@@ -133,10 +133,14 @@ func Serve() {
 					projectAdminRouter.PUT("/:id/review", admin.ReviewProject)
 				}
 
-				// User
+				// User 用户管理
 				userAdminRouter := adminRouter.Group("/users")
 				{
-					userAdminRouter.GET("", admin.ListUsers)
+					userAdminRouter.GET("", admin.ListUsersHandler)
+					userAdminRouter.POST("", admin.CreateUserHandler)
+					userAdminRouter.GET("/:id", admin.GetUserHandler)
+					userAdminRouter.PUT("/:id", admin.UpdateUserHandler)
+					userAdminRouter.DELETE("/:id", admin.DeleteUserHandler)
 				}
 			}
 		}

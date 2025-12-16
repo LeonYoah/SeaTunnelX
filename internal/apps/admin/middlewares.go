@@ -25,23 +25,39 @@
 package admin
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
-	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	"github.com/seatunnel/seatunnelX/internal/db"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
-	"net/http"
 )
 
+// LoginAdminRequired 管理员权限验证中间件
 func LoginAdminRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// init trace
 		ctx, span := otel_trace.Start(c.Request.Context(), "LoginAdminRequired")
 		defer span.End()
 
-		user, _ := oauth.GetUserFromContext(c)
+		// 获取当前用户 ID
+		userID := auth.GetUserIDFromContext(c)
+		if userID == 0 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error_msg": "未登录", "data": nil})
+			return
+		}
 
+		// 查询用户信息
+		user, err := auth.FindByID(db.DB(ctx), userID)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error_msg": "用户不存在", "data": nil})
+			return
+		}
+
+		// 检查是否为管理员
 		if !user.IsAdmin {
-			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error_msg": AdminRequired, "data": nil})
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error_msg": AdminRequired, "data": nil})
 			return
 		}
 

@@ -212,6 +212,37 @@
     "myProjects": "我的项目",
     "myReceived": "我的领取",
     "quickCreate": "快速创建",
-    "profile": "个人信息"
+    "profile": "个人信息",
+    "userManagement": "用户管理"
+  },
+  "admin": {
+    "userManagement": {
+      "title": "用户管理",
+      "createUser": "创建用户",
+      "editUser": "编辑用户",
+      "deleteUser": "删除用户",
+      "deleteConfirm": "确定要删除用户 {username} 吗？此操作不可撤销。",
+      "username": "用户名",
+      "nickname": "昵称",
+      "password": "密码",
+      "passwordPlaceholder": "留空则不修改密码",
+      "isAdmin": "管理员",
+      "isActive": "启用",
+      "lastLoginAt": "最后登录",
+      "createdAt": "创建时间",
+      "actions": "操作",
+      "noUsers": "暂无用户",
+      "createSuccess": "用户创建成功",
+      "updateSuccess": "用户更新成功",
+      "deleteSuccess": "用户删除成功",
+      "errors": {
+        "usernameRequired": "请输入用户名",
+        "passwordRequired": "请输入密码",
+        "passwordTooShort": "密码长度不能少于6位",
+        "usernameTooShort": "用户名长度不能少于3位",
+        "usernameExists": "用户名已存在",
+        "cannotDeleteSelf": "不能删除当前登录用户"
+      }
+    }
   }
 }

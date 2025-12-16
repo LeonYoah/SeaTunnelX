@@ -207,10 +207,11 @@ const FloatingDockDesktop = memo(
         )}
       >
         {(() => {
-          const firstRow = items.slice(0, 3);
           const dividerIndex = items.findIndex(
             (item) => item.title === 'divider',
           );
+          // 取 divider 之前的所有项目，如果没有 divider 则取全部
+          const firstRow = dividerIndex !== -1 ? items.slice(0, dividerIndex) : items;
           const secondRow =
             dividerIndex !== -1 ? items.slice(dividerIndex + 1) : [];
 
@@ -226,11 +227,13 @@ const FloatingDockDesktop = memo(
                   <div className='w-px h-full bg-border'></div>
                 </div>
               )}
-              <div className='flex items-end gap-2'>
-                {secondRow.map((item) => (
-                  <IconContainer mouseX={mouseX} key={item.title} {...item} />
-                ))}
-              </div>
+              {secondRow.length > 0 && (
+                <div className='flex items-end gap-2'>
+                  {secondRow.map((item) => (
+                    <IconContainer mouseX={mouseX} key={item.title} {...item} />
+                  ))}
+                </div>
+              )}
             </>
           );
         })()}

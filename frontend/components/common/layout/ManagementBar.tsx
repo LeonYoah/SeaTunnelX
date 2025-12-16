@@ -13,6 +13,7 @@ import {
   Globe,
   Check,
   Github,
+  Users,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -73,6 +74,14 @@ export function ManagementBar() {
     });
   };
 
+  // 管理员入口项
+  const adminItems = user?.is_admin ? [{
+    title: tDock('userManagement'),
+    icon: <Users {...IconOptions} />,
+    href: '/admin/users',
+  }] : [];
+
+  // dockItems 数组
   const dockItems = [
     {
       title: tDock('realTimeData'),
@@ -89,6 +98,8 @@ export function ManagementBar() {
       icon: <ShoppingBag {...IconOptions} />,
       href: '/received',
     },
+    // 管理员用户管理入口
+    ...adminItems,
     {
       title: 'divider',
       icon: <div />,

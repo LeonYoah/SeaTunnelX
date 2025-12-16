@@ -61,4 +61,8 @@ export interface BasicUserInfo {
   avatar_url: string;
   /** 用户分数 */
   score: number;
+  /** 是否为管理员 */
+  is_admin?: boolean;
+  /** 是否激活 */
+  is_active?: boolean;
 }

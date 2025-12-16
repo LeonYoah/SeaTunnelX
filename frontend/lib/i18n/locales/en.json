@@ -212,6 +212,37 @@
     "myProjects": "My Projects",
     "myReceived": "My Received",
     "quickCreate": "Quick Create",
-    "profile": "Profile"
+    "profile": "Profile",
+    "userManagement": "User Management"
+  },
+  "admin": {
+    "userManagement": {
+      "title": "User Management",
+      "createUser": "Create User",
+      "editUser": "Edit User",
+      "deleteUser": "Delete User",
+      "deleteConfirm": "Are you sure you want to delete user {username}? This action cannot be undone.",
+      "username": "Username",
+      "nickname": "Nickname",
+      "password": "Password",
+      "passwordPlaceholder": "Leave empty to keep current password",
+      "isAdmin": "Administrator",
+      "isActive": "Active",
+      "lastLoginAt": "Last Login",
+      "createdAt": "Created At",
+      "actions": "Actions",
+      "noUsers": "No users found",
+      "createSuccess": "User created successfully",
+      "updateSuccess": "User updated successfully",
+      "deleteSuccess": "User deleted successfully",
+      "errors": {
+        "usernameRequired": "Please enter username",
+        "passwordRequired": "Please enter password",
+        "passwordTooShort": "Password must be at least 6 characters",
+        "usernameTooShort": "Username must be at least 3 characters",
+        "usernameExists": "Username already exists",
+        "cannotDeleteSelf": "Cannot delete current logged in user"
+      }
+    }
   }
 }
