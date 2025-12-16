@@ -138,6 +138,6 @@ schedule:
 worker:
   concurrency: 50
 
-# LinuxDo 配置（保留用于兼容，新部署可忽略）
-linuxDo:
+# 旧版配置（保留用于兼容，新部署可忽略）
+legacy:
   api_key: ""

@@ -100,7 +100,7 @@ func doOAuth(ctx context.Context, code string) (*User, error) {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	var userInfo LinuxDoUserInfo
+	var userInfo LegacyOAuthUserInfo
 	if err = json.Unmarshal(responseData, &userInfo); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err

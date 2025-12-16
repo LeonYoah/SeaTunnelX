@@ -29,20 +29,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seatunnel/seatunnelX/internal/config"
 	"io"
 	"net/http"
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/seatunnel/seatunnelX/internal/config"
+
 	utils2 "gorm.io/gorm/utils"
 
 	"github.com/seatunnel/seatunnelX/internal/utils"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/db"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -130,7 +131,7 @@ func (p *Project) CreateItems(ctx context.Context, tx *gorm.DB, items []string, 
 
 	if isLottery {
 		headers := map[string]string{
-			"User-Api-Key": config.Config.LinuxDo.ApiKey,
+			"User-Api-Key": config.Config.Legacy.ApiKey,
 		}
 		// 获取话题基本信息
 		url := fmt.Sprintf("https://linux.do/t/%d.json", topicId)

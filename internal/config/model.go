@@ -29,11 +29,11 @@ type configModel struct {
 	Schedule       scheduleConfig       `mapstructure:"schedule"`
 	Worker         workerConfig         `mapstructure:"worker"`
 	ClickHouse     clickHouseConfig     `mapstructure:"clickhouse"`
-	LinuxDo        linuxDoConfig        `mapstructure:"linuxdo"`
+	Legacy         legacyConfig         `mapstructure:"legacy"`
 }
 
-// linuxDoConfig LinuxDo 配置（保留用于兼容）
-type linuxDoConfig struct {
+// legacyConfig 旧版配置（保留用于兼容）
+type legacyConfig struct {
 	ApiKey string `mapstructure:"api_key"`
 }
 
