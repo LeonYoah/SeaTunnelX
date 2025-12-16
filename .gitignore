@@ -33,6 +33,7 @@ data/
 /build/
 /bin/
 /dist/
+*.exe
 
 # go workspace
 go.work

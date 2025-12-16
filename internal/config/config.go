@@ -39,6 +39,13 @@ func init() {
 
 	// 读取配置文件
 	if err := viper.ReadInConfig(); err != nil {
+		// 在测试环境中，如果配置文件不存在，使用默认配置
+		if os.Getenv("GO_TEST") == "1" || isTestEnvironment() {
+			log.Printf("[Config] 测试环境，使用默认配置: %v\n", err)
+			Config = &configModel{}
+			setDefaults(Config)
+			return
+		}
 		log.Fatalf("[Config] read config failed: %v\n", err)
 	}
 
@@ -53,6 +60,17 @@ func init() {
 
 	// 设置全局配置
 	Config = &c
+}
+
+// isTestEnvironment 检测是否在测试环境中运行
+func isTestEnvironment() bool {
+	// 检查是否通过 go test 运行
+	for _, arg := range os.Args {
+		if len(arg) > 5 && arg[:5] == "-test" {
+			return true
+		}
+	}
+	return false
 }
 
 // setDefaults 设置配置默认值

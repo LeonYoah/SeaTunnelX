@@ -22,7 +22,7 @@ type configModel struct {
 	ProjectApp projectAppConfig `mapstructure:"projectApp"`
 	Auth       authConfig       `mapstructure:"auth"`
 	OAuth2     OAuth2Config     `mapstructure:"oauth2"`
-	Database   databaseConfig   `mapstructure:"database"`
+	Database   DatabaseConfig   `mapstructure:"database"`
 	Redis      redisConfig      `mapstructure:"redis"`
 	Log        logConfig        `mapstructure:"log"`
 	Schedule   scheduleConfig   `mapstructure:"schedule"`
@@ -77,8 +77,8 @@ type authConfig struct {
 	BcryptCost           int    `mapstructure:"bcrypt_cost"`
 }
 
-// databaseConfig 数据库配置
-type databaseConfig struct {
+// DatabaseConfig 数据库配置（导出供其他包使用）
+type DatabaseConfig struct {
 	Enabled         bool   `mapstructure:"enabled"`
 	Type            string `mapstructure:"type"`        // sqlite, mysql, postgres
 	SQLitePath      string `mapstructure:"sqlite_path"` // SQLite 文件路径
