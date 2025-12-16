@@ -17,7 +17,7 @@ import {
 
 import {useRef, useState, memo, useCallback} from 'react';
 
-export const FloatingDock = ({
+export const FloatingDock = memo(({
   items,
   desktopClassName,
   mobileClassName,
@@ -46,7 +46,9 @@ export const FloatingDock = ({
       />
     </>
   );
-};
+});
+
+FloatingDock.displayName = 'FloatingDock';
 
 const FloatingDockMobile = memo(
   ({
@@ -119,9 +121,9 @@ const FloatingDockMobile = memo(
                           'flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 dark:bg-neutral-900',
                           buttonClassName,
                         )}
-                        {...(item.external || item.href.startsWith('https://')
-                          ? {target: '_blank', rel: 'noopener noreferrer'}
-                          : {})}
+                        {...(item.external || item.href.startsWith('https://') ?
+                          {target: '_blank', rel: 'noopener noreferrer'} :
+                          {})}
                       >
                         <div className='flex items-center justify-center'>
                           {item.icon}
@@ -323,16 +325,16 @@ const IconContainer = memo(
     }, []);
 
     const Element = customComponent ? 'div' : href ? 'a' : 'button';
-    const elementProps = customComponent
-      ? {}
-      : href
-        ? {
+    const elementProps = customComponent ?
+      {} :
+      href ?
+        {
             href,
-            ...(external || href.startsWith('https://')
-              ? {target: '_blank', rel: 'noopener noreferrer'}
-              : {}),
-          }
-        : {onClick};
+            ...(external || href.startsWith('https://') ?
+              {target: '_blank', rel: 'noopener noreferrer'} :
+              {}),
+          } :
+        {onClick};
 
     return (
       <Element {...elementProps}>
