@@ -35,7 +35,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="zh-CN"
+      lang='zh-CN'
       className={`${inter.variable} ${notoSansSC.variable} hide-scrollbar font-sans`}
       suppressHydrationWarning
     >
@@ -43,8 +43,8 @@ export default function RootLayout({
         className={`${inter.variable} ${notoSansSC.variable} hide-scrollbar font-sans antialiased`}
       >
         <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
+          attribute='class'
+          defaultTheme='system'
           enableSystem
           disableTransitionOnChange
         >

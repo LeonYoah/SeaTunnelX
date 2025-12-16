@@ -109,18 +109,18 @@ function Counter({
 
   return (
     <motion.div
-      data-slot="counter"
+      data-slot='counter'
       layout
       transition={transition}
       className={cn(
-          'flex items-center gap-x-2 p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800',
-          className,
+        'flex items-center gap-x-2 p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800',
+        className,
       )}
       {...props}
     >
       <motion.div whileHover={{scale: 1.05}} whileTap={{scale: 0.95}}>
         <Button
-          size="icon"
+          size='icon'
           {...buttonProps}
           onClick={() => handleButtonClick(handleDecrement)}
           onMouseDown={() => startLongPress(handleDecrement)}
@@ -129,8 +129,8 @@ function Counter({
           onTouchStart={() => startLongPress(handleDecrement)}
           onTouchEnd={stopLongPress}
           className={cn(
-              'bg-white dark:bg-neutral-950 hover:bg-white/70 dark:hover:bg-neutral-950/70 text-neutral-950 dark:text-white text-2xl font-light pb-[3px] select-none',
-              buttonProps?.className,
+            'bg-white dark:bg-neutral-950 hover:bg-white/70 dark:hover:bg-neutral-950/70 text-neutral-950 dark:text-white text-2xl font-light pb-[3px] select-none',
+            buttonProps?.className,
           )}
         >
           -
@@ -145,7 +145,7 @@ function Counter({
 
       <motion.div whileHover={{scale: 1.05}} whileTap={{scale: 0.95}}>
         <Button
-          size="icon"
+          size='icon'
           {...buttonProps}
           onClick={() => handleButtonClick(handleIncrement)}
           onMouseDown={() => startLongPress(handleIncrement)}
@@ -154,8 +154,8 @@ function Counter({
           onTouchStart={() => startLongPress(handleIncrement)}
           onTouchEnd={stopLongPress}
           className={cn(
-              'bg-white dark:bg-neutral-950 hover:bg-white/70 dark:hover:bg-neutral-950/70 text-neutral-950 dark:text-white text-2xl font-light pb-[3px] select-none',
-              buttonProps?.className,
+            'bg-white dark:bg-neutral-950 hover:bg-white/70 dark:hover:bg-neutral-950/70 text-neutral-950 dark:text-white text-2xl font-light pb-[3px] select-none',
+            buttonProps?.className,
           )}
         >
           +

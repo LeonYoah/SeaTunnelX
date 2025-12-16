@@ -11,7 +11,7 @@ import {
 import {cn} from '@/lib/utils';
 
 const staticAnimations = {
-  'path': {
+  path: {
     initial: {pathLength: 1, opacity: 1},
     animate: {
       pathLength: [0.05, 1],
@@ -81,7 +81,7 @@ interface IconWrapperProps<T> extends IconProps<T> {
 }
 
 const AnimateIconContext = React.createContext<AnimateIconContextValue | null>(
-    null,
+  null,
 );
 
 function useAnimateIconContext() {
@@ -114,12 +114,12 @@ function AnimateIcon({
   const currentAnimation = React.useRef(animation);
 
   const startAnimation = React.useCallback(
-      (trigger: TriggerProp) => {
-        currentAnimation.current =
+    (trigger: TriggerProp) => {
+      currentAnimation.current =
         typeof trigger === 'string' ? trigger : animation;
-        setLocalAnimate(true);
-      },
-      [animation],
+      setLocalAnimate(true);
+    },
+    [animation],
   );
 
   const stopAnimation = React.useCallback(() => {
@@ -134,8 +134,8 @@ function AnimateIcon({
   }, [animate]);
 
   React.useEffect(
-      () => onAnimateChange?.(localAnimate, currentAnimation.current),
-      [localAnimate, onAnimateChange],
+    () => onAnimateChange?.(localAnimate, currentAnimation.current),
+    [localAnimate, onAnimateChange],
   );
 
   React.useEffect(() => {
@@ -185,7 +185,8 @@ function AnimateIcon({
 }
 
 // eslint-disable-next-line quotes
-const pathClassName = "[&_[stroke-dasharray='1px_1px']]:![stroke-dasharray:1px_0px]";
+const pathClassName =
+  "[&_[stroke-dasharray='1px_1px']]:![stroke-dasharray:1px_0px]";
 
 function IconWrapper<T extends string>({
   size = 28,
@@ -227,8 +228,8 @@ function IconWrapper<T extends string>({
         <IconComponent
           size={size}
           className={cn(
-              className,
-              (animationToUse === 'path' || animationToUse === 'path-loop') &&
+            className,
+            (animationToUse === 'path' || animationToUse === 'path-loop') &&
               pathClassName,
           )}
           {...props}
@@ -259,8 +260,8 @@ function IconWrapper<T extends string>({
         <IconComponent
           size={size}
           className={cn(
-              className,
-              (animationProp === 'path' || animationProp === 'path-loop') &&
+            className,
+            (animationProp === 'path' || animationProp === 'path-loop') &&
               pathClassName,
           )}
           {...props}
@@ -273,8 +274,8 @@ function IconWrapper<T extends string>({
     <IconComponent
       size={size}
       className={cn(
-          className,
-          (animationProp === 'path' || animationProp === 'path-loop') &&
+        className,
+        (animationProp === 'path' || animationProp === 'path-loop') &&
           pathClassName,
       )}
       {...props}
@@ -283,7 +284,7 @@ function IconWrapper<T extends string>({
 }
 
 function getVariants<
-  V extends { default: T; [key: string]: T },
+  V extends {default: T; [key: string]: T},
   T extends Record<string, Variants>,
 >(animations: V): T {
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -318,8 +319,8 @@ function getVariants<
         if (!transition) continue;
 
         const hasNestedKeys = Object.values(transition).some(
-            (v) =>
-              typeof v === 'object' &&
+          (v) =>
+            typeof v === 'object' &&
             v !== null &&
             ('ease' in v || 'duration' in v || 'times' in v),
         );

@@ -26,12 +26,12 @@ function GradientText({
 
   return (
     <span
-      data-slot="gradient-text"
+      data-slot='gradient-text'
       className={cn('relative inline-block', className)}
       {...props}
     >
       <motion.span
-        className="m-0 text-transparent bg-clip-text bg-[length:700%_100%] bg-[position:0%_0%]"
+        className='m-0 text-transparent bg-clip-text bg-[length:700%_100%] bg-[position:0%_0%]'
         style={baseStyle}
         initial={{backgroundPosition: '0% 0%'}}
         animate={{backgroundPosition: '500% 100%'}}
@@ -42,7 +42,7 @@ function GradientText({
 
       {neon && (
         <motion.span
-          className="m-0 absolute top-0 left-0 text-transparent bg-clip-text blur-[8px] mix-blend-plus-lighter bg-[length:700%_100%] bg-[position:0%_0%]"
+          className='m-0 absolute top-0 left-0 text-transparent bg-clip-text blur-[8px] mix-blend-plus-lighter bg-[length:700%_100%] bg-[position:0%_0%]'
           style={baseStyle}
           initial={{backgroundPosition: '0% 0%'}}
           animate={{backgroundPosition: '500% 100%'}}

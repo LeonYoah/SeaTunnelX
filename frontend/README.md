@@ -20,22 +20,26 @@
 ## 🛠️ 技术栈
 
 ### 核心框架
+
 - **[Next.js 15](https://nextjs.org/)** - React 框架，支持服务端渲染和静态生成
 - **[React 19](https://reactjs.org/)** - 用户界面构建库
 - **[TypeScript 5](https://www.typescriptlang.org/)** - 静态类型检查
 
 ### UI 组件和样式
+
 - **[Tailwind CSS 4](https://tailwindcss.com/)** - 实用优先的 CSS 框架
 - **[Shadcn UI](https://ui.shadcn.com/)** - 高质量的 UI 组件集合
 - **[Lucide Icons](https://lucide.dev/)** - 简约美观的图标库
 - **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** - 中文字体支持
 
 ### 状态管理和数据处理
+
 - **[Axios](https://axios-http.com/)** - HTTP 客户端
 - **[Zod](https://zod.dev/)** - TypeScript 优先的模式验证
 - **[React Hook Form](https://react-hook-form.com/)** - 高性能表单库
 
 ### 开发工具
+
 - **[ESLint](https://eslint.org/)** - 代码质量检查
 - **[Prettier](https://prettier.io/)** - 代码格式化
 - **[Turbopack](https://turbo.build/pack)** - 高性能构建工具
@@ -109,32 +113,35 @@ frontend/
 
 ### 目录说明
 
-| 目录 | 描述 | 规范 |
-|------|------|------|
-| `app/` | Next.js 15 App Router 页面组件 | 使用文件系统路由 |
-| `components/common/` | 业务相关的通用组件 | 按功能模块组织 |
-| `components/ui/` | Shadcn UI 基础组件 | 不直接修改，通过覆盖样式自定义 |
-| `components/layout/` | 布局相关组件 | 页面结构和导航组件 |
-| `components/icons/` | 自定义图标组件 | 命名导出，SVG 组件形式 |
-| `lib/services/` | API 服务层 | 按业务领域划分服务 |
-| `types/` | TypeScript 类型定义 | 全局类型和接口定义 |
+| 目录                 | 描述                           | 规范                           |
+| -------------------- | ------------------------------ | ------------------------------ |
+| `app/`               | Next.js 15 App Router 页面组件 | 使用文件系统路由               |
+| `components/common/` | 业务相关的通用组件             | 按功能模块组织                 |
+| `components/ui/`     | Shadcn UI 基础组件             | 不直接修改，通过覆盖样式自定义 |
+| `components/layout/` | 布局相关组件                   | 页面结构和导航组件             |
+| `components/icons/`  | 自定义图标组件                 | 命名导出，SVG 组件形式         |
+| `lib/services/`      | API 服务层                     | 按业务领域划分服务             |
+| `types/`             | TypeScript 类型定义            | 全局类型和接口定义             |
 
 ## 🧑‍💻 开发指南
 
 ### 开发工作流
 
 1. **启动开发服务器**
+
    ```bash
    pnpm dev
    ```
 
 2. **创建新组件**
+
    ```bash
    # 在对应目录创建组件文件
    touch components/common/my-component.tsx
    ```
 
 3. **添加新页面**
+
    ```bash
    # 在 app 目录下创建路由文件
    mkdir app/my-page
@@ -159,6 +166,7 @@ frontend/
 #### 创建新服务
 
 1. **创建目录结构**：
+
    ```
    /lib/services/新服务名/
      ├── types.ts           # 类型定义
@@ -167,9 +175,10 @@ frontend/
    ```
 
 2. **实现服务类**：
+
    ```typescript
    // 新服务名/服务名.service.ts
-   import { BaseService } from '../core/base.service';
+   import {BaseService} from '../core/base.service';
 
    export class 新服务类 extends BaseService {
      protected static readonly basePath = '/api/v1/路径';
@@ -181,12 +190,13 @@ frontend/
    ```
 
 3. **在 services/index.ts 注册**：
+
    ```typescript
-   import { 新服务类 } from './新服务名';
+   import {新服务类} from './新服务名';
 
    const services = {
      auth: AuthService,
-     新服务名: 新服务类
+     新服务名: 新服务类,
    };
    ```
 
@@ -255,11 +265,11 @@ export default function UserCard({ user, onClick }: UserCardProps) {
 
 ```tsx
 // ✅ 推荐的样式写法
-<div className="flex items-center gap-4 p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow">
-  <Avatar className="h-10 w-10" />
-  <div className="flex-1">
-    <h3 className="font-medium text-gray-900">{user.name}</h3>
-    <p className="text-sm text-gray-500">{user.email}</p>
+<div className='flex items-center gap-4 p-4 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow'>
+  <Avatar className='h-10 w-10' />
+  <div className='flex-1'>
+    <h3 className='font-medium text-gray-900'>{user.name}</h3>
+    <p className='text-sm text-gray-500'>{user.email}</p>
   </div>
 </div>
 ```
@@ -272,23 +282,23 @@ export default function UserCard({ user, onClick }: UserCardProps) {
 
 ```tsx
 // 使用 Lucide 图标
-import { Search, User, Settings } from 'lucide-react';
+import {Search, User, Settings} from 'lucide-react';
 
 // 自定义图标
-import { LinuxDoLogo } from '@/components/icons';
+import {LinuxDoLogo} from '@/components/icons';
 
-<Search className="h-5 w-5 text-gray-400" />
+<Search className='h-5 w-5 text-gray-400' />;
 ```
 
 ### 命名规范
 
-| 类型 | 规范 | 示例 |
-|------|------|------|
-| 文件名 | kebab-case | `user-profile.tsx` |
-| 组件名 | PascalCase | `UserProfile` |
-| 函数/变量 | camelCase | `getUserData` |
-| 常量 | UPPER_SNAKE_CASE | `API_BASE_URL` |
-| 类型/接口 | PascalCase | `UserData`, `ApiResponse` |
+| 类型      | 规范             | 示例                      |
+| --------- | ---------------- | ------------------------- |
+| 文件名    | kebab-case       | `user-profile.tsx`        |
+| 组件名    | PascalCase       | `UserProfile`             |
+| 函数/变量 | camelCase        | `getUserData`             |
+| 常量      | UPPER_SNAKE_CASE | `API_BASE_URL`            |
+| 类型/接口 | PascalCase       | `UserData`, `ApiResponse` |
 
 ## 🚀 构建部署
 
@@ -357,10 +367,7 @@ pnpm build
 
 ```javascript
 module.exports = {
-  content: [
-    './app/**/*.{js,ts,jsx,tsx}',
-    './components/**/*.{js,ts,jsx,tsx}',
-  ],
+  content: ['./app/**/*.{js,ts,jsx,tsx}', './components/**/*.{js,ts,jsx,tsx}'],
   // ...
 };
 ```
@@ -403,4 +410,3 @@ pnpm build && npx @next/bundle-analyzer
 ---
 
 💡 **提示**: 如有问题或建议，欢迎在项目 Issues 中反馈！
-

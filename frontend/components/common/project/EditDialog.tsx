@@ -8,14 +8,32 @@ import {useBulkImport} from '@/hooks/use-bulk-import';
 import {useFileUpload} from '@/hooks/use-file-upload';
 import {toast} from 'sonner';
 import {Button} from '@/components/ui/button';
-import {Tabs, TabsList, TabsTrigger, TabsContent, TabsContents} from '@/components/animate-ui/radix/tabs';
-import {Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter} from '@/components/animate-ui/radix/dialog';
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  TabsContents,
+} from '@/components/animate-ui/radix/tabs';
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/animate-ui/radix/dialog';
 import {validateProjectForm} from '@/components/common/project';
 import {ProjectBasicForm} from '@/components/common/project/ProjectBasicForm';
 import {BulkImportSection} from '@/components/common/project/BulkImportSection';
 import {Pencil, CheckCircle} from 'lucide-react';
 import services from '@/lib/services';
-import {DistributionType, ProjectListItem, UpdateProjectRequest} from '@/lib/services/project/types';
+import {
+  DistributionType,
+  ProjectListItem,
+  UpdateProjectRequest,
+} from '@/lib/services/project/types';
 
 interface EditDialogProps {
   project: ProjectListItem;
@@ -37,13 +55,17 @@ export function EditDialog({
   const [updateSuccess, setUpdateSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState('basic');
 
-  const {formData, setFormData, resetForm: resetProjectForm} = useProjectForm({
+  const {
+    formData,
+    setFormData,
+    resetForm: resetProjectForm,
+  } = useProjectForm({
     mode: 'edit',
     project,
   });
 
   const {tags, setTags, availableTags, fetchTags, resetTags} = useProjectTags(
-      project.tags || [],
+    project.tags || [],
   );
 
   const {
@@ -71,7 +93,6 @@ export function EditDialog({
     handleCancelUpload,
   } = useFileUpload();
 
-
   const resetForm = useCallback(() => {
     resetProjectForm();
     resetTags(project.tags || []);
@@ -87,7 +108,6 @@ export function EditDialog({
       resetForm();
     }
   }, [open, resetForm, fetchTags]);
-
 
   const handleFileUpload = (files: File[]) => {
     handleFileUploadBase(files, newItems, allowDuplicates, setNewItems);
@@ -136,8 +156,8 @@ export function EditDialog({
       };
 
       const result = await services.project.updateProjectSafe(
-          project.id,
-          updateData,
+        project.id,
+        updateData,
       );
 
       if (!result.success) {
@@ -155,9 +175,10 @@ export function EditDialog({
         minimum_trust_level: formData.minimumTrustLevel,
         allow_same_ip: formData.allowSameIP,
         risk_level: formData.riskLevel,
-        total_items: project.distribution_type === DistributionType.LOTTERY ?
-          project.total_items :
-          project.total_items + newItems.length,
+        total_items:
+          project.distribution_type === DistributionType.LOTTERY
+            ? project.total_items
+            : project.total_items + newItems.length,
       };
 
       setUpdateSuccess(true);
@@ -176,8 +197,8 @@ export function EditDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {children || (
-          <Button size="sm" variant="ghost">
-            <Pencil className="h-4 w-4" />
+          <Button size='sm' variant='ghost'>
+            <Pencil className='h-4 w-4' />
           </Button>
         )}
       </DialogTrigger>
@@ -194,13 +215,13 @@ export function EditDialog({
         </DialogHeader>
 
         {updateSuccess ? (
-          <div className="space-y-6 py-6">
-            <div className="flex items-center justify-center">
-              <div className="flex items-center gap-3 text-green-600">
-                <CheckCircle className="h-8 w-8" />
+          <div className='space-y-6 py-6'>
+            <div className='flex items-center justify-center'>
+              <div className='flex items-center gap-3 text-green-600'>
+                <CheckCircle className='h-8 w-8' />
                 <div>
-                  <h3 className="text-lg font-semibold">项目更新成功</h3>
-                  <p className="text-sm text-muted-foreground">
+                  <h3 className='text-lg font-semibold'>项目更新成功</h3>
+                  <p className='text-sm text-muted-foreground'>
                     项目名称：{formData.name}
                   </p>
                 </div>
@@ -211,18 +232,20 @@ export function EditDialog({
           <Tabs
             value={activeTab}
             onValueChange={setActiveTab}
-            className="w-full"
+            className='w-full'
           >
-            <TabsList className={`grid w-full ${project.distribution_type === DistributionType.LOTTERY ? 'grid-cols-1' : 'grid-cols-2'}`}>
-              <TabsTrigger value="basic">基本设置</TabsTrigger>
+            <TabsList
+              className={`grid w-full ${project.distribution_type === DistributionType.LOTTERY ? 'grid-cols-1' : 'grid-cols-2'}`}
+            >
+              <TabsTrigger value='basic'>基本设置</TabsTrigger>
               {project.distribution_type !== DistributionType.LOTTERY && (
-                <TabsTrigger value="content">追加内容</TabsTrigger>
+                <TabsTrigger value='content'>追加内容</TabsTrigger>
               )}
             </TabsList>
 
-            <TabsContents className="mb-1 -mt-2 rounded-sm h-full bg-background">
+            <TabsContents className='mb-1 -mt-2 rounded-sm h-full bg-background'>
               <TabsContent
-                value="basic"
+                value='basic'
                 className={`space-y-6 py-6 ${isMobile ? 'max-h-[65vh]' : 'max-h-[60vh]'} overflow-y-auto`}
               >
                 <ProjectBasicForm
@@ -237,7 +260,7 @@ export function EditDialog({
 
               {project.distribution_type !== DistributionType.LOTTERY && (
                 <TabsContent
-                  value="content"
+                  value='content'
                   className={`space-y-6 py-6 ${isMobile ? 'max-h-[65vh]' : 'max-h-[60vh]'} overflow-y-auto`}
                 >
                   <BulkImportSection
@@ -254,7 +277,7 @@ export function EditDialog({
                     onFileUploadOpenChange={setFileUploadOpen}
                     onFileUpload={handleFileUpload}
                     isMobile={isMobile}
-                    mode="edit"
+                    mode='edit'
                     totalExistingItems={project.total_items}
                     confirmationOpen={confirmationOpen}
                     onConfirmationOpenChange={setConfirmationOpen}
@@ -268,14 +291,14 @@ export function EditDialog({
           </Tabs>
         )}
 
-        <DialogFooter className="flex-col gap-2">
+        <DialogFooter className='flex-col gap-2'>
           {updateSuccess ? (
             <Button
               onClick={() => {
                 setOpen(false);
                 resetForm();
               }}
-              className="w-full"
+              className='w-full'
             >
               关闭
             </Button>
@@ -283,13 +306,12 @@ export function EditDialog({
             <Button
               onClick={handleSubmit}
               disabled={loading}
-              className="w-full"
+              className='w-full'
             >
               {loading ? '更新中...' : '更新项目'}
             </Button>
           )}
         </DialogFooter>
-
       </DialogContent>
     </Dialog>
   );

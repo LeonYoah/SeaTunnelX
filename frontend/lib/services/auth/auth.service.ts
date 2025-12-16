@@ -51,7 +51,8 @@ export class AuthService extends BaseService {
       const loginURL = await this.getLoginURL();
       window.location.href = loginURL;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '获取登录URL失败';
+      const errorMessage =
+        error instanceof Error ? error.message : '获取登录URL失败';
       console.error(errorMessage);
       throw new Error(errorMessage);
     }
@@ -77,19 +78,20 @@ export class AuthService extends BaseService {
       await this.callLogoutAPI();
 
       // 添加登出标记
-      const finalRedirect = redirectTo === '/login' ?
-        '/login?logout=true' :
-        redirectTo;
+      const finalRedirect =
+        redirectTo === '/login' ? '/login?logout=true' : redirectTo;
 
       // 重定向
       window.location.href = finalRedirect;
     } catch (error) {
-      console.error('登出失败:', error instanceof Error ? error.message : '未知错误');
+      console.error(
+        '登出失败:',
+        error instanceof Error ? error.message : '未知错误',
+      );
 
       // 出错时仍然重定向
-      const finalRedirect = redirectTo === '/login' ?
-        '/login?logout=true' :
-        redirectTo;
+      const finalRedirect =
+        redirectTo === '/login' ? '/login?logout=true' : redirectTo;
 
       window.location.href = finalRedirect;
     }

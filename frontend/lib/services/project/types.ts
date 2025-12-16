@@ -313,4 +313,6 @@ export interface ProjectReceiver {
 /**
  * 项目领取者响应类型
  */
-export type ProjectReceiversResponse = BackendResponse<ProjectReceiver[] | null>;
+export type ProjectReceiversResponse = BackendResponse<
+  ProjectReceiver[] | null
+>;

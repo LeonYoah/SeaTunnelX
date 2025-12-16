@@ -70,7 +70,6 @@ export function useAuth(): UseAuthReturn {
         setState((prev) => ({...prev, isLoading: true, error: null}));
       }
 
-
       // 使用缓存数据（如果缓存有效）
       const now = Date.now();
       if (userInfoCache.data && now - userInfoCache.timestamp < CACHE_EXPIRY) {
@@ -103,7 +102,8 @@ export function useAuth(): UseAuthReturn {
               isAuthenticated: false,
               user: null,
               isLoading: false,
-              error: error instanceof Error ? error.message : '获取用户信息失败',
+              error:
+                error instanceof Error ? error.message : '获取用户信息失败',
             });
           }
         } finally {
@@ -111,7 +111,6 @@ export function useAuth(): UseAuthReturn {
         }
         return;
       }
-
 
       // 创建新请求并缓存Promise
       userInfoCache.promise = services.auth.getUserInfo();
@@ -160,7 +159,7 @@ export function useAuth(): UseAuthReturn {
         });
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 避免循环依赖导致的重复请求
 
   /**

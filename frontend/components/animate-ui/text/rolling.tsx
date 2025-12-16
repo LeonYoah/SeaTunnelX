@@ -78,17 +78,19 @@ function RollingText({
   const characters = React.useMemo(() => text.split(''), [text]);
 
   return (
-    <span data-slot="rolling-text" {...props} ref={localRef}>
+    <span data-slot='rolling-text' {...props} ref={localRef}>
       {characters.map((char, idx) => (
         <span
           key={`${idx}-${animationCount}`}
-          className="relative inline-block perspective-[9999999px] transform-3d w-auto"
-          aria-hidden="true"
+          className='relative inline-block perspective-[9999999px] transform-3d w-auto'
+          aria-hidden='true'
         >
           <motion.span
-            className="absolute inline-block backface-hidden origin-[50%_25%]"
+            className='absolute inline-block backface-hidden origin-[50%_25%]'
             initial={ENTRY_ANIMATION.initial}
-            animate={isAnimating ? ENTRY_ANIMATION.animate : ENTRY_ANIMATION.initial}
+            animate={
+              isAnimating ? ENTRY_ANIMATION.animate : ENTRY_ANIMATION.initial
+            }
             transition={{
               ...transition,
               delay: idx * (transition?.delay ?? 0),
@@ -97,9 +99,11 @@ function RollingText({
             {formatCharacter(char)}
           </motion.span>
           <motion.span
-            className="absolute inline-block backface-hidden origin-[50%_100%]"
+            className='absolute inline-block backface-hidden origin-[50%_100%]'
             initial={EXIT_ANIMATION.initial}
-            animate={isAnimating ? EXIT_ANIMATION.animate : EXIT_ANIMATION.initial}
+            animate={
+              isAnimating ? EXIT_ANIMATION.animate : EXIT_ANIMATION.initial
+            }
             transition={{
               ...transition,
               delay: idx * (transition?.delay ?? 0) + 0.3,
@@ -107,11 +111,11 @@ function RollingText({
           >
             {formatCharacter(char)}
           </motion.span>
-          <span className="invisible">{formatCharacter(char)}</span>
+          <span className='invisible'>{formatCharacter(char)}</span>
         </span>
       ))}
 
-      <span className="sr-only">{text}</span>
+      <span className='sr-only'>{text}</span>
     </span>
   );
 }

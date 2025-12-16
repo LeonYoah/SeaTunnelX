@@ -52,11 +52,11 @@ function InputButtonProvider({
       }}
     >
       <div
-        data-slot="input-button-provider"
+        data-slot='input-button-provider'
         className={cn(
-            'relative w-fit flex items-center justify-center h-10',
-            (showInput || localShowInput) && 'w-full max-w-[400px]',
-            className,
+          'relative w-fit flex items-center justify-center h-10',
+          (showInput || localShowInput) && 'w-full max-w-[400px]',
+          className,
         )}
         {...props}
       />
@@ -69,7 +69,7 @@ type InputButtonProps = HTMLMotionProps<'div'>;
 function InputButton({className, ...props}: InputButtonProps) {
   return (
     <motion.div
-      data-slot="input-button"
+      data-slot='input-button'
       className={cn('flex size-full', className)}
       {...props}
     />
@@ -83,10 +83,10 @@ function InputButtonAction({className, ...props}: InputButtonActionProps) {
 
   return (
     <motion.button
-      data-slot="input-button-action"
+      data-slot='input-button-action'
       className={cn(
-          'bg-background text-sm whitespace-nowrap disabled:pointer-events-none disabled:opacity-50 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive rounded-full border text-background-foreground cursor-pointer pl-4 pr-12 size-full font-medium',
-          className,
+        'bg-background text-sm whitespace-nowrap disabled:pointer-events-none disabled:opacity-50 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive rounded-full border text-background-foreground cursor-pointer pl-4 pr-12 size-full font-medium',
+        className,
       )}
       layoutId={`input-button-action-${id}`}
       transition={transition}
@@ -110,11 +110,11 @@ function InputButtonSubmit({
 
   return (
     <motion.button
-      data-slot="input-button-submit"
+      data-slot='input-button-submit'
       layoutId={`input-button-submit-${id}`}
       transition={transition}
       className={cn(
-          'z-[1] [&_svg:not([class*=\'size-\'])]:size-4 cursor-pointer disabled:pointer-events-none  disabled:opacity-50 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive whitespace-nowrap bg-primary hover:bg-primary/90 transition-colors text-primary-foreground rounded-full text-sm flex items-center justify-center font-medium absolute inset-y-1 right-1',
+        "z-[1] [&_svg:not([class*='size-'])]:size-4 cursor-pointer disabled:pointer-events-none  disabled:opacity-50 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive whitespace-nowrap bg-primary hover:bg-primary/90 transition-colors text-primary-foreground rounded-full text-sm flex items-center justify-center font-medium absolute inset-y-1 right-1",
         showInput ? 'px-4' : 'aspect-square',
         className,
       )}
@@ -123,7 +123,7 @@ function InputButtonSubmit({
     >
       {showInput ? (
         <motion.span
-          key="show-button"
+          key='show-button'
           initial={{opacity: 0, scale: 0}}
           animate={{opacity: 1, scale: 1}}
           transition={{duration: 0.2}}
@@ -132,12 +132,12 @@ function InputButtonSubmit({
         </motion.span>
       ) : (
         <motion.span
-          key="show-icon"
+          key='show-icon'
           initial={{opacity: 0, scale: 0}}
           animate={{opacity: 1, scale: 1}}
           transition={{duration: 0.2}}
         >
-          <Icon className="size-4" />
+          <Icon className='size-4' />
         </motion.span>
       )}
     </motion.button>
@@ -152,17 +152,17 @@ function InputButtonInput({className, ...props}: InputButtonInputProps) {
   return (
     <AnimatePresence>
       {showInput && (
-        <div className="absolute inset-0 size-full flex items-center justify-center">
+        <div className='absolute inset-0 size-full flex items-center justify-center'>
           <motion.div
             layoutId={`input-button-input-${id}`}
-            className="size-full flex items-center bg-background rounded-full relative"
+            className='size-full flex items-center bg-background rounded-full relative'
             transition={transition}
           >
             <input
-              data-slot="input-button-input"
+              data-slot='input-button-input'
               className={cn(
-                  'size-full selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground inset-0 pl-4 focus-visible:border-ring border focus-visible:ring-ring/50 focus-visible:ring-[3px] pr-32 py-2 text-sm bg-background rounded-full focus:outline-none absolute shrink-0 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive disabled:pointer-events-none disabled:cursor-not-allowed',
-                  className,
+                'size-full selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground inset-0 pl-4 focus-visible:border-ring border focus-visible:ring-ring/50 focus-visible:ring-[3px] pr-32 py-2 text-sm bg-background rounded-full focus:outline-none absolute shrink-0 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive disabled:pointer-events-none disabled:cursor-not-allowed',
+                className,
               )}
               {...props}
             />

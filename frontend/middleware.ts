@@ -1,8 +1,10 @@
 import {NextRequest, NextResponse} from 'next/server';
 
 const HCAPTCHA_VERIFY_URL = 'https://hcaptcha.com/siteverify';
-const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY || 'your-hcaptcha-secret-key';
-const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || 'http://localhost:8000';
+const HCAPTCHA_SECRET_KEY =
+  process.env.HCAPTCHA_SECRET_KEY || 'your-hcaptcha-secret-key';
+const BACKEND_BASE_URL =
+  process.env.NEXT_PUBLIC_BACKEND_BASE_URL || 'http://localhost:8000';
 const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
 
 interface HCaptchaResponse {
@@ -38,7 +40,10 @@ function formatErrorMessage(error: unknown, fallbackMessage: string): string {
 /**
  * 验证hCaptcha令牌
  */
-async function verifyCaptcha(token: string, remoteip?: string): Promise<{ success: boolean; error?: string }> {
+async function verifyCaptcha(
+  token: string,
+  remoteip?: string,
+): Promise<{success: boolean; error?: string}> {
   try {
     const response = await fetch(HCAPTCHA_VERIFY_URL, {
       method: 'POST',
@@ -80,14 +85,20 @@ async function verifyCaptcha(token: string, remoteip?: string): Promise<{ succes
 
     return {success: true};
   } catch (error) {
-    return {success: false, error: formatErrorMessage(error, '验证服务连接失败，请检查网络后重试')};
+    return {
+      success: false,
+      error: formatErrorMessage(error, '验证服务连接失败，请检查网络后重试'),
+    };
   }
 }
 
 /**
  * 处理领取请求
  */
-async function handleReceiveRequest(request: NextRequest, pathname: string): Promise<NextResponse> {
+async function handleReceiveRequest(
+  request: NextRequest,
+  pathname: string,
+): Promise<NextResponse> {
   const clientIP = getClientIP(request);
 
   try {
@@ -97,8 +108,8 @@ async function handleReceiveRequest(request: NextRequest, pathname: string): Pro
     // 验证必要参数
     if (!body.captcha_token) {
       return NextResponse.json(
-          {error_msg: '缺少必要的验证信息'},
-          {status: 400},
+        {error_msg: '缺少必要的验证信息'},
+        {status: 400},
       );
     }
 
@@ -106,8 +117,8 @@ async function handleReceiveRequest(request: NextRequest, pathname: string): Pro
     const captchaResult = await verifyCaptcha(body.captcha_token, clientIP);
     if (!captchaResult.success) {
       return NextResponse.json(
-          {error_msg: captchaResult.error || '人机验证失败，请重新验证'},
-          {status: 400},
+        {error_msg: captchaResult.error || '人机验证失败，请重新验证'},
+        {status: 400},
       );
     }
 
@@ -122,12 +133,15 @@ async function handleReceiveRequest(request: NextRequest, pathname: string): Pro
         'Content-Type': 'application/json',
         'X-Forwarded-For': clientIP,
         'X-Original-Host': request.headers.get('host') || '',
-        'Cookie': request.headers.get('cookie') || '',
+        Cookie: request.headers.get('cookie') || '',
         'User-Agent': 'CDK-Frontend-Middleware',
-        'Referer': request.headers.get('referer') || '',
-        'Origin': request.headers.get('origin') || '',
+        Referer: request.headers.get('referer') || '',
+        Origin: request.headers.get('origin') || '',
       },
-      body: Object.keys(backendBody).length > 0 ? JSON.stringify(backendBody) : undefined,
+      body:
+        Object.keys(backendBody).length > 0
+          ? JSON.stringify(backendBody)
+          : undefined,
       credentials: 'include',
     });
 
@@ -141,8 +155,8 @@ async function handleReceiveRequest(request: NextRequest, pathname: string): Pro
     });
   } catch (error) {
     return NextResponse.json(
-        {error_msg: formatErrorMessage(error, '服务器内部错误，请稍后重试')},
-        {status: 500},
+      {error_msg: formatErrorMessage(error, '服务器内部错误，请稍后重试')},
+      {status: 500},
     );
   }
 }

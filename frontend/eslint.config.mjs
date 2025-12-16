@@ -10,17 +10,14 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
-  ...compat.extends(
-      'next/core-web-vitals',
-      'next/typescript',
-      'google',
-  ),
+  ...compat.extends('next/core-web-vitals', 'next/typescript', 'google'),
   {
     rules: {
       'valid-jsdoc': 'off',
       'require-jsdoc': 'off',
       'max-len': 'off',
-      // 'linebreak-style': 'off', // 如果您是windows系统，可在开发时禁用行尾换行符检查
+      'linebreak-style': 'off', // 如果您是windows系统，可在开发时禁用行尾换行符检查
+      'indent': 'off', // 让 Prettier 处理缩进
     },
   },
 ];

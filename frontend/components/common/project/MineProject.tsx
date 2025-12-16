@@ -94,9 +94,9 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
    */
   const handleProjectUpdated = (updatedProject: ProjectListItem) => {
     onProjectsChange(
-        (projects || []).map((p) =>
+      (projects || []).map((p) =>
         p.id === updatedProject.id ? updatedProject : p,
-        ),
+      ),
     );
     onCacheClear();
   };
@@ -115,7 +115,7 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
 
     try {
       const result = await services.project.deleteProjectSafe(
-          projectToDelete.id,
+        projectToDelete.id,
       );
 
       if (result.success) {
@@ -123,7 +123,7 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
 
         onCacheClear();
         onProjectsChange(
-            (projects || []).filter((p) => p.id !== projectToDelete.id),
+          (projects || []).filter((p) => p.id !== projectToDelete.id),
         );
         onTotalChange(total - 1);
 
@@ -170,23 +170,23 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
   const renderContent = () => {
     if ((!(projects || []).length && !loading) || error) {
       return (
-        <Card className="border-none shadow-none">
-          <CardContent className="p-12 text-center">
+        <Card className='border-none shadow-none'>
+          <CardContent className='p-12 text-center'>
             <EmptyState
               icon={FolderOpen}
-              title="暂无分发项目"
+              title='暂无分发项目'
               description={
-                (selectedTags || []).length > 0 ?
-                  '未找到符合条件的分发项目' :
-                  '点击右上方按钮创建您的第一个分发项目'
+                (selectedTags || []).length > 0
+                  ? '未找到符合条件的分发项目'
+                  : '点击右上方按钮创建您的第一个分发项目'
               }
-              className="p-12 text-center"
+              className='p-12 text-center'
             >
               {(selectedTags || []).length > 0 && (
                 <Button
-                  variant="outline"
+                  variant='outline'
                   onClick={onClearAllFilters}
-                  className="text-xs h-8"
+                  className='text-xs h-8'
                 >
                   清除筛选条件
                 </Button>
@@ -203,7 +203,7 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
 
     return (
       <>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+        <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6'>
           {(projects || []).map((project, index) => (
             <ProjectCard
               key={project.id}
@@ -217,18 +217,18 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
                     e.preventDefault();
                     e.stopPropagation();
                   }}
-                  className="flex gap-1"
+                  className='flex gap-1'
                 >
                   <ReceiverDialog
                     projectId={project.id}
                     projectName={project.name}
                   >
                     <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 sm:h-7 sm:w-7 p-0 bg-white/20 hover:bg-white/30 text-white"
+                      variant='ghost'
+                      size='sm'
+                      className='h-6 w-6 sm:h-7 sm:w-7 p-0 bg-white/20 hover:bg-white/30 text-white'
                     >
-                      <Users className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                      <Users className='h-2.5 w-2.5 sm:h-3 sm:w-3' />
                     </Button>
                   </ReceiverDialog>
                   <EditDialog
@@ -236,11 +236,11 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
                     onProjectUpdated={handleProjectUpdated}
                   >
                     <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 sm:h-7 sm:w-7 p-0 bg-white/20 hover:bg-white/30 text-white"
+                      variant='ghost'
+                      size='sm'
+                      className='h-6 w-6 sm:h-7 sm:w-7 p-0 bg-white/20 hover:bg-white/30 text-white'
                     >
-                      <Pencil className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+                      <Pencil className='h-2.5 w-2.5 sm:h-3 sm:w-3' />
                     </Button>
                   </EditDialog>
                 </div>
@@ -250,28 +250,28 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
         </div>
 
         {totalPages > 1 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-8">
-            <div className="text-sm text-muted-foreground order-2 sm:order-1">
+          <div className='flex flex-col sm:flex-row items-center justify-between gap-4 mt-8'>
+            <div className='text-sm text-muted-foreground order-2 sm:order-1'>
               共 {total} 个项目，第 {currentPage} / {totalPages} 页
             </div>
-            <div className="flex items-center space-x-2 order-1 sm:order-2">
+            <div className='flex items-center space-x-2 order-1 sm:order-2'>
               <Button
-                variant="outline"
-                size="sm"
+                variant='outline'
+                size='sm'
                 onClick={handlePrevPage}
                 disabled={currentPage === 1}
               >
-                <ChevronLeft className="h-4 w-4 mr-1" />
+                <ChevronLeft className='h-4 w-4 mr-1' />
                 上一页
               </Button>
               <Button
-                variant="outline"
-                size="sm"
+                variant='outline'
+                size='sm'
                 onClick={handleNextPage}
                 disabled={currentPage === totalPages}
               >
                 下一页
-                <ChevronRight className="h-4 w-4 ml-1" />
+                <ChevronRight className='h-4 w-4 ml-1' />
               </Button>
             </div>
           </div>
@@ -304,19 +304,19 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
 
   return (
     <motion.div
-      className="space-y-6"
-      initial="hidden"
-      animate="visible"
+      className='space-y-6'
+      initial='hidden'
+      animate='visible'
       variants={containerVariants}
     >
       {/* 标题和标签过滤器 */}
       <motion.div
-        className="flex items-center justify-between"
+        className='flex items-center justify-between'
         variants={itemVariants}
       >
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">所有项目</h2>
-          <Badge variant="secondary" className="text-xs font-bold">
+        <div className='flex items-center gap-2'>
+          <h2 className='text-lg font-semibold'>所有项目</h2>
+          <Badge variant='secondary' className='text-xs font-bold'>
             {total}
           </Badge>
         </div>
@@ -325,11 +325,11 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
         <TagFilterPopover
           trigger={
             <Button
-              variant="outline"
-              size="sm"
-              className="rounded-full w-8 h-8 mr-1.5"
+              variant='outline'
+              size='sm'
+              className='rounded-full w-8 h-8 mr-1.5'
             >
-              <Filter className="h-4 w-4" />
+              <Filter className='h-4 w-4' />
             </Button>
           }
           tags={tags}
@@ -345,25 +345,25 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
       {/* 当前选择的标签展示 */}
       {(selectedTags || []).length > 0 && (
         <motion.div
-          className="flex items-center flex-wrap gap-2"
+          className='flex items-center flex-wrap gap-2'
           variants={itemVariants}
         >
-          <span className="text-xs text-muted-foreground">筛选条件:</span>
+          <span className='text-xs text-muted-foreground'>筛选条件:</span>
           {(selectedTags || []).map((tag) => (
             <Badge
               key={tag}
-              variant="outline"
-              className="px-2 py-0 h-6 bg-primary/5 text-primary border-primary/20 select-none cursor-pointer hover:bg-primary/10 transition-colors"
+              variant='outline'
+              className='px-2 py-0 h-6 bg-primary/5 text-primary border-primary/20 select-none cursor-pointer hover:bg-primary/10 transition-colors'
               onClick={() => onTagToggle(tag)}
             >
               {tag}
-              <X className="ml-1 h-3 w-3" />
+              <X className='ml-1 h-3 w-3' />
             </Badge>
           ))}
           <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-xs text-muted-foreground"
+            variant='ghost'
+            size='sm'
+            className='h-6 px-2 text-xs text-muted-foreground'
             onClick={onClearAllFilters}
           >
             清除全部
@@ -383,16 +383,16 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-red-500" />
+            <AlertDialogTitle className='flex items-center gap-2'>
+              <Trash2 className='h-5 w-5 text-red-500' />
               确认删除项目
             </AlertDialogTitle>
             <AlertDialogDescription>
               您确定要删除项目 &quot;
-              <span className="font-medium">{projectToDelete?.name}</span>&quot;
+              <span className='font-medium'>{projectToDelete?.name}</span>&quot;
               吗？
               <br />
-              <span className="text-red-600 font-medium">
+              <span className='text-red-600 font-medium'>
                 此操作无法撤销，项目的所有数据将被永久删除。
               </span>
             </AlertDialogDescription>
@@ -405,7 +405,7 @@ export function MineProject({data, LoadingSkeleton}: MineProjectProps) {
                 confirmDeleteProject();
               }}
               disabled={deleting}
-              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              className='bg-red-600 hover:bg-red-700 focus:ring-red-600'
             >
               {deleting ? '删除中...' : '确认删除'}
             </AlertDialogAction>

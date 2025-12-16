@@ -18,11 +18,11 @@ const apiClient = axios.create({
  * 确保所有请求带上凭证
  */
 apiClient.interceptors.request.use(
-    (config) => {
-      config.withCredentials = true;
-      return config;
-    },
-    (error) => Promise.reject(error),
+  (config) => {
+    config.withCredentials = true;
+    return config;
+  },
+  (error) => Promise.reject(error),
 );
 
 /**
@@ -31,7 +31,10 @@ apiClient.interceptors.request.use(
  */
 function initiateLogin(currentPath: string): Promise<never> {
   // 防止循环重定向
-  if (!currentPath.startsWith('/login') && !currentPath.startsWith('/callback')) {
+  if (
+    !currentPath.startsWith('/login') &&
+    !currentPath.startsWith('/callback')
+  ) {
     // 动态导入AuthService避免循环依赖
     import('../auth/auth.service').then(({AuthService}) => {
       // 直接调用登录方法，传入当前路径作为重定向目标
@@ -48,37 +51,37 @@ function initiateLogin(currentPath: string): Promise<never> {
  * 处理API响应和统一错误处理
  */
 apiClient.interceptors.response.use(
-    (response: AxiosResponse<ApiResponse>) => response,
-    (error: AxiosError<ApiError>) => {
+  (response: AxiosResponse<ApiResponse>) => response,
+  (error: AxiosError<ApiError>) => {
     // 处理401未授权错误
-      if (error.response?.status === 401) {
-        return initiateLogin(window.location.pathname);
-      }
+    if (error.response?.status === 401) {
+      return initiateLogin(window.location.pathname);
+    }
 
-      // 处理后端返回的错误信息
-      if (error.response?.data?.error_msg) {
-        const apiError = new Error(error.response.data.error_msg);
-        apiError.name = 'ApiError';
-        return Promise.reject(apiError);
-      }
+    // 处理后端返回的错误信息
+    if (error.response?.data?.error_msg) {
+      const apiError = new Error(error.response.data.error_msg);
+      apiError.name = 'ApiError';
+      return Promise.reject(apiError);
+    }
 
-      // 处理网络错误
-      if (error.code === 'ECONNABORTED') {
-        return Promise.reject(new Error('请求超时，请检查网络连接'));
-      }
+    // 处理网络错误
+    if (error.code === 'ECONNABORTED') {
+      return Promise.reject(new Error('请求超时，请检查网络连接'));
+    }
 
-      // 处理权限错误
-      if (error.response?.status === 403) {
-        return Promise.reject(new Error('权限不足'));
-      }
+    // 处理权限错误
+    if (error.response?.status === 403) {
+      return Promise.reject(new Error('权限不足'));
+    }
 
-      // 处理服务器错误
-      if (error.response && error.response.status >= 500) {
-        return Promise.reject(new Error('服务器内部错误，请稍后重试'));
-      }
+    // 处理服务器错误
+    if (error.response && error.response.status >= 500) {
+      return Promise.reject(new Error('服务器内部错误，请稍后重试'));
+    }
 
-      return Promise.reject(new Error(error.message || '网络请求失败'));
-    },
+    return Promise.reject(new Error(error.message || '网络请求失败'));
+  },
 );
 
 export default apiClient;

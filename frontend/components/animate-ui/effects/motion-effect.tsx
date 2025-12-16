@@ -26,7 +26,7 @@ type MotionEffectProps = HTMLMotionProps<'div'> & {
         offset?: number;
       }
     | boolean;
-  fade?: { initialOpacity?: number; opacity?: number } | boolean;
+  fade?: {initialOpacity?: number; opacity?: number} | boolean;
   zoom?:
     | {
         initialScale?: number;
@@ -95,10 +95,10 @@ function MotionEffect({
     <AnimatePresence>
       <motion.div
         ref={localRef}
-        data-slot="motion-effect"
-        initial="hidden"
+        data-slot='motion-effect'
+        initial='hidden'
         animate={isInView ? 'visible' : 'hidden'}
-        exit="hidden"
+        exit='hidden'
         variants={{
           hidden: hiddenVariant,
           visible: visibleVariant,

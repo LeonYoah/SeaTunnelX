@@ -28,7 +28,7 @@ type SystemThemeSelectSpec<T> = {
   dark: T;
 };
 
-const getBaseRules = <T, >(light: T, dark: T) => ({
+const getBaseRules = <T,>(light: T, dark: T) => ({
   light,
   dark,
 });
@@ -36,14 +36,14 @@ const getBaseRules = <T, >(light: T, dark: T) => ({
 const getSystemTheme = (): SystemTheme => {
   if (typeof window !== 'undefined') {
     return window.matchMedia(`(prefers-color-scheme: ${SystemTheme.DARK})`)
-        .matches ?
-      SystemTheme.DARK :
-      SystemTheme.LIGHT;
+      .matches
+      ? SystemTheme.DARK
+      : SystemTheme.LIGHT;
   }
   return SystemTheme.LIGHT;
 };
 
-const selectSystem = <T, >(spec: SystemThemeSelectSpec<T>): T => {
+const selectSystem = <T,>(spec: SystemThemeSelectSpec<T>): T => {
   switch (getSystemTheme()) {
     case SystemTheme.LIGHT:
       return spec.light;
@@ -56,7 +56,7 @@ export function useThemeUtils() {
   const {theme, setTheme} = useTheme();
 
   const select = useCallback(
-    <T, >(spec: ThemeSelectSpec<T>): T => {
+    <T,>(spec: ThemeSelectSpec<T>): T => {
       switch (theme) {
         case UserTheme.LIGHT:
           return spec.light;
@@ -86,8 +86,8 @@ export function useThemeUtils() {
 
   const getIcon = (className: string) => {
     const baseRules = getBaseRules(
-        <MoonIcon className={className} />,
-        <SunIcon className={className} />,
+      <MoonIcon className={className} />,
+      <SunIcon className={className} />,
     );
     return select({
       ...baseRules,

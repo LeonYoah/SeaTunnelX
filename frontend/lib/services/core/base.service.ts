@@ -26,8 +26,14 @@ export abstract class BaseService {
    * @param params - 查询参数
    * @returns 响应数据
    */
-  protected static async get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-    const response = await apiClient.get<ApiResponse<T>>(this.getFullPath(path), {params});
+  protected static async get<T>(
+    path: string,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
+    const response = await apiClient.get<ApiResponse<T>>(
+      this.getFullPath(path),
+      {params},
+    );
     return response.data.data;
   }
 
@@ -39,7 +45,10 @@ export abstract class BaseService {
    * @returns 响应数据
    */
   protected static async post<T>(path: string, data?: unknown): Promise<T> {
-    const response = await apiClient.post<ApiResponse<T>>(this.getFullPath(path), data);
+    const response = await apiClient.post<ApiResponse<T>>(
+      this.getFullPath(path),
+      data,
+    );
     return response.data.data;
   }
 
@@ -51,7 +60,10 @@ export abstract class BaseService {
    * @returns 响应数据
    */
   protected static async put<T>(path: string, data?: unknown): Promise<T> {
-    const response = await apiClient.put<ApiResponse<T>>(this.getFullPath(path), data);
+    const response = await apiClient.put<ApiResponse<T>>(
+      this.getFullPath(path),
+      data,
+    );
     return response.data.data;
   }
 
@@ -62,8 +74,14 @@ export abstract class BaseService {
    * @param params - 查询参数
    * @returns 响应数据
    */
-  protected static async delete<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-    const response = await apiClient.delete<ApiResponse<T>>(this.getFullPath(path), {params});
+  protected static async delete<T>(
+    path: string,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
+    const response = await apiClient.delete<ApiResponse<T>>(
+      this.getFullPath(path),
+      {params},
+    );
     return response.data.data;
   }
 }

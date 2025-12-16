@@ -3,8 +3,19 @@
 import * as React from 'react';
 import {Area, AreaChart, CartesianGrid, XAxis, YAxis} from 'recharts';
 import {useIsMobile} from '@/hooks/use-mobile';
-import {ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent} from '@/components/ui/chart';
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {ReceiveHistoryItem} from '@/lib/services/project/types';
 import {CountingNumber} from '@/components/animate-ui/text/counting-number';
 import {motion} from 'motion/react';
@@ -26,25 +37,33 @@ const CHART_CONFIG = {
   count: {label: '领取数量', color: '#2563eb'},
 } satisfies ChartConfig;
 
-type TimeRange = keyof typeof TIME_RANGE_CONFIG
+type TimeRange = keyof typeof TIME_RANGE_CONFIG;
 
 /**
  * 数据图表组件的Props接口
  */
 interface DataChartProps {
   /** 领取历史数据 */
-  data: ReceiveHistoryItem[]
+  data: ReceiveHistoryItem[];
 }
 
 /**
  * 统计数据卡片组件
  */
-const StatCard = ({title, value, suffix = ''}: {title: string; value: number; suffix?: string}) => {
+const StatCard = ({
+  title,
+  value,
+  suffix = '',
+}: {
+  title: string;
+  value: number;
+  suffix?: string;
+}) => {
   const decimalPlaces = value % 1 === 0 ? 0 : 2;
 
   return (
     <motion.div
-      className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+      className='p-3 bg-gray-50 dark:bg-gray-800 rounded-lg'
       variants={{
         hidden: {opacity: 0, y: 20, scale: 0.95},
         visible: {
@@ -55,9 +74,12 @@ const StatCard = ({title, value, suffix = ''}: {title: string; value: number; su
         },
       }}
     >
-      <div className="text-xs text-gray-600 dark:text-gray-400 mb-1">{title}</div>
-      <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-        <CountingNumber number={value} decimalPlaces={decimalPlaces}/>{suffix}
+      <div className='text-xs text-gray-600 dark:text-gray-400 mb-1'>
+        {title}
+      </div>
+      <div className='text-lg font-semibold text-gray-900 dark:text-gray-100'>
+        <CountingNumber number={value} decimalPlaces={decimalPlaces} />
+        {suffix}
       </div>
     </motion.div>
   );
@@ -81,7 +103,11 @@ export function DataChart({data}: DataChartProps) {
     const config = TIME_RANGE_CONFIG[timeRange];
     const isMonthRange = 'months' in config;
     const today = new Date();
-    const startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const startDate = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+    );
 
     const statsMap = new Map<string, number>();
     data.forEach((item) => {
@@ -107,7 +133,11 @@ export function DataChart({data}: DataChartProps) {
     const dateRange: string[] = [];
     if (isMonthRange) {
       for (let i = config.months - 1; i >= 0; i--) {
-        const date = new Date(startDate.getFullYear(), startDate.getMonth() - i, 1);
+        const date = new Date(
+          startDate.getFullYear(),
+          startDate.getMonth() - i,
+          1,
+        );
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         dateRange.push(`${year}-${month}`);
@@ -168,7 +198,8 @@ export function DataChart({data}: DataChartProps) {
     });
 
     const currentDay = today.getDate();
-    const avgDaily = currentDay > 0 ? Math.round(thisMonthCount / currentDay * 10) / 10 : 0;
+    const avgDaily =
+      currentDay > 0 ? Math.round((thisMonthCount / currentDay) * 10) / 10 : 0;
 
     return {
       total: data.length,
@@ -202,35 +233,42 @@ export function DataChart({data}: DataChartProps) {
 
   return (
     <motion.div
-      className="space-y-4"
-      initial="hidden"
-      animate="visible"
+      className='space-y-4'
+      initial='hidden'
+      animate='visible'
       variants={containerVariants}
     >
-      <motion.div className="grid grid-cols-2 md:grid-cols-4 gap-3" variants={containerVariants}>
-        <StatCard title="总计" value={stats.total} />
-        <StatCard title="今日" value={stats.today} />
-        <StatCard title="本月" value={stats.thisMonth} />
-        <StatCard title="日均" value={stats.avgDaily} />
+      <motion.div
+        className='grid grid-cols-2 md:grid-cols-4 gap-3'
+        variants={containerVariants}
+      >
+        <StatCard title='总计' value={stats.total} />
+        <StatCard title='今日' value={stats.today} />
+        <StatCard title='本月' value={stats.thisMonth} />
+        <StatCard title='日均' value={stats.avgDaily} />
       </motion.div>
 
-      <motion.div variants={chartVariants} className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <div className="mb-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold">
-              领取趋势
-            </h2>
+      <motion.div
+        variants={chartVariants}
+        className='p-4 bg-gray-50 dark:bg-gray-800 rounded-lg'
+      >
+        <div className='mb-4'>
+          <div className='flex items-center justify-between'>
+            <h2 className='text-base font-semibold'>领取趋势</h2>
 
             <div>
-              <Select value={timeRange} onValueChange={(value) => {
-                if (value in TIME_RANGE_CONFIG) {
-                  setTimeRange(value as TimeRange);
-                }
-              }}>
-                <SelectTrigger className="flex w-24 max-h-[32px] text-xs">
+              <Select
+                value={timeRange}
+                onValueChange={(value) => {
+                  if (value in TIME_RANGE_CONFIG) {
+                    setTimeRange(value as TimeRange);
+                  }
+                }}
+              >
+                <SelectTrigger className='flex w-24 max-h-[32px] text-xs'>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="w-24">
+                <SelectContent className='w-24'>
                   {Object.entries(TIME_RANGE_CONFIG).map(([key, option]) => (
                     <SelectItem key={key} value={key}>
                       {option.label}
@@ -242,18 +280,29 @@ export function DataChart({data}: DataChartProps) {
           </div>
         </div>
 
-        <div className="py-2">
-          <ChartContainer config={CHART_CONFIG} className="-ml-8 h-[300px] w-full">
+        <div className='py-2'>
+          <ChartContainer
+            config={CHART_CONFIG}
+            className='-ml-8 h-[300px] w-full'
+          >
             <AreaChart data={chartData}>
               <defs>
-                <linearGradient id="fillCount" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={CHART_CONFIG.count.color} stopOpacity={0.8} />
-                  <stop offset="95%" stopColor={CHART_CONFIG.count.color} stopOpacity={0.1} />
+                <linearGradient id='fillCount' x1='0' y1='0' x2='0' y2='1'>
+                  <stop
+                    offset='5%'
+                    stopColor={CHART_CONFIG.count.color}
+                    stopOpacity={0.8}
+                  />
+                  <stop
+                    offset='95%'
+                    stopColor={CHART_CONFIG.count.color}
+                    stopOpacity={0.1}
+                  />
                 </linearGradient>
               </defs>
               <CartesianGrid vertical={false} />
               <XAxis
-                dataKey="displayDate"
+                dataKey='displayDate'
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
@@ -268,12 +317,12 @@ export function DataChart({data}: DataChartProps) {
               />
               <ChartTooltip
                 cursor={false}
-                content={<ChartTooltipContent indicator="dot" />}
+                content={<ChartTooltipContent indicator='dot' />}
               />
               <Area
-                dataKey="count"
-                type="monotone"
-                fill="url(#fillCount)"
+                dataKey='count'
+                type='monotone'
+                fill='url(#fillCount)'
                 stroke={CHART_CONFIG.count.color}
                 strokeWidth={2}
               />

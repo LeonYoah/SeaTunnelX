@@ -39,11 +39,11 @@ function WritingText({
   const words = React.useMemo(() => text.split(' '), [text]);
 
   return (
-    <span ref={localRef} data-slot="writing-text" {...props}>
+    <span ref={localRef} data-slot='writing-text' {...props}>
       {words.map((word, index) => (
         <motion.span
           key={index}
-          className="inline-block will-change-transform will-change-opacity"
+          className='inline-block will-change-transform will-change-opacity'
           style={{marginRight: spacing}}
           initial={{opacity: 0, y: 10}}
           animate={isInView ? {opacity: 1, y: 0} : undefined}

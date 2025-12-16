@@ -40,11 +40,11 @@ function CountingNumber({
 
   const numberStr = number.toString();
   const decimals =
-    typeof decimalPlaces === 'number' ?
-      decimalPlaces :
-      numberStr.includes('.') ?
-        (numberStr.split('.')[1]?.length ?? 0) :
-        0;
+    typeof decimalPlaces === 'number'
+      ? decimalPlaces
+      : numberStr.includes('.')
+        ? (numberStr.split('.')[1]?.length ?? 0)
+        : 0;
 
   const motionVal = useMotionValue(fromNumber);
   const springVal = useSpring(motionVal, transition);
@@ -62,9 +62,9 @@ function CountingNumber({
     const unsubscribe = springVal.on('change', (latest) => {
       if (localRef.current) {
         let formatted =
-          decimals > 0 ?
-            latest.toFixed(decimals) :
-            Math.round(latest).toString();
+          decimals > 0
+            ? latest.toFixed(decimals)
+            : Math.round(latest).toString();
 
         if (decimals > 0) {
           formatted = formatted.replace('.', decimalSeparator);
@@ -74,9 +74,9 @@ function CountingNumber({
           const finalIntLength = Math.floor(Math.abs(number)).toString().length;
           const [intPart, fracPart] = formatted.split(decimalSeparator);
           const paddedInt = intPart?.padStart(finalIntLength, '0') ?? '';
-          formatted = fracPart ?
-            `${paddedInt}${decimalSeparator}${fracPart}` :
-            paddedInt;
+          formatted = fracPart
+            ? `${paddedInt}${decimalSeparator}${fracPart}`
+            : paddedInt;
         }
 
         localRef.current.textContent = formatted;
@@ -86,15 +86,15 @@ function CountingNumber({
   }, [springVal, decimals, padStart, number, decimalSeparator]);
 
   const finalIntLength = Math.floor(Math.abs(number)).toString().length;
-  const initialText = padStart ?
-    '0'.padStart(finalIntLength, '0') +
-      (decimals > 0 ? decimalSeparator + '0'.repeat(decimals) : '') :
-    '0' + (decimals > 0 ? decimalSeparator + '0'.repeat(decimals) : '');
+  const initialText = padStart
+    ? '0'.padStart(finalIntLength, '0') +
+      (decimals > 0 ? decimalSeparator + '0'.repeat(decimals) : '')
+    : '0' + (decimals > 0 ? decimalSeparator + '0'.repeat(decimals) : '');
 
   return (
     <span
       ref={localRef}
-      data-slot="counting-number"
+      data-slot='counting-number'
       className={className}
       {...props}
     >

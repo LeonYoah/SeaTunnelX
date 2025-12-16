@@ -45,9 +45,9 @@ function FlipButton({
   const backOffset = from === 'top' || from === 'left' ? '-50%' : '50%';
 
   const buildVariant = (
-      opacity: number,
-      rotation: number,
-      offset: string | null = null,
+    opacity: number,
+    rotation: number,
+    offset: string | null = null,
   ): Variant => ({
     opacity,
     [rotateAxis]: rotation,
@@ -67,45 +67,46 @@ function FlipButton({
 
   const frontDisplay = frontContent || frontText;
   const backDisplay = backContent || backText;
-  const invisibleText = frontText || (typeof frontContent === 'string' ? frontContent : 'Content');
+  const invisibleText =
+    frontText || (typeof frontContent === 'string' ? frontContent : 'Content');
 
   return (
     <motion.button
-      data-slot="flip-button"
-      initial="initial"
-      whileHover="hover"
+      data-slot='flip-button'
+      initial='initial'
+      whileHover='hover'
       whileTap={{scale: 0.95}}
       className={cn(
-          'relative inline-block h-10 px-4 py-2 text-sm font-medium cursor-pointer perspective-[1000px] focus:outline-none',
-          className,
+        'relative inline-block h-10 px-4 py-2 text-sm font-medium cursor-pointer perspective-[1000px] focus:outline-none',
+        className,
       )}
       {...props}
     >
       <motion.span
-        data-slot="flip-button-front"
+        data-slot='flip-button-front'
         variants={frontVariants}
         transition={transition}
         className={cn(
-            DEFAULT_SPAN_CLASS_NAME,
-            'bg-muted text-black dark:text-white',
-            frontClassName,
+          DEFAULT_SPAN_CLASS_NAME,
+          'bg-muted text-black dark:text-white',
+          frontClassName,
         )}
       >
         {frontDisplay}
       </motion.span>
       <motion.span
-        data-slot="flip-button-back"
+        data-slot='flip-button-back'
         variants={backVariants}
         transition={transition}
         className={cn(
-            DEFAULT_SPAN_CLASS_NAME,
-            'bg-primary text-primary-foreground',
-            backClassName,
+          DEFAULT_SPAN_CLASS_NAME,
+          'bg-primary text-primary-foreground',
+          backClassName,
         )}
       >
         {backDisplay}
       </motion.span>
-      <span className="invisible">{invisibleText}</span>
+      <span className='invisible'>{invisibleText}</span>
     </motion.button>
   );
 }

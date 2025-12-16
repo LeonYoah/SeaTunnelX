@@ -48,22 +48,25 @@ export function useDashboard(days: number): UseDashboardReturn {
   const [lastUpdate, setLastUpdate] = useState<string>('');
   const [isCached, setIsCached] = useState<boolean>(false);
 
-  const defaultData: DashboardResponse = useMemo(() => ({
-    userGrowth: [],
-    activityData: [],
-    projectTags: [],
-    distributeModes: [],
-    hotProjects: [],
-    activeCreators: [],
-    activeReceivers: [],
-    summary: {
-      totalUsers: 0,
-      newUsers: 0,
-      totalProjects: 0,
-      totalReceived: 0,
-      recentReceived: 0,
-    },
-  }), []);
+  const defaultData: DashboardResponse = useMemo(
+    () => ({
+      userGrowth: [],
+      activityData: [],
+      projectTags: [],
+      distributeModes: [],
+      hotProjects: [],
+      activeCreators: [],
+      activeReceivers: [],
+      summary: {
+        totalUsers: 0,
+        newUsers: 0,
+        totalProjects: 0,
+        totalReceived: 0,
+        recentReceived: 0,
+      },
+    }),
+    [],
+  );
 
   /**
    * 从缓存获取数据
@@ -88,68 +91,78 @@ export function useDashboard(days: number): UseDashboardReturn {
    * @param data - 数据
    * @param lastUpdate - 最后更新时间
    */
-  const setCachedData = useCallback((days: number, data: DashboardResponse, lastUpdate: string) => {
-    dataCache.set(days, {
-      data,
-      timestamp: Date.now(),
-      lastUpdate,
-    });
-  }, []);
+  const setCachedData = useCallback(
+    (days: number, data: DashboardResponse, lastUpdate: string) => {
+      dataCache.set(days, {
+        data,
+        timestamp: Date.now(),
+        lastUpdate,
+      });
+    },
+    [],
+  );
 
   /**
    * 获取数据的核心方法
    * @param forceLoading - 是否强制显示加载状态
    * @param forceRefresh - 是否强制刷新（忽略缓存）
    */
-  const fetchData = useCallback(async (forceLoading = false, forceRefresh = false) => {
-    if (!forceRefresh) {
-      const cached = getCachedData(days);
-      if (cached) {
-        setData(cached.data);
-        setLastUpdate(cached.lastUpdate);
-        setIsCached(true);
+  const fetchData = useCallback(
+    async (forceLoading = false, forceRefresh = false) => {
+      if (!forceRefresh) {
+        const cached = getCachedData(days);
+        if (cached) {
+          setData(cached.data);
+          setLastUpdate(cached.lastUpdate);
+          setIsCached(true);
+          setIsLoading(false);
+          setIsInitialLoading(false);
+          setError(null);
+          return;
+        }
+      }
+
+      if (isInitialLoading || forceLoading) {
+        setIsLoading(true);
+      }
+      setError(null);
+      setIsCached(false);
+
+      try {
+        const newData = await DashboardService.getAllDashboardData(days);
+        const updateTime = new Date().toLocaleTimeString();
+
+        setCachedData(days, newData, updateTime);
+
+        setData(newData);
+        setLastUpdate(updateTime);
+
+        if (isInitialLoading) {
+          setIsInitialLoading(false);
+        }
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : '获取仪表盘数据失败';
+        setError(new Error(errorMessage));
+
+        setData((prevData) => prevData || defaultData);
+      } finally {
         setIsLoading(false);
-        setIsInitialLoading(false);
-        setError(null);
-        return;
       }
-    }
-
-    if (isInitialLoading || forceLoading) {
-      setIsLoading(true);
-    }
-    setError(null);
-    setIsCached(false);
-
-    try {
-      const newData = await DashboardService.getAllDashboardData(days);
-      const updateTime = new Date().toLocaleTimeString();
-
-      setCachedData(days, newData, updateTime);
-
-      setData(newData);
-      setLastUpdate(updateTime);
-
-      if (isInitialLoading) {
-        setIsInitialLoading(false);
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '获取仪表盘数据失败';
-      setError(new Error(errorMessage));
-
-      setData((prevData) => prevData || defaultData);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [days, isInitialLoading, defaultData, getCachedData, setCachedData]);
+    },
+    [days, isInitialLoading, defaultData, getCachedData, setCachedData],
+  );
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  const refresh = useCallback(async (forceLoading = false) => {
-    await fetchData(forceLoading, true);
-  }, [fetchData]);
+  const refresh = useCallback(
+    async (forceLoading = false) => {
+      await fetchData(forceLoading, true);
+    },
+    [fetchData],
+  );
 
   return {
     data: data || defaultData,

@@ -41,12 +41,24 @@ export const TRUST_LEVEL_OPTIONS = [
 /**
  * 信任等级配置 - 用于卡片样式和显示
  */
-export const TRUST_LEVEL_CONFIG: Record<number, {name: string; gradient: string}> = {
+export const TRUST_LEVEL_CONFIG: Record<
+  number,
+  {name: string; gradient: string}
+> = {
   0: {name: '新用户', gradient: 'bg-gradient-to-br from-gray-600 to-gray-700'},
-  1: {name: '基本用户', gradient: 'bg-gradient-to-br from-emerald-500 to-cyan-500'},
+  1: {
+    name: '基本用户',
+    gradient: 'bg-gradient-to-br from-emerald-500 to-cyan-500',
+  },
   2: {name: '成员', gradient: 'bg-gradient-to-br from-blue-600 to-purple-700'},
-  3: {name: '活跃用户', gradient: 'bg-gradient-to-br from-purple-600 to-pink-600'},
-  4: {name: '领导者', gradient: 'bg-gradient-to-br from-orange-500 to-pink-500'},
+  3: {
+    name: '活跃用户',
+    gradient: 'bg-gradient-to-br from-purple-600 to-pink-600',
+  },
+  4: {
+    name: '领导者',
+    gradient: 'bg-gradient-to-br from-orange-500 to-pink-500',
+  },
 };
 
 /**
@@ -74,14 +86,16 @@ export const parseImportContent = (content: string): string[] => {
       const jsonArray = JSON.parse(trimmedContent);
       if (Array.isArray(jsonArray)) {
         return jsonArray
-            .map((item) => {
-              if (typeof item === 'object' && item !== null) {
-                return JSON.stringify(item);
-              }
-              return String(item);
-            })
-            .filter((item) => item.trim())
-            .map((item) => item.substring(0, FORM_LIMITS.CONTENT_ITEM_MAX_LENGTH));
+          .map((item) => {
+            if (typeof item === 'object' && item !== null) {
+              return JSON.stringify(item);
+            }
+            return String(item);
+          })
+          .filter((item) => item.trim())
+          .map((item) =>
+            item.substring(0, FORM_LIMITS.CONTENT_ITEM_MAX_LENGTH),
+          );
       }
     } catch {
       // JSON 解析失败，继续使用原有逻辑
@@ -92,30 +106,30 @@ export const parseImportContent = (content: string): string[] => {
   let parsed = trimmedContent.split('\n').filter((item) => item.trim());
   if (parsed.length === 1) {
     parsed = trimmedContent
-        .replace(/，/g, ',')
-        .split(',')
-        .filter((item) => item.trim());
+      .replace(/，/g, ',')
+      .split(',')
+      .filter((item) => item.trim());
   }
   return parsed
-      .map((item) =>
-        item.trim().substring(0, FORM_LIMITS.CONTENT_ITEM_MAX_LENGTH),
-      )
-      .filter((item) => item);
+    .map((item) =>
+      item.trim().substring(0, FORM_LIMITS.CONTENT_ITEM_MAX_LENGTH),
+    )
+    .filter((item) => item);
 };
 
 /**
  * 批量导入分发内容的通用逻辑（带过滤开关）
  */
 export const handleBulkImportContentWithFilter = (
-    bulkContent: string,
-    currentItems: string[],
-    allowDuplicates: boolean,
-    onSuccess: (
+  bulkContent: string,
+  currentItems: string[],
+  allowDuplicates: boolean,
+  onSuccess: (
     newItems: string[],
     importedCount: number,
     skippedInfo?: string,
   ) => void,
-    onError: (message: string) => void,
+  onError: (message: string) => void,
 ) => {
   const trimmedContent = bulkContent.trim();
   if (!trimmedContent) {
@@ -172,16 +186,22 @@ export const handleBulkImportContentWithFilter = (
  * 批量导入分发内容的通用逻辑（保持向后兼容）
  */
 export const handleBulkImportContent = (
-    bulkContent: string,
-    currentItems: string[],
-    onSuccess: (
+  bulkContent: string,
+  currentItems: string[],
+  onSuccess: (
     newItems: string[],
     importedCount: number,
     skippedInfo?: string,
   ) => void,
-    onError: (message: string) => void,
+  onError: (message: string) => void,
 ) => {
-  handleBulkImportContentWithFilter(bulkContent, currentItems, false, onSuccess, onError);
+  handleBulkImportContentWithFilter(
+    bulkContent,
+    currentItems,
+    false,
+    onSuccess,
+    onError,
+  );
 };
 
 /**
@@ -191,7 +211,7 @@ export const validateProjectForm = (formData: {
   name: string;
   startTime: Date | null;
   endTime: Date | null;
-}): { isValid: boolean; errorMessage?: string } => {
+}): {isValid: boolean; errorMessage?: string} => {
   if (!formData.name.trim()) {
     return {isValid: false, errorMessage: '项目名称不能为空'};
   }

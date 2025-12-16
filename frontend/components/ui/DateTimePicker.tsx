@@ -8,7 +8,13 @@ import {Button} from '@/components/ui/button';
 import {Calendar} from '@/components/ui/calendar';
 import {Label} from '@/components/ui/label';
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover';
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {cn} from '@/lib/utils';
 import {Separator} from '@/components/ui/separator';
 
@@ -53,25 +59,28 @@ export function DateTimePicker({
 
     const newDateTime = new Date(date);
     newDateTime.setHours(
-        parseInt(timeValue.hours),
-        parseInt(timeValue.minutes),
-        parseInt(timeValue.seconds),
+      parseInt(timeValue.hours),
+      parseInt(timeValue.minutes),
+      parseInt(timeValue.seconds),
     );
 
     setSelectedDate(newDateTime);
     onChange?.(newDateTime);
   };
 
-  const handleTimeChange = (type: 'hours' | 'minutes' | 'seconds', value: string) => {
+  const handleTimeChange = (
+    type: 'hours' | 'minutes' | 'seconds',
+    value: string,
+  ) => {
     const newTimeValue = {...timeValue, [type]: value};
     setTimeValue(newTimeValue);
 
     if (selectedDate) {
       const newDateTime = new Date(selectedDate);
       newDateTime.setHours(
-          parseInt(newTimeValue.hours),
-          parseInt(newTimeValue.minutes),
-          parseInt(newTimeValue.seconds),
+        parseInt(newTimeValue.hours),
+        parseInt(newTimeValue.minutes),
+        parseInt(newTimeValue.seconds),
       );
       setSelectedDate(newDateTime);
       onChange?.(newDateTime);
@@ -79,9 +88,7 @@ export function DateTimePicker({
   };
 
   const generateOptions = (max: number) => {
-    return Array.from({length: max}, (_, i) =>
-      i.toString().padStart(2, '0'),
-    );
+    return Array.from({length: max}, (_, i) => i.toString().padStart(2, '0'));
   };
 
   const setCurrentTime = () => {
@@ -97,23 +104,19 @@ export function DateTimePicker({
   };
 
   return (
-    <div className="space-y-2">
-      {label && (
-        <Label className="text-sm font-medium">
-          {label}
-        </Label>
-      )}
+    <div className='space-y-2'>
+      {label && <Label className='text-sm font-medium'>{label}</Label>}
       <Popover open={isOpen} onOpenChange={setIsOpen}>
         <PopoverTrigger asChild>
           <Button
-            variant="outline"
+            variant='outline'
             className={cn(
-                'w-full justify-start text-left font-normal',
-                !selectedDate && 'text-muted-foreground',
+              'w-full justify-start text-left font-normal',
+              !selectedDate && 'text-muted-foreground',
             )}
             disabled={disabled}
           >
-            <CalendarIcon className="mr-2 h-4 w-4" />
+            <CalendarIcon className='mr-2 h-4 w-4' />
             {selectedDate ? (
               format(selectedDate, 'yyyy年MM月dd日 HH:mm:ss', {locale: zhCN})
             ) : (
@@ -121,10 +124,10 @@ export function DateTimePicker({
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <div className="flex flex-col">
+        <PopoverContent className='w-auto p-0' align='start'>
+          <div className='flex flex-col'>
             <Calendar
-              mode="single"
+              mode='single'
               selected={selectedDate}
               onSelect={handleDateSelect}
               disabled={(date) => {
@@ -137,33 +140,35 @@ export function DateTimePicker({
                 }
                 return false;
               }}
-              className="rounded-none border-r"
+              className='rounded-none border-r'
               locale={zhCN}
             />
 
-            <Separator className="my-2" />
+            <Separator className='my-2' />
 
-            <div className="flex flex-col p-3 gap-3 ">
-
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-3 w-3" />
-                  <span className="text-xs font-medium">选择时间</span>
+            <div className='flex flex-col p-3 gap-3 '>
+              <div className='flex items-center justify-between'>
+                <div className='flex items-center gap-2'>
+                  <Clock className='h-3 w-3' />
+                  <span className='text-xs font-medium'>选择时间</span>
                 </div>
                 <Button
-                  variant="ghost"
-                  size="sm"
+                  variant='ghost'
+                  size='sm'
                   onClick={setCurrentTime}
-                  className="text-xs text-muted-foreground"
+                  className='text-xs text-muted-foreground'
                 >
                   当前时间
                 </Button>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <Select value={timeValue.hours} onValueChange={(value) => handleTimeChange('hours', value)}>
-                    <SelectTrigger className="w-full h-8 text-xs">
+              <div className='grid grid-cols-3 gap-2'>
+                <div className='space-y-1'>
+                  <Select
+                    value={timeValue.hours}
+                    onValueChange={(value) => handleTimeChange('hours', value)}
+                  >
+                    <SelectTrigger className='w-full h-8 text-xs'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -176,9 +181,14 @@ export function DateTimePicker({
                   </Select>
                 </div>
 
-                <div className="space-y-1">
-                  <Select value={timeValue.minutes} onValueChange={(value) => handleTimeChange('minutes', value)}>
-                    <SelectTrigger className="w-full h-8 text-xs">
+                <div className='space-y-1'>
+                  <Select
+                    value={timeValue.minutes}
+                    onValueChange={(value) =>
+                      handleTimeChange('minutes', value)
+                    }
+                  >
+                    <SelectTrigger className='w-full h-8 text-xs'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -191,9 +201,14 @@ export function DateTimePicker({
                   </Select>
                 </div>
 
-                <div className="space-y-1">
-                  <Select value={timeValue.seconds} onValueChange={(value) => handleTimeChange('seconds', value)}>
-                    <SelectTrigger className="w-full h-8 text-xs">
+                <div className='space-y-1'>
+                  <Select
+                    value={timeValue.seconds}
+                    onValueChange={(value) =>
+                      handleTimeChange('seconds', value)
+                    }
+                  >
+                    <SelectTrigger className='w-full h-8 text-xs'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

@@ -17,7 +17,7 @@ type DialogContextType = {
 };
 
 const DialogContext = React.createContext<DialogContextType | undefined>(
-    undefined,
+  undefined,
 );
 
 const useDialog = (): DialogContextType => {
@@ -32,7 +32,7 @@ type DialogProps = React.ComponentProps<typeof DialogPrimitive.Root>;
 
 function Dialog({children, ...props}: DialogProps) {
   const [isOpen, setIsOpen] = React.useState(
-      props?.open ?? props?.defaultOpen ?? false,
+    props?.open ?? props?.defaultOpen ?? false,
   );
 
   React.useEffect(() => {
@@ -40,17 +40,17 @@ function Dialog({children, ...props}: DialogProps) {
   }, [props?.open]);
 
   const handleOpenChange = React.useCallback(
-      (open: boolean) => {
-        setIsOpen(open);
-        props.onOpenChange?.(open);
-      },
-      [props],
+    (open: boolean) => {
+      setIsOpen(open);
+      props.onOpenChange?.(open);
+    },
+    [props],
   );
 
   return (
     <DialogContext.Provider value={{isOpen}}>
       <DialogPrimitive.Root
-        data-slot="dialog"
+        data-slot='dialog'
         {...props}
         onOpenChange={handleOpenChange}
       >
@@ -63,19 +63,19 @@ function Dialog({children, ...props}: DialogProps) {
 type DialogTriggerProps = React.ComponentProps<typeof DialogPrimitive.Trigger>;
 
 function DialogTrigger(props: DialogTriggerProps) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
+  return <DialogPrimitive.Trigger data-slot='dialog-trigger' {...props} />;
 }
 
 type DialogPortalProps = React.ComponentProps<typeof DialogPrimitive.Portal>;
 
 function DialogPortal(props: DialogPortalProps) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
+  return <DialogPrimitive.Portal data-slot='dialog-portal' {...props} />;
 }
 
 type DialogCloseProps = React.ComponentProps<typeof DialogPrimitive.Close>;
 
 function DialogClose(props: DialogCloseProps) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
+  return <DialogPrimitive.Close data-slot='dialog-close' {...props} />;
 }
 
 type DialogOverlayProps = React.ComponentProps<typeof DialogPrimitive.Overlay>;
@@ -83,10 +83,10 @@ type DialogOverlayProps = React.ComponentProps<typeof DialogPrimitive.Overlay>;
 function DialogOverlay({className, ...props}: DialogOverlayProps) {
   return (
     <DialogPrimitive.Overlay
-      data-slot="dialog-overlay"
+      data-slot='dialog-overlay'
       className={cn(
-          'fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-          className,
+        'fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+        className,
       )}
       {...props}
     />
@@ -118,10 +118,10 @@ function DialogContent({
   return (
     <AnimatePresence>
       {isOpen && (
-        <DialogPortal forceMount data-slot="dialog-portal">
+        <DialogPortal forceMount data-slot='dialog-portal'>
           <DialogOverlay asChild forceMount>
             <motion.div
-              key="dialog-overlay"
+              key='dialog-overlay'
               initial={{opacity: 0}}
               animate={{opacity: 1}}
               exit={{opacity: 0}}
@@ -130,8 +130,8 @@ function DialogContent({
           </DialogOverlay>
           <DialogPrimitive.Content asChild forceMount {...props}>
             <motion.div
-              key="dialog-content"
-              data-slot="dialog-content"
+              key='dialog-content'
+              data-slot='dialog-content'
               initial={{
                 opacity: 0,
                 scale: 0.95,
@@ -149,15 +149,15 @@ function DialogContent({
               }}
               transition={{...transition, duration: 0.15, ease: 'easeOut'}}
               className={cn(
-                  'fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg rounded-xl',
-                  className,
+                'fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg rounded-xl',
+                className,
               )}
               {...props}
             >
               {children}
-              <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-                <X className="h-4 w-4" />
-                <span className="sr-only">Close</span>
+              <DialogPrimitive.Close className='absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground'>
+                <X className='h-4 w-4' />
+                <span className='sr-only'>Close</span>
               </DialogPrimitive.Close>
             </motion.div>
           </DialogPrimitive.Content>
@@ -172,10 +172,10 @@ type DialogHeaderProps = React.ComponentProps<'div'>;
 function DialogHeader({className, ...props}: DialogHeaderProps) {
   return (
     <div
-      data-slot="dialog-header"
+      data-slot='dialog-header'
       className={cn(
-          'flex flex-col space-y-1.5 text-center sm:text-left',
-          className,
+        'flex flex-col space-y-1.5 text-center sm:text-left',
+        className,
       )}
       {...props}
     />
@@ -187,10 +187,10 @@ type DialogFooterProps = React.ComponentProps<'div'>;
 function DialogFooter({className, ...props}: DialogFooterProps) {
   return (
     <div
-      data-slot="dialog-footer"
+      data-slot='dialog-footer'
       className={cn(
-          'flex flex-col-reverse sm:flex-row sm:justify-end gap-2',
-          className,
+        'flex flex-col-reverse sm:flex-row sm:justify-end gap-2',
+        className,
       )}
       {...props}
     />
@@ -202,10 +202,10 @@ type DialogTitleProps = React.ComponentProps<typeof DialogPrimitive.Title>;
 function DialogTitle({className, ...props}: DialogTitleProps) {
   return (
     <DialogPrimitive.Title
-      data-slot="dialog-title"
+      data-slot='dialog-title'
       className={cn(
-          'text-lg font-semibold leading-none tracking-tight',
-          className,
+        'text-lg font-semibold leading-none tracking-tight',
+        className,
       )}
       {...props}
     />
@@ -219,7 +219,7 @@ type DialogDescriptionProps = React.ComponentProps<
 function DialogDescription({className, ...props}: DialogDescriptionProps) {
   return (
     <DialogPrimitive.Description
-      data-slot="dialog-description"
+      data-slot='dialog-description'
       className={cn('text-sm text-muted-foreground', className)}
       {...props}
     />

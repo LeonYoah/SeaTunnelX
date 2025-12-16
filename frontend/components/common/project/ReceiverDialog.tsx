@@ -6,9 +6,23 @@ import {toast} from 'sonner';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {ScrollArea} from '@/components/ui/scroll-area';
-import {Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription} from '@/components/animate-ui/radix/dialog';
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/animate-ui/radix/dialog';
 import {EmptyState} from '@/components/common/layout/EmptyState';
-import {Users, Search, Copy, CheckCircle, AlertCircle, Loader2} from 'lucide-react';
+import {
+  Users,
+  Search,
+  Copy,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+} from 'lucide-react';
 import services from '@/lib/services';
 import {ProjectReceiver} from '@/lib/services/project/types';
 
@@ -30,7 +44,9 @@ export function ReceiverDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [receivers, setReceivers] = useState<ProjectReceiver[]>([]);
-  const [filteredReceivers, setFilteredReceivers] = useState<ProjectReceiver[]>([]);
+  const [filteredReceivers, setFilteredReceivers] = useState<ProjectReceiver[]>(
+    [],
+  );
   const [searchKeyword, setSearchKeyword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -61,15 +77,19 @@ export function ReceiverDialog({
   /**
    * 搜索功能
    */
-  const handleSearch = useCallback((keyword: string) => {
-    const filtered = receivers.filter((receiver) =>
-      receiver.username.toLowerCase().includes(keyword.toLowerCase()) ||
-      receiver.nickname.toLowerCase().includes(keyword.toLowerCase()) ||
-      receiver.content.toLowerCase().includes(keyword.toLowerCase()),
-    );
+  const handleSearch = useCallback(
+    (keyword: string) => {
+      const filtered = receivers.filter(
+        (receiver) =>
+          receiver.username.toLowerCase().includes(keyword.toLowerCase()) ||
+          receiver.nickname.toLowerCase().includes(keyword.toLowerCase()) ||
+          receiver.content.toLowerCase().includes(keyword.toLowerCase()),
+      );
 
-    setFilteredReceivers(filtered);
-  }, [receivers]);
+      setFilteredReceivers(filtered);
+    },
+    [receivers],
+  );
 
   /**
    * 复制内容到剪贴板
@@ -117,8 +137,8 @@ export function ReceiverDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {children || (
-          <Button size="sm" variant="ghost">
-            <Users className="h-4 w-4" />
+          <Button size='sm' variant='ghost'>
+            <Users className='h-4 w-4' />
           </Button>
         )}
       </DialogTrigger>
@@ -126,7 +146,7 @@ export function ReceiverDialog({
         className={`${isMobile ? 'max-w-[95vw] max-h-[85vh]' : 'max-w-3xl max-h-[80vh]'} overflow-hidden`}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className='flex items-center gap-2'>
             项目领取人
           </DialogTitle>
           <DialogDescription>
@@ -134,45 +154,53 @@ export function ReceiverDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className='space-y-3'>
           {/* 搜索栏 */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className='relative'>
+            <Search className='absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground' />
             <Input
-              placeholder="搜索用户名、昵称或内容..."
+              placeholder='搜索用户名、昵称或内容...'
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
-              className="pl-10"
+              className='pl-10'
             />
           </div>
 
           {/* 统计信息 */}
           {!loading && !error && (
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <div className='flex items-center justify-between text-sm text-muted-foreground'>
               <span>
                 共 {receivers.length} 人领取
-                {searchKeyword && ` · 筛选出 ${filteredReceivers.length} 条结果`}
+                {searchKeyword &&
+                  ` · 筛选出 ${filteredReceivers.length} 条结果`}
               </span>
             </div>
           )}
 
           {/* 内容区域 */}
-          <div className="min-h-[300px]">
+          <div className='min-h-[300px]'>
             {loading ? (
-              <div className="flex items-center justify-center h-[300px]">
-                <div className="flex flex-col items-center gap-2">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">正在加载领取人列表...</p>
+              <div className='flex items-center justify-center h-[300px]'>
+                <div className='flex flex-col items-center gap-2'>
+                  <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+                  <p className='text-sm text-muted-foreground'>
+                    正在加载领取人列表...
+                  </p>
                 </div>
               </div>
             ) : error ? (
               <EmptyState
                 icon={AlertCircle}
-                title="加载失败"
+                title='加载失败'
                 description={error}
-                className="h-[300px] flex flex-col items-center justify-center"
+                className='h-[300px] flex flex-col items-center justify-center'
               >
-                <Button onClick={handleRetry} variant="outline" size="sm" className="mt-3">
+                <Button
+                  onClick={handleRetry}
+                  variant='outline'
+                  size='sm'
+                  className='mt-3'
+                >
                   重试
                 </Button>
               </EmptyState>
@@ -180,31 +208,37 @@ export function ReceiverDialog({
               <EmptyState
                 icon={Users}
                 title={searchKeyword ? '未找到匹配的领取人' : '暂无领取人'}
-                description={searchKeyword ? '尝试调整搜索关键词' : '还没有人领取此项目'}
-                className="h-[300px] flex flex-col items-center justify-center"
+                description={
+                  searchKeyword ? '尝试调整搜索关键词' : '还没有人领取此项目'
+                }
+                className='h-[300px] flex flex-col items-center justify-center'
               />
             ) : (
-              <ScrollArea className="h-[300px] pr-4">
-                <div className="space-y-2">
+              <ScrollArea className='h-[300px] pr-4'>
+                <div className='space-y-2'>
                   {filteredReceivers.map((receiver, index) => (
                     <div
                       key={`${receiver.username}-${index}`}
-                      className="p-2 border rounded-md hover:bg-muted/50 transition-colors"
+                      className='p-2 border rounded-md hover:bg-muted/50 transition-colors'
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm">{receiver.username} ({receiver.nickname})</span>
-                        <span className="text-xs text-muted-foreground">-</span>
-                        <span className="text-xs font-mono truncate flex-1 min-w-0">{receiver.content}</span>
+                      <div className='flex items-center gap-2'>
+                        <span className='font-medium text-sm'>
+                          {receiver.username} ({receiver.nickname})
+                        </span>
+                        <span className='text-xs text-muted-foreground'>-</span>
+                        <span className='text-xs font-mono truncate flex-1 min-w-0'>
+                          {receiver.content}
+                        </span>
                         <Button
-                          variant="secondary"
-                          size="sm"
+                          variant='secondary'
+                          size='sm'
                           onClick={() => handleCopy(receiver.content, index)}
-                          className="flex-shrink-0 h-6 w-6 p-0"
+                          className='flex-shrink-0 h-6 w-6 p-0'
                         >
                           {copiedIndex === index ? (
-                            <CheckCircle className="h-3 w-3 text-green-600" />
+                            <CheckCircle className='h-3 w-3 text-green-600' />
                           ) : (
-                            <Copy className="h-3 w-3" />
+                            <Copy className='h-3 w-3' />
                           )}
                         </Button>
                       </div>

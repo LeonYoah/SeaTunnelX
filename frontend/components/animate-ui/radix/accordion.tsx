@@ -32,7 +32,7 @@ const useAccordionItem = (): AccordionItemContextType => {
 type AccordionProps = React.ComponentProps<typeof AccordionPrimitive.Root>;
 
 function Accordion(props: AccordionProps) {
-  return <AccordionPrimitive.Root data-slot="accordion" {...props} />;
+  return <AccordionPrimitive.Root data-slot='accordion' {...props} />;
 }
 
 type AccordionItemProps = React.ComponentProps<
@@ -47,7 +47,7 @@ function AccordionItem({className, children, ...props}: AccordionItemProps) {
   return (
     <AccordionItemContext.Provider value={{isOpen, setIsOpen}}>
       <AccordionPrimitive.Item
-        data-slot="accordion-item"
+        data-slot='accordion-item'
         className={cn('border-b', className)}
         {...props}
       >
@@ -100,13 +100,13 @@ function AccordionTrigger({
   }, [setIsOpen]);
 
   return (
-    <AccordionPrimitive.Header data-slot="accordion-header" className="flex">
+    <AccordionPrimitive.Header data-slot='accordion-header' className='flex'>
       <AccordionPrimitive.Trigger
         ref={triggerRef}
-        data-slot="accordion-trigger"
+        data-slot='accordion-trigger'
         className={cn(
-            'flex flex-1 text-start items-center justify-between py-4 font-medium hover:underline',
-            className,
+          'flex flex-1 text-start items-center justify-between py-4 font-medium hover:underline',
+          className,
         )}
         {...props}
       >
@@ -114,11 +114,11 @@ function AccordionTrigger({
 
         {chevron && (
           <motion.div
-            data-slot="accordion-trigger-chevron"
+            data-slot='accordion-trigger-chevron'
             animate={{rotate: isOpen ? 180 : 0}}
             transition={transition}
           >
-            <ChevronDown className="size-5 shrink-0" />
+            <ChevronDown className='size-5 shrink-0' />
           </motion.div>
         )}
       </AccordionPrimitive.Trigger>
@@ -146,11 +146,11 @@ function AccordionContent({
       {isOpen && (
         <AccordionPrimitive.Content forceMount {...props}>
           <motion.div
-            key="accordion-content"
-            data-slot="accordion-content"
-            initial={{'height': 0, 'opacity': 0, '--mask-stop': '0%'}}
-            animate={{'height': 'auto', 'opacity': 1, '--mask-stop': '100%'}}
-            exit={{'height': 0, 'opacity': 0, '--mask-stop': '0%'}}
+            key='accordion-content'
+            data-slot='accordion-content'
+            initial={{height: 0, opacity: 0, '--mask-stop': '0%'}}
+            animate={{height: 'auto', opacity: 1, '--mask-stop': '100%'}}
+            exit={{height: 0, opacity: 0, '--mask-stop': '0%'}}
             transition={transition}
             style={{
               maskImage:
@@ -158,7 +158,7 @@ function AccordionContent({
               WebkitMaskImage:
                 'linear-gradient(black var(--mask-stop), transparent var(--mask-stop))',
             }}
-            className="overflow-hidden"
+            className='overflow-hidden'
             {...props}
           >
             <div className={cn('pb-4 pt-0 text-sm', className)}>{children}</div>

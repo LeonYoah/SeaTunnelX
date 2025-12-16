@@ -10,9 +10,28 @@ import {toast} from 'sonner';
 import {Label} from '@/components/ui/label';
 import {Input} from '@/components/ui/input';
 import {Button} from '@/components/ui/button';
-import {Tabs, TabsList, TabsTrigger, TabsContent, TabsContents} from '@/components/animate-ui/radix/tabs';
-import {Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter} from '@/components/animate-ui/radix/dialog';
-import {Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '@/components/ui/tooltip';
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  TabsContents,
+} from '@/components/animate-ui/radix/tabs';
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/animate-ui/radix/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {validateProjectForm} from '@/components/common/project';
 import {ProjectBasicForm} from '@/components/common/project/ProjectBasicForm';
 import {BulkImportSection} from '@/components/common/project/BulkImportSection';
@@ -41,10 +60,16 @@ export function CreateDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createSuccess, setCreateSuccess] = useState(false);
-  const [createdProject, setCreatedProject] = useState<ProjectInfo | null>(null);
+  const [createdProject, setCreatedProject] = useState<ProjectInfo | null>(
+    null,
+  );
   const [activeTab, setActiveTab] = useState('basic');
 
-  const {formData, setFormData, resetForm: resetProjectForm} = useProjectForm({
+  const {
+    formData,
+    setFormData,
+    resetForm: resetProjectForm,
+  } = useProjectForm({
     mode: 'create',
   });
 
@@ -72,7 +97,6 @@ export function CreateDialog({
     handleConfirmUpload,
     handleCancelUpload,
   } = useFileUpload();
-
 
   useEffect(() => {
     if (open) {
@@ -117,7 +141,7 @@ export function CreateDialog({
 
     if (
       (formData.distributionType === DistributionType.ONE_FOR_EACH ||
-       formData.distributionType === DistributionType.LOTTERY) &&
+        formData.distributionType === DistributionType.LOTTERY) &&
       items.length === 0
     ) {
       toast.error('至少需要添加一个分发内容');
@@ -125,7 +149,10 @@ export function CreateDialog({
       return false;
     }
 
-    if (formData.distributionType === DistributionType.LOTTERY && !formData.topicId) {
+    if (
+      formData.distributionType === DistributionType.LOTTERY &&
+      !formData.topicId
+    ) {
       toast.error('抽奖分发必须提供社区话题ID');
       setActiveTab('distribution');
       return false;
@@ -154,11 +181,11 @@ export function CreateDialog({
         distribution_type: formData.distributionType,
         topic_id: formData.topicId,
         project_items:
-          formData.distributionType === DistributionType.ONE_FOR_EACH ?
-            items :
-            formData.distributionType === DistributionType.LOTTERY ?
-            items :
-            ['接龙申请模式'],
+          formData.distributionType === DistributionType.ONE_FOR_EACH
+            ? items
+            : formData.distributionType === DistributionType.LOTTERY
+              ? items
+              : ['接龙申请模式'],
       };
 
       const result = await services.project.createProjectSafe(projectData);
@@ -217,7 +244,7 @@ export function CreateDialog({
       <DialogTrigger asChild>
         {children || (
           <Button>
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className='mr-2 h-4 w-4' />
             创建项目
           </Button>
         )}
@@ -230,40 +257,44 @@ export function CreateDialog({
             {createSuccess ? '项目创建成功' : '创建新项目'}
           </DialogTitle>
           <DialogDescription>
-            {createSuccess ?
-              '项目已准备就绪，可以开始分发啦' :
-              '创建一个新的项目来管理和分发您的内容'}
+            {createSuccess
+              ? '项目已准备就绪，可以开始分发啦'
+              : '创建一个新的项目来管理和分发您的内容'}
           </DialogDescription>
         </DialogHeader>
 
         {createSuccess && createdProject ? (
-          <div className="space-y-6 py-6">
-            <div className="flex items-center justify-center">
-              <div className="flex items-center gap-3 text-green-600">
-                <CheckCircle className={`${isMobile ? 'h-6 w-6' : 'h-8 w-8'} flex-shrink-0`} />
-                <div className="flex flex-col text-left">
-                  <h3 className="text-lg font-semibold">{createdProject.name}</h3>
-                  <p className="text-sm text-muted-foreground">
+          <div className='space-y-6 py-6'>
+            <div className='flex items-center justify-center'>
+              <div className='flex items-center gap-3 text-green-600'>
+                <CheckCircle
+                  className={`${isMobile ? 'h-6 w-6' : 'h-8 w-8'} flex-shrink-0`}
+                />
+                <div className='flex flex-col text-left'>
+                  <h3 className='text-lg font-semibold'>
+                    {createdProject.name}
+                  </h3>
+                  <p className='text-sm text-muted-foreground'>
                     您可以复制下方链接，分享您分发的内容
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="flex flex-col">
-                <Label className="text-sm font-medium">项目领取链接</Label>
+            <div className='space-y-4'>
+              <div className='flex flex-col'>
+                <Label className='text-sm font-medium'>项目领取链接</Label>
               </div>
 
-              <div className="flex gap-2">
+              <div className='flex gap-2'>
                 <Input
                   value={getReceiveLink(createdProject.id)}
                   readOnly
-                  className="bg-gray-100 border-none text-sm h-8 flex-1"
+                  className='bg-gray-100 border-none text-sm h-8 flex-1'
                 />
                 <Button
-                  size="sm"
-                  variant="secondary"
+                  size='sm'
+                  variant='secondary'
                   onClick={async () => {
                     try {
                       await copyToClipboard(getReceiveLink(createdProject.id));
@@ -273,14 +304,14 @@ export function CreateDialog({
                     }
                   }}
                 >
-                  <Copy className="h-4 w-4" />
+                  <Copy className='h-4 w-4' />
                 </Button>
                 <Button
-                  size="sm"
-                  variant="secondary"
+                  size='sm'
+                  variant='secondary'
                   onClick={() => openLink(getReceiveLink(createdProject.id))}
                 >
-                  <ExternalLink className="h-4 w-4" />
+                  <ExternalLink className='h-4 w-4' />
                 </Button>
               </div>
             </div>
@@ -289,16 +320,16 @@ export function CreateDialog({
           <Tabs
             value={activeTab}
             onValueChange={setActiveTab}
-            className="w-full"
+            className='w-full'
           >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="basic">基本设置</TabsTrigger>
-              <TabsTrigger value="distribution">分发内容</TabsTrigger>
+            <TabsList className='grid w-full grid-cols-2'>
+              <TabsTrigger value='basic'>基本设置</TabsTrigger>
+              <TabsTrigger value='distribution'>分发内容</TabsTrigger>
             </TabsList>
 
-            <TabsContents className="mb-1 -mt-2 rounded-sm h-full bg-background">
+            <TabsContents className='mb-1 -mt-2 rounded-sm h-full bg-background'>
               <TabsContent
-                value="basic"
+                value='basic'
                 className={`space-y-6 py-6 ${isMobile ? 'max-h-[65vh]' : 'max-h-[60vh]'} overflow-y-auto`}
               >
                 <ProjectBasicForm
@@ -312,7 +343,7 @@ export function CreateDialog({
               </TabsContent>
 
               <TabsContent
-                value="distribution"
+                value='distribution'
                 className={`space-y-6 py-6 ${isMobile ? 'max-h-[65vh]' : 'max-h-[60vh]'} overflow-y-auto`}
               >
                 <DistributionModeSelect
@@ -323,45 +354,55 @@ export function CreateDialog({
                 />
 
                 {formData.distributionType === DistributionType.LOTTERY && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor="topicId">
-                        Linux Do 话题 ID <span className="text-red-500">*</span>
+                  <div className='space-y-2'>
+                    <div className='flex items-center gap-2'>
+                      <Label htmlFor='topicId'>
+                        Linux Do 话题 ID <span className='text-red-500'>*</span>
                       </Label>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                            <HelpCircle className='h-4 w-4 text-muted-foreground cursor-help' />
                           </TooltipTrigger>
                           <TooltipContent>
                             <p>可以直接粘贴话题链接，系统会自动提取ID</p>
-                            <p>需要添加&ldquo;抽奖&rdquo;标签且抽奖已结束的话题</p>
+                            <p>
+                              需要添加&ldquo;抽奖&rdquo;标签且抽奖已结束的话题
+                            </p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     </div>
                     <Input
-                      id="topicId"
-                      type="text"
-                      placeholder="填写社区抽奖话题的 ID 或粘贴话题链接"
+                      id='topicId'
+                      type='text'
+                      placeholder='填写社区抽奖话题的 ID 或粘贴话题链接'
                       value={formData.topicId?.toString() || ''}
                       onChange={(e) => {
                         let value = e.target.value.trim();
 
-                        const urlMatch = value.match(/linux\.do\/t(?:\/topic)?\/(\d+)(?:[\/\?\#]|$)/i);
+                        const urlMatch = value.match(
+                          /linux\.do\/t(?:\/topic)?\/(\d+)(?:[\/\?\#]|$)/i,
+                        );
                         if (urlMatch) {
                           value = urlMatch[1];
                         }
 
                         const numValue = value ? parseInt(value) : NaN;
-                        setFormData({...formData, topicId: (!isNaN(numValue) && numValue > 0) ? numValue : undefined});
+                        setFormData({
+                          ...formData,
+                          topicId:
+                            !isNaN(numValue) && numValue > 0
+                              ? numValue
+                              : undefined,
+                        });
                       }}
                     />
                   </div>
                 )}
 
-                {(formData.distributionType === DistributionType.ONE_FOR_EACH ||
-                  formData.distributionType === DistributionType.LOTTERY) ? (
+                {formData.distributionType === DistributionType.ONE_FOR_EACH ||
+                formData.distributionType === DistributionType.LOTTERY ? (
                   <BulkImportSection
                     items={items}
                     bulkContent={bulkContent}
@@ -376,7 +417,7 @@ export function CreateDialog({
                     onFileUploadOpenChange={setFileUploadOpen}
                     onFileUpload={handleFileUpload}
                     isMobile={isMobile}
-                    mode="create"
+                    mode='create'
                     confirmationOpen={confirmationOpen}
                     onConfirmationOpenChange={setConfirmationOpen}
                     pendingFile={pendingFile}
@@ -384,12 +425,12 @@ export function CreateDialog({
                     onCancelUpload={handleCancelUpload}
                   />
                 ) : (
-                  <div className="flex items-center justify-center py-12">
-                    <div className="text-center">
-                      <div className="text-lg font-medium text-muted-foreground mb-2">
+                  <div className='flex items-center justify-center py-12'>
+                    <div className='text-center'>
+                      <div className='text-lg font-medium text-muted-foreground mb-2'>
                         敬请期待
                       </div>
-                      <p className="text-sm text-muted-foreground">
+                      <p className='text-sm text-muted-foreground'>
                         接龙申请功能正在开发中
                       </p>
                     </div>
@@ -400,31 +441,35 @@ export function CreateDialog({
           </Tabs>
         )}
 
-        <DialogFooter className="flex-col gap-2">
+        <DialogFooter className='flex-col gap-2'>
           {createSuccess ? (
             <Button
               onClick={() => {
                 setOpen(false);
                 resetForm();
               }}
-              className="w-full"
+              className='w-full'
             >
               关闭
             </Button>
           ) : (
             <Button
               onClick={handleSubmit}
-              disabled={loading || formData.distributionType === DistributionType.INVITE}
-              className="w-full"
+              disabled={
+                loading || formData.distributionType === DistributionType.INVITE
+              }
+              className='w-full'
             >
-              {loading ? '创建中...' :
-               formData.distributionType === DistributionType.INVITE ? '开发中' :
-               formData.distributionType === DistributionType.LOTTERY ? '创建抽奖分发' :
-               '创建'}
+              {loading
+                ? '创建中...'
+                : formData.distributionType === DistributionType.INVITE
+                  ? '开发中'
+                  : formData.distributionType === DistributionType.LOTTERY
+                    ? '创建抽奖分发'
+                    : '创建'}
             </Button>
           )}
         </DialogFooter>
-
       </DialogContent>
     </Dialog>
   );

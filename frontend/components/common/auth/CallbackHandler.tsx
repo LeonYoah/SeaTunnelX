@@ -15,15 +15,13 @@ export type CallbackHandlerProps = React.ComponentProps<'div'>;
 /**
  * OAuth回调处理组件
  */
-export function CallbackHandler({
-  className,
-  ...props
-}: CallbackHandlerProps) {
+export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>(
+    'loading',
+  );
   const [error, setError] = useState<string>('');
-
 
   useEffect(() => {
     /**
@@ -77,37 +75,45 @@ export function CallbackHandler({
   }, [searchParams]);
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center w-full h-screen overflow-hidden">
-      <div className={cn('flex flex-col gap-6 w-full max-w-md px-6 py-8 rounded-2xl max-h-screen overflow-y-auto', className)} {...props}>
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-md">
-              <GalleryVerticalEnd className="size-6" />
+    <div className='fixed inset-0 flex items-center justify-center w-full h-screen overflow-hidden'>
+      <div
+        className={cn(
+          'flex flex-col gap-6 w-full max-w-md px-6 py-8 rounded-2xl max-h-screen overflow-y-auto',
+          className,
+        )}
+        {...props}
+      >
+        <div className='flex flex-col gap-6'>
+          <div className='flex flex-col items-center gap-2'>
+            <div className='flex size-8 items-center justify-center rounded-md'>
+              <GalleryVerticalEnd className='size-6' />
             </div>
-            <h1 className="text-xl font-bold">欢迎使用 LINUX DO CDK</h1>
+            <h1 className='text-xl font-bold'>欢迎使用 LINUX DO CDK</h1>
           </div>
-          <div className="flex flex-col items-center gap-4">
+          <div className='flex flex-col items-center gap-4'>
             {status === 'loading' && (
-              <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin" />
-                <div className="text-center space-y-2">
-                  <h2 className="text-lg font-medium">正在验证</h2>
+              <div className='flex flex-col items-center gap-4 w-full max-w-sm'>
+                <div className='w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin' />
+                <div className='text-center space-y-2'>
+                  <h2 className='text-lg font-medium'>正在验证</h2>
                 </div>
               </div>
             )}
             {status === 'success' && (
-              <div className="flex flex-col items-center gap-3">
-                <CheckCircle2 className="h-8 w-8 text-green-500" />
-                <h2 className="text-lg font-medium text-green-500">验证成功</h2>
+              <div className='flex flex-col items-center gap-3'>
+                <CheckCircle2 className='h-8 w-8 text-green-500' />
+                <h2 className='text-lg font-medium text-green-500'>验证成功</h2>
               </div>
             )}
             {status === 'error' && (
-              <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                <AlertCircle className="h-8 w-8 text-destructive" />
-                <div className="text-center space-y-3 w-full">
-                  <h2 className="text-md font-medium text-destructive">验证失败 ｜{error}</h2>
+              <div className='flex flex-col items-center gap-4 w-full max-w-sm'>
+                <AlertCircle className='h-8 w-8 text-destructive' />
+                <div className='text-center space-y-3 w-full'>
+                  <h2 className='text-md font-medium text-destructive'>
+                    验证失败 ｜{error}
+                  </h2>
                   <LiquidButton
-                    className="w-full mt-4"
+                    className='w-full mt-4'
                     onClick={() => router.push('/login')}
                   >
                     重新登录
@@ -117,8 +123,8 @@ export function CallbackHandler({
             )}
           </div>
         </div>
-        <div className="text-muted-foreground text-center text-xs text-balance">
-          <span className="[&_a]:underline [&_a]:underline-offset-4 [&_a:hover]:text-primary">
+        <div className='text-muted-foreground text-center text-xs text-balance'>
+          <span className='[&_a]:underline [&_a]:underline-offset-4 [&_a:hover]:text-primary'>
             LINUX DO CDK - 让资源共享更简单.
           </span>
         </div>

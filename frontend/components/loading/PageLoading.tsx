@@ -25,22 +25,20 @@ export function PageLoading({
   iconSize = 24,
 }: PageLoadingProps = {}) {
   const containerClasses = cn(
-      'flex flex-col items-center justify-center gap-3',
-      fullscreen && 'fixed inset-0 bg-background/80 backdrop-blur-sm z-50',
-      !fullscreen && 'py-12',
-      className,
+    'flex flex-col items-center justify-center gap-3',
+    fullscreen && 'fixed inset-0 bg-background/80 backdrop-blur-sm z-50',
+    !fullscreen && 'py-12',
+    className,
   );
 
   return (
     <div className={containerClasses}>
       <LoaderCircle
         size={iconSize}
-        className="text-primary animate-spin"
-        animation="default"
+        className='text-primary animate-spin'
+        animation='default'
       />
-      <p className="text-sm text-muted-foreground font-medium">
-        {text}
-      </p>
+      <p className='text-sm text-muted-foreground font-medium'>{text}</p>
     </div>
   );
 }

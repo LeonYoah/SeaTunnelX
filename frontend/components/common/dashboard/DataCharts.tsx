@@ -2,13 +2,36 @@
 
 import {useMemo} from 'react';
 import {DISTRIBUTION_MODE_NAMES} from '../project/constants';
-import {ChartContainerProps, UserGrowthChartProps, ActivityChartProps, CategoryChartProps, DistributeModeChartProps, TooltipProps} from '@/lib/services/dashboard/types';
-import {AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, Legend} from 'recharts';
+import {
+  ChartContainerProps,
+  UserGrowthChartProps,
+  ActivityChartProps,
+  CategoryChartProps,
+  DistributeModeChartProps,
+  TooltipProps,
+} from '@/lib/services/dashboard/types';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  Legend,
+} from 'recharts';
 
 /**
  * 生成时间范围图表数据
  */
-const generateTimeRangeChartData = (data: { date: string; value: number }[] | undefined, range: number = 7) => {
+const generateTimeRangeChartData = (
+  data: {date: string; value: number}[] | undefined,
+  range: number = 7,
+) => {
   // 生成完整的日期范围
   const today = new Date();
   const fullDateRange = [];
@@ -108,10 +131,7 @@ const ENHANCED_COLORS = {
     '#6b7280',
   ],
   // 柱状图配色
-  barChart: [
-    '#3b82f6',
-    '#f59e0b',
-  ],
+  barChart: ['#3b82f6', '#f59e0b'],
   // 线性渐变色
   gradients: {
     blue: {from: '#3b82f6', to: '#1e40af'},
@@ -127,15 +147,15 @@ const ENHANCED_COLORS = {
 const EnhancedTooltip = ({active, payload, label}: TooltipProps) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg min-w-[140px]">
-        <div className="flex flex-col space-y-2">
+      <div className='bg-gray-50 dark:bg-gray-800 p-3 rounded-lg min-w-[140px]'>
+        <div className='flex flex-col space-y-2'>
           {/* 标题 */}
-          <div className=" text-sm font-bold text-gray-600 dark:text-gray-400">
+          <div className=' text-sm font-bold text-gray-600 dark:text-gray-400'>
             {label}
           </div>
 
           {/* 数据项 */}
-          <div className="space-y-1">
+          <div className='space-y-1'>
             {payload.map((entry, index) => {
               let itemColor = entry.color;
               if (!itemColor) {
@@ -143,16 +163,23 @@ const EnhancedTooltip = ({active, payload, label}: TooltipProps) => {
               }
 
               return (
-                <div key={`tooltip-item-${index}`} className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                <div
+                  key={`tooltip-item-${index}`}
+                  className='flex items-center justify-between gap-2'
+                >
+                  <div className='flex items-center gap-2'>
                     <div
-                      className="w-1.5 h-1.5 rounded-full"
+                      className='w-1.5 h-1.5 rounded-full'
                       style={{backgroundColor: itemColor as string}}
                     />
-                    <span className="text-xs text-gray-600 dark:text-gray-400">数量</span>
+                    <span className='text-xs text-gray-600 dark:text-gray-400'>
+                      数量
+                    </span>
                   </div>
-                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100 tabular-nums">
-                    {typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}
+                  <span className='text-sm font-bold text-gray-900 dark:text-gray-100 tabular-nums'>
+                    {typeof entry.value === 'number'
+                      ? entry.value.toLocaleString()
+                      : entry.value}
                   </span>
                 </div>
               );
@@ -172,39 +199,46 @@ const PieTooltip = ({active, payload}: TooltipProps) => {
   if (active && payload && payload.length) {
     const data = payload[0];
     const total = (data.payload?.total as number) || 100;
-    const percentage = ((data.value as number) / total * 100).toFixed(1);
+    const percentage = (((data.value as number) / total) * 100).toFixed(1);
 
     const correctColor = (data.payload?.color as string) || data.color;
 
     return (
-      <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg min-w-[150px]">
-        <div className="flex flex-col space-y-2">
-          <div className="text-sm font-bold text-gray-600 dark:text-gray-400">
+      <div className='bg-gray-50 dark:bg-gray-800 p-3 rounded-lg min-w-[150px]'>
+        <div className='flex flex-col space-y-2'>
+          <div className='text-sm font-bold text-gray-600 dark:text-gray-400'>
             {data.name}
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+          <div className='space-y-1'>
+            <div className='flex items-center justify-between gap-2'>
+              <div className='flex items-center gap-2'>
                 <div
-                  className="w-1.5 h-1.5 rounded-full"
+                  className='w-1.5 h-1.5 rounded-full'
                   style={{backgroundColor: correctColor as string}}
                 />
-                <span className="text-xs text-gray-600 dark:text-gray-400">数量</span>
+                <span className='text-xs text-gray-600 dark:text-gray-400'>
+                  数量
+                </span>
               </div>
-              <span className="text-sm font-bold text-gray-900 dark:text-gray-100 tabular-nums">
+              <span className='text-sm font-bold text-gray-900 dark:text-gray-100 tabular-nums'>
                 {(data.value as number).toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+            <div className='flex items-center justify-between gap-2'>
+              <div className='flex items-center gap-2'>
                 <div
-                  className="w-1.5 h-1.5 rounded-full"
+                  className='w-1.5 h-1.5 rounded-full'
                   style={{backgroundColor: correctColor as string}}
                 />
-                <span className="text-xs text-gray-600 dark:text-gray-400">占比</span>
+                <span className='text-xs text-gray-600 dark:text-gray-400'>
+                  占比
+                </span>
               </div>
-              <span className="text-sm font-bold tabular-nums" style={{color: correctColor as string}}>
+              <span
+                className='text-sm font-bold tabular-nums'
+                style={{color: correctColor as string}}
+              >
                 {percentage}%
               </span>
             </div>
@@ -219,28 +253,40 @@ const PieTooltip = ({active, payload}: TooltipProps) => {
 /**
  * 图表容器
  */
-function ChartContainer({title, icon, isLoading, children, hideHeader = false}: ChartContainerProps & {hideHeader?: boolean}) {
+function ChartContainer({
+  title,
+  icon,
+  isLoading,
+  children,
+  hideHeader = false,
+}: ChartContainerProps & {hideHeader?: boolean}) {
   return (
-    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg transition-colors">
+    <div className='bg-gray-50 dark:bg-gray-800 rounded-lg transition-colors'>
       {!hideHeader && (
-        <div className="p-4 pb-2">
-          <div className="flex items-center gap-3">
+        <div className='p-4 pb-2'>
+          <div className='flex items-center gap-3'>
             {icon && (
-              <div className="text-gray-600 dark:text-gray-400 w-4 h-4 flex items-center justify-center">
+              <div className='text-gray-600 dark:text-gray-400 w-4 h-4 flex items-center justify-center'>
                 {icon}
               </div>
             )}
-            <h3 className="text-xs font-medium text-gray-600 dark:text-gray-400">{title}</h3>
+            <h3 className='text-xs font-medium text-gray-600 dark:text-gray-400'>
+              {title}
+            </h3>
           </div>
         </div>
       )}
       <div className={hideHeader ? 'p-4' : 'p-4 pt-2'}>
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-[300px] space-y-3">
-            <div className="animate-spin h-8 w-8 border-4 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full"></div>
-            <span className="text-sm text-gray-500 dark:text-gray-400">数据加载中...</span>
+          <div className='flex flex-col items-center justify-center h-[300px] space-y-3'>
+            <div className='animate-spin h-8 w-8 border-4 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full'></div>
+            <span className='text-sm text-gray-500 dark:text-gray-400'>
+              数据加载中...
+            </span>
           </div>
-        ) : children}
+        ) : (
+          children
+        )}
       </div>
     </div>
   );
@@ -249,22 +295,48 @@ function ChartContainer({title, icon, isLoading, children, hideHeader = false}: 
 /**
  * 用户增长趋势图表
  */
-export function UserGrowthChart({data, isLoading, icon, range = 7, hideHeader = false}: UserGrowthChartProps & {hideHeader?: boolean}) {
-  const chartData = useMemo(() => generateTimeRangeChartData(data, range), [data, range]);
+export function UserGrowthChart({
+  data,
+  isLoading,
+  icon,
+  range = 7,
+  hideHeader = false,
+}: UserGrowthChartProps & {hideHeader?: boolean}) {
+  const chartData = useMemo(
+    () => generateTimeRangeChartData(data, range),
+    [data, range],
+  );
 
   return (
-    <ChartContainer title="用户增长" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-      <div className="h-[300px] transition-all duration-300 ease-in-out" key={`user-growth-${range}-${data?.length || 0}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{top: 10, right: 10, left: -10, bottom: 0}}>
+    <ChartContainer
+      title='用户增长'
+      icon={icon}
+      isLoading={isLoading}
+      hideHeader={hideHeader}
+    >
+      <div
+        className='h-[300px] transition-all duration-300 ease-in-out'
+        key={`user-growth-${range}-${data?.length || 0}`}
+      >
+        <ResponsiveContainer width='100%' height='100%'>
+          <AreaChart
+            data={chartData}
+            margin={{top: 10, right: 10, left: -10, bottom: 0}}
+          >
             <defs>
-              <linearGradient id="userGrowthGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05}/>
+              <linearGradient
+                id='userGrowthGradient'
+                x1='0'
+                y1='0'
+                x2='0'
+                y2='1'
+              >
+                <stop offset='5%' stopColor='#3b82f6' stopOpacity={0.4} />
+                <stop offset='95%' stopColor='#3b82f6' stopOpacity={0.05} />
               </linearGradient>
             </defs>
             <XAxis
-              dataKey="date"
+              dataKey='date'
               axisLine={false}
               tickLine={false}
               tick={{fontSize: 12, fill: '#6b7280'}}
@@ -278,16 +350,23 @@ export function UserGrowthChart({data, isLoading, icon, range = 7, hideHeader = 
               allowDecimals={false}
             />
             <Tooltip
-              content={<EnhancedTooltip labelFormatter={(label) => `日期: ${label}`} />}
-              cursor={{stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '3 3', strokeOpacity: 0.6}}
+              content={
+                <EnhancedTooltip labelFormatter={(label) => `日期: ${label}`} />
+              }
+              cursor={{
+                stroke: '#3b82f6',
+                strokeWidth: 1,
+                strokeDasharray: '3 3',
+                strokeOpacity: 0.6,
+              }}
             />
             <Area
-              type="monotone"
-              dataKey="value"
-              stroke="#3b82f6"
+              type='monotone'
+              dataKey='value'
+              stroke='#3b82f6'
               strokeWidth={2}
               fillOpacity={1}
-              fill="url(#userGrowthGradient)"
+              fill='url(#userGrowthGradient)'
               activeDot={{
                 r: 6,
                 stroke: '#1e40af',
@@ -308,22 +387,42 @@ export function UserGrowthChart({data, isLoading, icon, range = 7, hideHeader = 
 /**
  * 领取活动趋势图表
  */
-export function ActivityChart({data, isLoading, icon, range = 7, hideHeader = false}: ActivityChartProps & {hideHeader?: boolean}) {
-  const chartData = useMemo(() => generateTimeRangeChartData(data, range), [data, range]);
+export function ActivityChart({
+  data,
+  isLoading,
+  icon,
+  range = 7,
+  hideHeader = false,
+}: ActivityChartProps & {hideHeader?: boolean}) {
+  const chartData = useMemo(
+    () => generateTimeRangeChartData(data, range),
+    [data, range],
+  );
 
   return (
-    <ChartContainer title="领取活动趋势" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-      <div className="h-[300px] transition-all duration-300 ease-in-out" key={`activity-${range}-${data?.length || 0}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{top: 10, right: 10, left: -10, bottom: 0}}>
+    <ChartContainer
+      title='领取活动趋势'
+      icon={icon}
+      isLoading={isLoading}
+      hideHeader={hideHeader}
+    >
+      <div
+        className='h-[300px] transition-all duration-300 ease-in-out'
+        key={`activity-${range}-${data?.length || 0}`}
+      >
+        <ResponsiveContainer width='100%' height='100%'>
+          <AreaChart
+            data={chartData}
+            margin={{top: 10, right: 10, left: -10, bottom: 0}}
+          >
             <defs>
-              <linearGradient id="activityGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0.05}/>
+              <linearGradient id='activityGradient' x1='0' y1='0' x2='0' y2='1'>
+                <stop offset='5%' stopColor='#10b981' stopOpacity={0.4} />
+                <stop offset='95%' stopColor='#10b981' stopOpacity={0.05} />
               </linearGradient>
             </defs>
             <XAxis
-              dataKey="date"
+              dataKey='date'
               axisLine={false}
               tickLine={false}
               tick={{fontSize: 12, fill: '#6b7280'}}
@@ -337,16 +436,23 @@ export function ActivityChart({data, isLoading, icon, range = 7, hideHeader = fa
               allowDecimals={false}
             />
             <Tooltip
-              content={<EnhancedTooltip labelFormatter={(label) => `日期: ${label}`} />}
-              cursor={{stroke: '#10b981', strokeWidth: 1, strokeDasharray: '3 3', strokeOpacity: 0.6}}
+              content={
+                <EnhancedTooltip labelFormatter={(label) => `日期: ${label}`} />
+              }
+              cursor={{
+                stroke: '#10b981',
+                strokeWidth: 1,
+                strokeDasharray: '3 3',
+                strokeOpacity: 0.6,
+              }}
             />
             <Area
-              type="monotone"
-              dataKey="value"
-              stroke="#10b981"
+              type='monotone'
+              dataKey='value'
+              stroke='#10b981'
               strokeWidth={2}
               fillOpacity={1}
-              fill="url(#activityGradient)"
+              fill='url(#activityGradient)'
               activeDot={{
                 r: 6,
                 stroke: '#047857',
@@ -367,7 +473,12 @@ export function ActivityChart({data, isLoading, icon, range = 7, hideHeader = fa
 /**
  * 项目标签分布柱状图
  */
-export function CategoryChart({data, isLoading, icon, hideHeader = false}: CategoryChartProps & {hideHeader?: boolean}) {
+export function CategoryChart({
+  data,
+  isLoading,
+  icon,
+  hideHeader = false,
+}: CategoryChartProps & {hideHeader?: boolean}) {
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
 
@@ -378,10 +489,17 @@ export function CategoryChart({data, isLoading, icon, hideHeader = false}: Categ
 
   if (!isLoading && (!chartData || chartData.length === 0)) {
     return (
-      <ChartContainer title="项目标签" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-        <div className="flex flex-col items-center justify-center h-[300px] space-y-3">
-          <div className="text-4xl opacity-30 text-gray-400">{icon}</div>
-          <span className="text-sm text-gray-500 dark:text-gray-400">暂无标签数据</span>
+      <ChartContainer
+        title='项目标签'
+        icon={icon}
+        isLoading={isLoading}
+        hideHeader={hideHeader}
+      >
+        <div className='flex flex-col items-center justify-center h-[300px] space-y-3'>
+          <div className='text-4xl opacity-30 text-gray-400'>{icon}</div>
+          <span className='text-sm text-gray-500 dark:text-gray-400'>
+            暂无标签数据
+          </span>
         </div>
       </ChartContainer>
     );
@@ -394,12 +512,23 @@ export function CategoryChart({data, isLoading, icon, hideHeader = false}: Categ
   }));
 
   return (
-    <ChartContainer title="项目标签" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-      <div className="h-[300px] w-full transition-all duration-300 ease-in-out" key={`category-${data?.length || 0}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={enhancedData} margin={{top: 10, right: 10, left: -10, bottom: 0}}>
+    <ChartContainer
+      title='项目标签'
+      icon={icon}
+      isLoading={isLoading}
+      hideHeader={hideHeader}
+    >
+      <div
+        className='h-[300px] w-full transition-all duration-300 ease-in-out'
+        key={`category-${data?.length || 0}`}
+      >
+        <ResponsiveContainer width='100%' height='100%'>
+          <BarChart
+            data={enhancedData}
+            margin={{top: 10, right: 10, left: -10, bottom: 0}}
+          >
             <XAxis
-              dataKey="name"
+              dataKey='name'
               axisLine={false}
               tickLine={false}
               tick={{fontSize: 12, fill: '#6b7280'}}
@@ -413,11 +542,13 @@ export function CategoryChart({data, isLoading, icon, hideHeader = false}: Categ
               allowDecimals={false}
             />
             <Tooltip
-              content={<EnhancedTooltip labelFormatter={(label) => `标签: ${label}`} />}
+              content={
+                <EnhancedTooltip labelFormatter={(label) => `标签: ${label}`} />
+              }
               cursor={{fill: 'rgba(59, 130, 246, 0.05)'}}
             />
             <Bar
-              dataKey="value"
+              dataKey='value'
               radius={[8, 8, 0, 0]}
               maxBarSize={80}
               {...ANIMATION_CONFIG.base}
@@ -426,7 +557,11 @@ export function CategoryChart({data, isLoading, icon, hideHeader = false}: Categ
               {enhancedData.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={ENHANCED_COLORS.barChart[index % ENHANCED_COLORS.barChart.length]}
+                  fill={
+                    ENHANCED_COLORS.barChart[
+                      index % ENHANCED_COLORS.barChart.length
+                    ]
+                  }
                   style={{
                     filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))',
                   }}
@@ -440,21 +575,32 @@ export function CategoryChart({data, isLoading, icon, hideHeader = false}: Categ
   );
 }
 
-
 /**
  * 分发模式统计饼图
  */
-export function DistributeModeChart({data, isLoading, icon, hideHeader = false}: DistributeModeChartProps & {hideHeader?: boolean}) {
+export function DistributeModeChart({
+  data,
+  isLoading,
+  icon,
+  hideHeader = false,
+}: DistributeModeChartProps & {hideHeader?: boolean}) {
   const chartData = useMemo(() => {
     return data && data.length > 0 ? data : [];
   }, [data]);
 
   if (!isLoading && (!chartData || chartData.length === 0)) {
     return (
-      <ChartContainer title="分发模式统计" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-        <div className="flex flex-col items-center justify-center h-[300px] space-y-3">
-          <div className="text-4xl opacity-30 text-gray-400">{icon}</div>
-          <span className="text-sm text-gray-500 dark:text-gray-400">暂无分发数据</span>
+      <ChartContainer
+        title='分发模式统计'
+        icon={icon}
+        isLoading={isLoading}
+        hideHeader={hideHeader}
+      >
+        <div className='flex flex-col items-center justify-center h-[300px] space-y-3'>
+          <div className='text-4xl opacity-30 text-gray-400'>{icon}</div>
+          <span className='text-sm text-gray-500 dark:text-gray-400'>
+            暂无分发数据
+          </span>
         </div>
       </ChartContainer>
     );
@@ -469,16 +615,24 @@ export function DistributeModeChart({data, isLoading, icon, hideHeader = false}:
   }));
 
   return (
-    <ChartContainer title="分发模式统计" icon={icon} isLoading={isLoading} hideHeader={hideHeader}>
-      <div className="h-[300px] w-full transition-all duration-300 ease-in-out" key={`distribute-${data?.length || 0}`}>
-        <ResponsiveContainer width="100%" height="100%">
+    <ChartContainer
+      title='分发模式统计'
+      icon={icon}
+      isLoading={isLoading}
+      hideHeader={hideHeader}
+    >
+      <div
+        className='h-[300px] w-full transition-all duration-300 ease-in-out'
+        key={`distribute-${data?.length || 0}`}
+      >
+        <ResponsiveContainer width='100%' height='100%'>
           <PieChart margin={{top: 50, right: 10, left: -10, bottom: 50}}>
             <Pie
               data={enhancedData}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="45%"
+              dataKey='value'
+              nameKey='name'
+              cx='50%'
+              cy='45%'
               outerRadius={100}
               innerRadius={45}
               paddingAngle={1}
@@ -489,8 +643,12 @@ export function DistributeModeChart({data, isLoading, icon, hideHeader = false}:
               {enhancedData?.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={ENHANCED_COLORS.pieChart[index % ENHANCED_COLORS.pieChart.length]}
-                  stroke="#ffffff"
+                  fill={
+                    ENHANCED_COLORS.pieChart[
+                      index % ENHANCED_COLORS.pieChart.length
+                    ]
+                  }
+                  stroke='#ffffff'
                   strokeWidth={1}
                   style={{
                     filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))',
@@ -501,23 +659,25 @@ export function DistributeModeChart({data, isLoading, icon, hideHeader = false}:
                   onMouseEnter={(e) => {
                     const target = e.target as HTMLElement;
                     target.style.transform = 'scale(1.05)';
-                    target.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))';
+                    target.style.filter =
+                      'drop-shadow(0 4px 8px rgba(0,0,0,0.2))';
                   }}
                   onMouseLeave={(e) => {
                     const target = e.target as HTMLElement;
                     target.style.transform = 'scale(1)';
-                    target.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))';
+                    target.style.filter =
+                      'drop-shadow(0 2px 4px rgba(0,0,0,0.1))';
                   }}
                 />
               ))}
             </Pie>
             <Tooltip content={<PieTooltip />} />
             <Legend
-              verticalAlign="bottom"
-              align="center"
-              layout="horizontal"
+              verticalAlign='bottom'
+              align='center'
+              layout='horizontal'
               iconSize={8}
-              iconType="circle"
+              iconType='circle'
               wrapperStyle={{
                 position: 'absolute',
                 bottom: '-10px',
@@ -531,13 +691,15 @@ export function DistributeModeChart({data, isLoading, icon, hideHeader = false}:
                 lineHeight: '1',
               }}
               formatter={(value: number) => (
-                <span style={{
-                  color: '#6b7280',
-                  fontWeight: '400',
-                  whiteSpace: 'nowrap',
-                  lineHeight: '1',
-                  verticalAlign: 'middle',
-                }}>
+                <span
+                  style={{
+                    color: '#6b7280',
+                    fontWeight: '400',
+                    whiteSpace: 'nowrap',
+                    lineHeight: '1',
+                    verticalAlign: 'middle',
+                  }}
+                >
                   {value}
                 </span>
               )}

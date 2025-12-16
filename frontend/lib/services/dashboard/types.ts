@@ -1,7 +1,10 @@
 import {DistributionType} from '../project/types';
 import {ApiResponse} from '../core/types';
 import {ReactNode} from 'react';
-import {NameType, ValueType} from 'recharts/types/component/DefaultTooltipContent';
+import {
+  NameType,
+  ValueType,
+} from 'recharts/types/component/DefaultTooltipContent';
 
 /**
  * 时间序列数据
@@ -175,7 +178,10 @@ export interface StatCardProps {
 /**
  * 列表项数据类型（支持所有列表类型）
  */
-export type ListItemData = HotProjectData | ActiveCreatorData | ActiveReceiverData;
+export type ListItemData =
+  | HotProjectData
+  | ActiveCreatorData
+  | ActiveReceiverData;
 
 /**
  * 卡片列表组件属性
@@ -262,6 +268,8 @@ export interface TooltipProps {
     payload?: Record<string, unknown>;
   }>;
   label?: string;
-  labelFormatter?: (label: string, payload?: Record<string, unknown>[]) => ReactNode;
+  labelFormatter?: (
+    label: string,
+    payload?: Record<string, unknown>[],
+  ) => ReactNode;
 }
-

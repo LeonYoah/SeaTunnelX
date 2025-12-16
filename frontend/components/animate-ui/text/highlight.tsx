@@ -40,7 +40,7 @@ function HighlightText({
   return (
     <motion.span
       ref={localRef}
-      data-slot="highlight-text"
+      data-slot='highlight-text'
       initial={{
         backgroundSize: '0% 100%',
       }}
@@ -52,8 +52,8 @@ function HighlightText({
         display: 'inline',
       }}
       className={cn(
-          `relative inline-block px-2 py-1 rounded-lg bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-500 dark:to-purple-500`,
-          className,
+        `relative inline-block px-2 py-1 rounded-lg bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-500 dark:to-purple-500`,
+        className,
       )}
       {...props}
     >

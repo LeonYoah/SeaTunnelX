@@ -11,7 +11,7 @@ type CheckboxProps = React.ComponentProps<typeof CheckboxPrimitive.Root> &
 
 function Checkbox({className, onCheckedChange, ...props}: CheckboxProps) {
   const [isChecked, setIsChecked] = React.useState(
-      props?.checked ?? props?.defaultChecked ?? false,
+    props?.checked ?? props?.defaultChecked ?? false,
   );
 
   React.useEffect(() => {
@@ -19,11 +19,11 @@ function Checkbox({className, onCheckedChange, ...props}: CheckboxProps) {
   }, [props?.checked]);
 
   const handleCheckedChange = React.useCallback(
-      (checked: boolean) => {
-        setIsChecked(checked);
-        onCheckedChange?.(checked);
-      },
-      [onCheckedChange],
+    (checked: boolean) => {
+      setIsChecked(checked);
+      onCheckedChange?.(checked);
+    },
+    [onCheckedChange],
   );
 
   return (
@@ -33,10 +33,10 @@ function Checkbox({className, onCheckedChange, ...props}: CheckboxProps) {
       asChild
     >
       <motion.button
-        data-slot="checkbox"
+        data-slot='checkbox'
         className={cn(
-            'peer size-5 flex items-center justify-center shrink-0 rounded-sm bg-input transition-colors duration-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground',
-            className,
+          'peer size-5 flex items-center justify-center shrink-0 rounded-sm bg-input transition-colors duration-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground',
+          className,
         )}
         whileTap={{scale: 0.95}}
         whileHover={{scale: 1.05}}
@@ -44,20 +44,20 @@ function Checkbox({className, onCheckedChange, ...props}: CheckboxProps) {
       >
         <CheckboxPrimitive.Indicator forceMount asChild>
           <motion.svg
-            data-slot="checkbox-indicator"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth="3.5"
-            stroke="currentColor"
-            className="size-3.5"
-            initial="unchecked"
+            data-slot='checkbox-indicator'
+            xmlns='http://www.w3.org/2000/svg'
+            fill='none'
+            viewBox='0 0 24 24'
+            strokeWidth='3.5'
+            stroke='currentColor'
+            className='size-3.5'
+            initial='unchecked'
             animate={isChecked ? 'checked' : 'unchecked'}
           >
             <motion.path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4.5 12.75l6 6 9-13.5"
+              strokeLinecap='round'
+              strokeLinejoin='round'
+              d='M4.5 12.75l6 6 9-13.5'
               variants={{
                 checked: {
                   pathLength: 1,

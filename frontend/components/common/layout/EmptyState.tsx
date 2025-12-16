@@ -69,37 +69,30 @@ export function EmptyState({
   return (
     <motion.div
       className={className}
-      initial="hidden"
-      animate="visible"
+      initial='hidden'
+      animate='visible'
       variants={containerVariants}
     >
       {Icon && (
         <motion.div
-          className="mx-auto w-15 h-15 bg-muted rounded-full flex items-center justify-center mb-4"
+          className='mx-auto w-15 h-15 bg-muted rounded-full flex items-center justify-center mb-4'
           variants={iconVariants}
         >
-          <Icon className="w-8 h-8 text-muted-foreground" />
+          <Icon className='w-8 h-8 text-muted-foreground' />
         </motion.div>
       )}
-      <motion.div
-        className="mb-2 text-base font-bold"
-        variants={itemVariants}
-      >
+      <motion.div className='mb-2 text-base font-bold' variants={itemVariants}>
         {title}
       </motion.div>
       {description && (
         <motion.div
-          className="mb-4 text-xs text-muted-foreground"
+          className='mb-4 text-xs text-muted-foreground'
           variants={itemVariants}
         >
           {description}
         </motion.div>
       )}
-      {children && (
-        <motion.div variants={itemVariants}>
-          {children}
-        </motion.div>
-      )}
+      {children && <motion.div variants={itemVariants}>{children}</motion.div>}
     </motion.div>
   );
 }

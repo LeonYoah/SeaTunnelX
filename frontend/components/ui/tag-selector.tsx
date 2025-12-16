@@ -37,14 +37,17 @@ function TagSelector({
   const [searchValue, setSearchValue] = React.useState('');
   const scrollElementRef = React.useRef<HTMLDivElement>(null);
 
-  const handleInputChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value.length > maxTagLength) {
-      setSearchValue(value.slice(0, maxTagLength));
-    } else {
-      setSearchValue(value);
-    }
-  }, [maxTagLength]);
+  const handleInputChange = React.useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      if (value.length > maxTagLength) {
+        setSearchValue(value.slice(0, maxTagLength));
+      } else {
+        setSearchValue(value);
+      }
+    },
+    [maxTagLength],
+  );
 
   /* 构建虚拟列表项 */
   const listItems = React.useMemo(() => {
@@ -56,12 +59,19 @@ function TagSelector({
 
     // 过滤可用标签
     const filteredTags = availableTags
-        .filter((tag) => !selectedTags.includes(tag))
-        .filter((tag) => !searchValue || tag.toLowerCase().includes(searchValue.toLowerCase()));
+      .filter((tag) => !selectedTags.includes(tag))
+      .filter(
+        (tag) =>
+          !searchValue || tag.toLowerCase().includes(searchValue.toLowerCase()),
+      );
 
     // 判断是否显示创建选项
-    const shouldShowCreate = searchValue && searchValue.trim() &&
-      !availableTags.some((tag) => tag.toLowerCase() === searchValue.toLowerCase());
+    const shouldShowCreate =
+      searchValue &&
+      searchValue.trim() &&
+      !availableTags.some(
+        (tag) => tag.toLowerCase() === searchValue.toLowerCase(),
+      );
 
     // 如果没有标签且没有搜索内容
     if (availableTags.length === 0 && !searchValue) {
@@ -143,42 +153,48 @@ function TagSelector({
     }
   }, [isOpen, virtualizer]);
 
-  const addTag = React.useCallback((tag: string) => {
-    const trimmedTag = tag.trim();
-    if (!trimmedTag) return;
+  const addTag = React.useCallback(
+    (tag: string) => {
+      const trimmedTag = tag.trim();
+      if (!trimmedTag) return;
 
-    if (trimmedTag === '无标签') {
-      toast.error('不允许创建名为"无标签"的标签');
-      return;
-    }
+      if (trimmedTag === '无标签') {
+        toast.error('不允许创建名为"无标签"的标签');
+        return;
+      }
 
-    if (selectedTags.includes(trimmedTag)) {
-      toast.error('该标签已添加');
-      return;
-    }
+      if (selectedTags.includes(trimmedTag)) {
+        toast.error('该标签已添加');
+        return;
+      }
 
-    if (selectedTags.length >= maxTags) {
-      toast.error(`标签数量已达上限(${maxTags}个)`);
-      return;
-    }
+      if (selectedTags.length >= maxTags) {
+        toast.error(`标签数量已达上限(${maxTags}个)`);
+        return;
+      }
 
-    if (trimmedTag.length > maxTagLength) {
-      const truncatedTag = trimmedTag.slice(0, maxTagLength);
-      onTagsChange([...selectedTags, truncatedTag]);
-    } else {
-      onTagsChange([...selectedTags, trimmedTag]);
-    }
+      if (trimmedTag.length > maxTagLength) {
+        const truncatedTag = trimmedTag.slice(0, maxTagLength);
+        onTagsChange([...selectedTags, truncatedTag]);
+      } else {
+        onTagsChange([...selectedTags, trimmedTag]);
+      }
 
-    setSearchValue('');
-  }, [selectedTags, maxTags, maxTagLength, onTagsChange]);
+      setSearchValue('');
+    },
+    [selectedTags, maxTags, maxTagLength, onTagsChange],
+  );
 
-  const removeTag = React.useCallback((tagToRemove: string) => {
-    onTagsChange(selectedTags.filter((tag) => tag !== tagToRemove));
-  }, [selectedTags, onTagsChange]);
+  const removeTag = React.useCallback(
+    (tagToRemove: string) => {
+      onTagsChange(selectedTags.filter((tag) => tag !== tagToRemove));
+    },
+    [selectedTags, onTagsChange],
+  );
 
   return (
     <div
-      data-slot="tag-selector"
+      data-slot='tag-selector'
       className={cn('space-y-2', className)}
       {...props}
     >
@@ -186,9 +202,9 @@ function TagSelector({
         <Popover open={isOpen} onOpenChange={setIsOpen}>
           <PopoverTrigger asChild>
             <Button
-              data-slot="tag-selector-trigger"
-              variant="outline"
-              role="combobox"
+              data-slot='tag-selector-trigger'
+              variant='outline'
+              role='combobox'
               aria-expanded={isOpen}
               className={cn(
                 isMobile ? 'w-full mb-2' : 'flex-1',
@@ -196,25 +212,27 @@ function TagSelector({
               )}
               onClick={() => setIsOpen(true)}
             >
-              <span className="truncate">
-                {searchValue ? searchValue : `${placeholder}（${selectedTags.length}/${maxTags}）`}
+              <span className='truncate'>
+                {searchValue
+                  ? searchValue
+                  : `${placeholder}（${selectedTags.length}/${maxTags}）`}
               </span>
-              <PlusCircle className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              <PlusCircle className='ml-2 h-4 w-4 shrink-0 opacity-50' />
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            data-slot="tag-selector-content"
-            className="w-[300px] p-0"
-            align="start"
+            data-slot='tag-selector-content'
+            className='w-[300px] p-0'
+            align='start'
           >
-            <div className="flex flex-col">
+            <div className='flex flex-col'>
               <div
-                data-slot="tag-selector-search"
-                className="flex items-center gap-2 border-b p-3"
+                data-slot='tag-selector-search'
+                className='flex items-center gap-2 border-b p-3'
               >
-                <SearchIcon className="h-4 w-4 shrink-0 opacity-50" />
+                <SearchIcon className='h-4 w-4 shrink-0 opacity-50' />
                 <input
-                  className="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-muted-foreground"
+                  className='flex-1 bg-transparent border-none outline-none text-sm placeholder:text-muted-foreground'
                   placeholder={`搜索或创建标签(16字符以内)`}
                   value={searchValue}
                   onChange={handleInputChange}
@@ -224,8 +242,8 @@ function TagSelector({
 
               <div
                 ref={scrollElementRef}
-                data-slot="tag-selector-scroll-area"
-                className="h-[180px] overflow-auto overscroll-contain"
+                data-slot='tag-selector-scroll-area'
+                className='h-[180px] overflow-auto overscroll-contain'
                 style={{
                   scrollbarWidth: 'thin',
                   scrollbarColor: '#d1d5db transparent',
@@ -265,41 +283,43 @@ function TagSelector({
                         }}
                       >
                         {item.type === 'empty' && (
-                          <div className="flex flex-col items-center justify-center text-center text-sm px-2 h-full py-8">
+                          <div className='flex flex-col items-center justify-center text-center text-sm px-2 h-full py-8'>
                             <p>{item.content}</p>
                             {item.id === 'empty' && (
-                              <p className="text-muted-foreground mt-1">输入内容创建新标签</p>
+                              <p className='text-muted-foreground mt-1'>
+                                输入内容创建新标签
+                              </p>
                             )}
                           </div>
                         )}
 
                         {item.type === 'header' && (
-                          <div className="px-3 text-xs font-medium text-muted-foreground flex items-center h-full bg-muted/30">
+                          <div className='px-3 text-xs font-medium text-muted-foreground flex items-center h-full bg-muted/30'>
                             {item.content}
                           </div>
                         )}
 
                         {item.type === 'create' && (
                           <div
-                            className="flex items-center gap-2 rounded-sm px-3 text-sm cursor-pointer hover:bg-accent mx-1 h-full mt-2"
+                            className='flex items-center gap-2 rounded-sm px-3 text-sm cursor-pointer hover:bg-accent mx-1 h-full mt-2'
                             onClick={() => {
                               addTag(item.content);
                               setIsOpen(false);
                             }}
                           >
-                            <PlusCircle className="h-4 w-4" />
+                            <PlusCircle className='h-4 w-4' />
                             <span>创建 &quot;{item.content}&quot;</span>
                           </div>
                         )}
 
                         {item.type === 'tag' && (
                           <div
-                            className="flex items-center justify-between rounded-sm px-3 text-sm cursor-pointer hover:bg-accent mx-1 h-full"
+                            className='flex items-center justify-between rounded-sm px-3 text-sm cursor-pointer hover:bg-accent mx-1 h-full'
                             onClick={() => addTag(item.content)}
                           >
                             <span>{item.content}</span>
                             {selectedTags.includes(item.content) && (
-                              <Check className="h-4 w-4 text-green-500" />
+                              <Check className='h-4 w-4 text-green-500' />
                             )}
                           </div>
                         )}
@@ -309,11 +329,11 @@ function TagSelector({
                 </div>
               </div>
 
-              <div className="flex items-center justify-center gap-2 p-1">
+              <div className='flex items-center justify-center gap-2 p-1'>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
+                  variant='outline'
+                  size='sm'
+                  className='w-full'
                   onClick={() => setIsOpen(false)}
                 >
                   完成
@@ -326,24 +346,24 @@ function TagSelector({
 
       {selectedTags.length > 0 && (
         <div
-          data-slot="tag-selector-selected"
-          className="flex flex-wrap gap-2 mt-2"
+          data-slot='tag-selector-selected'
+          className='flex flex-wrap gap-2 mt-2'
         >
           {selectedTags.map((tag) => (
             <Badge
               key={tag}
-              variant="secondary"
-              className="flex items-center gap-1 pr-1"
+              variant='secondary'
+              className='flex items-center gap-1 pr-1'
             >
               {tag}
               <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-4 w-4 p-0 hover:bg-transparent hover:text-destructive"
+                type='button'
+                variant='ghost'
+                size='sm'
+                className='h-4 w-4 p-0 hover:bg-transparent hover:text-destructive'
                 onClick={() => removeTag(tag)}
               >
-                <X className="h-3 w-3" />
+                <X className='h-3 w-3' />
               </Button>
             </Badge>
           ))}

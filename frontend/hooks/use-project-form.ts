@@ -40,26 +40,28 @@ export function useProjectForm(options: UseProjectFormOptions) {
       };
     }
 
-    return initialData || {
-      name: '',
-      description: '',
-      startTime: new Date(),
-      endTime: new Date(Date.now() + DEFAULT_FORM_VALUES.TIME_OFFSET_24H),
-      minimumTrustLevel: TrustLevel.BASIC_USER,
-      allowSameIP: false,
-      riskLevel: DEFAULT_FORM_VALUES.RISK_LEVEL,
-      distributionType: DistributionType.ONE_FOR_EACH,
-    };
+    return (
+      initialData || {
+        name: '',
+        description: '',
+        startTime: new Date(),
+        endTime: new Date(Date.now() + DEFAULT_FORM_VALUES.TIME_OFFSET_24H),
+        minimumTrustLevel: TrustLevel.BASIC_USER,
+        allowSameIP: false,
+        riskLevel: DEFAULT_FORM_VALUES.RISK_LEVEL,
+        distributionType: DistributionType.ONE_FOR_EACH,
+      }
+    );
   }, [initialData, mode, project]);
 
   const [formData, setFormData] = useState<ProjectFormData>(getInitialFormData);
 
-  const updateFormField = useCallback(<K extends keyof ProjectFormData>(
-    field: K,
-    value: ProjectFormData[K],
-  ) => {
-    setFormData((prev) => ({...prev, [field]: value}));
-  }, [setFormData]);
+  const updateFormField = useCallback(
+    <K extends keyof ProjectFormData>(field: K, value: ProjectFormData[K]) => {
+      setFormData((prev) => ({...prev, [field]: value}));
+    },
+    [setFormData],
+  );
 
   const resetForm = useCallback(() => {
     setFormData(getInitialFormData());

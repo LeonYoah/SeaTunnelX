@@ -17,8 +17,8 @@ export const BackgroundLines = ({
   return (
     <div
       className={cn(
-          'h-screen w-full bg-white dark:bg-black overflow-hidden',
-          className,
+        'h-screen w-full bg-white dark:bg-black overflow-hidden',
+        className,
       )}
     >
       <SVG svgOptions={svgOptions} />
@@ -92,23 +92,23 @@ const SVG = ({
   ];
   return (
     <motion.svg
-      viewBox="0 0 1440 900"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
+      viewBox='0 0 1440 900'
+      fill='none'
+      xmlns='http://www.w3.org/2000/svg'
       initial={{opacity: 0}}
       animate={{opacity: 1}}
       transition={{duration: 1}}
-      className="absolute inset-0 w-full h-full pointer-events-none"
+      className='absolute inset-0 w-full h-full pointer-events-none'
     >
       {paths.map((path, idx) => (
         <motion.path
           d={path}
           stroke={colors[idx]}
-          strokeWidth="2.3"
-          strokeLinecap="round"
+          strokeWidth='2.3'
+          strokeLinecap='round'
           variants={pathVariants}
-          initial="initial"
-          animate="animate"
+          initial='initial'
+          animate='animate'
           transition={{
             duration: svgOptions?.duration || 10,
             ease: 'linear',
@@ -126,11 +126,11 @@ const SVG = ({
         <motion.path
           d={path}
           stroke={colors[idx]}
-          strokeWidth="2.3"
-          strokeLinecap="round"
+          strokeWidth='2.3'
+          strokeLinecap='round'
           variants={pathVariants}
-          initial="initial"
-          animate="animate"
+          initial='initial'
+          animate='animate'
           transition={{
             duration: svgOptions?.duration || 10,
             ease: 'linear',

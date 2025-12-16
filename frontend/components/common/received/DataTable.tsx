@@ -4,8 +4,22 @@ import React, {useState, useMemo, useEffect} from 'react';
 import Link from 'next/link';
 import {Input} from '@/components/ui/input';
 import {Button} from '@/components/ui/button';
-import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '@/components/ui/table';
-import {Search, ExternalLink, Copy, ChevronLeft, ChevronRight, Package} from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Search,
+  ExternalLink,
+  Copy,
+  ChevronLeft,
+  ChevronRight,
+  Package,
+} from 'lucide-react';
 import {formatDateTimeWithSeconds, copyToClipboard} from '@/lib/utils';
 import {ReceiveHistoryItem} from '@/lib/services/project/types';
 import {EmptyState} from '@/components/common/layout/EmptyState';
@@ -28,13 +42,14 @@ interface DataTableProps {
 }
 
 type SortField = keyof ReceiveHistoryItem;
-type SortDirection = typeof SORT_DIRECTIONS[keyof typeof SORT_DIRECTIONS];
+type SortDirection = (typeof SORT_DIRECTIONS)[keyof typeof SORT_DIRECTIONS];
 
 /**
  * 打开项目详情页
  */
 const openProjectDetail = (projectId: string): void => {
-  const baseUrl = process.env.NEXT_PUBLIC_FRONTEND_BASE_URL || window.location.origin;
+  const baseUrl =
+    process.env.NEXT_PUBLIC_FRONTEND_BASE_URL || window.location.origin;
   const url = `${baseUrl}/receive/${projectId}`;
   window.open(url, '_blank');
 };
@@ -43,19 +58,20 @@ const openProjectDetail = (projectId: string): void => {
  * 数据过滤和排序处理
  */
 const processData = (
-    data: ReceiveHistoryItem[],
-    searchTerm: string,
-    sortField: SortField,
-    sortDirection: SortDirection,
+  data: ReceiveHistoryItem[],
+  searchTerm: string,
+  sortField: SortField,
+  sortDirection: SortDirection,
 ): ReceiveHistoryItem[] => {
   let filtered = data;
 
   if (searchTerm) {
     const term = searchTerm.toLowerCase();
-    filtered = data.filter((item) =>
-      item.project_name.toLowerCase().includes(term) ||
-      item.project_creator.toLowerCase().includes(term) ||
-      item.project_creator_nickname.toLowerCase().includes(term),
+    filtered = data.filter(
+      (item) =>
+        item.project_name.toLowerCase().includes(term) ||
+        item.project_creator.toLowerCase().includes(term) ||
+        item.project_creator_nickname.toLowerCase().includes(term),
     );
   }
 
@@ -73,9 +89,17 @@ const processData = (
     if (aValue === null || aValue === undefined) return 1;
     if (bValue === null || bValue === undefined) return -1;
 
-    return sortDirection === SORT_DIRECTIONS.ASC ?
-      (aValue < bValue ? -1 : aValue > bValue ? 1 : 0) :
-      (aValue > bValue ? -1 : aValue < bValue ? 1 : 0);
+    return sortDirection === SORT_DIRECTIONS.ASC
+      ? aValue < bValue
+        ? -1
+        : aValue > bValue
+          ? 1
+          : 0
+      : aValue > bValue
+        ? -1
+        : aValue < bValue
+          ? 1
+          : 0;
   });
 };
 
@@ -88,15 +112,18 @@ const Pagination = ({
   dataLength,
   onPageChange,
 }: {
-  currentPage: number
-  totalPages: number
-  dataLength: number
-  onPageChange: (page: number) => void
+  currentPage: number;
+  totalPages: number;
+  dataLength: number;
+  onPageChange: (page: number) => void;
 }) => {
   const generatePageNumbers = () => {
     const pages = [];
     let startPage = Math.max(1, currentPage - 2);
-    const endPage = Math.min(totalPages, startPage + MAX_PAGINATION_BUTTONS - 1);
+    const endPage = Math.min(
+      totalPages,
+      startPage + MAX_PAGINATION_BUTTONS - 1,
+    );
 
     if (endPage - startPage < MAX_PAGINATION_BUTTONS - 1) {
       startPage = Math.max(1, endPage - MAX_PAGINATION_BUTTONS + 1);
@@ -112,24 +139,22 @@ const Pagination = ({
   const {pages, startPage, endPage} = generatePageNumbers();
 
   return (
-    <div className="flex items-center justify-between px-2">
-      <div className="text-xs text-gray-500">
-        {dataLength === 0 ? (
-          '无数据'
-        ) : (
-          `第 ${((currentPage - 1) * ITEMS_PER_PAGE) + 1}-${Math.min(currentPage * ITEMS_PER_PAGE, dataLength)} 条，共 ${dataLength} 条`
-        )}
+    <div className='flex items-center justify-between px-2'>
+      <div className='text-xs text-gray-500'>
+        {dataLength === 0
+          ? '无数据'
+          : `第 ${(currentPage - 1) * ITEMS_PER_PAGE + 1}-${Math.min(currentPage * ITEMS_PER_PAGE, dataLength)} 条，共 ${dataLength} 条`}
       </div>
 
-      <div className="flex items-center space-x-1">
+      <div className='flex items-center space-x-1'>
         <Button
-          variant="ghost"
-          size="sm"
+          variant='ghost'
+          size='sm'
           onClick={() => onPageChange(currentPage - 1)}
           disabled={currentPage === 1 || dataLength === 0}
-          className="h-7 w-7 p-0"
+          className='h-7 w-7 p-0'
         >
-          <ChevronLeft className="h-3.5 w-3.5" />
+          <ChevronLeft className='h-3.5 w-3.5' />
         </Button>
 
         {totalPages > 0 && (
@@ -137,14 +162,16 @@ const Pagination = ({
             {startPage > 1 && (
               <>
                 <Button
-                  variant="ghost"
-                  size="sm"
+                  variant='ghost'
+                  size='sm'
                   onClick={() => onPageChange(1)}
-                  className="h-7 px-2 text-xs"
+                  className='h-7 px-2 text-xs'
                 >
                   1
                 </Button>
-                {startPage > 2 && <span className="text-xs text-gray-400">...</span>}
+                {startPage > 2 && (
+                  <span className='text-xs text-gray-400'>...</span>
+                )}
               </>
             )}
 
@@ -152,9 +179,9 @@ const Pagination = ({
               <Button
                 key={page}
                 variant={currentPage === page ? 'default' : 'ghost'}
-                size="sm"
+                size='sm'
                 onClick={() => onPageChange(page)}
-                className="h-7 px-2 text-xs"
+                className='h-7 px-2 text-xs'
               >
                 {page}
               </Button>
@@ -162,12 +189,14 @@ const Pagination = ({
 
             {endPage < totalPages && (
               <>
-                {endPage < totalPages - 1 && <span className="text-xs text-gray-400">...</span>}
+                {endPage < totalPages - 1 && (
+                  <span className='text-xs text-gray-400'>...</span>
+                )}
                 <Button
-                  variant="ghost"
-                  size="sm"
+                  variant='ghost'
+                  size='sm'
                   onClick={() => onPageChange(totalPages)}
-                  className="h-7 px-2 text-xs"
+                  className='h-7 px-2 text-xs'
                 >
                   {totalPages}
                 </Button>
@@ -177,13 +206,13 @@ const Pagination = ({
         )}
 
         <Button
-          variant="ghost"
-          size="sm"
+          variant='ghost'
+          size='sm'
           onClick={() => onPageChange(currentPage + 1)}
           disabled={currentPage === totalPages || dataLength === 0}
-          className="h-7 w-7 p-0"
+          className='h-7 w-7 p-0'
         >
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className='h-3.5 w-3.5' />
         </Button>
       </div>
     </div>
@@ -196,7 +225,9 @@ const Pagination = ({
 export function DataTable({data}: DataTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<SortField>('received_at');
-  const [sortDirection, setSortDirection] = useState<SortDirection>(SORT_DIRECTIONS.DESC);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(
+    SORT_DIRECTIONS.DESC,
+  );
   const [currentPage, setCurrentPage] = useState(1);
   const isMobile = useIsMobile();
 
@@ -205,19 +236,23 @@ export function DataTable({data}: DataTableProps) {
   }, [searchTerm]);
 
   const sortedAndFilteredData = useMemo(
-      () => processData(data, searchTerm, sortField, sortDirection),
-      [data, searchTerm, sortField, sortDirection],
+    () => processData(data, searchTerm, sortField, sortDirection),
+    [data, searchTerm, sortField, sortDirection],
   );
 
   const totalPages = Math.ceil(sortedAndFilteredData.length / ITEMS_PER_PAGE);
   const paginatedData = sortedAndFilteredData.slice(
-      (currentPage - 1) * ITEMS_PER_PAGE,
-      currentPage * ITEMS_PER_PAGE,
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE,
   );
 
   const handleSort = (field: SortField) => {
     if (field === sortField) {
-      setSortDirection(sortDirection === SORT_DIRECTIONS.ASC ? SORT_DIRECTIONS.DESC : SORT_DIRECTIONS.ASC);
+      setSortDirection(
+        sortDirection === SORT_DIRECTIONS.ASC
+          ? SORT_DIRECTIONS.DESC
+          : SORT_DIRECTIONS.ASC,
+      );
     } else {
       setSortField(field);
       setSortDirection(SORT_DIRECTIONS.DESC);
@@ -254,63 +289,64 @@ export function DataTable({data}: DataTableProps) {
 
   return (
     <motion.div
-      className="space-y-4"
-      initial="hidden"
-      animate="visible"
+      className='space-y-4'
+      initial='hidden'
+      animate='visible'
       variants={containerVariants}
     >
-      <motion.div className="flex items-center justify-between" variants={itemVariants}>
-        <h2 className="text-base font-semibold">
-          详细记录
-        </h2>
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+      <motion.div
+        className='flex items-center justify-between'
+        variants={itemVariants}
+      >
+        <h2 className='text-base font-semibold'>详细记录</h2>
+        <div className='relative'>
+          <Search className='absolute left-2 top-2.5 h-4 w-4 text-muted-foreground' />
           <Input
-            placeholder="搜索项目名称或创建者..."
+            placeholder='搜索项目名称或创建者...'
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8 w-48"
+            className='pl-8 w-48'
           />
         </div>
       </motion.div>
 
-      <motion.div className="rounded-md border" variants={itemVariants}>
+      <motion.div className='rounded-md border' variants={itemVariants}>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[10px]">
+              <TableHead className='w-[10px]'>
                 <button
-                  className="font-medium hover:text-primary transition-colors"
+                  className='font-medium hover:text-primary transition-colors'
                   onClick={() => handleSort('received_at')}
                 >
                   领取时间{renderSortIcon('received_at')}
                 </button>
               </TableHead>
-              <TableHead className="w-[120px] lg:w-[200px] xl:w-[300px]">
+              <TableHead className='w-[120px] lg:w-[200px] xl:w-[300px]'>
                 <button
-                  className="font-medium hover:text-primary transition-colors"
+                  className='font-medium hover:text-primary transition-colors'
                   onClick={() => handleSort('project_name')}
                 >
                   项目名称{renderSortIcon('project_name')}
                 </button>
               </TableHead>
-              <TableHead className="w-[120px] lg:w-[160px] xl:w-[200px]">
+              <TableHead className='w-[120px] lg:w-[160px] xl:w-[200px]'>
                 <button
-                  className="font-medium hover:text-primary transition-colors"
+                  className='font-medium hover:text-primary transition-colors'
                   onClick={() => handleSort('project_creator_nickname')}
                 >
                   创建者{renderSortIcon('project_creator_nickname')}
                 </button>
               </TableHead>
-              <TableHead className="w-[240px] lg:w-[400px] xl:w-[600px]">
+              <TableHead className='w-[240px] lg:w-[400px] xl:w-[600px]'>
                 <button
-                  className="font-medium hover:text-primary transition-colors"
+                  className='font-medium hover:text-primary transition-colors'
                   onClick={() => handleSort('content')}
                 >
                   项目内容{renderSortIcon('content')}
                 </button>
               </TableHead>
-              <TableHead className="text-right w-[60px]"></TableHead>
+              <TableHead className='text-right w-[60px]'></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -319,21 +355,23 @@ export function DataTable({data}: DataTableProps) {
                 <TableCell colSpan={5}>
                   <EmptyState
                     icon={Package}
-                    title="暂无领取记录"
-                    description="您还没有领取任何项目内容"
+                    title='暂无领取记录'
+                    description='您还没有领取任何项目内容'
                   />
                 </TableCell>
               </TableRow>
             ) : (
               paginatedData.map((item) => (
                 <TableRow key={`${item.project_id}-${item.received_at}`}>
-                  <TableCell className="text-xs text-gray-600 dark:text-gray-400">
-                    {item.received_at ? formatDateTimeWithSeconds(item.received_at) : '-'}
+                  <TableCell className='text-xs text-gray-600 dark:text-gray-400'>
+                    {item.received_at
+                      ? formatDateTimeWithSeconds(item.received_at)
+                      : '-'}
                   </TableCell>
                   <TableCell>
-                    <div className="max-w-[120px] lg:max-w-[200px] xl:max-w-[300px]">
+                    <div className='max-w-[120px] lg:max-w-[200px] xl:max-w-[300px]'>
                       <span
-                        className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer block overflow-hidden text-ellipsis whitespace-nowrap"
+                        className='text-xs text-gray-600 dark:text-gray-400 hover:text-primary hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer block overflow-hidden text-ellipsis whitespace-nowrap'
                         onClick={() => openProjectDetail(item.project_id)}
                         title={`${item.project_name} - 点击查看项目详情`}
                       >
@@ -341,54 +379,55 @@ export function DataTable({data}: DataTableProps) {
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs text-gray-600 dark:text-gray-400">
-                    <div className="max-w-[120px] lg:max-w-[160px] xl:max-w-[200px]">
+                  <TableCell className='text-xs text-gray-600 dark:text-gray-400'>
+                    <div className='max-w-[120px] lg:max-w-[160px] xl:max-w-[200px]'>
                       <Link
                         href={`https://linux.do/u/${item.project_creator}/summary`}
                         target='_blank'
                         rel='noopener noreferrer'
-                        className="hover:text-primary hover:text-blue-600 dark:hover:text-blue-400 transition-colors block overflow-hidden text-ellipsis whitespace-nowrap"
+                        className='hover:text-primary hover:text-blue-600 dark:hover:text-blue-400 transition-colors block overflow-hidden text-ellipsis whitespace-nowrap'
                         title={`${item.project_creator_nickname || item.project_creator} - 点击查看用户主页`}
                       >
                         {item.project_creator_nickname || item.project_creator}
                       </Link>
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs font-mono text-gray-600 dark:text-gray-400">
-                    <div className="max-w-[240px] lg:max-w-[400px] xl:max-w-[600px]">
-                      <div className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-sm flex items-center justify-between group hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                  <TableCell className='text-xs font-mono text-gray-600 dark:text-gray-400'>
+                    <div className='max-w-[240px] lg:max-w-[400px] xl:max-w-[600px]'>
+                      <div
+                        className='text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded-sm flex items-center justify-between group hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer'
                         onDoubleClick={() => copyToClipboard(item.content)}
                         title={`${item.content} - 双击复制内容`}
                       >
-                        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                        <div className='flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap'>
                           {item.content}
                         </div>
                         <Button
-                          variant="ghost"
-                          size="sm"
+                          variant='ghost'
+                          size='sm'
                           onClick={() => copyToClipboard(item.content)}
                           className={`h-5 w-5 p-0 ml-2 transition-opacity duration-200 hover:bg-gray-300 dark:hover:bg-gray-600 ${
-                            isMobile ?
-                              'opacity-100' :
-                              'opacity-0 group-hover:opacity-100'
+                            isMobile
+                              ? 'opacity-100'
+                              : 'opacity-0 group-hover:opacity-100'
                           }`}
-                          title="复制项目内容"
+                          title='复制项目内容'
                         >
-                          <Copy className="h-3 w-3" />
+                          <Copy className='h-3 w-3' />
                         </Button>
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end space-x-1">
+                  <TableCell className='text-right'>
+                    <div className='flex justify-end space-x-1'>
                       <Button
-                        variant="ghost"
-                        size="sm"
+                        variant='ghost'
+                        size='sm'
                         onClick={() => openProjectDetail(item.project_id)}
-                        className="h-6 w-6 p-0"
-                        title="查看详情"
+                        className='h-6 w-6 p-0'
+                        title='查看详情'
                       >
-                        <ExternalLink className="h-3 w-3" />
+                        <ExternalLink className='h-3 w-3' />
                       </Button>
                     </div>
                   </TableCell>
