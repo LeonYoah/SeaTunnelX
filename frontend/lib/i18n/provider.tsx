@@ -25,12 +25,7 @@ import {
   ReactNode,
 } from 'react';
 import {NextIntlClientProvider} from 'next-intl';
-import {
-  Locale,
-  defaultLocale,
-  getCurrentLocale,
-  saveLocale,
-} from './config';
+import {Locale, defaultLocale, getCurrentLocale, saveLocale} from './config';
 
 import zhMessages from './locales/zh.json';
 import enMessages from './locales/en.json';
@@ -82,7 +77,7 @@ export function I18nProvider({children}: I18nProviderProps) {
       <NextIntlClientProvider
         locale={currentLocale}
         messages={currentMessages}
-        timeZone="Asia/Shanghai"
+        timeZone='Asia/Shanghai'
       >
         {children}
       </NextIntlClientProvider>

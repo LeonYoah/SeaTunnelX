@@ -50,13 +50,13 @@ function TestComponent() {
 
   return (
     <div>
-      <span data-testid="locale">{locale}</span>
-      <span data-testid="loading">{t('loading')}</span>
-      <span data-testid="error">{t('error')}</span>
-      <button onClick={() => setLocale('en')} data-testid="switch-en">
+      <span data-testid='locale'>{locale}</span>
+      <span data-testid='loading'>{t('loading')}</span>
+      <span data-testid='error'>{t('error')}</span>
+      <button onClick={() => setLocale('en')} data-testid='switch-en'>
         English
       </button>
-      <button onClick={() => setLocale('zh')} data-testid="switch-zh">
+      <button onClick={() => setLocale('zh')} data-testid='switch-zh'>
         中文
       </button>
     </div>

@@ -10,14 +10,18 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  // 基础配置
   ...compat.extends('next/core-web-vitals', 'next/typescript', 'google'),
+  // prettier 配置必须放在最后，用于关闭所有与 prettier 冲突的规则
+  ...compat.extends('prettier'),
   {
     rules: {
+      // 关闭 JSDoc 相关规则
       'valid-jsdoc': 'off',
       'require-jsdoc': 'off',
-      'max-len': 'off',
+      // curly 规则：要求 if/else 等必须使用大括号（保持代码清晰）
       'linebreak-style': 'off', // 如果您是windows系统，可在开发时禁用行尾换行符检查
-      'indent': 'off', // 让 Prettier 处理缩进
+      curly: ['error', 'all'],
     },
   },
 ];

@@ -49,8 +49,7 @@ export class AuthService extends BaseService {
       await this.loginWithCredentials(credentials);
       window.location.href = redirectTo;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : '登录失败';
+      const errorMessage = error instanceof Error ? error.message : '登录失败';
       console.error(errorMessage);
       throw new Error(errorMessage);
     }
@@ -124,7 +123,9 @@ export class AuthService extends BaseService {
    */
   static async getEnabledOAuthProviders(): Promise<string[]> {
     const {default: apiClient} = await import('../core/api-client');
-    const response = await apiClient.get<{data: string[]}>(`${this.oauthBasePath}/providers`);
+    const response = await apiClient.get<{data: string[]}>(
+      `${this.oauthBasePath}/providers`,
+    );
     return response.data.data || [];
   }
 
@@ -135,9 +136,9 @@ export class AuthService extends BaseService {
    * @returns 登录授权URL
    */
   static async getOAuthLoginURL(provider?: string): Promise<string> {
-    const path = provider ?
-      `${this.oauthBasePath}/login?provider=${provider}` :
-      `${this.oauthBasePath}/login`;
+    const path = provider
+      ? `${this.oauthBasePath}/login?provider=${provider}`
+      : `${this.oauthBasePath}/login`;
     // 直接使用完整路径，不经过getFullPath
     const {default: apiClient} = await import('../core/api-client');
     const response = await apiClient.get<{data: string}>(path);

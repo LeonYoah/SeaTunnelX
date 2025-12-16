@@ -83,9 +83,15 @@ export class AdminUserService extends BaseService {
     const queryParams = new URLSearchParams();
     queryParams.append('current', params.current.toString());
     queryParams.append('size', params.size.toString());
-    if (params.username) queryParams.append('username', params.username);
-    if (params.is_active !== undefined) queryParams.append('is_active', params.is_active.toString());
-    if (params.is_admin !== undefined) queryParams.append('is_admin', params.is_admin.toString());
+    if (params.username) {
+      queryParams.append('username', params.username);
+    }
+    if (params.is_active !== undefined) {
+      queryParams.append('is_active', params.is_active.toString());
+    }
+    if (params.is_admin !== undefined) {
+      queryParams.append('is_admin', params.is_admin.toString());
+    }
 
     return this.get<ListUsersResponse>(`?${queryParams.toString()}`);
   }
@@ -107,7 +113,10 @@ export class AdminUserService extends BaseService {
   /**
    * 更新用户
    */
-  static async updateUser(id: number, data: UpdateUserRequest): Promise<UserInfo> {
+  static async updateUser(
+    id: number,
+    data: UpdateUserRequest,
+  ): Promise<UserInfo> {
     return this.put<UserInfo>(`/${id}`, data);
   }
 

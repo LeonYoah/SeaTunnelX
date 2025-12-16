@@ -35,12 +35,12 @@ export function LanguageSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-9 w-9">
-          <Globe className="h-4 w-4" />
-          <span className="sr-only">Switch language</span>
+        <Button variant='ghost' size='icon' className='h-9 w-9'>
+          <Globe className='h-4 w-4' />
+          <span className='sr-only'>Switch language</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align='end'>
         {locales.map((loc) => (
           <DropdownMenuItem
             key={loc}

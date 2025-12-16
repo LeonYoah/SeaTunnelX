@@ -117,7 +117,9 @@ const ProfileButton = memo(() => {
                       </AvatarFallback>
                     </Avatar>
                     <div className='flex-1 min-w-0'>
-                      <div className='font-semibold truncate'>{user.username}</div>
+                      <div className='font-semibold truncate'>
+                        {user.username}
+                      </div>
                       {user.nickname && (
                         <div className='text-sm text-muted-foreground truncate'>
                           {user.nickname}
@@ -125,9 +127,9 @@ const ProfileButton = memo(() => {
                       )}
                       <div className='text-xs text-muted-foreground mt-1 flex items-center gap-2'>
                         <span>
-                          {user.trust_level !== undefined ?
-                            getTrustLevelText(user.trust_level) :
-                            t('unknown')}
+                          {user.trust_level !== undefined
+                            ? getTrustLevelText(user.trust_level)
+                            : t('unknown')}
                         </span>
                         <span>•</span>
                         <span>{user.id}</span>
@@ -196,13 +198,15 @@ const ProfileButton = memo(() => {
                     key={loc}
                     onClick={() => setLocale(loc as Locale)}
                     className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
-                      locale === loc ?
-                        'bg-primary/10 text-primary border border-primary/30' :
-                        'bg-muted/50 hover:bg-muted/80'
+                      locale === loc
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'bg-muted/50 hover:bg-muted/80'
                     }`}
                   >
                     <Globe className='h-4 w-4' />
-                    <span className='text-sm'>{localeNames[loc as Locale]}</span>
+                    <span className='text-sm'>
+                      {localeNames[loc as Locale]}
+                    </span>
                     {locale === loc && <Check className='h-3 w-3' />}
                   </button>
                 ))}
@@ -225,7 +229,9 @@ const ProfileButton = memo(() => {
                 <div className='flex items-center justify-center w-8 h-8 rounded-md bg-orange-500/10 group-hover:bg-orange-500/20 transition-colors'>
                   <GithubIcon className='h-4 w-4 text-orange-600' />
                 </div>
-                <span className='text-sm font-medium'>{t('seatunnelRepo')}</span>
+                <span className='text-sm font-medium'>
+                  {t('seatunnelRepo')}
+                </span>
               </Link>
               <Link
                 href='https://github.com/LeonYoah/SeaTunnelX'
@@ -236,7 +242,9 @@ const ProfileButton = memo(() => {
                 <div className='flex items-center justify-center w-8 h-8 rounded-md bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors'>
                   <GithubIcon className='h-4 w-4 text-blue-600' />
                 </div>
-                <span className='text-sm font-medium'>{t('seatunnelXRepo')}</span>
+                <span className='text-sm font-medium'>
+                  {t('seatunnelXRepo')}
+                </span>
               </Link>
             </div>
           </div>

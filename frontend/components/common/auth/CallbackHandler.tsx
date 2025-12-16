@@ -121,7 +121,9 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
             {status === 'success' && (
               <div className='flex flex-col items-center gap-3'>
                 <CheckCircle2 className='h-8 w-8 text-green-500' />
-                <h2 className='text-lg font-medium text-green-500'>{t('success')}</h2>
+                <h2 className='text-lg font-medium text-green-500'>
+                  {t('success')}
+                </h2>
               </div>
             )}
             {status === 'error' && (

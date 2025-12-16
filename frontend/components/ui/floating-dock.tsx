@@ -17,36 +17,38 @@ import {
 
 import {useRef, useState, memo, useCallback} from 'react';
 
-export const FloatingDock = memo(({
-  items,
-  desktopClassName,
-  mobileClassName,
-  mobileButtonClassName,
-}: {
-  items: {
-    title: string;
-    icon: React.ReactNode;
-    href?: string;
-    onClick?: () => void;
-    tooltip?: string;
-    customComponent?: React.ReactNode;
-    external?: boolean;
-  }[];
-  desktopClassName?: string;
-  mobileClassName?: string;
-  mobileButtonClassName?: string;
-}) => {
-  return (
-    <>
-      <FloatingDockDesktop items={items} className={desktopClassName} />
-      <FloatingDockMobile
-        items={items}
-        className={mobileClassName}
-        buttonClassName={mobileButtonClassName}
-      />
-    </>
-  );
-});
+export const FloatingDock = memo(
+  ({
+    items,
+    desktopClassName,
+    mobileClassName,
+    mobileButtonClassName,
+  }: {
+    items: {
+      title: string;
+      icon: React.ReactNode;
+      href?: string;
+      onClick?: () => void;
+      tooltip?: string;
+      customComponent?: React.ReactNode;
+      external?: boolean;
+    }[];
+    desktopClassName?: string;
+    mobileClassName?: string;
+    mobileButtonClassName?: string;
+  }) => {
+    return (
+      <>
+        <FloatingDockDesktop items={items} className={desktopClassName} />
+        <FloatingDockMobile
+          items={items}
+          className={mobileClassName}
+          buttonClassName={mobileButtonClassName}
+        />
+      </>
+    );
+  },
+);
 
 FloatingDock.displayName = 'FloatingDock';
 
@@ -121,9 +123,9 @@ const FloatingDockMobile = memo(
                           'flex h-8 w-8 items-center justify-center rounded-full bg-gray-50 dark:bg-neutral-900',
                           buttonClassName,
                         )}
-                        {...(item.external || item.href.startsWith('https://') ?
-                          {target: '_blank', rel: 'noopener noreferrer'} :
-                          {})}
+                        {...(item.external || item.href.startsWith('https://')
+                          ? {target: '_blank', rel: 'noopener noreferrer'}
+                          : {})}
                       >
                         <div className='flex items-center justify-center'>
                           {item.icon}
@@ -213,7 +215,8 @@ const FloatingDockDesktop = memo(
             (item) => item.title === 'divider',
           );
           // 取 divider 之前的所有项目，如果没有 divider 则取全部
-          const firstRow = dividerIndex !== -1 ? items.slice(0, dividerIndex) : items;
+          const firstRow =
+            dividerIndex !== -1 ? items.slice(0, dividerIndex) : items;
           const secondRow =
             dividerIndex !== -1 ? items.slice(dividerIndex + 1) : [];
 
@@ -325,16 +328,16 @@ const IconContainer = memo(
     }, []);
 
     const Element = customComponent ? 'div' : href ? 'a' : 'button';
-    const elementProps = customComponent ?
-      {} :
-      href ?
-        {
+    const elementProps = customComponent
+      ? {}
+      : href
+        ? {
             href,
-            ...(external || href.startsWith('https://') ?
-              {target: '_blank', rel: 'noopener noreferrer'} :
-              {}),
-          } :
-        {onClick};
+            ...(external || href.startsWith('https://')
+              ? {target: '_blank', rel: 'noopener noreferrer'}
+              : {}),
+          }
+        : {onClick};
 
     return (
       <Element {...elementProps}>

@@ -52,10 +52,12 @@ vi.mock('next-intl', () => ({
       'terms.termsDialog.description': '请仔细阅读以下服务条款',
       'terms.termsDialog.general.title': '1. 一般条款',
       'terms.termsDialog.general.content1': '本服务条款规定了您使用服务的条件',
-      'terms.termsDialog.general.content2': '通过访问或使用我们的服务，您同意受这些条款的约束',
+      'terms.termsDialog.general.content2':
+        '通过访问或使用我们的服务，您同意受这些条款的约束',
       'terms.termsDialog.general.content3': '我们保留随时修改这些条款的权利',
       'terms.termsDialog.usage.title': '2. 使用规则',
-      'terms.termsDialog.usage.content1': '您同意以合法和负责任的方式使用我们的服务',
+      'terms.termsDialog.usage.content1':
+        '您同意以合法和负责任的方式使用我们的服务',
       'terms.termsDialog.usage.content2': '禁止的行为包括但不限于：',
       'terms.termsDialog.usage.prohibited1': '发布非法内容',
       'terms.termsDialog.usage.prohibited2': '尝试未经授权访问',
@@ -159,7 +161,9 @@ describe('LoginForm', () => {
   describe('表单渲染 (Requirements 8.1, 8.2)', () => {
     it('应该显示平台名称 "SeaTunnel 一站式运维管理平台"', () => {
       render(<LoginForm />);
-      expect(screen.getByText('欢迎使用 SeaTunnel 一站式运维管理平台')).toBeInTheDocument();
+      expect(
+        screen.getByText('欢迎使用 SeaTunnel 一站式运维管理平台'),
+      ).toBeInTheDocument();
     });
 
     it('应该显示用户名输入框', () => {

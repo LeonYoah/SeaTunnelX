@@ -37,7 +37,11 @@ interface AuthState {
  */
 interface UseAuthReturn extends AuthState {
   /** 使用用户名密码登录（默认方式） */
-  loginWithCredentials: (username: string, password: string, redirectTo?: string) => Promise<void>;
+  loginWithCredentials: (
+    username: string,
+    password: string,
+    redirectTo?: string,
+  ) => Promise<void>;
   /** 使用 OAuth 登录（备选方式） */
   loginWithOAuth: (provider?: string, redirectTo?: string) => Promise<void>;
   /** 执行登出 */
@@ -188,59 +192,64 @@ export function useAuth(): UseAuthReturn {
    * @param password - 密码
    * @param redirectTo - 登录成功后重定向的URL
    */
-  const loginWithCredentials = useCallback(async (
-    username: string,
-    password: string,
-    redirectTo?: string,
-  ) => {
-    try {
-      if (isMounted.current) {
-        setState((prev) => ({...prev, isLoading: true, error: null}));
+  const loginWithCredentials = useCallback(
+    async (username: string, password: string, redirectTo?: string) => {
+      try {
+        if (isMounted.current) {
+          setState((prev) => ({...prev, isLoading: true, error: null}));
+        }
+        await services.auth.login({username, password}, redirectTo);
+      } catch (error) {
+        if (isMounted.current) {
+          setState((prev) => ({
+            ...prev,
+            isLoading: false,
+            error: error instanceof Error ? error.message : '登录失败',
+          }));
+        }
+        throw error;
       }
-      await services.auth.login({username, password}, redirectTo);
-    } catch (error) {
-      if (isMounted.current) {
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          error: error instanceof Error ? error.message : '登录失败',
-        }));
-      }
-      throw error;
-    }
-  }, []);
+    },
+    [],
+  );
 
   /**
    * 使用 OAuth 登录（备选登录方式）
    * @param provider - OAuth 提供商（如 'github', 'google'）
    * @param redirectTo - 登录成功后重定向的URL
    */
-  const loginWithOAuth = useCallback(async (provider?: string, redirectTo?: string) => {
-    try {
-      if (isMounted.current) {
-        setState((prev) => ({...prev, isLoading: true, error: null}));
+  const loginWithOAuth = useCallback(
+    async (provider?: string, redirectTo?: string) => {
+      try {
+        if (isMounted.current) {
+          setState((prev) => ({...prev, isLoading: true, error: null}));
+        }
+        await services.auth.loginWithOAuth(provider, redirectTo);
+      } catch (error) {
+        if (isMounted.current) {
+          setState((prev) => ({
+            ...prev,
+            isLoading: false,
+            error: error instanceof Error ? error.message : '登录失败',
+          }));
+        }
+        throw error;
       }
-      await services.auth.loginWithOAuth(provider, redirectTo);
-    } catch (error) {
-      if (isMounted.current) {
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          error: error instanceof Error ? error.message : '登录失败',
-        }));
-      }
-      throw error;
-    }
-  }, []);
+    },
+    [],
+  );
 
   /**
    * 执行 OAuth 登录操作（兼容旧API）
    * @deprecated 请使用 loginWithOAuth
    * @param redirectTo - 登录成功后重定向的URL
    */
-  const login = useCallback(async (redirectTo?: string) => {
-    return loginWithOAuth(undefined, redirectTo);
-  }, [loginWithOAuth]);
+  const login = useCallback(
+    async (redirectTo?: string) => {
+      return loginWithOAuth(undefined, redirectTo);
+    },
+    [loginWithOAuth],
+  );
 
   /**
    * 执行登出操作

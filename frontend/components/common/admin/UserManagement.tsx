@@ -52,7 +52,11 @@ import {Badge} from '@/components/ui/badge';
 import {toast} from 'sonner';
 import {Plus, Pencil, Trash2, Search, Users} from 'lucide-react';
 import services from '@/lib/services';
-import type {UserInfo, CreateUserRequest, UpdateUserRequest} from '@/lib/services/admin/user.service';
+import type {
+  UserInfo,
+  CreateUserRequest,
+  UpdateUserRequest,
+} from '@/lib/services/admin/user.service';
 
 /**
  * 用户管理组件
@@ -215,7 +219,9 @@ export function UserManagement() {
    */
   const handleToggleActive = async (user: UserInfo) => {
     try {
-      await services.adminUser.updateUser(user.id, {is_active: !user.is_active});
+      await services.adminUser.updateUser(user.id, {
+        is_active: !user.is_active,
+      });
       toast.success(t('admin.userManagement.updateSuccess'));
       loadUsers();
     } catch (error) {
@@ -234,22 +240,24 @@ export function UserManagement() {
   const totalPages = Math.ceil(total / pageSize);
 
   return (
-    <div className="space-y-6">
+    <div className='space-y-6'>
       {/* 页面标题 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Users className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">{t('admin.userManagement.title')}</h1>
+      <div className='flex items-center justify-between'>
+        <div className='flex items-center gap-2'>
+          <Users className='h-6 w-6' />
+          <h1 className='text-2xl font-bold'>
+            {t('admin.userManagement.title')}
+          </h1>
         </div>
         <Button onClick={handleOpenCreate}>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className='h-4 w-4 mr-2' />
           {t('admin.userManagement.createUser')}
         </Button>
       </div>
 
       {/* 搜索栏 */}
-      <div className="flex gap-4">
-        <div className="flex-1 max-w-sm">
+      <div className='flex gap-4'>
+        <div className='flex-1 max-w-sm'>
           <Input
             placeholder={t('admin.userManagement.username')}
             value={searchUsername}
@@ -257,14 +265,14 @@ export function UserManagement() {
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
         </div>
-        <Button variant="outline" onClick={handleSearch}>
-          <Search className="h-4 w-4 mr-2" />
+        <Button variant='outline' onClick={handleSearch}>
+          <Search className='h-4 w-4 mr-2' />
           {t('common.search')}
         </Button>
       </div>
 
       {/* 用户表格 */}
-      <div className="border rounded-lg">
+      <div className='border rounded-lg'>
         <Table>
           <TableHeader>
             <TableRow>
@@ -280,13 +288,16 @@ export function UserManagement() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8">
+                <TableCell colSpan={7} className='text-center py-8'>
                   {t('common.loading')}
                 </TableCell>
               </TableRow>
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell
+                  colSpan={7}
+                  className='text-center py-8 text-muted-foreground'
+                >
                   {t('admin.userManagement.noUsers')}
                 </TableCell>
               </TableRow>
@@ -294,13 +305,15 @@ export function UserManagement() {
               users.map((user) => (
                 <TableRow key={user.id}>
                   <TableCell>{user.id}</TableCell>
-                  <TableCell className="font-medium">{user.username}</TableCell>
+                  <TableCell className='font-medium'>{user.username}</TableCell>
                   <TableCell>{user.nickname || '-'}</TableCell>
                   <TableCell>
                     {user.is_admin ? (
-                      <Badge variant="default">{t('admin.userManagement.isAdmin')}</Badge>
+                      <Badge variant='default'>
+                        {t('admin.userManagement.isAdmin')}
+                      </Badge>
                     ) : (
-                      <Badge variant="secondary">User</Badge>
+                      <Badge variant='secondary'>User</Badge>
                     )}
                   </TableCell>
                   <TableCell>
@@ -313,20 +326,20 @@ export function UserManagement() {
                     {new Date(user.created_at).toLocaleDateString()}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
+                    <div className='flex gap-2'>
                       <Button
-                        variant="ghost"
-                        size="icon"
+                        variant='ghost'
+                        size='icon'
                         onClick={() => handleOpenEdit(user)}
                       >
-                        <Pencil className="h-4 w-4" />
+                        <Pencil className='h-4 w-4' />
                       </Button>
                       <Button
-                        variant="ghost"
-                        size="icon"
+                        variant='ghost'
+                        size='icon'
                         onClick={() => handleOpenDelete(user)}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <Trash2 className='h-4 w-4 text-destructive' />
                       </Button>
                     </div>
                   </TableCell>
@@ -339,21 +352,21 @@ export function UserManagement() {
 
       {/* 分页 */}
       {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
+        <div className='flex justify-center gap-2'>
           <Button
-            variant="outline"
-            size="sm"
+            variant='outline'
+            size='sm'
             disabled={currentPage === 1}
             onClick={() => setCurrentPage((p) => p - 1)}
           >
             {t('common.previous')}
           </Button>
-          <span className="flex items-center px-4">
+          <span className='flex items-center px-4'>
             {currentPage} / {totalPages}
           </span>
           <Button
-            variant="outline"
-            size="sm"
+            variant='outline'
+            size='sm'
             disabled={currentPage === totalPages}
             onClick={() => setCurrentPage((p) => p + 1)}
           >
@@ -368,43 +381,62 @@ export function UserManagement() {
           <DialogHeader>
             <DialogTitle>{t('admin.userManagement.createUser')}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="username">{t('admin.userManagement.username')}</Label>
+          <div className='space-y-4 py-4'>
+            <div className='space-y-2'>
+              <Label htmlFor='username'>
+                {t('admin.userManagement.username')}
+              </Label>
               <Input
-                id="username"
+                id='username'
                 value={formData.username}
-                onChange={(e) => setFormData({...formData, username: e.target.value})}
+                onChange={(e) =>
+                  setFormData({...formData, username: e.target.value})
+                }
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">{t('admin.userManagement.password')}</Label>
+            <div className='space-y-2'>
+              <Label htmlFor='password'>
+                {t('admin.userManagement.password')}
+              </Label>
               <Input
-                id="password"
-                type="password"
+                id='password'
+                type='password'
                 value={formData.password}
-                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                onChange={(e) =>
+                  setFormData({...formData, password: e.target.value})
+                }
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="nickname">{t('admin.userManagement.nickname')}</Label>
+            <div className='space-y-2'>
+              <Label htmlFor='nickname'>
+                {t('admin.userManagement.nickname')}
+              </Label>
               <Input
-                id="nickname"
+                id='nickname'
                 value={formData.nickname}
-                onChange={(e) => setFormData({...formData, nickname: e.target.value})}
+                onChange={(e) =>
+                  setFormData({...formData, nickname: e.target.value})
+                }
               />
             </div>
-            <div className="flex items-center space-x-2">
+            <div className='flex items-center space-x-2'>
               <Switch
-                id="is_admin"
+                id='is_admin'
                 checked={formData.is_admin}
-                onCheckedChange={(checked) => setFormData({...formData, is_admin: checked})}
+                onCheckedChange={(checked) =>
+                  setFormData({...formData, is_admin: checked})
+                }
               />
-              <Label htmlFor="is_admin">{t('admin.userManagement.isAdmin')}</Label>
+              <Label htmlFor='is_admin'>
+                {t('admin.userManagement.isAdmin')}
+              </Label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+            <Button
+              variant='outline'
+              onClick={() => setIsCreateDialogOpen(false)}
+            >
               {t('common.cancel')}
             </Button>
             <Button onClick={handleCreate}>{t('common.create')}</Button>
@@ -418,40 +450,57 @@ export function UserManagement() {
           <DialogHeader>
             <DialogTitle>{t('admin.userManagement.editUser')}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-username">{t('admin.userManagement.username')}</Label>
-              <Input id="edit-username" value={formData.username} disabled />
+          <div className='space-y-4 py-4'>
+            <div className='space-y-2'>
+              <Label htmlFor='edit-username'>
+                {t('admin.userManagement.username')}
+              </Label>
+              <Input id='edit-username' value={formData.username} disabled />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-password">{t('admin.userManagement.password')}</Label>
+            <div className='space-y-2'>
+              <Label htmlFor='edit-password'>
+                {t('admin.userManagement.password')}
+              </Label>
               <Input
-                id="edit-password"
-                type="password"
+                id='edit-password'
+                type='password'
                 placeholder={t('admin.userManagement.passwordPlaceholder')}
                 value={formData.password}
-                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                onChange={(e) =>
+                  setFormData({...formData, password: e.target.value})
+                }
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-nickname">{t('admin.userManagement.nickname')}</Label>
+            <div className='space-y-2'>
+              <Label htmlFor='edit-nickname'>
+                {t('admin.userManagement.nickname')}
+              </Label>
               <Input
-                id="edit-nickname"
+                id='edit-nickname'
                 value={formData.nickname}
-                onChange={(e) => setFormData({...formData, nickname: e.target.value})}
+                onChange={(e) =>
+                  setFormData({...formData, nickname: e.target.value})
+                }
               />
             </div>
-            <div className="flex items-center space-x-2">
+            <div className='flex items-center space-x-2'>
               <Switch
-                id="edit-is_admin"
+                id='edit-is_admin'
                 checked={formData.is_admin}
-                onCheckedChange={(checked) => setFormData({...formData, is_admin: checked})}
+                onCheckedChange={(checked) =>
+                  setFormData({...formData, is_admin: checked})
+                }
               />
-              <Label htmlFor="edit-is_admin">{t('admin.userManagement.isAdmin')}</Label>
+              <Label htmlFor='edit-is_admin'>
+                {t('admin.userManagement.isAdmin')}
+              </Label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+            <Button
+              variant='outline'
+              onClick={() => setIsEditDialogOpen(false)}
+            >
               {t('common.cancel')}
             </Button>
             <Button onClick={handleUpdate}>{t('common.save')}</Button>
@@ -460,17 +509,26 @@ export function UserManagement() {
       </Dialog>
 
       {/* 删除确认对话框 */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('admin.userManagement.deleteUser')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('admin.userManagement.deleteUser')}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t('admin.userManagement.deleteConfirm', {username: selectedUser?.username || ''})}
+              {t('admin.userManagement.deleteConfirm', {
+                username: selectedUser?.username || '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>{t('common.delete')}</AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete}>
+              {t('common.delete')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
