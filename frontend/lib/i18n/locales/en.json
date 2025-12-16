@@ -1,0 +1,176 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "success": "Operation successful",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "submit": "Submit",
+    "reset": "Reset"
+  },
+  "auth": {
+    "login": {
+      "title": "Welcome to SeaTunnel Operations Platform",
+      "subtitle": "Please login to continue",
+      "username": "Username",
+      "usernamePlaceholder": "Enter your username",
+      "password": "Password",
+      "passwordPlaceholder": "Enter your password",
+      "loginButton": "Login",
+      "loggingIn": "Logging in...",
+      "redirecting": "Redirecting...",
+      "loginWithLinuxDo": "Login with Linux Do",
+      "loginWithOtherLinuxDo": "Login with another Linux Do account",
+      "loginWithGithub": "Login with GitHub",
+      "loginWithGoogle": "Login with Google",
+      "orLoginWith": "Or login with",
+      "rememberMe": "Remember me",
+      "forgotPassword": "Forgot password?"
+    },
+    "logout": {
+      "success": "You have been logged out successfully",
+      "button": "Logout"
+    },
+    "errors": {
+      "invalidCredentials": "Invalid username or password",
+      "emptyUsername": "Please enter your username",
+      "emptyPassword": "Please enter your password",
+      "loginFailed": "Login failed, please try again",
+      "sessionExpired": "Session expired, please login again",
+      "unauthorized": "Unauthorized access"
+    }
+  },
+  "terms": {
+    "agreement": "By logging in, you agree to our",
+    "termsOfService": "Terms of Service",
+    "and": "and",
+    "privacyPolicy": "Privacy Policy",
+    "termsDialog": {
+      "title": "Terms of Service",
+      "description": "Please read the following terms of service carefully. By using this service, you agree to these terms.",
+      "general": {
+        "title": "1. General Terms",
+        "content1": "These Terms of Service (hereinafter referred to as \"Terms\") set forth the conditions for your use of the SeaTunnel Operations Platform.",
+        "content2": "By accessing or using our services, you agree to be bound by these terms. If you do not agree to these terms, please do not use our services.",
+        "content3": "We reserve the right to modify these terms at any time. Modified terms will take effect immediately upon posting."
+      },
+      "usage": {
+        "title": "2. Usage Rules",
+        "content1": "You agree to use our services in a lawful and responsible manner, strictly complying with applicable laws and regulations.",
+        "content2": "Prohibited behaviors include but are not limited to:",
+        "prohibited1": "Posting illegal, harmful, threatening, abusive, harassing, defamatory, or otherwise objectionable content",
+        "prohibited2": "Attempting unauthorized access to our systems or other users' accounts",
+        "prohibited3": "Interfering with or disrupting the normal operation of services",
+        "prohibited4": "Violating any applicable laws or regulations"
+      },
+      "content": {
+        "title": "3. Content Standards",
+        "intro": "To maintain a healthy online environment, distribution of the following types of content is strictly prohibited:",
+        "pornography": "Pornographic content: Any content containing pornography, obscenity, nudity, or sexual suggestions",
+        "promotion": "Promotional content: Commercial advertisements, marketing promotions, spam, or other commercial content",
+        "illegal": "Illegal content: Any content that violates applicable laws and regulations",
+        "harmful": "Harmful information: Violence, terrorism, extremism, or content that endangers national security",
+        "false": "False information: Rumors, fake news, or misleading information",
+        "infringement": "Infringing content: Content that infringes on intellectual property rights, privacy rights, or other legal rights of others",
+        "warning": "Once violating content is discovered, we will immediately remove it and may terminate the associated account."
+      },
+      "legal": {
+        "title": "4. Legal Compliance",
+        "intro": "This service strictly complies with applicable laws and regulations, including but not limited to:",
+        "law1": "Cybersecurity Law",
+        "law2": "Data Security Law",
+        "law3": "Personal Information Protection Law",
+        "law4": "Internet Information Service Management Measures",
+        "law5": "Network Information Content Ecological Governance Regulations",
+        "compliance": "Users must comply with the above laws and regulations and other relevant provisions when using the service.",
+        "cooperation": "For violations of laws and regulations, we will cooperate with relevant authorities for investigation and handling."
+      },
+      "account": {
+        "title": "5. Account Responsibility",
+        "content1": "You are responsible for maintaining the accuracy and security of your account information.",
+        "content2": "You are responsible for all activities conducted using your account.",
+        "content3": "If you discover any unauthorized use, please notify us immediately."
+      },
+      "intellectual": {
+        "title": "6. Intellectual Property",
+        "content1": "All content in the service, including text, graphics, logos, images, and software, is protected by copyright and other intellectual property laws.",
+        "content2": "Without our explicit written permission, you may not copy, modify, distribute, or otherwise use this content."
+      },
+      "limitation": {
+        "title": "7. Limitation of Liability",
+        "content1": "To the maximum extent permitted by law, we are not liable for any indirect, incidental, special, or consequential damages.",
+        "content2": "Our total liability shall not exceed the amount you paid for the service in the past 12 months."
+      }
+    },
+    "privacyDialog": {
+      "title": "Privacy Policy",
+      "description": "We value your privacy. This policy explains how we collect, use, and protect your personal information.",
+      "collection": {
+        "title": "1. Information Collection",
+        "intro": "We collect the following types of information:",
+        "item1": "Account information: Public information such as username and avatar obtained through OAuth",
+        "item2": "Usage data: Information about how you use our services",
+        "item3": "Technical information: IP address, device information, browser type, etc.",
+        "item4": "Log information: Server logs and error reports"
+      },
+      "usage": {
+        "title": "2. Information Usage",
+        "intro": "We use the collected information for:",
+        "item1": "Providing and maintaining our services",
+        "item2": "Improving user experience",
+        "item3": "Preventing fraud and abuse",
+        "item4": "Complying with legal obligations",
+        "item5": "Sending important notifications"
+      },
+      "sharing": {
+        "title": "3. Information Sharing",
+        "content1": "We do not sell, exchange, or rent your personal information to third parties.",
+        "content2": "We may share your information in the following circumstances:",
+        "item1": "With your explicit consent",
+        "item2": "Legal requirements or government requests",
+        "item3": "To protect our rights and property",
+        "item4": "With trusted service providers (subject to confidentiality agreements)"
+      },
+      "security": {
+        "title": "4. Data Security",
+        "intro": "We employ industry-standard security measures to protect your information:",
+        "item1": "Data transmission encryption (HTTPS/TLS)",
+        "item2": "Database access control and encryption",
+        "item3": "Regular security audits and vulnerability scanning",
+        "item4": "Employee access permission management",
+        "warning": "Please note that no data transmission or storage method is 100% secure."
+      },
+      "retention": {
+        "title": "5. Data Retention",
+        "intro": "We retain your personal information only for as long as necessary:",
+        "item1": "Account information: Duration of account existence",
+        "item2": "Usage logs: 90 days",
+        "item3": "Security logs: 1 year",
+        "deletion": "You can request deletion of your account and related data at any time."
+      },
+      "rights": {
+        "title": "6. Your Rights",
+        "intro": "You have the following rights regarding your personal information:",
+        "item1": "Right of access: View information we hold about you",
+        "item2": "Right of correction: Correct inaccurate information",
+        "item3": "Right of deletion: Request deletion of your personal information",
+        "item4": "Right to restrict processing: Limit how we process your information"
+      }
+    }
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "settings": "Settings",
+    "profile": "Profile",
+    "logout": "Logout"
+  }
+}
