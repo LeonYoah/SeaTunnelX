@@ -26,13 +26,17 @@ package migrator
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strings"
 
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
+	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
+	"gorm.io/gorm"
 )
 
 func Migrate() {
@@ -47,8 +51,10 @@ func Migrate() {
 		return
 	}
 
+	// 执行数据库表迁移，包含用户表
 	if err := db.GetDB(context.Background()).AutoMigrate(
-		&oauth.User{},
+		&auth.User{},  // 用户表（用户名密码认证）
+		&oauth.User{}, // OAuth 用户表（保留兼容）
 		&project.Project{},
 		&project.ProjectItem{},
 		&project.ProjectTag{},
@@ -57,6 +63,11 @@ func Migrate() {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}
 	log.Printf("[Database] auto migrate success\n")
+
+	// 初始化默认管理员用户
+	if err := initDefaultAdminUser(); err != nil {
+		log.Printf("[Database] 初始化默认管理员用户失败: %v\n", err)
+	}
 
 	// 创建存储过程（仅 MySQL 支持）
 	dbType := db.GetDatabaseType()
@@ -67,6 +78,63 @@ func Migrate() {
 	} else {
 		log.Printf("[Database] 跳过存储过程创建（当前数据库类型: %s）\n", dbType)
 	}
+}
+
+// initDefaultAdminUser 初始化默认管理员用户
+// 仅在首次启动时（用户表为空）创建默认 admin 用户
+// Requirements: 2.1, 2.2
+func initDefaultAdminUser() error {
+	database := db.GetDB(context.Background())
+	if database == nil {
+		return errors.New("数据库连接未初始化")
+	}
+
+	// 获取认证配置
+	authConfig := config.GetAuthConfig()
+
+	// 检查是否已存在用户
+	var count int64
+	if err := database.Model(&auth.User{}).Count(&count).Error; err != nil {
+		return err
+	}
+
+	// 如果已有用户，跳过初始化
+	if count > 0 {
+		log.Println("[Database] 用户表已有数据，跳过默认管理员初始化")
+		return nil
+	}
+
+	// 检查是否已存在 admin 用户（双重检查）
+	var existingUser auth.User
+	err := database.Where("username = ?", authConfig.DefaultAdminUsername).First(&existingUser).Error
+	if err == nil {
+		log.Printf("[Database] 管理员用户 '%s' 已存在，跳过创建\n", authConfig.DefaultAdminUsername)
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	// 创建默认管理员用户
+	adminUser := &auth.User{
+		Username: authConfig.DefaultAdminUsername,
+		Nickname: "系统管理员",
+		IsActive: true,
+		IsAdmin:  true,
+	}
+
+	// 设置密码（使用 bcrypt 哈希）
+	if err := adminUser.SetPassword(authConfig.DefaultAdminPassword, authConfig.BcryptCost); err != nil {
+		return err
+	}
+
+	// 保存到数据库
+	if err := adminUser.Create(database); err != nil {
+		return err
+	}
+
+	log.Printf("[Database] 成功创建默认管理员用户: %s\n", authConfig.DefaultAdminUsername)
+	return nil
 }
 
 // 创建存储过程
