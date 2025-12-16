@@ -9,6 +9,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/hibiken/asynq v0.25.1
+	github.com/leanovate/gopter v0.2.11
 	github.com/redis/go-redis/extra/redisotel/v9 v9.9.0
 	github.com/redis/go-redis/v9 v9.10.0
 	github.com/spf13/cobra v1.9.1
@@ -23,10 +24,12 @@ require (
 	go.opentelemetry.io/otel/sdk v1.36.0
 	go.opentelemetry.io/otel/trace v1.36.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.38.0
 	golang.org/x/oauth2 v0.30.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.11
+	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.30.0
 	gorm.io/plugin/opentelemetry v0.1.14
 )
@@ -78,10 +81,10 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
-	github.com/leanovate/gopter v0.2.11 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/paulmach/orb v0.11.1 // indirect
@@ -109,7 +112,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.17.0 // indirect
-	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect

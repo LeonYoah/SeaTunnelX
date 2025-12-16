@@ -93,6 +93,17 @@ func setDefaults(c *configModel) {
 	if c.Auth.BcryptCost == 0 {
 		c.Auth.BcryptCost = 10
 	}
+
+	// 日志默认配置
+	if c.Log.Level == "" {
+		c.Log.Level = "info"
+	}
+	if c.Log.Format == "" {
+		c.Log.Format = "console"
+	}
+	if c.Log.Output == "" {
+		c.Log.Output = "stdout"
+	}
 }
 
 // GetDatabaseType 获取数据库类型

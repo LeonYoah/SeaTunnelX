@@ -1,34 +1,28 @@
 ﻿/*
- * MIT License
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * Copyright (c) 2025 linux.do
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
+// Package router 提供 HTTP 路由配置
 package router
 
 import (
 	"context"
-	"fmt"
+	"log"
+
 	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/redis"
 	"github.com/gin-gonic/gin"
 	_ "github.com/seatunnel/seatunnelX/docs"
 	"github.com/seatunnel/seatunnelX/internal/apps/admin"
@@ -38,11 +32,10 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
+	"github.com/seatunnel/seatunnelX/internal/session"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"log"
-	"strconv"
 )
 
 func Serve() {
@@ -57,29 +50,11 @@ func Serve() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// Session
-	sessionStore, err := redis.NewStoreWithDB(
-		config.Config.Redis.MinIdleConn,
-		"tcp",
-		fmt.Sprintf("%s:%d", config.Config.Redis.Host, config.Config.Redis.Port),
-		config.Config.Redis.Username,
-		config.Config.Redis.Password,
-		strconv.Itoa(config.Config.Redis.DB),
-		[]byte(config.Config.App.SessionSecret),
-	)
-	if err != nil {
-		log.Fatalf("[API] init session store failed: %v\n", err)
+	// 初始化会话存储（根据配置自动选择内存或 Redis）
+	if err := session.InitSessionStore(); err != nil {
+		log.Fatalf("[API] 初始化会话存储失败: %v\n", err)
 	}
-	sessionStore.Options(
-		sessions.Options{
-			Path:     "/",
-			Domain:   config.Config.App.SessionDomain,
-			MaxAge:   config.Config.App.SessionAge,
-			HttpOnly: config.Config.App.SessionHttpOnly,
-			Secure:   config.Config.App.SessionSecure, // 若用 HTTPS 可以设 true
-		},
-	)
-	r.Use(sessions.Sessions(config.Config.App.SessionCookieName, sessionStore))
+	r.Use(sessions.Sessions(config.Config.App.SessionCookieName, session.GinStore))
 
 	// 补充中间件
 	r.Use(otelgin.Middleware(config.Config.App.AppName), loggerMiddleware())

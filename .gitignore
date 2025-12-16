@@ -19,6 +19,7 @@ frontend/node_modules/*
 frontend/.next/*
 frontend/next-env.d.ts
 frontend/package-lock.json
+frontend/pnpm-lock.yaml
 frontend/.env
 .env.*
 !.env.example

@@ -18,12 +18,12 @@
 package config
 
 type configModel struct {
-	App        appConfig        `mapstructure:"app"`
+	App        AppConfig        `mapstructure:"app"`
 	ProjectApp projectAppConfig `mapstructure:"projectApp"`
 	Auth       authConfig       `mapstructure:"auth"`
 	OAuth2     OAuth2Config     `mapstructure:"oauth2"`
 	Database   DatabaseConfig   `mapstructure:"database"`
-	Redis      redisConfig      `mapstructure:"redis"`
+	Redis      RedisConfig      `mapstructure:"redis"`
 	Log        logConfig        `mapstructure:"log"`
 	Schedule   scheduleConfig   `mapstructure:"schedule"`
 	Worker     workerConfig     `mapstructure:"worker"`
@@ -46,8 +46,8 @@ type OAuth2Config struct {
 	UserEndpoint          string `mapstructure:"user_endpoint"`
 }
 
-// appConfig 应用基本配置
-type appConfig struct {
+// AppConfig 应用基本配置（导出供其他包使用）
+type AppConfig struct {
 	AppName           string `mapstructure:"app_name"`
 	Env               string `mapstructure:"env"`
 	Addr              string `mapstructure:"addr"`
@@ -106,8 +106,8 @@ type clickHouseConfig struct {
 	DialTimeout     int      `mapstructure:"dial_timeout"`
 }
 
-// redisConfig Redis配置
-type redisConfig struct {
+// RedisConfig Redis配置（导出供其他包使用）
+type RedisConfig struct {
 	Enabled      bool   `mapstructure:"enabled"`
 	Host         string `mapstructure:"host"`
 	Port         int    `mapstructure:"port"`
