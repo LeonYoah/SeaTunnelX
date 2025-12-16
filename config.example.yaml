@@ -1,0 +1,115 @@
+# Seatunnel 运维管理平台配置
+# 复制为 config.yaml 使用
+
+# 应用配置
+app:
+  app_name: "seatunnel-platform"
+  env: "development" # development, testing, production
+  addr: ":8000"
+  session_cookie_name: "seatunnel_session_id"
+  session_secret: "<uniq string>" # 首次启动后不可更改
+  session_domain: "localhost"
+  session_age: 86400
+  session_secure: false
+  session_http_only: true
+  api_prefix: "/api"
+
+# 项目配置
+projectApp:
+  hidden_threshold: 5
+  deduction_per_offense: 5
+  create_project_rate_limit:
+    - interval_seconds: 60
+      max_count: 1
+    - interval_seconds: 60
+      max_count: 3
+    - interval_seconds: 60
+      max_count: 5
+    - interval_seconds: 60
+      max_count: 10
+    - interval_seconds: 60
+      max_count: 20
+
+# 认证配置
+auth:
+  default_admin_username: "admin"
+  default_admin_password: "admin123"  # 首次启动时创建的默认管理员密码
+  bcrypt_cost: 10
+
+# OAuth2 配置（保留用于兼容，新部署可忽略）
+oauth2:
+  client_id: ""
+  client_secret: ""
+  redirect_uri: ""
+  authorization_endpoint: ""
+  token_endpoint: ""
+  user_endpoint: ""
+
+
+# 数据库配置
+database:
+  enabled: true
+  type: "sqlite"  # sqlite, mysql, postgres
+  sqlite_path: "./data/seatunnel.db"  # SQLite 文件路径
+  # MySQL/PostgreSQL 配置（使用 sqlite 时可忽略）
+  host: "127.0.0.1"
+  port: 3306
+  username: "root"
+  password: ""
+  database: "seatunnel"
+  max_idle_conn: 10
+  max_open_conn: 100
+  conn_max_lifetime: 3600
+  log_level: "info"  # error, warn, info, debug, silent
+
+# ClickHouse 配置
+clickhouse:
+  enabled: false
+  hosts:
+    - "127.0.0.1:9000"
+  username: "default"
+  password: ""
+  database: "seatunnel"
+  max_idle_conn: 10
+  max_open_conn: 100
+  conn_max_lifetime: 3600
+  dial_timeout: 5
+
+# Redis 配置（可选，禁用时使用内存存储会话）
+redis:
+  enabled: false  # 设为 false 使用内存存储
+  host: "127.0.0.1"
+  port: 6379
+  username: ""
+  password: ""
+  db: 0
+  pool_size: 100
+  min_idle_conn: 10
+  dial_timeout: 5
+  read_timeout: 3
+  write_timeout: 3
+
+# 日志配置
+log:
+  level: "info"  # debug, info, warn, error, fatal, panic
+  format: "json"  # text, json
+  output: "stdout"  # stdout, file
+  file_path: "./logs/app.log"
+  max_size: 100
+  max_age: 30
+  max_backups: 10
+  compress: true
+
+# 定时任务配置
+schedule:
+  user_badge_score_dispatch_interval_seconds: 1
+  update_user_badges_scores_task_cron: "0 2 * * *"
+  update_all_badges_task_cron: "0 1 * * *"
+
+# 工作线程配置
+worker:
+  concurrency: 50
+
+# LinuxDo 配置（保留用于兼容，新部署可忽略）
+linuxDo:
+  api_key: ""

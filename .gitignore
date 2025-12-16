@@ -1,0 +1,41 @@
+# IDE
+.idea
+.vscode
+.kiro
+.augment
+.cursor
+
+# logs
+logs
+*.log
+
+# config
+config.yaml
+
+# frontend
+frontend/build
+frontend/disk
+frontend/node_modules/*
+frontend/.next/*
+frontend/next-env.d.ts
+frontend/package-lock.json
+frontend/.env
+.env.*
+!.env.example
+*.tsbuildinfo
+
+# os
+.DS_Store
+Thumbs.db
+data/
+
+# build
+/build/
+/bin/
+/dist/
+
+# go workspace
+go.work
+go.work.sum
+cdk
+main
