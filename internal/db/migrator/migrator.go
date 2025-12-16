@@ -36,20 +36,36 @@ import (
 )
 
 func Migrate() {
-	if err := db.DB(context.Background()).AutoMigrate(
+	// 先初始化数据库连接
+	if err := db.InitDatabase(); err != nil {
+		log.Fatalf("[Database] 初始化数据库失败: %v\n", err)
+	}
+
+	// 检查数据库是否已初始化
+	if !db.IsDatabaseInitialized() {
+		log.Println("[Database] 数据库未启用，跳过迁移")
+		return
+	}
+
+	if err := db.GetDB(context.Background()).AutoMigrate(
 		&oauth.User{},
 		&project.Project{},
 		&project.ProjectItem{},
 		&project.ProjectTag{},
 		&project.ProjectReport{},
 	); err != nil {
-		log.Fatalf("[MySQL] auto migrate failed: %v\n", err)
+		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}
-	log.Printf("[MySQL] auto migrate success\n")
+	log.Printf("[Database] auto migrate success\n")
 
-	// 创建存储过程
-	if err := createStoredProcedures(); err != nil {
-		log.Fatalf("[MySQL] create stored procedures failed: %v\n", err)
+	// 创建存储过程（仅 MySQL 支持）
+	dbType := db.GetDatabaseType()
+	if dbType == "mysql" {
+		if err := createStoredProcedures(); err != nil {
+			log.Printf("[Database] create stored procedures failed (may not be supported): %v\n", err)
+		}
+	} else {
+		log.Printf("[Database] 跳过存储过程创建（当前数据库类型: %s）\n", dbType)
 	}
 }
 
@@ -70,7 +86,7 @@ func createStoredProcedures() error {
 	sqlContent = strings.Replace(sqlContent, "$$", ";", -1)
 
 	// 执行SQL语句
-	if err := db.DB(context.Background()).Exec(sqlContent).Error; err != nil {
+	if err := db.GetDB(context.Background()).Exec(sqlContent).Error; err != nil {
 		return err
 	}
 

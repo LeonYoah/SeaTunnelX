@@ -26,58 +26,27 @@ package db
 
 import (
 	"context"
-	"fmt"
-	"github.com/seatunnel/seatunnelX/internal/config"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/plugin/opentelemetry/tracing"
 	"log"
-	"time"
+
+	"gorm.io/gorm"
 )
 
 var (
 	db *gorm.DB
 )
 
+// init 函数已废弃，数据库初始化统一由 database.go 中的 InitDatabase() 处理
+// 保留此文件仅用于向后兼容，不再自动初始化 MySQL 连接
 func init() {
-	if !config.Config.Database.Enabled {
-		log.Println("[MySQL] is disabled, skipping MySQL initialization")
-		return
-	}
-
-	var err error
-
-	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		config.Config.Database.Username,
-		config.Config.Database.Password,
-		config.Config.Database.Host,
-		config.Config.Database.Port,
-		config.Config.Database.Database,
-	)
-	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
-	if err != nil {
-		log.Fatalf("[MySQL] init connection failed: %v\n", err)
-	}
-
-	// Trace 注入
-	if err := db.Use(tracing.NewPlugin(tracing.WithoutMetrics())); err != nil {
-		log.Fatalf("[MySQL] init trace failed: %v\n", err)
-	}
-
-	// 获取通用数据库对象
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatalf("[MySQL] load sql db failed: %v\n", err)
-	}
-
-	// 设置连接池参数
-	dbConfig := config.Config.Database
-	sqlDB.SetMaxIdleConns(dbConfig.MaxIdleConn)
-	sqlDB.SetMaxOpenConns(dbConfig.MaxOpenConn)
-	sqlDB.SetConnMaxLifetime(time.Duration(dbConfig.ConnMaxLifetime) * time.Second)
+	// 不再在 init 中自动初始化数据库
+	// 数据库初始化现在由 InitDatabase() 函数统一处理
+	// 该函数会根据配置文件中的 database.type 选择正确的数据库驱动
+	log.Println("[MySQL] init() 已废弃，数据库初始化由 InitDatabase() 统一处理")
 }
 
+// DB 函数已废弃，请使用 GetDB(ctx) 代替
+// 保留此函数仅用于向后兼容
 func DB(ctx context.Context) *gorm.DB {
-	return db.WithContext(ctx)
+	// 使用 database.go 中的统一数据库实例
+	return GetDB(ctx)
 }

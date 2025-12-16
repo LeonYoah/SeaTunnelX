@@ -31,6 +31,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
+	"github.com/seatunnel/seatunnelX/internal/db"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
 	"github.com/seatunnel/seatunnelX/internal/session"
 	swaggerFiles "github.com/swaggo/files"
@@ -44,6 +45,11 @@ func Serve() {
 	// 运行模式
 	if config.Config.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// 初始化数据库（根据配置自动选择 SQLite、MySQL 或 PostgreSQL）
+	if err := db.InitDatabase(); err != nil {
+		log.Fatalf("[API] 初始化数据库失败: %v\n", err)
 	}
 
 	// 初始化路由

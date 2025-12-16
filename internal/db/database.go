@@ -47,7 +47,14 @@ const (
 // InitDatabase 根据配置初始化数据库连接
 // 支持 SQLite、MySQL、PostgreSQL 三种数据库类型
 // 默认使用 SQLite
+// 此函数是幂等的，重复调用会跳过已初始化的数据库
 func InitDatabase() error {
+	// 如果已经初始化，直接返回
+	if globalDB != nil {
+		log.Println("[Database] 数据库已初始化，跳过重复初始化")
+		return nil
+	}
+
 	dbConfig := config.Config.Database
 
 	if !dbConfig.Enabled {
