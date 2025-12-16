@@ -54,8 +54,9 @@ type User struct {
 }
 
 // TableName 指定表名
+// 使用 auth_users 避免与 oauth.User 的 users 表冲突
 func (User) TableName() string {
-	return "users"
+	return "auth_users"
 }
 
 // SetPassword 设置用户密码
