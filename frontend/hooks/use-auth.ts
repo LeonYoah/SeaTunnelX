@@ -1,3 +1,19 @@
+/**
+ * Copyright 2024 Apache Software Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import {useState, useEffect, useCallback, useRef} from 'react';
 import services from '@/lib/services';
 import {BasicUserInfo} from '@/lib/services/core';
@@ -20,14 +36,18 @@ interface AuthState {
  * 认证Hook返回值
  */
 interface UseAuthReturn extends AuthState {
-  /** 执行登录 */
-  login: (redirectTo?: string) => Promise<void>;
+  /** 使用用户名密码登录（默认方式） */
+  loginWithCredentials: (username: string, password: string, redirectTo?: string) => Promise<void>;
+  /** 使用 OAuth 登录（备选方式） */
+  loginWithOAuth: (provider?: string, redirectTo?: string) => Promise<void>;
   /** 执行登出 */
   logout: (redirectTo?: string) => Promise<void>;
   /** 清除错误 */
   clearError: () => void;
   /** 检查认证状态 */
   checkAuthStatus: () => Promise<void>;
+  /** @deprecated 使用 loginWithOAuth 代替 */
+  login: (redirectTo?: string) => Promise<void>;
 }
 
 /** 缓存过期时间（毫秒） */
@@ -46,7 +66,7 @@ const userInfoCache: {
 
 /**
  * 用户认证状态管理Hook
- *
+ * 支持用户名密码登录（默认）和 OAuth 登录（备选）
  */
 export function useAuth(): UseAuthReturn {
   const [state, setState] = useState<AuthState>({
@@ -163,15 +183,21 @@ export function useAuth(): UseAuthReturn {
   }, []); // 避免循环依赖导致的重复请求
 
   /**
-   * 执行登录操作
+   * 使用用户名密码登录（默认登录方式）
+   * @param username - 用户名
+   * @param password - 密码
    * @param redirectTo - 登录成功后重定向的URL
    */
-  const login = useCallback(async (redirectTo?: string) => {
+  const loginWithCredentials = useCallback(async (
+    username: string,
+    password: string,
+    redirectTo?: string,
+  ) => {
     try {
       if (isMounted.current) {
         setState((prev) => ({...prev, isLoading: true, error: null}));
       }
-      await services.auth.login(redirectTo);
+      await services.auth.login({username, password}, redirectTo);
     } catch (error) {
       if (isMounted.current) {
         setState((prev) => ({
@@ -180,8 +206,41 @@ export function useAuth(): UseAuthReturn {
           error: error instanceof Error ? error.message : '登录失败',
         }));
       }
+      throw error;
     }
   }, []);
+
+  /**
+   * 使用 OAuth 登录（备选登录方式）
+   * @param provider - OAuth 提供商（如 'github', 'google'）
+   * @param redirectTo - 登录成功后重定向的URL
+   */
+  const loginWithOAuth = useCallback(async (provider?: string, redirectTo?: string) => {
+    try {
+      if (isMounted.current) {
+        setState((prev) => ({...prev, isLoading: true, error: null}));
+      }
+      await services.auth.loginWithOAuth(provider, redirectTo);
+    } catch (error) {
+      if (isMounted.current) {
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: error instanceof Error ? error.message : '登录失败',
+        }));
+      }
+      throw error;
+    }
+  }, []);
+
+  /**
+   * 执行 OAuth 登录操作（兼容旧API）
+   * @deprecated 请使用 loginWithOAuth
+   * @param redirectTo - 登录成功后重定向的URL
+   */
+  const login = useCallback(async (redirectTo?: string) => {
+    return loginWithOAuth(undefined, redirectTo);
+  }, [loginWithOAuth]);
 
   /**
    * 执行登出操作
@@ -250,6 +309,8 @@ export function useAuth(): UseAuthReturn {
     user: state.user,
     isLoading: state.isLoading,
     error: state.error,
+    loginWithCredentials,
+    loginWithOAuth,
     login,
     logout,
     clearError,

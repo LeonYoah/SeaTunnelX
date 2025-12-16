@@ -140,11 +140,65 @@ pnpm dev
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
 | `app.addr` | 后端服务监听地址 | `:8000` |
-| `oauth2.client_id` | OAuth2 客户端 ID | `your_client_id` |
-| `database.host` | MySQL 数据库地址 | `127.0.0.1` |
-| `redis.host` | Redis 服务器地址 | `127.0.0.1` |
+| `auth.default_admin_username` | 默认管理员用户名 | `admin` |
+| `auth.default_admin_password` | 默认管理员密码 | `admin123` |
+| `database.type` | 数据库类型 | `sqlite`, `mysql`, `postgres` |
+| `redis.enabled` | 是否启用 Redis | `true`, `false` |
 
 详细配置说明请参考 `config.example.yaml` 文件。
+
+### 🔐 OAuth 登录配置（可选）
+
+平台支持 GitHub 和 Google OAuth 登录作为备选登录方式。默认使用用户名密码登录。
+
+#### 获取 GitHub OAuth 凭证
+
+1. 登录 GitHub，访问 [Developer Settings](https://github.com/settings/developers)
+2. 点击 **"New OAuth App"**
+3. 填写应用信息：
+   - **Application name**: `SeaTunnel Platform`（可自定义）
+   - **Homepage URL**: `http://localhost:3000`
+   - **Authorization callback URL**: `http://localhost:3000/callback`
+4. 点击 **"Register application"**
+5. 创建后复制 **Client ID**
+6. 点击 **"Generate a new client secret"** 获取 **Client Secret**
+
+> 📖 详细教程：[GitHub OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-github-oauth2/)
+
+#### 获取 Google OAuth 凭证
+
+1. 访问 [Google Cloud Console](https://console.cloud.google.com/)
+2. 创建新项目或选择现有项目
+3. 左侧菜单 → **APIs & Services** → **Credentials**
+4. 点击 **"Create Credentials"** → **"OAuth client ID"**
+5. 如果首次配置，需要先设置 **OAuth consent screen**：
+   - 选择 **External**
+   - 填写应用名称、用户支持邮箱等基本信息
+6. 选择 **Application type**: **"Web application"**
+7. 添加 **Authorized redirect URIs**: `http://localhost:3000/callback`
+8. 创建后获得 **Client ID** 和 **Client Secret**
+
+> 📖 详细教程：[Google OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-google-oauth2/)
+
+#### 配置 OAuth 凭证
+
+在 `config.yaml` 中配置获取的凭证：
+
+```yaml
+oauth_providers:
+  github:
+    enabled: true
+    client_id: "你的 GitHub Client ID"
+    client_secret: "你的 GitHub Client Secret"
+    redirect_uri: "http://localhost:3000/callback"
+  google:
+    enabled: true
+    client_id: "你的 Google Client ID"
+    client_secret: "你的 Google Client Secret"
+    redirect_uri: "http://localhost:3000/callback"
+```
+
+> ⚠️ **注意**：如果不需要某个 OAuth 提供商，将 `enabled` 设为 `false` 即可。
 
 ## 🔧 开发指南
 

@@ -28,12 +28,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"time"
+
 	"github.com/hibiken/asynq"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 	"github.com/seatunnel/seatunnelX/internal/task"
 	"github.com/seatunnel/seatunnelX/internal/task/schedule"
-	"io"
-	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -99,7 +100,7 @@ func doOAuth(ctx context.Context, code string) (*User, error) {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	var userInfo OAuthUserInfo
+	var userInfo LinuxDoUserInfo
 	if err = json.Unmarshal(responseData, &userInfo); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err

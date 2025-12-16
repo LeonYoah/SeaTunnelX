@@ -18,17 +18,18 @@
 package config
 
 type configModel struct {
-	App        AppConfig        `mapstructure:"app"`
-	ProjectApp projectAppConfig `mapstructure:"projectApp"`
-	Auth       authConfig       `mapstructure:"auth"`
-	OAuth2     OAuth2Config     `mapstructure:"oauth2"`
-	Database   DatabaseConfig   `mapstructure:"database"`
-	Redis      RedisConfig      `mapstructure:"redis"`
-	Log        logConfig        `mapstructure:"log"`
-	Schedule   scheduleConfig   `mapstructure:"schedule"`
-	Worker     workerConfig     `mapstructure:"worker"`
-	ClickHouse clickHouseConfig `mapstructure:"clickhouse"`
-	LinuxDo    linuxDoConfig    `mapstructure:"linuxdo"`
+	App            AppConfig            `mapstructure:"app"`
+	ProjectApp     projectAppConfig     `mapstructure:"projectApp"`
+	Auth           authConfig           `mapstructure:"auth"`
+	OAuth2         OAuth2Config         `mapstructure:"oauth2"`
+	OAuthProviders OAuthProvidersConfig `mapstructure:"oauth_providers"`
+	Database       DatabaseConfig       `mapstructure:"database"`
+	Redis          RedisConfig          `mapstructure:"redis"`
+	Log            logConfig            `mapstructure:"log"`
+	Schedule       scheduleConfig       `mapstructure:"schedule"`
+	Worker         workerConfig         `mapstructure:"worker"`
+	ClickHouse     clickHouseConfig     `mapstructure:"clickhouse"`
+	LinuxDo        linuxDoConfig        `mapstructure:"linuxdo"`
 }
 
 // linuxDoConfig LinuxDo 配置（保留用于兼容）
@@ -36,7 +37,7 @@ type linuxDoConfig struct {
 	ApiKey string `mapstructure:"api_key"`
 }
 
-// OAuth2Config OAuth2认证配置（保留用于兼容）
+// OAuth2Config OAuth2认证配置（保留用于兼容旧配置）
 type OAuth2Config struct {
 	ClientID              string `mapstructure:"client_id"`
 	ClientSecret          string `mapstructure:"client_secret"`
@@ -44,6 +45,20 @@ type OAuth2Config struct {
 	AuthorizationEndpoint string `mapstructure:"authorization_endpoint"`
 	TokenEndpoint         string `mapstructure:"token_endpoint"`
 	UserEndpoint          string `mapstructure:"user_endpoint"`
+}
+
+// OAuthProviderConfig 单个 OAuth 提供商配置
+type OAuthProviderConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`
+	ClientID     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
+	RedirectURI  string `mapstructure:"redirect_uri"`
+}
+
+// OAuthProvidersConfig 多 OAuth 提供商配置
+type OAuthProvidersConfig struct {
+	GitHub OAuthProviderConfig `mapstructure:"github"`
+	Google OAuthProviderConfig `mapstructure:"google"`
 }
 
 // AppConfig 应用基本配置（导出供其他包使用）

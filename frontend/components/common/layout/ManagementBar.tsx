@@ -1,16 +1,18 @@
+'use client';
+
 import {useState, useEffect} from 'react';
+import {useTranslations} from 'next-intl';
 import {FloatingDock} from '@/components/ui/floating-dock';
 import {
-  MessageCircleIcon,
-  SendIcon,
   BarChartIcon,
   FolderIcon,
   ShoppingBag,
   PlusCircle,
-  Github,
-  ExternalLinkIcon,
   User,
   LogOutIcon,
+  Globe,
+  Check,
+  Github,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -27,39 +29,43 @@ import {
 } from '@/components/animate-ui/radix/dialog';
 import {Avatar, AvatarFallback, AvatarImage} from '@/components/ui/avatar';
 import {TrustLevel} from '@/lib/services/core';
+import {useLocale, locales, localeNames, Locale} from '@/lib/i18n';
 
 const IconOptions = {
   className: 'h-4 w-4',
 } as const;
 
-/**
- * 获取信任等级对应的文本描述
- */
-function getTrustLevelText(level: number): string {
-  switch (level) {
-    case TrustLevel.NEW_USER:
-      return '新用户';
-    case TrustLevel.BASIC_USER:
-      return '基本用户';
-    case TrustLevel.USER:
-      return '成员';
-    case TrustLevel.ACTIVE_USER:
-      return '活跃用户';
-    case TrustLevel.LEADER:
-      return '领导者';
-    default:
-      return '未知';
-  }
-}
-
 export function ManagementBar() {
   const themeUtils = useThemeUtils();
   const {user, isLoading, logout} = useAuth();
+  const {locale, setLocale} = useLocale();
   const [mounted, setMounted] = useState(false);
+  const t = useTranslations('profile');
+  const tDock = useTranslations('dock');
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  /**
+   * 获取信任等级对应的文本描述
+   */
+  const getTrustLevelText = (level: number): string => {
+    switch (level) {
+      case TrustLevel.NEW_USER:
+        return t('trustLevel.newUser');
+      case TrustLevel.BASIC_USER:
+        return t('trustLevel.basicUser');
+      case TrustLevel.USER:
+        return t('trustLevel.member');
+      case TrustLevel.ACTIVE_USER:
+        return t('trustLevel.activeUser');
+      case TrustLevel.LEADER:
+        return t('trustLevel.leader');
+      default:
+        return t('unknown');
+    }
+  };
 
   const handleLogout = () => {
     logout('/login').catch((error) => {
@@ -69,17 +75,17 @@ export function ManagementBar() {
 
   const dockItems = [
     {
-      title: '实时数据',
+      title: tDock('realTimeData'),
       icon: <BarChartIcon {...IconOptions} />,
       href: '/dashboard',
     },
     {
-      title: '我的项目',
+      title: tDock('myProjects'),
       icon: <FolderIcon {...IconOptions} />,
       href: '/project',
     },
     {
-      title: '我的领取',
+      title: tDock('myReceived'),
       icon: <ShoppingBag {...IconOptions} />,
       href: '/received',
     },
@@ -88,7 +94,7 @@ export function ManagementBar() {
       icon: <div />,
     },
     {
-      title: '快速创建',
+      title: tDock('quickCreate'),
       icon: <PlusCircle {...IconOptions} />,
       customComponent: (
         <CreateDialog>
@@ -99,7 +105,7 @@ export function ManagementBar() {
       ),
     },
     {
-      title: '个人信息',
+      title: tDock('profile'),
       icon: <User {...IconOptions} />,
       customComponent: (
         <Dialog>
@@ -110,7 +116,7 @@ export function ManagementBar() {
           </DialogTrigger>
           <DialogContent className='max-w-md'>
             <DialogHeader>
-              <DialogTitle>个人信息</DialogTitle>
+              <DialogTitle>{t('title')}</DialogTitle>
             </DialogHeader>
             <div className='space-y-4'>
               {!isLoading && user && (
@@ -140,9 +146,9 @@ export function ManagementBar() {
                           )}
                           <div className='text-xs text-muted-foreground mt-1 flex items-center gap-2'>
                             <span>
-                              {user.trust_level !== undefined
-                                ? getTrustLevelText(user.trust_level)
-                                : '未知'}
+                              {user.trust_level !== undefined ?
+                                getTrustLevelText(user.trust_level) :
+                                t('unknown')}
                             </span>
                             <span>•</span>
                             <span>{user.id}</span>
@@ -156,7 +162,7 @@ export function ManagementBar() {
                         className='shrink-0'
                       >
                         <LogOutIcon className='w-4 h-4 mr-1' />
-                        登出
+                        {t('logout')}
                       </Button>
                     </div>
                   </div>
@@ -165,7 +171,7 @@ export function ManagementBar() {
                   {user.score !== undefined && (
                     <div>
                       <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
-                        社区分数
+                        {t('communityScore')}
                       </h4>
                       <div className='text-lg font-bold text-primary flex items-center gap-2'>
                         <BarChartIcon className='h-4 w-4 text-primary' />
@@ -185,7 +191,7 @@ export function ManagementBar() {
               {mounted && (
                 <div>
                   <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
-                    主题设置
+                    {t('themeSettings')}
                   </h4>
                   <div className='flex items-center justify-between'>
                     <button
@@ -199,81 +205,83 @@ export function ManagementBar() {
                 </div>
               )}
 
+              {/* 语言设置 */}
+              {mounted && (
+                <div>
+                  <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
+                    {t('languageSettings')}
+                  </h4>
+                  <div className='flex items-center gap-2'>
+                    {locales.map((loc) => (
+                      <button
+                        key={loc}
+                        onClick={() => setLocale(loc as Locale)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
+                          locale === loc ?
+                            'bg-primary/10 text-primary border border-primary/30' :
+                            'bg-muted/50 hover:bg-muted/80'
+                        }`}
+                      >
+                        <Globe className='h-4 w-4' />
+                        <span className='text-sm'>{localeNames[loc as Locale]}</span>
+                        {locale === loc && <Check className='h-3 w-3' />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* 快速链接区域 */}
               <div>
                 <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
-                  快速链接
+                  {t('quickLinks')}
                 </h4>
                 <div className='grid grid-cols-2 gap-2'>
                   <Link
-                    href='https://linux.do'
+                    href='https://github.com/apache/seatunnel'
                     target='_blank'
                     rel='noopener noreferrer'
                     className='flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors group'
                   >
                     <div className='flex items-center justify-center w-8 h-8 rounded-md bg-orange-500/10 group-hover:bg-orange-500/20 transition-colors'>
-                      <ExternalLinkIcon className='h-4 w-4 text-orange-600' />
+                      <Github className='h-4 w-4 text-orange-600' />
                     </div>
-                    <span className='text-sm font-medium'>Linux Do 社区</span>
+                    <span className='text-sm font-medium'>{t('seatunnelRepo')}</span>
                   </Link>
                   <Link
-                    href='https://github.com/linux-do/cdk'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors group'
-                  >
-                    <div className='flex items-center justify-center w-8 h-8 rounded-md bg-gray-500/10 group-hover:bg-gray-500/20 transition-colors'>
-                      <Github className='h-4 w-4 text-gray-700 dark:text-gray-300' />
-                    </div>
-                    <span className='text-sm font-medium'>GitHub 仓库</span>
-                  </Link>
-                  <Link
-                    href='https://github.com/linux-do/cdk/issues/new/choose'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors group'
-                  >
-                    <div className='flex items-center justify-center w-8 h-8 rounded-md bg-green-500/10 group-hover:bg-green-500/20 transition-colors'>
-                      <MessageCircleIcon className='h-4 w-4 text-green-600' />
-                    </div>
-                    <span className='text-sm font-medium'>功能反馈</span>
-                  </Link>
-                  <Link
-                    href='https://t.me/linuxdocdk'
+                    href='https://github.com/LeonYoah/SeaTunnelX'
                     target='_blank'
                     rel='noopener noreferrer'
                     className='flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors group'
                   >
                     <div className='flex items-center justify-center w-8 h-8 rounded-md bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors'>
-                      <SendIcon className='h-4 w-4 text-blue-500' />
+                      <Github className='h-4 w-4 text-blue-600' />
                     </div>
-                    <span className='text-sm font-medium'>群组交流</span>
+                    <span className='text-sm font-medium'>{t('seatunnelXRepo')}</span>
                   </Link>
                 </div>
               </div>
 
               <div>
                 <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
-                  关于 LINUX DO CDK
+                  {t('about')}
                 </h4>
                 <div className='space-y-2'>
                   <div className='text-xs text-muted-foreground font-light'>
-                    版本: 1.1.0
+                    {t('version')}: 1.1.0
                   </div>
                   <div className='text-xs text-muted-foreground font-light'>
-                    构建时间: 2025-09-27
+                    {t('buildTime')}: 2025-09-27
                   </div>
                   <div className='text-xs text-muted-foreground font-light'>
-                    LINUX DO CDK 是一个为 Linux Do
-                    社区打造的内容分发工具平台，旨在提供快速、安全、便捷的 CDK
-                    分享服务。平台支持多种分发方式，具备完善的用户权限管理和风险控制机制。
+                    {t('description')}
                   </div>
                 </div>
               </div>
 
               {!isLoading && !user && (
                 <div className='text-center text-muted-foreground'>
-                  未登录用户
+                  {t('notLoggedIn')}
                 </div>
               )}
             </div>

@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/seatunnel/seatunnelX/docs"
 	"github.com/seatunnel/seatunnelX/internal/apps/admin"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
@@ -62,6 +63,9 @@ func Serve() {
 	}
 	r.Use(sessions.Sessions(config.Config.App.SessionCookieName, session.GinStore))
 
+	// 初始化 OAuth 提供商（GitHub、Google）
+	oauth.InitOAuthProviders()
+
 	// 补充中间件
 	r.Use(otelgin.Middleware(config.Config.App.AppName), loggerMiddleware())
 
@@ -78,15 +82,19 @@ func Serve() {
 			// Health
 			apiV1Router.GET("/health", health.Health)
 
-			// OAuth
+			// Auth（统一认证接口，支持密码登录和 OAuth 登录）
+			apiV1Router.POST("/auth/login", auth.Login)
+			apiV1Router.POST("/auth/logout", auth.LoginRequired(), auth.Logout)
+			apiV1Router.GET("/auth/user-info", auth.LoginRequired(), auth.GetUserInfo)
+
+			// OAuth（备选登录方式：GitHub、Google）
+			apiV1Router.GET("/oauth/providers", oauth.GetEnabledProvidersHandler)
 			apiV1Router.GET("/oauth/login", oauth.GetLoginURL)
-			apiV1Router.GET("/oauth/logout", oauth.LoginRequired(), oauth.Logout)
 			apiV1Router.POST("/oauth/callback", oauth.Callback)
-			apiV1Router.GET("/oauth/user-info", oauth.LoginRequired(), oauth.UserInfo)
 
 			// Project
 			projectRouter := apiV1Router.Group("/projects")
-			projectRouter.Use(oauth.LoginRequired())
+			projectRouter.Use(auth.LoginRequired())
 			{
 				projectRouter.GET("/mine", project.ListMyProjects)
 				projectRouter.GET("", project.ListProjects)
@@ -102,21 +110,21 @@ func Serve() {
 
 			// Tag
 			tagRouter := apiV1Router.Group("/tags")
-			tagRouter.Use(oauth.LoginRequired())
+			tagRouter.Use(auth.LoginRequired())
 			{
 				tagRouter.GET("", project.ListTags)
 			}
 
 			// Dashboard
 			dashboardRouter := apiV1Router.Group("/dashboard")
-			dashboardRouter.Use(oauth.LoginRequired())
+			dashboardRouter.Use(auth.LoginRequired())
 			{
 				dashboardRouter.GET("/stats/all", dashboard.GetAllStats)
 			}
 
 			// Admin
 			adminRouter := apiV1Router.Group("/admin")
-			adminRouter.Use(oauth.LoginRequired(), admin.LoginAdminRequired())
+			adminRouter.Use(auth.LoginRequired(), admin.LoginAdminRequired())
 			{
 				// Project
 				projectAdminRouter := adminRouter.Group("/projects")

@@ -1,7 +1,24 @@
 'use client';
 
+/**
+ * Copyright 2024 Apache Software Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import {useEffect, useState} from 'react';
 import {useRouter, useSearchParams} from 'next/navigation';
+import {useTranslations} from 'next-intl';
 import {LiquidButton} from '@/components/animate-ui/buttons/liquid';
 import {GalleryVerticalEnd, CheckCircle2, AlertCircle} from 'lucide-react';
 import services from '@/lib/services';
@@ -14,10 +31,12 @@ export type CallbackHandlerProps = React.ComponentProps<'div'>;
 
 /**
  * OAuth回调处理组件
+ * 处理OAuth登录回调，显示验证状态
  */
 export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const t = useTranslations('auth.callback');
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>(
     'loading',
   );
@@ -34,11 +53,11 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
         const errorParam = searchParams.get('error');
 
         if (errorParam) {
-          throw new Error(`OAuth认证失败: ${errorParam}`);
+          throw new Error(`${t('oauthFailed')}: ${errorParam}`);
         }
 
         if (!state || !code) {
-          throw new Error('缺少必要的认证参数');
+          throw new Error(t('missingParams'));
         }
 
         await services.auth.handleCallback({state, code});
@@ -56,11 +75,11 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
       } catch (err) {
         console.error('回调处理错误:', err);
 
-        let errorMessage = '登录处理失败';
+        let errorMessage = t('processingFailed');
 
         if (err instanceof Error) {
           if (err.message.includes('redis: nil')) {
-            errorMessage = '登录会话已过期，请重新登录';
+            errorMessage = t('sessionExpired') || '登录会话已过期，请重新登录';
           } else {
             errorMessage = err.message;
           }
@@ -72,7 +91,7 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
     };
 
     handleCallback();
-  }, [searchParams]);
+  }, [searchParams, t]);
 
   return (
     <div className='fixed inset-0 flex items-center justify-center w-full h-screen overflow-hidden'>
@@ -88,21 +107,21 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
             <div className='flex size-8 items-center justify-center rounded-md'>
               <GalleryVerticalEnd className='size-6' />
             </div>
-            <h1 className='text-xl font-bold'>欢迎使用 LINUX DO CDK</h1>
+            <h1 className='text-xl font-bold'>{t('title')}</h1>
           </div>
           <div className='flex flex-col items-center gap-4'>
             {status === 'loading' && (
               <div className='flex flex-col items-center gap-4 w-full max-w-sm'>
                 <div className='w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin' />
                 <div className='text-center space-y-2'>
-                  <h2 className='text-lg font-medium'>正在验证</h2>
+                  <h2 className='text-lg font-medium'>{t('verifying')}</h2>
                 </div>
               </div>
             )}
             {status === 'success' && (
               <div className='flex flex-col items-center gap-3'>
                 <CheckCircle2 className='h-8 w-8 text-green-500' />
-                <h2 className='text-lg font-medium text-green-500'>验证成功</h2>
+                <h2 className='text-lg font-medium text-green-500'>{t('success')}</h2>
               </div>
             )}
             {status === 'error' && (
@@ -110,13 +129,13 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
                 <AlertCircle className='h-8 w-8 text-destructive' />
                 <div className='text-center space-y-3 w-full'>
                   <h2 className='text-md font-medium text-destructive'>
-                    验证失败 ｜{error}
+                    {t('failed')} ｜{error}
                   </h2>
                   <LiquidButton
                     className='w-full mt-4'
                     onClick={() => router.push('/login')}
                   >
-                    重新登录
+                    {t('retryLogin')}
                   </LiquidButton>
                 </div>
               </div>
@@ -125,7 +144,7 @@ export function CallbackHandler({className, ...props}: CallbackHandlerProps) {
         </div>
         <div className='text-muted-foreground text-center text-xs text-balance'>
           <span className='[&_a]:underline [&_a]:underline-offset-4 [&_a:hover]:text-primary'>
-            LINUX DO CDK - 让资源共享更简单.
+            {t('footer')}
           </span>
         </div>
       </div>

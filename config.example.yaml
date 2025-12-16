@@ -36,7 +36,7 @@ auth:
   default_admin_password: "admin123"  # 首次启动时创建的默认管理员密码
   bcrypt_cost: 10
 
-# OAuth2 配置（保留用于兼容，新部署可忽略）
+# OAuth2 配置（保留用于兼容旧配置，新部署可忽略）
 oauth2:
   client_id: ""
   client_secret: ""
@@ -44,6 +44,34 @@ oauth2:
   authorization_endpoint: ""
   token_endpoint: ""
   user_endpoint: ""
+
+# OAuth 提供商配置（GitHub 和 Google）
+# 用于第三方登录，作为用户名密码登录的备选方式
+# 获取凭证教程：
+#   GitHub: https://apifox.com/apiskills/how-to-use-github-oauth2/
+#   Google: https://apifox.com/apiskills/how-to-use-google-oauth2/
+oauth_providers:
+  # GitHub OAuth 配置
+  # 1. 访问 https://github.com/settings/developers
+  # 2. 点击 "New OAuth App"
+  # 3. 填写 Application name, Homepage URL, Authorization callback URL
+  # 4. 获取 Client ID 和 Client Secret
+  github:
+    enabled: false  # 设为 true 启用 GitHub 登录
+    client_id: ""   # GitHub OAuth App 的 Client ID
+    client_secret: ""  # GitHub OAuth App 的 Client Secret
+    redirect_uri: "http://localhost:3000/callback"  # 回调地址，需与 GitHub 配置一致
+  # Google OAuth 配置
+  # 1. 访问 https://console.cloud.google.com/
+  # 2. 创建项目 → APIs & Services → Credentials
+  # 3. Create Credentials → OAuth client ID
+  # 4. 配置 OAuth consent screen 和 Authorized redirect URIs
+  # 5. 获取 Client ID 和 Client Secret
+  google:
+    enabled: false  # 设为 true 启用 Google 登录
+    client_id: ""   # Google OAuth 的 Client ID
+    client_secret: ""  # Google OAuth 的 Client Secret
+    redirect_uri: "http://localhost:3000/callback"  # 回调地址，需与 Google 配置一致
 
 
 # 数据库配置

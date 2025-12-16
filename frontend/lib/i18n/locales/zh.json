@@ -46,6 +46,17 @@
       "loginFailed": "登录失败，请重试",
       "sessionExpired": "会话已过期，请重新登录",
       "unauthorized": "未授权访问"
+    },
+    "callback": {
+      "title": "欢迎使用 SeaTunnel 一站式运维管理平台",
+      "verifying": "正在验证",
+      "success": "验证成功",
+      "failed": "验证失败",
+      "retryLogin": "重新登录",
+      "oauthFailed": "OAuth认证失败",
+      "missingParams": "缺少必要的认证参数",
+      "processingFailed": "登录处理失败",
+      "footer": "SeaTunnel 一站式运维管理平台 - 让数据集成更简单"
     }
   },
   "terms": {
@@ -172,5 +183,35 @@
     "settings": "设置",
     "profile": "个人资料",
     "logout": "登出"
+  },
+  "profile": {
+    "title": "个人信息",
+    "logout": "登出",
+    "notLoggedIn": "未登录用户",
+    "unknown": "未知",
+    "communityScore": "社区分数",
+    "themeSettings": "主题设置",
+    "languageSettings": "语言设置",
+    "quickLinks": "快速链接",
+    "seatunnelRepo": "SeaTunnel 仓库",
+    "seatunnelXRepo": "SeaTunnelX 仓库",
+    "about": "关于 SeaTunnelX",
+    "version": "版本",
+    "buildTime": "构建时间",
+    "description": "SeaTunnelX 是一个为数据集成打造的一站式运维管理平台，旨在提供快速、安全、便捷的数据同步服务。平台支持多种数据源，具备完善的任务管理和监控机制。",
+    "trustLevel": {
+      "newUser": "新用户",
+      "basicUser": "基本用户",
+      "member": "成员",
+      "activeUser": "活跃用户",
+      "leader": "领导者"
+    }
+  },
+  "dock": {
+    "realTimeData": "实时数据",
+    "myProjects": "我的项目",
+    "myReceived": "我的领取",
+    "quickCreate": "快速创建",
+    "profile": "个人信息"
   }
 }

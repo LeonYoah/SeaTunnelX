@@ -40,12 +40,14 @@ var (
 const DefaultBcryptCost = 10
 
 // User 用户模型
-// 用于存储系统用户信息，支持用户名密码认证
+// 用于存储系统用户信息，支持用户名密码认证和 OAuth 认证
 type User struct {
 	ID           uint64    `json:"id" gorm:"primaryKey;autoIncrement"`
 	Username     string    `json:"username" gorm:"size:255;unique;not null"`
-	PasswordHash string    `json:"-" gorm:"column:password_hash;size:255;not null"` // 密码哈希，JSON 序列化时忽略
+	PasswordHash string    `json:"-" gorm:"column:password_hash;size:255"` // 密码哈希，OAuth 用户可为空
 	Nickname     string    `json:"nickname" gorm:"size:255"`
+	AvatarURL    string    `json:"avatar_url" gorm:"column:avatar_url;size:255"` // 头像 URL
+	OAuthID      string    `json:"oauth_id" gorm:"size:255;index"`               // OAuth 提供商 ID，格式: provider:id
 	IsActive     bool      `json:"is_active" gorm:"default:true"`
 	IsAdmin      bool      `json:"is_admin" gorm:"default:false"`
 	LastLoginAt  time.Time `json:"last_login_at"`
@@ -147,6 +149,7 @@ type UserInfo struct {
 	ID          uint64    `json:"id"`
 	Username    string    `json:"username"`
 	Nickname    string    `json:"nickname"`
+	AvatarURL   string    `json:"avatar_url"`
 	IsActive    bool      `json:"is_active"`
 	IsAdmin     bool      `json:"is_admin"`
 	LastLoginAt time.Time `json:"last_login_at"`
@@ -159,9 +162,22 @@ func (u *User) ToUserInfo() *UserInfo {
 		ID:          u.ID,
 		Username:    u.Username,
 		Nickname:    u.Nickname,
+		AvatarURL:   u.AvatarURL,
 		IsActive:    u.IsActive,
 		IsAdmin:     u.IsAdmin,
 		LastLoginAt: u.LastLoginAt,
 		CreatedAt:   u.CreatedAt,
 	}
+}
+
+// FindByOAuthID 根据 OAuth ID 查找用户
+func FindByOAuthID(db *gorm.DB, oauthID string) (*User, error) {
+	var user User
+	if err := db.Where("oauth_id = ?", oauthID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
 }

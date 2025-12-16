@@ -30,7 +30,8 @@ import (
 	"gorm.io/gorm"
 )
 
-type OAuthUserInfo struct {
+// LegacyOAuthUserInfo 旧版 OAuth 用户信息（保留用于兼容旧数据）
+type LegacyOAuthUserInfo struct {
 	Id         uint64     `json:"id"`
 	Username   string     `json:"username"`
 	Name       string     `json:"name"`
@@ -44,6 +45,7 @@ type User struct {
 	Username       string     `json:"username" gorm:"size:255;unique"`
 	Nickname       string     `json:"nickname" gorm:"size:255"`
 	AvatarUrl      string     `json:"avatar_url" gorm:"size:255"`
+	OAuthID        string     `json:"oauth_id" gorm:"size:255;index"` // OAuth 提供商 ID，格式: provider:id
 	IsActive       bool       `json:"is_active" gorm:"default:true"`
 	TrustLevel     TrustLevel `json:"trust_level"`
 	Score          int8       `json:"score"`

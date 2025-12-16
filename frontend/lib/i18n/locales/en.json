@@ -46,6 +46,17 @@
       "loginFailed": "Login failed, please try again",
       "sessionExpired": "Session expired, please login again",
       "unauthorized": "Unauthorized access"
+    },
+    "callback": {
+      "title": "Welcome to SeaTunnel Operations Platform",
+      "verifying": "Verifying",
+      "success": "Verification successful",
+      "failed": "Verification failed",
+      "retryLogin": "Login again",
+      "oauthFailed": "OAuth authentication failed",
+      "missingParams": "Missing required authentication parameters",
+      "processingFailed": "Login processing failed",
+      "footer": "SeaTunnel Operations Platform - Making data integration easier"
     }
   },
   "terms": {
@@ -172,5 +183,35 @@
     "settings": "Settings",
     "profile": "Profile",
     "logout": "Logout"
+  },
+  "profile": {
+    "title": "Profile",
+    "logout": "Logout",
+    "notLoggedIn": "Not logged in",
+    "unknown": "Unknown",
+    "communityScore": "Community Score",
+    "themeSettings": "Theme Settings",
+    "languageSettings": "Language Settings",
+    "quickLinks": "Quick Links",
+    "seatunnelRepo": "SeaTunnel Repo",
+    "seatunnelXRepo": "SeaTunnelX Repo",
+    "about": "About SeaTunnelX",
+    "version": "Version",
+    "buildTime": "Build Time",
+    "description": "SeaTunnelX is a one-stop operations platform for data integration, providing fast, secure, and convenient data synchronization services. The platform supports multiple data sources with comprehensive task management and monitoring capabilities.",
+    "trustLevel": {
+      "newUser": "New User",
+      "basicUser": "Basic User",
+      "member": "Member",
+      "activeUser": "Active User",
+      "leader": "Leader"
+    }
+  },
+  "dock": {
+    "realTimeData": "Real-time Data",
+    "myProjects": "My Projects",
+    "myReceived": "My Received",
+    "quickCreate": "Quick Create",
+    "profile": "Profile"
   }
 }
