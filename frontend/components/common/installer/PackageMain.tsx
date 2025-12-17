@@ -17,7 +17,7 @@ import { useTranslations } from 'next-intl';
 
 export function PackageMain() {
   const t = useTranslations();
-  const { packages, loading, error, refresh, uploadPackage, deletePackage } = usePackages();
+  const { packages, loading, error, refresh, uploadPackage, deletePackage, startDownload, downloads } = usePackages();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'online' | 'local'>('online');
 
@@ -29,6 +29,15 @@ export function PackageMain() {
   const handleDelete = async (version: string) => {
     if (confirm(t('installer.confirmDeletePackage', { version }))) {
       await deletePackage(version);
+    }
+  };
+
+  const handleDownload = async (version: string, mirror: 'aliyun' | 'apache' | 'huaweicloud') => {
+    try {
+      await startDownload(version, mirror);
+    } catch (err) {
+      // Error is handled by the hook / 错误由 hook 处理
+      console.error('Download failed:', err);
     }
   };
 
@@ -133,6 +142,8 @@ export function PackageMain() {
                 versions={packages?.versions || []}
                 recommendedVersion={packages?.recommended_version}
                 loading={loading}
+                onDownload={handleDownload}
+                downloads={downloads}
               />
             </CardContent>
           </Card>

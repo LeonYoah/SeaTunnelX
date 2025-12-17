@@ -5,9 +5,6 @@ import {useTranslations} from 'next-intl';
 import {FloatingDock} from '@/components/ui/floating-dock';
 import {
   BarChartIcon,
-  FolderIcon,
-  ShoppingBag,
-  PlusCircle,
   User,
   LogOutIcon,
   Globe,
@@ -22,7 +19,6 @@ import {
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
-import {CreateDialog} from '@/components/common/project/CreateDialog';
 import {CountingNumber} from '@/components/animate-ui/text/counting-number';
 import {Button} from '@/components/ui/button';
 import Link from 'next/link';
@@ -44,10 +40,6 @@ const IconOptions = {
 // 预创建静态图标，避免每次渲染重新创建
 // Pre-create static icons to avoid re-creating on each render
 const StaticIcons = {
-  barChart: <BarChartIcon {...IconOptions} />,
-  folder: <FolderIcon {...IconOptions} />,
-  shoppingBag: <ShoppingBag {...IconOptions} />,
-  plusCircle: <PlusCircle {...IconOptions} />,
   user: <User {...IconOptions} />,
   users: <Users {...IconOptions} />,
   server: <Server {...IconOptions} />,
@@ -58,15 +50,7 @@ const StaticIcons = {
   divider: <div />,
 };
 
-// 快速创建按钮 - 独立组件避免重复渲染
-const QuickCreateButton = memo(() => (
-  <CreateDialog>
-    <div className='w-full h-full flex items-center justify-center cursor-pointer rounded transition-colors'>
-      <PlusCircle className='h-4 w-4' />
-    </div>
-  </CreateDialog>
-));
-QuickCreateButton.displayName = 'QuickCreateButton';
+
 
 // 个人信息按钮 - 独立组件
 const ProfileButton = memo(() => {
@@ -303,23 +287,7 @@ export function ManagementBar() {
 
   // 使用 useMemo 缓存 dockItems，只在关键依赖变化时重新计算
   const dockItems = useMemo((): DockItem[] => {
-    const items: DockItem[] = [
-      {
-        title: tDock('realTimeData'),
-        icon: StaticIcons.barChart,
-        href: '/dashboard',
-      },
-      {
-        title: tDock('myProjects'),
-        icon: StaticIcons.folder,
-        href: '/project',
-      },
-      {
-        title: tDock('myReceived'),
-        icon: StaticIcons.shoppingBag,
-        href: '/received',
-      },
-    ];
+    const items: DockItem[] = [];
 
     // 主机管理入口 / Host management entry
     items.push({
@@ -369,13 +337,6 @@ export function ManagementBar() {
     items.push({
       title: 'divider',
       icon: StaticIcons.divider,
-    });
-
-    // 快速创建
-    items.push({
-      title: tDock('quickCreate'),
-      icon: StaticIcons.plusCircle,
-      customComponent: <QuickCreateButton />,
     });
 
     // 个人信息

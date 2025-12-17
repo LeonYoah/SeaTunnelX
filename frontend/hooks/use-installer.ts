@@ -22,6 +22,7 @@ import type {
   JVMConfig,
   CheckpointConfig,
   ConnectorConfig,
+  DownloadTask,
 } from '@/lib/services/installer/types';
 
 // ==================== usePackages Hook ====================
@@ -33,6 +34,9 @@ interface UsePackagesReturn {
   refresh: () => Promise<void>;
   uploadPackage: (file: File, version: string) => Promise<PackageInfo>;
   deletePackage: (version: string) => Promise<void>;
+  startDownload: (version: string, mirror?: MirrorSource) => Promise<DownloadTask>;
+  downloads: DownloadTask[];
+  refreshDownloads: () => Promise<void>;
 }
 
 /**
@@ -41,8 +45,10 @@ interface UsePackagesReturn {
  */
 export function usePackages(): UsePackagesReturn {
   const [packages, setPackages] = useState<AvailableVersions | null>(null);
+  const [downloads, setDownloads] = useState<DownloadTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchPackages = useCallback(async () => {
     try {
@@ -57,9 +63,54 @@ export function usePackages(): UsePackagesReturn {
     }
   }, []);
 
+  const fetchDownloads = useCallback(async () => {
+    try {
+      const data = await installerService.listDownloads();
+      setDownloads(data);
+      
+      // Check if any download is in progress / 检查是否有下载正在进行
+      const hasActiveDownload = data.some(
+        (d) => d.status === 'downloading' || d.status === 'pending'
+      );
+      
+      // Start or stop polling based on active downloads / 根据活动下载启动或停止轮询
+      if (hasActiveDownload && !pollingRef.current) {
+        pollingRef.current = setInterval(async () => {
+          const updated = await installerService.listDownloads();
+          setDownloads(updated);
+          
+          // Check if download completed, refresh packages / 检查下载是否完成，刷新安装包列表
+          const stillActive = updated.some(
+            (d) => d.status === 'downloading' || d.status === 'pending'
+          );
+          if (!stillActive) {
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current);
+              pollingRef.current = null;
+            }
+            // Refresh packages after download completes / 下载完成后刷新安装包列表
+            fetchPackages();
+          }
+        }, 1000);
+      } else if (!hasActiveDownload && pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    } catch (err) {
+      // Ignore errors for download list / 忽略下载列表的错误
+    }
+  }, [fetchPackages]);
+
   useEffect(() => {
     fetchPackages();
-  }, [fetchPackages]);
+    fetchDownloads();
+    
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+    };
+  }, [fetchPackages, fetchDownloads]);
 
   const uploadPackage = useCallback(async (file: File, version: string) => {
     const result = await installerService.uploadPackage(file, version);
@@ -72,6 +123,12 @@ export function usePackages(): UsePackagesReturn {
     await fetchPackages(); // Refresh list after delete
   }, [fetchPackages]);
 
+  const startDownload = useCallback(async (version: string, mirror?: MirrorSource) => {
+    const task = await installerService.startDownload(version, mirror);
+    await fetchDownloads(); // Start polling
+    return task;
+  }, [fetchDownloads]);
+
   return {
     packages,
     loading,
@@ -79,6 +136,9 @@ export function usePackages(): UsePackagesReturn {
     refresh: fetchPackages,
     uploadPackage,
     deletePackage,
+    startDownload,
+    downloads,
+    refreshDownloads: fetchDownloads,
   };
 }
 

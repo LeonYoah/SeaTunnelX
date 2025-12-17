@@ -17,6 +17,11 @@ import type {
   DeletePackageResponse,
   PrecheckResponse,
   InstallResponse,
+  DownloadTask,
+  DownloadRequest,
+  DownloadResponse,
+  DownloadListResponse,
+  MirrorSource,
 } from './types';
 
 const API_PREFIX = '/api/v1';
@@ -173,6 +178,67 @@ export async function cancelInstallation(hostId: number | string): Promise<Insta
   return response.data.data!;
 }
 
+// ==================== Package Download 安装包下载 ====================
+
+/**
+ * Start downloading a package to server
+ * 开始下载安装包到服务器
+ */
+export async function startDownload(version: string, mirror?: MirrorSource): Promise<DownloadTask> {
+  const request: DownloadRequest = { version, mirror };
+  const response = await apiClient.post<DownloadResponse>(
+    `${API_PREFIX}/packages/download`,
+    request
+  );
+  if (response.data.error_msg && !response.data.data) {
+    throw new Error(response.data.error_msg);
+  }
+  return response.data.data!;
+}
+
+/**
+ * Get download status for a version
+ * 获取某版本的下载状态
+ */
+export async function getDownloadStatus(version: string): Promise<DownloadTask> {
+  const response = await apiClient.get<DownloadResponse>(
+    `${API_PREFIX}/packages/download/${version}`
+  );
+  if (response.data.error_msg) {
+    throw new Error(response.data.error_msg);
+  }
+  return response.data.data!;
+}
+
+/**
+ * Cancel a download
+ * 取消下载
+ */
+export async function cancelDownload(version: string): Promise<DownloadTask> {
+  const response = await apiClient.post<DownloadResponse>(
+    `${API_PREFIX}/packages/download/${version}/cancel`,
+    {}
+  );
+  if (response.data.error_msg) {
+    throw new Error(response.data.error_msg);
+  }
+  return response.data.data!;
+}
+
+/**
+ * List all download tasks
+ * 获取所有下载任务
+ */
+export async function listDownloads(): Promise<DownloadTask[]> {
+  const response = await apiClient.get<DownloadListResponse>(
+    `${API_PREFIX}/packages/downloads`
+  );
+  if (response.data.error_msg) {
+    throw new Error(response.data.error_msg);
+  }
+  return response.data.data || [];
+}
+
 // ==================== Export all functions 导出所有函数 ====================
 
 export const installerService = {
@@ -181,6 +247,11 @@ export const installerService = {
   getPackageInfo,
   uploadPackage,
   deletePackage,
+  // Package download / 安装包下载
+  startDownload,
+  getDownloadStatus,
+  cancelDownload,
+  listDownloads,
   // Precheck / 预检查
   runPrecheck,
   // Installation / 安装

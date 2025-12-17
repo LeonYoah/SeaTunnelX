@@ -35,7 +35,9 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/installer"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
+	"github.com/seatunnel/seatunnelX/internal/apps/plugin"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
+	"github.com/seatunnel/seatunnelX/internal/apps/task"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
@@ -275,7 +277,104 @@ func Serve() {
 				// DELETE /api/v1/packages/:version - 删除本地安装包
 				// DELETE /api/v1/packages/:version - Delete local package
 				packageRouter.DELETE("/:version", installerHandler.DeletePackage)
+
+				// POST /api/v1/packages/download - 开始下载安装包到服务器
+				// POST /api/v1/packages/download - Start downloading package to server
+				packageRouter.POST("/download", installerHandler.StartDownload)
+
+				// GET /api/v1/packages/downloads - 获取所有下载任务
+				// GET /api/v1/packages/downloads - List all download tasks
+				packageRouter.GET("/downloads", installerHandler.ListDownloads)
+
+				// GET /api/v1/packages/download/:version - 获取下载状态
+				// GET /api/v1/packages/download/:version - Get download status
+				packageRouter.GET("/download/:version", installerHandler.GetDownloadStatus)
+
+				// POST /api/v1/packages/download/:version/cancel - 取消下载
+				// POST /api/v1/packages/download/:version/cancel - Cancel download
+				packageRouter.POST("/download/:version/cancel", installerHandler.CancelDownload)
 			}
+
+			// Task 任务管理
+			// Initialize task manager and handler
+			// 初始化任务管理器和处理器
+			taskManager := task.NewManager()
+			taskHandler := task.NewHandler(taskManager)
+
+			// Task management routes 任务管理路由
+			taskRouter := apiV1Router.Group("/tasks")
+			taskRouter.Use(auth.LoginRequired())
+			{
+				// POST /api/v1/tasks - 创建任务
+				// POST /api/v1/tasks - Create task
+				taskRouter.POST("", taskHandler.CreateTask)
+
+				// GET /api/v1/tasks - 获取任务列表
+				// GET /api/v1/tasks - List tasks
+				taskRouter.GET("", taskHandler.ListTasks)
+
+				// GET /api/v1/tasks/:id - 获取任务详情
+				// GET /api/v1/tasks/:id - Get task details
+				taskRouter.GET("/:id", taskHandler.GetTask)
+
+				// POST /api/v1/tasks/:id/start - 开始执行任务
+				// POST /api/v1/tasks/:id/start - Start task
+				taskRouter.POST("/:id/start", taskHandler.StartTask)
+
+				// POST /api/v1/tasks/:id/cancel - 取消任务
+				// POST /api/v1/tasks/:id/cancel - Cancel task
+				taskRouter.POST("/:id/cancel", taskHandler.CancelTask)
+
+				// POST /api/v1/tasks/:id/retry - 重试任务
+				// POST /api/v1/tasks/:id/retry - Retry task
+				taskRouter.POST("/:id/retry", taskHandler.RetryTask)
+			}
+
+			// Host tasks route 主机任务路由
+			// GET /api/v1/hosts/:id/tasks - 获取主机任务列表
+			// GET /api/v1/hosts/:id/tasks - List host tasks
+			hostRouter.GET("/:id/tasks", taskHandler.ListHostTasks)
+
+			// Plugin 插件市场管理
+			// Initialize plugin repository, service and handler
+			// 初始化插件仓库、服务和处理器
+			pluginRepo := plugin.NewRepository(db.DB(context.Background()))
+			pluginService := plugin.NewService(pluginRepo)
+			pluginHandler := plugin.NewHandler(pluginService)
+
+			// Plugin marketplace routes 插件市场路由
+			pluginRouter := apiV1Router.Group("/plugins")
+			pluginRouter.Use(auth.LoginRequired())
+			{
+				// GET /api/v1/plugins - 获取可用插件列表
+				// GET /api/v1/plugins - List available plugins
+				pluginRouter.GET("", pluginHandler.ListAvailablePlugins)
+
+				// GET /api/v1/plugins/:name - 获取插件详情
+				// GET /api/v1/plugins/:name - Get plugin info
+				pluginRouter.GET("/:name", pluginHandler.GetPluginInfo)
+			}
+
+			// Host plugin routes 主机插件路由
+			// GET /api/v1/hosts/:id/plugins - 获取主机已安装插件
+			// GET /api/v1/hosts/:id/plugins - Get host installed plugins
+			hostRouter.GET("/:id/plugins", pluginHandler.ListInstalledPlugins)
+
+			// POST /api/v1/hosts/:id/plugins - 安装插件到主机
+			// POST /api/v1/hosts/:id/plugins - Install plugin to host
+			hostRouter.POST("/:id/plugins", pluginHandler.InstallPlugin)
+
+			// DELETE /api/v1/hosts/:id/plugins/:name - 卸载插件
+			// DELETE /api/v1/hosts/:id/plugins/:name - Uninstall plugin
+			hostRouter.DELETE("/:id/plugins/:name", pluginHandler.UninstallPlugin)
+
+			// PUT /api/v1/hosts/:id/plugins/:name/enable - 启用插件
+			// PUT /api/v1/hosts/:id/plugins/:name/enable - Enable plugin
+			hostRouter.PUT("/:id/plugins/:name/enable", pluginHandler.EnablePlugin)
+
+			// PUT /api/v1/hosts/:id/plugins/:name/disable - 禁用插件
+			// PUT /api/v1/hosts/:id/plugins/:name/disable - Disable plugin
+			hostRouter.PUT("/:id/plugins/:name/disable", pluginHandler.DisablePlugin)
 
 			// Installation routes on hosts 主机安装路由
 			// POST /api/v1/hosts/:id/precheck - 运行预检查

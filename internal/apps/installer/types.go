@@ -219,3 +219,40 @@ type PrecheckResult struct {
 	OverallStatus CheckStatus    `json:"overall_status"`
 	Summary       string         `json:"summary"`
 }
+
+// DownloadStatus represents the status of a download task
+// DownloadStatus 表示下载任务的状态
+type DownloadStatus string
+
+const (
+	DownloadStatusPending    DownloadStatus = "pending"
+	DownloadStatusDownloading DownloadStatus = "downloading"
+	DownloadStatusCompleted  DownloadStatus = "completed"
+	DownloadStatusFailed     DownloadStatus = "failed"
+	DownloadStatusCancelled  DownloadStatus = "cancelled"
+)
+
+// DownloadTask represents a package download task
+// DownloadTask 表示安装包下载任务
+type DownloadTask struct {
+	ID              string         `json:"id"`
+	Version         string         `json:"version"`
+	Mirror          MirrorSource   `json:"mirror"`
+	DownloadURL     string         `json:"download_url"`
+	Status          DownloadStatus `json:"status"`
+	Progress        int            `json:"progress"`          // 0-100
+	DownloadedBytes int64          `json:"downloaded_bytes"`
+	TotalBytes      int64          `json:"total_bytes"`
+	Speed           int64          `json:"speed"`             // bytes per second
+	Message         string         `json:"message,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	StartTime       time.Time      `json:"start_time"`
+	EndTime         *time.Time     `json:"end_time,omitempty"`
+}
+
+// DownloadRequest represents a request to download a package
+// DownloadRequest 表示下载安装包的请求
+type DownloadRequest struct {
+	Version string       `json:"version" binding:"required"`
+	Mirror  MirrorSource `json:"mirror"`
+}

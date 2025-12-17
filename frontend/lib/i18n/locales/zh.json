@@ -619,7 +619,11 @@
       "success": "成功",
       "failed": "失败",
       "skipped": "已跳过"
-    }
+    },
+    "downloadToServer": "下载到服务器",
+    "downloadCompleted": "下载完成",
+    "downloadFailed": "下载失败",
+    "retry": "重试"
   },
   "admin": {
     "userManagement": {

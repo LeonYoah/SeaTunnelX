@@ -6,6 +6,7 @@ import {HostService} from './host/index';
 import {ClusterService} from './cluster/index';
 import {AuditService} from './audit/index';
 import {installerService} from './installer/index';
+import {pluginService} from './plugin/index';
 
 /**
  * 服务层架构说明：
@@ -116,6 +117,12 @@ const services = {
    * Installer management service
    */
   installer: installerService,
+
+  /**
+   * 插件市场服务
+   * Plugin marketplace service
+   */
+  plugin: pluginService,
 };
 
 export default services;

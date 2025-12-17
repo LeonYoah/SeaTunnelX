@@ -104,6 +104,26 @@ func setDefaults(c *configModel) {
 	if c.Log.Output == "" {
 		c.Log.Output = "stdout"
 	}
+
+	// 存储默认配置
+	if c.Storage.BaseDir == "" {
+		c.Storage.BaseDir = "./data/storage"
+	}
+	if c.Storage.PackagesDir == "" {
+		c.Storage.PackagesDir = "./data/storage/packages"
+	}
+	if c.Storage.PluginsDir == "" {
+		c.Storage.PluginsDir = "./data/storage/plugins"
+	}
+	if c.Storage.TempDir == "" {
+		c.Storage.TempDir = "./data/storage/temp"
+	}
+	if c.Storage.MaxPackageSize == 0 {
+		c.Storage.MaxPackageSize = 2048 // 2GB
+	}
+	if c.Storage.CleanupIntervalHours == 0 {
+		c.Storage.CleanupIntervalHours = 24
+	}
 }
 
 // GetDatabaseType 获取数据库类型
@@ -124,4 +144,41 @@ func GetAuthConfig() authConfig {
 // IsRedisEnabled 检查 Redis 是否启用
 func IsRedisEnabled() bool {
 	return Config.Redis.Enabled
+}
+
+// GetStorageConfig 获取存储配置
+func GetStorageConfig() StorageConfig {
+	return Config.Storage
+}
+
+// GetPackagesDir 获取安装包存储目录
+func GetPackagesDir() string {
+	if Config.Storage.PackagesDir != "" {
+		return Config.Storage.PackagesDir
+	}
+	return "./data/storage/packages"
+}
+
+// GetPluginsDir 获取插件存储目录
+func GetPluginsDir() string {
+	if Config.Storage.PluginsDir != "" {
+		return Config.Storage.PluginsDir
+	}
+	return "./data/storage/plugins"
+}
+
+// GetTempDir 获取临时文件目录
+func GetTempDir() string {
+	if Config.Storage.TempDir != "" {
+		return Config.Storage.TempDir
+	}
+	return "./data/storage/temp"
+}
+
+// GetMaxPackageSize 获取最大安装包大小（字节）
+func GetMaxPackageSize() int64 {
+	if Config.Storage.MaxPackageSize > 0 {
+		return Config.Storage.MaxPackageSize * 1024 * 1024 // MB to bytes
+	}
+	return 2048 * 1024 * 1024 // 默认 2GB
 }

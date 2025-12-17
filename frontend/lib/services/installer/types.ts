@@ -270,3 +270,58 @@ export interface InstallResponse {
   error_msg: string;
   data: InstallationStatus | null;
 }
+
+// ==================== Download Types 下载类型 ====================
+
+/**
+ * Download status
+ * 下载状态
+ */
+export type DownloadStatus = 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * Download task
+ * 下载任务
+ */
+export interface DownloadTask {
+  id: string;
+  version: string;
+  mirror: MirrorSource;
+  download_url: string;
+  status: DownloadStatus;
+  progress: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  speed: number;
+  message?: string;
+  error?: string;
+  start_time: string;
+  end_time?: string;
+}
+
+/**
+ * Download request
+ * 下载请求
+ */
+export interface DownloadRequest {
+  version: string;
+  mirror?: MirrorSource;
+}
+
+/**
+ * Download response
+ * 下载响应
+ */
+export interface DownloadResponse {
+  error_msg: string;
+  data: DownloadTask | null;
+}
+
+/**
+ * Download list response
+ * 下载列表响应
+ */
+export interface DownloadListResponse {
+  error_msg: string;
+  data: DownloadTask[] | null;
+}

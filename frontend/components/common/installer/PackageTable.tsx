@@ -22,9 +22,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Download, Trash2, MoreHorizontal, Star, ExternalLink } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Download, Trash2, MoreHorizontal, Star, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import type { PackageInfo, MirrorSource } from '@/lib/services/installer/types';
+import type { PackageInfo, MirrorSource, DownloadTask } from '@/lib/services/installer/types';
 
 interface PackageTableProps {
   type: 'online' | 'local';
@@ -33,6 +34,8 @@ interface PackageTableProps {
   recommendedVersion?: string;
   loading?: boolean;
   onDelete?: (version: string) => void;
+  onDownload?: (version: string, mirror: MirrorSource) => void;
+  downloads?: DownloadTask[];
 }
 
 // Mirror source labels / 镜像源标签
@@ -68,8 +71,22 @@ export function PackageTable({
   recommendedVersion,
   loading,
   onDelete,
+  onDownload,
+  downloads = [],
 }: PackageTableProps) {
   const t = useTranslations();
+
+  // Get download task for a version / 获取某版本的下载任务
+  const getDownloadTask = (version: string): DownloadTask | undefined => {
+    return downloads.find((d) => d.version === version);
+  };
+
+  // Format speed / 格式化速度
+  const formatSpeed = (bytesPerSecond: number): string => {
+    if (bytesPerSecond < 1024) return `${bytesPerSecond} B/s`;
+    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+    return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  };
 
   if (loading) {
     return (
@@ -118,29 +135,85 @@ export function PackageTable({
                 <Badge variant="outline">{t('installer.available')}</Badge>
               </TableCell>
               <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Download className="h-4 w-4 mr-2" />
-                      {t('installer.download')}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {Object.entries(mirrorLabels).map(([mirror, label]) => (
-                      <DropdownMenuItem key={mirror} asChild>
-                        <a
-                          href={`https://mirrors.aliyun.com/apache/seatunnel/${version}/apache-seatunnel-${version}-bin.tar.gz`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          {label}
-                        </a>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {(() => {
+                  const task = getDownloadTask(version);
+                  
+                  // Show download progress / 显示下载进度
+                  if (task && (task.status === 'downloading' || task.status === 'pending')) {
+                    return (
+                      <div className="flex items-center gap-2 min-w-[200px]">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <div className="flex-1">
+                          <Progress value={task.progress} className="h-2" />
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {task.progress}% - {formatSpeed(task.speed)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  // Show completed status / 显示完成状态
+                  if (task?.status === 'completed') {
+                    return (
+                      <div className="flex items-center gap-2 text-green-600">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="text-sm">{t('installer.downloadCompleted')}</span>
+                      </div>
+                    );
+                  }
+                  
+                  // Show failed status / 显示失败状态
+                  if (task?.status === 'failed') {
+                    return (
+                      <div className="flex items-center gap-2">
+                        <XCircle className="h-4 w-4 text-destructive" />
+                        <span className="text-sm text-destructive">{t('installer.downloadFailed')}</span>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm">
+                              {t('installer.retry')}
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {Object.entries(mirrorLabels).map(([mirror, label]) => (
+                              <DropdownMenuItem
+                                key={mirror}
+                                onClick={() => onDownload?.(version, mirror as MirrorSource)}
+                              >
+                                <Download className="h-4 w-4 mr-2" />
+                                {label}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    );
+                  }
+                  
+                  // Show download button / 显示下载按钮
+                  return (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Download className="h-4 w-4 mr-2" />
+                          {t('installer.downloadToServer')}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {Object.entries(mirrorLabels).map(([mirror, label]) => (
+                          <DropdownMenuItem
+                            key={mirror}
+                            onClick={() => onDownload?.(version, mirror as MirrorSource)}
+                          >
+                            <Download className="h-4 w-4 mr-2" />
+                            {label}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  );
+                })()}
               </TableCell>
             </TableRow>
           ))}

@@ -619,7 +619,11 @@
       "success": "Success",
       "failed": "Failed",
       "skipped": "Skipped"
-    }
+    },
+    "downloadToServer": "Download to Server",
+    "downloadCompleted": "Download Completed",
+    "downloadFailed": "Download Failed",
+    "retry": "Retry"
   },
   "admin": {
     "userManagement": {

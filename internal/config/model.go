@@ -25,6 +25,7 @@ type configModel struct {
 	OAuthProviders OAuthProvidersConfig `mapstructure:"oauth_providers"`
 	Database       DatabaseConfig       `mapstructure:"database"`
 	Redis          RedisConfig          `mapstructure:"redis"`
+	Storage        StorageConfig        `mapstructure:"storage"`
 	Log            logConfig            `mapstructure:"log"`
 	Schedule       scheduleConfig       `mapstructure:"schedule"`
 	Worker         workerConfig         `mapstructure:"worker"`
@@ -134,6 +135,33 @@ type RedisConfig struct {
 	DialTimeout  int    `mapstructure:"dial_timeout"`
 	ReadTimeout  int    `mapstructure:"read_timeout"`
 	WriteTimeout int    `mapstructure:"write_timeout"`
+}
+
+// StorageConfig 存储配置（本地文件存储目录）
+type StorageConfig struct {
+	// BaseDir 基础存储目录，其他目录默认相对于此目录
+	// BaseDir is the base storage directory, other directories are relative to this
+	BaseDir string `mapstructure:"base_dir"`
+
+	// PackagesDir SeaTunnel 安装包存储目录
+	// PackagesDir is the directory for SeaTunnel installation packages
+	PackagesDir string `mapstructure:"packages_dir"`
+
+	// PluginsDir 插件包存储目录（connector jars, lib dependencies）
+	// PluginsDir is the directory for plugin packages
+	PluginsDir string `mapstructure:"plugins_dir"`
+
+	// TempDir 临时文件目录（下载中的文件等）
+	// TempDir is the directory for temporary files
+	TempDir string `mapstructure:"temp_dir"`
+
+	// MaxPackageSize 最大安装包大小（MB），默认 2048MB (2GB)
+	// MaxPackageSize is the maximum package size in MB
+	MaxPackageSize int64 `mapstructure:"max_package_size"`
+
+	// CleanupIntervalHours 临时文件清理间隔（小时），默认 24
+	// CleanupIntervalHours is the interval for cleaning up temp files
+	CleanupIntervalHours int `mapstructure:"cleanup_interval_hours"`
 }
 
 // logConfig 日志配置

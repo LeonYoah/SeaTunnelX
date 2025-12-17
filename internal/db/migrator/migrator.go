@@ -35,6 +35,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
+	"github.com/seatunnel/seatunnelX/internal/apps/plugin"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
@@ -66,8 +67,9 @@ func Migrate() {
 		&project.ProjectItem{}, // 项目条目表 / Project item table
 		&project.ProjectTag{},  // 项目标签表 / Project tag table
 		&project.ProjectReport{},
-		&audit.CommandLog{}, // 命令日志表 / Command log table
-		&audit.AuditLog{},   // 审计日志表 / Audit log table
+		&audit.CommandLog{},    // 命令日志表 / Command log table
+		&audit.AuditLog{},      // 审计日志表 / Audit log table
+		&plugin.InstalledPlugin{}, // 已安装插件表 / Installed plugin table
 	); err != nil {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}

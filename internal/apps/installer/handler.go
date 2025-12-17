@@ -163,6 +163,110 @@ func (h *Handler) DeletePackage(c *gin.Context) {
 	c.JSON(http.StatusOK, DeletePackageResponse{})
 }
 
+// ==================== Download APIs 下载 API ====================
+
+// DownloadResponse represents the response for download operations.
+// DownloadResponse 表示下载操作的响应。
+type DownloadResponse struct {
+	ErrorMsg string        `json:"error_msg"`
+	Data     *DownloadTask `json:"data"`
+}
+
+// DownloadListResponse represents the response for listing downloads.
+// DownloadListResponse 表示获取下载列表的响应。
+type DownloadListResponse struct {
+	ErrorMsg string          `json:"error_msg"`
+	Data     []*DownloadTask `json:"data"`
+}
+
+// StartDownload handles POST /api/v1/packages/download - starts downloading a package.
+// StartDownload 处理 POST /api/v1/packages/download - 开始下载安装包。
+// @Tags packages
+// @Accept json
+// @Produce json
+// @Param request body DownloadRequest true "下载请求"
+// @Success 200 {object} DownloadResponse
+// @Router /api/v1/packages/download [post]
+func (h *Handler) StartDownload(c *gin.Context) {
+	var req DownloadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, DownloadResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	task, err := h.service.StartDownload(c.Request.Context(), &req)
+	if err != nil {
+		// If download is already in progress, return the existing task / 如果下载已在进行中，返回现有任务
+		if err == ErrDownloadInProgress {
+			c.JSON(http.StatusOK, DownloadResponse{Data: task, ErrorMsg: "下载已在进行中 / Download already in progress"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, DownloadResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Installer] 开始下载安装包: %s from %s", req.Version, req.Mirror)
+	c.JSON(http.StatusOK, DownloadResponse{Data: task})
+}
+
+// GetDownloadStatus handles GET /api/v1/packages/download/:version - gets download status.
+// GetDownloadStatus 处理 GET /api/v1/packages/download/:version - 获取下载状态。
+// @Tags packages
+// @Produce json
+// @Param version path string true "版本号"
+// @Success 200 {object} DownloadResponse
+// @Router /api/v1/packages/download/{version} [get]
+func (h *Handler) GetDownloadStatus(c *gin.Context) {
+	version := c.Param("version")
+	if version == "" {
+		c.JSON(http.StatusBadRequest, DownloadResponse{ErrorMsg: "版本号不能为空 / Version is required"})
+		return
+	}
+
+	task, err := h.service.GetDownloadStatus(c.Request.Context(), version)
+	if err != nil {
+		c.JSON(http.StatusNotFound, DownloadResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, DownloadResponse{Data: task})
+}
+
+// CancelDownload handles POST /api/v1/packages/download/:version/cancel - cancels a download.
+// CancelDownload 处理 POST /api/v1/packages/download/:version/cancel - 取消下载。
+// @Tags packages
+// @Produce json
+// @Param version path string true "版本号"
+// @Success 200 {object} DownloadResponse
+// @Router /api/v1/packages/download/{version}/cancel [post]
+func (h *Handler) CancelDownload(c *gin.Context) {
+	version := c.Param("version")
+	if version == "" {
+		c.JSON(http.StatusBadRequest, DownloadResponse{ErrorMsg: "版本号不能为空 / Version is required"})
+		return
+	}
+
+	task, err := h.service.CancelDownload(c.Request.Context(), version)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, DownloadResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Installer] 取消下载: %s", version)
+	c.JSON(http.StatusOK, DownloadResponse{Data: task})
+}
+
+// ListDownloads handles GET /api/v1/packages/downloads - lists all download tasks.
+// ListDownloads 处理 GET /api/v1/packages/downloads - 获取所有下载任务。
+// @Tags packages
+// @Produce json
+// @Success 200 {object} DownloadListResponse
+// @Router /api/v1/packages/downloads [get]
+func (h *Handler) ListDownloads(c *gin.Context) {
+	tasks := h.service.ListDownloads(c.Request.Context())
+	c.JSON(http.StatusOK, DownloadListResponse{Data: tasks})
+}
+
 // ==================== Precheck APIs 预检查 API ====================
 
 // PrecheckRequest represents the request for precheck.

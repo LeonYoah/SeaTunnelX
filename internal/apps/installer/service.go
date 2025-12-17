@@ -25,12 +25,17 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/seatunnel/seatunnelX/internal/config"
 )
 
 // Common errors / 常见错误
@@ -49,19 +54,40 @@ var MirrorURLs = map[MirrorSource]string{
 	MirrorHuaweiCloud: "https://mirrors.huaweicloud.com/apache/seatunnel",
 }
 
-// SupportedVersions lists supported SeaTunnel versions
-// SupportedVersions 列出支持的 SeaTunnel 版本
-var SupportedVersions = []string{
+// FallbackVersions is the fallback version list when online fetch fails
+// FallbackVersions 是在线获取失败时的备用版本列表
+var FallbackVersions = []string{
 	"2.3.12",
 	"2.3.11",
 	"2.3.10",
 	"2.3.9",
 	"2.3.8",
+	"2.3.7",
+	"2.3.6",
+	"2.3.5",
+	"2.3.4",
+	"2.3.3",
+	"2.3.2",
+	"2.3.1",
+	"2.3.0",
+	"2.2.0-beta",
+	"2.1.3",
+	"2.1.2",
+	"2.1.1",
+	"2.1.0",
 }
 
 // RecommendedVersion is the recommended SeaTunnel version
 // RecommendedVersion 是推荐的 SeaTunnel 版本
 const RecommendedVersion = "2.3.12"
+
+// ApacheArchiveURL is the URL to fetch version list from Apache Archive
+// ApacheArchiveURL 是从 Apache Archive 获取版本列表的 URL
+const ApacheArchiveURL = "https://archive.apache.org/dist/seatunnel/"
+
+// VersionCacheDuration is how long to cache the version list
+// VersionCacheDuration 是版本列表的缓存时间
+const VersionCacheDuration = 1 * time.Hour
 
 // Service provides installation management functionality.
 // Service 提供安装管理功能。
@@ -70,10 +96,19 @@ type Service struct {
 	// packageDir 是存储本地安装包的目录
 	packageDir string
 
+	// tempDir is the directory for temporary files (downloads in progress)
+	// tempDir 是临时文件目录（下载中的文件）
+	tempDir string
+
 	// installations tracks ongoing installations by host ID
 	// installations 按主机 ID 跟踪正在进行的安装
 	installations map[string]*InstallationStatus
 	installMu     sync.RWMutex
+
+	// downloads tracks ongoing download tasks by version
+	// downloads 按版本跟踪正在进行的下载任务
+	downloads   map[string]*DownloadTask
+	downloadsMu sync.RWMutex
 
 	// agentManager is used to communicate with agents
 	// agentManager 用于与 Agent 通信
@@ -82,16 +117,36 @@ type Service struct {
 
 // NewService creates a new Service instance.
 // NewService 创建一个新的 Service 实例。
+// If packageDir is empty, it uses the configured packages directory.
+// 如果 packageDir 为空，则使用配置的安装包目录。
 func NewService(packageDir string) *Service {
+	// Use configured directory if not specified / 如果未指定则使用配置的目录
+	if packageDir == "" {
+		packageDir = config.GetPackagesDir()
+	}
+
 	// Create package directory if not exists / 如果不存在则创建安装包目录
 	if err := os.MkdirAll(packageDir, 0755); err != nil {
 		// Log error but continue / 记录错误但继续
 	}
 
+	// Also create temp directory / 同时创建临时目录
+	if err := os.MkdirAll(config.GetTempDir(), 0755); err != nil {
+		// Log error but continue / 记录错误但继续
+	}
+
 	return &Service{
 		packageDir:    packageDir,
+		tempDir:       config.GetTempDir(),
 		installations: make(map[string]*InstallationStatus),
+		downloads:     make(map[string]*DownloadTask),
 	}
+}
+
+// NewServiceWithDefaults creates a new Service instance with default configuration.
+// NewServiceWithDefaults 使用默认配置创建新的 Service 实例。
+func NewServiceWithDefaults() *Service {
+	return NewService("")
 }
 
 // ==================== Package Management 安装包管理 ====================
@@ -234,6 +289,258 @@ func (s *Service) DeletePackage(ctx context.Context, version string) error {
 	}
 
 	return os.Remove(localPath)
+}
+
+// ==================== Package Download 安装包下载 ====================
+
+// ErrDownloadInProgress indicates a download is already in progress for this version
+// ErrDownloadInProgress 表示该版本的下载已在进行中
+var ErrDownloadInProgress = errors.New("download already in progress / 下载已在进行中")
+
+// ErrDownloadNotFound indicates the download task was not found
+// ErrDownloadNotFound 表示下载任务未找到
+var ErrDownloadNotFound = errors.New("download task not found / 下载任务未找到")
+
+// StartDownload starts downloading a package from mirror to local storage.
+// StartDownload 开始从镜像源下载安装包到本地存储。
+func (s *Service) StartDownload(ctx context.Context, req *DownloadRequest) (*DownloadTask, error) {
+	s.downloadsMu.Lock()
+	defer s.downloadsMu.Unlock()
+
+	// Check if download is already in progress / 检查是否已有下载正在进行
+	if existing, ok := s.downloads[req.Version]; ok {
+		if existing.Status == DownloadStatusDownloading || existing.Status == DownloadStatusPending {
+			return existing, ErrDownloadInProgress
+		}
+	}
+
+	// Use default mirror if not specified / 如果未指定则使用默认镜像源
+	mirror := req.Mirror
+	if mirror == "" {
+		mirror = MirrorAliyun
+	}
+
+	// Get download URL / 获取下载 URL
+	downloadURL := fmt.Sprintf("%s/%s/apache-seatunnel-%s-bin.tar.gz",
+		MirrorURLs[mirror], req.Version, req.Version)
+
+	// Create download task / 创建下载任务
+	task := &DownloadTask{
+		ID:          uuid.New().String(),
+		Version:     req.Version,
+		Mirror:      mirror,
+		DownloadURL: downloadURL,
+		Status:      DownloadStatusPending,
+		Progress:    0,
+		Message:     "准备下载 / Preparing download",
+		StartTime:   time.Now(),
+	}
+
+	s.downloads[req.Version] = task
+
+	// Start download in background / 在后台开始下载
+	go s.runDownload(context.Background(), task)
+
+	return task, nil
+}
+
+// GetDownloadStatus returns the current download status for a version.
+// GetDownloadStatus 返回某版本的当前下载状态。
+func (s *Service) GetDownloadStatus(ctx context.Context, version string) (*DownloadTask, error) {
+	s.downloadsMu.RLock()
+	defer s.downloadsMu.RUnlock()
+
+	task, ok := s.downloads[version]
+	if !ok {
+		return nil, ErrDownloadNotFound
+	}
+
+	return task, nil
+}
+
+// CancelDownload cancels an ongoing download.
+// CancelDownload 取消正在进行的下载。
+func (s *Service) CancelDownload(ctx context.Context, version string) (*DownloadTask, error) {
+	s.downloadsMu.Lock()
+	defer s.downloadsMu.Unlock()
+
+	task, ok := s.downloads[version]
+	if !ok {
+		return nil, ErrDownloadNotFound
+	}
+
+	if task.Status != DownloadStatusDownloading && task.Status != DownloadStatusPending {
+		return task, nil // Already completed or failed / 已完成或失败
+	}
+
+	now := time.Now()
+	task.Status = DownloadStatusCancelled
+	task.Message = "下载已取消 / Download cancelled"
+	task.EndTime = &now
+
+	// Clean up temp file / 清理临时文件
+	tempPath := filepath.Join(s.tempDir, fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz.tmp", version))
+	os.Remove(tempPath)
+
+	return task, nil
+}
+
+// ListDownloads returns all download tasks.
+// ListDownloads 返回所有下载任务。
+func (s *Service) ListDownloads(ctx context.Context) []*DownloadTask {
+	s.downloadsMu.RLock()
+	defer s.downloadsMu.RUnlock()
+
+	tasks := make([]*DownloadTask, 0, len(s.downloads))
+	for _, task := range s.downloads {
+		tasks = append(tasks, task)
+	}
+	return tasks
+}
+
+// runDownload executes the download process.
+// runDownload 执行下载过程。
+func (s *Service) runDownload(ctx context.Context, task *DownloadTask) {
+	s.downloadsMu.Lock()
+	task.Status = DownloadStatusDownloading
+	task.Message = "正在下载 / Downloading"
+	s.downloadsMu.Unlock()
+
+	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", task.Version)
+	tempPath := filepath.Join(s.tempDir, fileName+".tmp")
+	finalPath := filepath.Join(s.packageDir, fileName)
+
+	// Create HTTP request / 创建 HTTP 请求
+	resp, err := http.Get(task.DownloadURL)
+	if err != nil {
+		s.downloadsMu.Lock()
+		now := time.Now()
+		task.Status = DownloadStatusFailed
+		task.Error = fmt.Sprintf("请求失败 / Request failed: %v", err)
+		task.EndTime = &now
+		s.downloadsMu.Unlock()
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		s.downloadsMu.Lock()
+		now := time.Now()
+		task.Status = DownloadStatusFailed
+		task.Error = fmt.Sprintf("HTTP 错误 / HTTP error: %d", resp.StatusCode)
+		task.EndTime = &now
+		s.downloadsMu.Unlock()
+		return
+	}
+
+	// Get total size / 获取总大小
+	s.downloadsMu.Lock()
+	task.TotalBytes = resp.ContentLength
+	s.downloadsMu.Unlock()
+
+	// Create temp file / 创建临时文件
+	out, err := os.Create(tempPath)
+	if err != nil {
+		s.downloadsMu.Lock()
+		now := time.Now()
+		task.Status = DownloadStatusFailed
+		task.Error = fmt.Sprintf("创建文件失败 / Failed to create file: %v", err)
+		task.EndTime = &now
+		s.downloadsMu.Unlock()
+		return
+	}
+	defer out.Close()
+
+	// Download with progress tracking / 带进度跟踪的下载
+	buf := make([]byte, 32*1024) // 32KB buffer
+	var downloaded int64
+	lastUpdate := time.Now()
+	var lastDownloaded int64
+
+	for {
+		// Check if cancelled / 检查是否已取消
+		s.downloadsMu.RLock()
+		if task.Status == DownloadStatusCancelled {
+			s.downloadsMu.RUnlock()
+			out.Close()
+			os.Remove(tempPath)
+			return
+		}
+		s.downloadsMu.RUnlock()
+
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				s.downloadsMu.Lock()
+				now := time.Now()
+				task.Status = DownloadStatusFailed
+				task.Error = fmt.Sprintf("写入文件失败 / Failed to write file: %v", writeErr)
+				task.EndTime = &now
+				s.downloadsMu.Unlock()
+				os.Remove(tempPath)
+				return
+			}
+			downloaded += int64(n)
+
+			// Update progress every 500ms / 每 500ms 更新一次进度
+			if time.Since(lastUpdate) > 500*time.Millisecond {
+				s.downloadsMu.Lock()
+				task.DownloadedBytes = downloaded
+				if task.TotalBytes > 0 {
+					task.Progress = int(downloaded * 100 / task.TotalBytes)
+				}
+				// Calculate speed / 计算速度
+				elapsed := time.Since(lastUpdate).Seconds()
+				if elapsed > 0 {
+					task.Speed = int64(float64(downloaded-lastDownloaded) / elapsed)
+				}
+				task.Message = fmt.Sprintf("正在下载 / Downloading: %d%%", task.Progress)
+				s.downloadsMu.Unlock()
+
+				lastUpdate = time.Now()
+				lastDownloaded = downloaded
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			s.downloadsMu.Lock()
+			now := time.Now()
+			task.Status = DownloadStatusFailed
+			task.Error = fmt.Sprintf("下载失败 / Download failed: %v", err)
+			task.EndTime = &now
+			s.downloadsMu.Unlock()
+			os.Remove(tempPath)
+			return
+		}
+	}
+
+	// Close file before moving / 移动前关闭文件
+	out.Close()
+
+	// Move temp file to final location / 将临时文件移动到最终位置
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		s.downloadsMu.Lock()
+		now := time.Now()
+		task.Status = DownloadStatusFailed
+		task.Error = fmt.Sprintf("移动文件失败 / Failed to move file: %v", err)
+		task.EndTime = &now
+		s.downloadsMu.Unlock()
+		os.Remove(tempPath)
+		return
+	}
+
+	// Mark as completed / 标记为完成
+	s.downloadsMu.Lock()
+	now := time.Now()
+	task.Status = DownloadStatusCompleted
+	task.Progress = 100
+	task.DownloadedBytes = downloaded
+	task.Message = "下载完成 / Download completed"
+	task.EndTime = &now
+	s.downloadsMu.Unlock()
 }
 
 // ==================== Precheck 预检查 ====================

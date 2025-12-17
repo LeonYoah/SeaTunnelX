@@ -117,6 +117,21 @@ redis:
   read_timeout: 3
   write_timeout: 3
 
+# 存储配置（本地文件存储目录）
+storage:
+  # 基础存储目录，其他目录默认相对于此目录
+  base_dir: "./data/storage"
+  # SeaTunnel 安装包存储目录（在线下载或用户上传的安装包）
+  packages_dir: "./data/storage/packages"
+  # 插件包存储目录（connector jars, lib dependencies）
+  plugins_dir: "./data/storage/plugins"
+  # 临时文件目录（下载中的文件等）
+  temp_dir: "./data/storage/temp"
+  # 最大安装包大小（MB），默认 2048MB (2GB)
+  max_package_size: 2048
+  # 临时文件清理间隔（小时），默认 24
+  cleanup_interval_hours: 24
+
 # 日志配置
 log:
   level: "info"  # debug, info, warn, error, fatal, panic
