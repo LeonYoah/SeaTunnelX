@@ -1,0 +1,334 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package cluster
+
+import (
+	"context"
+	"errors"
+
+	"gorm.io/gorm"
+)
+
+// Repository provides data access operations for Cluster and ClusterNode entities.
+type Repository struct {
+	db *gorm.DB
+}
+
+// NewRepository creates a new Repository instance.
+func NewRepository(db *gorm.DB) *Repository {
+	return &Repository{db: db}
+}
+
+// Create creates a new cluster record in the database.
+// Returns ErrClusterNameDuplicate if a cluster with the same name already exists.
+// Returns ErrClusterNameEmpty if the cluster name is empty.
+func (r *Repository) Create(ctx context.Context, cluster *Cluster) error {
+	// Validate cluster name is not empty
+	if cluster.Name == "" {
+		return ErrClusterNameEmpty
+	}
+
+	// Check for duplicate name
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&Cluster{}).Where("name = ?", cluster.Name).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrClusterNameDuplicate
+	}
+
+	return r.db.WithContext(ctx).Create(cluster).Error
+}
+
+// GetByID retrieves a cluster by its ID with optional node preloading.
+// Returns ErrClusterNotFound if the cluster does not exist.
+func (r *Repository) GetByID(ctx context.Context, id uint, preloadNodes bool) (*Cluster, error) {
+	var cluster Cluster
+	query := r.db.WithContext(ctx)
+	if preloadNodes {
+		query = query.Preload("Nodes")
+	}
+	if err := query.First(&cluster, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrClusterNotFound
+		}
+		return nil, err
+	}
+	return &cluster, nil
+}
+
+// GetByName retrieves a cluster by its name.
+// Returns ErrClusterNotFound if no cluster with the given name exists.
+func (r *Repository) GetByName(ctx context.Context, name string) (*Cluster, error) {
+	var cluster Cluster
+	if err := r.db.WithContext(ctx).Where("name = ?", name).First(&cluster).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrClusterNotFound
+		}
+		return nil, err
+	}
+	return &cluster, nil
+}
+
+// List retrieves clusters based on filter criteria with pagination.
+// Returns the list of clusters and total count.
+func (r *Repository) List(ctx context.Context, filter *ClusterFilter) ([]*Cluster, int64, error) {
+	query := r.db.WithContext(ctx).Model(&Cluster{})
+
+	// Apply filters
+	if filter != nil {
+		if filter.Name != "" {
+			query = query.Where("name LIKE ?", "%"+filter.Name+"%")
+		}
+		if filter.Status != "" {
+			query = query.Where("status = ?", filter.Status)
+		}
+		if filter.DeploymentMode != "" {
+			query = query.Where("deployment_mode = ?", filter.DeploymentMode)
+		}
+	}
+
+	// Get total count
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Apply pagination
+	if filter != nil && filter.PageSize > 0 {
+		offset := 0
+		if filter.Page > 0 {
+			offset = (filter.Page - 1) * filter.PageSize
+		}
+		query = query.Offset(offset).Limit(filter.PageSize)
+	}
+
+	// Execute query with nodes preloaded
+	var clusters []*Cluster
+	if err := query.Preload("Nodes").Order("created_at DESC").Find(&clusters).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return clusters, total, nil
+}
+
+// Update updates an existing cluster record.
+// Returns ErrClusterNotFound if the cluster does not exist.
+// Returns ErrClusterNameDuplicate if updating to a name that already exists.
+func (r *Repository) Update(ctx context.Context, cluster *Cluster) error {
+	// Check if cluster exists
+	var existing Cluster
+	if err := r.db.WithContext(ctx).First(&existing, cluster.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrClusterNotFound
+		}
+		return err
+	}
+
+	// Check for duplicate name if name is being changed
+	if cluster.Name != "" && cluster.Name != existing.Name {
+		var count int64
+		if err := r.db.WithContext(ctx).Model(&Cluster{}).Where("name = ? AND id != ?", cluster.Name, cluster.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrClusterNameDuplicate
+		}
+	}
+
+	return r.db.WithContext(ctx).Save(cluster).Error
+}
+
+// Delete removes a cluster record from the database.
+// Returns ErrClusterNotFound if the cluster does not exist.
+// Note: This also deletes all associated cluster nodes due to foreign key cascade.
+func (r *Repository) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Delete associated nodes first
+		if err := tx.Where("cluster_id = ?", id).Delete(&ClusterNode{}).Error; err != nil {
+			return err
+		}
+
+		// Delete the cluster
+		result := tx.Delete(&Cluster{}, id)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrClusterNotFound
+		}
+		return nil
+	})
+}
+
+// UpdateStatus updates the status of a cluster.
+func (r *Repository) UpdateStatus(ctx context.Context, id uint, status ClusterStatus) error {
+	result := r.db.WithContext(ctx).Model(&Cluster{}).Where("id = ?", id).Update("status", status)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrClusterNotFound
+	}
+	return nil
+}
+
+// ExistsByName checks if a cluster with the given name exists.
+func (r *Repository) ExistsByName(ctx context.Context, name string) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&Cluster{}).Where("name = ?", name).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// Node operations
+
+// AddNode adds a node to a cluster.
+// Returns ErrClusterNotFound if the cluster does not exist.
+// Returns ErrNodeAlreadyExists if the host is already a node in the cluster.
+func (r *Repository) AddNode(ctx context.Context, node *ClusterNode) error {
+	// Check if cluster exists
+	var cluster Cluster
+	if err := r.db.WithContext(ctx).First(&cluster, node.ClusterID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrClusterNotFound
+		}
+		return err
+	}
+
+	// Check if node already exists in this cluster
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&ClusterNode{}).
+		Where("cluster_id = ? AND host_id = ?", node.ClusterID, node.HostID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrNodeAlreadyExists
+	}
+
+	return r.db.WithContext(ctx).Create(node).Error
+}
+
+// GetNodeByID retrieves a cluster node by its ID.
+// Returns ErrNodeNotFound if the node does not exist.
+func (r *Repository) GetNodeByID(ctx context.Context, id uint) (*ClusterNode, error) {
+	var node ClusterNode
+	if err := r.db.WithContext(ctx).First(&node, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNodeNotFound
+		}
+		return nil, err
+	}
+	return &node, nil
+}
+
+// GetNodesByClusterID retrieves all nodes for a cluster.
+func (r *Repository) GetNodesByClusterID(ctx context.Context, clusterID uint) ([]*ClusterNode, error) {
+	var nodes []*ClusterNode
+	if err := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// GetNodesByHostID retrieves all cluster nodes for a specific host.
+// This is useful for checking if a host is associated with any clusters.
+func (r *Repository) GetNodesByHostID(ctx context.Context, hostID uint) ([]*ClusterNode, error) {
+	var nodes []*ClusterNode
+	if err := r.db.WithContext(ctx).Where("host_id = ?", hostID).Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// RemoveNode removes a node from a cluster.
+// Returns ErrNodeNotFound if the node does not exist.
+func (r *Repository) RemoveNode(ctx context.Context, nodeID uint) error {
+	result := r.db.WithContext(ctx).Delete(&ClusterNode{}, nodeID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+// RemoveNodeByClusterAndHost removes a node by cluster ID and host ID.
+// Returns ErrNodeNotFound if the node does not exist.
+func (r *Repository) RemoveNodeByClusterAndHost(ctx context.Context, clusterID, hostID uint) error {
+	result := r.db.WithContext(ctx).Where("cluster_id = ? AND host_id = ?", clusterID, hostID).Delete(&ClusterNode{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+// UpdateNodeStatus updates the status of a cluster node.
+func (r *Repository) UpdateNodeStatus(ctx context.Context, nodeID uint, status NodeStatus) error {
+	result := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("id = ?", nodeID).Update("status", status)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+// UpdateNodeProcess updates the process information for a cluster node.
+func (r *Repository) UpdateNodeProcess(ctx context.Context, nodeID uint, pid int, processStatus string) error {
+	result := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("id = ?", nodeID).Updates(map[string]interface{}{
+		"process_pid":    pid,
+		"process_status": processStatus,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+// CountNodesByClusterID returns the number of nodes in a cluster.
+func (r *Repository) CountNodesByClusterID(ctx context.Context, clusterID uint) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("cluster_id = ?", clusterID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetClustersWithHostID retrieves all clusters that have a specific host as a node.
+// This is useful for checking cluster associations before deleting a host.
+func (r *Repository) GetClustersWithHostID(ctx context.Context, hostID uint) ([]*Cluster, error) {
+	var clusters []*Cluster
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN cluster_nodes ON cluster_nodes.cluster_id = clusters.id").
+		Where("cluster_nodes.host_id = ?", hostID).
+		Find(&clusters).Error; err != nil {
+		return nil, err
+	}
+	return clusters, nil
+}
