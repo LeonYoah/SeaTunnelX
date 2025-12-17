@@ -1,13 +1,13 @@
-# Seatunnel 运维管理平台配置
+# Seatunnel 一站式运维管理平台配置
 # 复制为 config.yaml 使用
 
 # 应用配置
 app:
-  app_name: "seatunnel-platform"
+  app_name: "SeaTunnelX"
   env: "development" # development, testing, production
   addr: ":8000"
   session_cookie_name: "seatunnel_session_id"
-  session_secret: "<uniq string>" # 首次启动后不可更改
+  session_secret: "123456" # 首次启动后不可更改
   session_domain: "localhost"
   session_age: 86400
   session_secure: false

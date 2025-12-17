@@ -155,6 +155,101 @@ go test ./...
 cd frontend && pnpm test
 ```
 
+## 🔧 二次开发指南
+
+### Protocol Buffers 代码生成
+
+本项目使用 gRPC 进行 Agent 与 Control Plane 之间的通信。如果修改了 `.proto` 文件，需要重新生成 Go 代码。
+
+#### 前置条件
+
+1. **安装 Go protoc 插件**（Linux/macOS/Windows 通用）
+
+```bash
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+```
+
+#### Linux / macOS
+
+1. **安装 protoc 编译器**
+
+```bash
+# macOS
+brew install protobuf
+
+# Ubuntu/Debian
+sudo apt-get install protobuf-compiler
+
+# CentOS/RHEL
+sudo yum install protobuf-compiler
+```
+
+2. **生成代码**
+
+```bash
+# 使用脚本（推荐）
+./scripts/proto.sh
+
+# 或手动执行
+protoc --proto_path=. \
+    --go_out=. --go_opt=paths=source_relative \
+    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+    internal/proto/agent/agent.proto
+```
+
+#### Windows (PowerShell)
+
+1. **下载并安装 protoc 编译器**
+
+```powershell
+# 一键下载并配置 protoc（临时安装到 TEMP 目录）
+$protocVersion = "28.3"
+$protocZip = "protoc-$protocVersion-win64.zip"
+$protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+$protocDir = "$env:TEMP\protoc"
+
+if (!(Test-Path $protocDir)) { 
+    New-Item -ItemType Directory -Path $protocDir -Force 
+}
+Invoke-WebRequest -Uri $protocUrl -OutFile "$protocDir\$protocZip"
+Expand-Archive -Path "$protocDir\$protocZip" -DestinationPath $protocDir -Force
+$env:PATH = "$protocDir\bin;$env:PATH"
+
+# 验证安装
+protoc --version
+```
+
+2. **生成代码**
+
+```powershell
+# 设置环境变量（每次新开 PowerShell 需要执行）
+$protocDir = "$env:TEMP\protoc"
+$env:PATH = "$protocDir\bin;$env:USERPROFILE\go\bin;$env:PATH"
+
+# 生成 protobuf 代码
+protoc --proto_path=. `
+    --go_out=. --go_opt=paths=source_relative `
+    --go-grpc_out=. --go-grpc_opt=paths=source_relative `
+    internal/proto/agent/agent.proto
+```
+
+> 💡 **提示**: Windows 用户也可以选择永久安装 protoc：
+> - 从 [GitHub Releases](https://github.com/protocolbuffers/protobuf/releases) 下载对应版本
+> - 解压到固定目录（如 `C:\protoc`）
+> - 将 `C:\protoc\bin` 添加到系统 PATH 环境变量
+
+#### 验证生成结果
+
+生成成功后，以下文件会被更新：
+- `internal/proto/agent/agent.pb.go` - Protobuf 消息定义
+- `internal/proto/agent/agent_grpc.pb.go` - gRPC 服务定义
+
+```bash
+# 运行测试验证生成的代码
+go test ./internal/proto/agent/...
+```
+
 ## 🚀 部署
 
 ### Docker 部署

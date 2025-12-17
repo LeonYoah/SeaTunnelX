@@ -1,0 +1,189 @@
+// Copyright 2024 Apache SeaTunnel
+// Licensed under the Apache License, Version 2.0
+
+syntax = "proto3";
+
+package seatunnel.agent.v1;
+
+option go_package = "github.com/seatunnel/seatunnelX/internal/proto/agent";
+
+// AgentService - Control Plane 端 gRPC 服务
+// 提供 Agent 注册、心跳、指令下发、日志上报等功能
+service AgentService {
+  // Agent 注册 - Agent 启动时向 Control Plane 注册
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  
+  // 心跳上报 - Agent 定期向 Control Plane 发送心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // 双向流 - 指令下发与结果上报
+  rpc CommandStream(stream CommandResponse) returns (stream CommandRequest);
+  
+  // 日志流 - Agent 向 Control Plane 推送日志
+  rpc LogStream(stream LogEntry) returns (LogStreamResponse);
+}
+
+// ============================================================================
+// 注册相关消息 (Requirements 8.2)
+// ============================================================================
+
+// RegisterRequest - Agent 注册请求
+message RegisterRequest {
+  string agent_id = 1;        // Agent 唯一标识
+  string hostname = 2;        // 主机名
+  string ip_address = 3;      // IP 地址
+  string os_type = 4;         // 操作系统类型: linux, darwin, windows
+  string arch = 5;            // CPU 架构: amd64, arm64
+  string agent_version = 6;   // Agent 版本号
+  SystemInfo system_info = 7; // 系统信息
+}
+
+// SystemInfo - 系统硬件信息
+message SystemInfo {
+  int32 cpu_cores = 1;        // CPU 核心数
+  int64 total_memory = 2;     // 总内存 (bytes)
+  int64 total_disk = 3;       // 总磁盘空间 (bytes)
+  string kernel_version = 4;  // 内核版本
+}
+
+// RegisterResponse - Agent 注册响应
+message RegisterResponse {
+  bool success = 1;           // 注册是否成功
+  string message = 2;         // 响应消息
+  string assigned_id = 3;     // Control Plane 分配的 ID
+  AgentConfig config = 4;     // 下发的配置
+}
+
+
+// AgentConfig - Agent 配置信息
+message AgentConfig {
+  int32 heartbeat_interval = 1;   // 心跳间隔 (秒)
+  int32 log_level = 2;            // 日志级别
+  map<string, string> extra = 3;  // 扩展配置
+}
+
+// ============================================================================
+// 心跳相关消息 (Requirements 8.3)
+// ============================================================================
+
+// HeartbeatRequest - 心跳请求
+message HeartbeatRequest {
+  string agent_id = 1;                    // Agent 唯一标识
+  int64 timestamp = 2;                    // 时间戳 (Unix 毫秒)
+  ResourceUsage resource_usage = 3;       // 资源使用情况
+  repeated ProcessStatus processes = 4;   // 进程状态列表
+}
+
+// ResourceUsage - 资源使用情况
+message ResourceUsage {
+  double cpu_usage = 1;       // CPU 使用率 (0-100)
+  double memory_usage = 2;    // 内存使用率 (0-100)
+  double disk_usage = 3;      // 磁盘使用率 (0-100)
+  int64 available_memory = 4; // 可用内存 (bytes)
+  int64 available_disk = 5;   // 可用磁盘空间 (bytes)
+}
+
+// ProcessStatus - 进程状态信息
+message ProcessStatus {
+  string name = 1;            // 进程名称
+  int32 pid = 2;              // 进程 ID
+  string status = 3;          // 状态: running, stopped, unknown
+  int64 uptime = 4;           // 运行时长 (秒)
+  double cpu_usage = 5;       // CPU 使用率
+  int64 memory_usage = 6;     // 内存使用量 (bytes)
+}
+
+// HeartbeatResponse - 心跳响应
+message HeartbeatResponse {
+  bool success = 1;           // 心跳是否成功
+  int64 server_time = 2;      // 服务器时间 (Unix 毫秒)
+}
+
+// ============================================================================
+// 指令相关消息 (Requirements 8.4, 8.5)
+// ============================================================================
+
+// CommandRequest - 指令请求 (Control Plane -> Agent)
+message CommandRequest {
+  string command_id = 1;              // 指令唯一标识
+  CommandType type = 2;               // 指令类型
+  map<string, string> parameters = 3; // 指令参数
+  int32 timeout = 4;                  // 超时时间 (秒)
+}
+
+// CommandType - 指令类型枚举
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  
+  // 预检查
+  PRECHECK = 1;
+  
+  // 安装类
+  INSTALL = 10;
+  UNINSTALL = 11;
+  UPGRADE = 12;
+  
+  // 进程管理
+  START = 20;
+  STOP = 21;
+  RESTART = 22;
+  STATUS = 23;
+  
+  // 诊断类
+  COLLECT_LOGS = 30;
+  JVM_DUMP = 31;
+  THREAD_DUMP = 32;
+  
+  // 配置类
+  UPDATE_CONFIG = 40;
+  ROLLBACK_CONFIG = 41;
+}
+
+// CommandResponse - 指令执行结果 (Agent -> Control Plane)
+message CommandResponse {
+  string command_id = 1;      // 指令唯一标识
+  CommandStatus status = 2;   // 执行状态
+  int32 progress = 3;         // 执行进度 (0-100)
+  string output = 4;          // 标准输出
+  string error = 5;           // 错误信息
+  int64 timestamp = 6;        // 时间戳 (Unix 毫秒)
+}
+
+// CommandStatus - 指令执行状态枚举
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;    // 等待执行
+  RUNNING = 2;    // 执行中
+  SUCCESS = 3;    // 执行成功
+  FAILED = 4;     // 执行失败
+  CANCELLED = 5;  // 已取消
+}
+
+// ============================================================================
+// 日志相关消息 (Requirements 8.6)
+// ============================================================================
+
+// LogEntry - 日志条目
+message LogEntry {
+  string agent_id = 1;            // Agent 唯一标识
+  string command_id = 2;          // 关联的指令 ID (可选)
+  int64 timestamp = 3;            // 时间戳 (Unix 毫秒)
+  LogLevel level = 4;             // 日志级别
+  string message = 5;             // 日志消息
+  map<string, string> fields = 6; // 扩展字段
+}
+
+// LogLevel - 日志级别枚举
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  DEBUG = 1;
+  INFO = 2;
+  WARN = 3;
+  ERROR = 4;
+}
+
+// LogStreamResponse - 日志流响应
+message LogStreamResponse {
+  bool success = 1;           // 是否成功
+  int64 received_count = 2;   // 已接收的日志条数
+}
