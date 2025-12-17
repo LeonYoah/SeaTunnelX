@@ -23,7 +23,8 @@
     "yes": "是",
     "no": "否",
     "clearFilters": "清除筛选",
-    "totalItems": "共 {total} 条"
+    "totalItems": "共 {total} 条",
+    "actions": "操作"
   },
   "auth": {
     "login": {
@@ -623,7 +624,9 @@
     "downloadToServer": "下载到服务器",
     "downloadCompleted": "下载完成",
     "downloadFailed": "下载失败",
-    "retry": "重试"
+    "downloaded": "已下载",
+    "retry": "重试",
+    "refreshVersions": "刷新版本列表"
   },
   "admin": {
     "userManagement": {

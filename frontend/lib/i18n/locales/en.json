@@ -23,7 +23,8 @@
     "yes": "Yes",
     "no": "No",
     "clearFilters": "Clear Filters",
-    "totalItems": "{total} items total"
+    "totalItems": "{total} items total",
+    "actions": "Actions"
   },
   "auth": {
     "login": {
@@ -623,7 +624,9 @@
     "downloadToServer": "Download to Server",
     "downloadCompleted": "Download Completed",
     "downloadFailed": "Download Failed",
-    "retry": "Retry"
+    "downloaded": "Downloaded",
+    "retry": "Retry",
+    "refreshVersions": "Refresh Versions"
   },
   "admin": {
     "userManagement": {

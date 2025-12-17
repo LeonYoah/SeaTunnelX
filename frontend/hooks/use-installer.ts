@@ -37,6 +37,8 @@ interface UsePackagesReturn {
   startDownload: (version: string, mirror?: MirrorSource) => Promise<DownloadTask>;
   downloads: DownloadTask[];
   refreshDownloads: () => Promise<void>;
+  refreshVersions: () => Promise<void>;
+  refreshingVersions: boolean;
 }
 
 /**
@@ -48,6 +50,7 @@ export function usePackages(): UsePackagesReturn {
   const [downloads, setDownloads] = useState<DownloadTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshingVersions, setRefreshingVersions] = useState(false);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchPackages = useCallback(async () => {
@@ -129,6 +132,28 @@ export function usePackages(): UsePackagesReturn {
     return task;
   }, [fetchDownloads]);
 
+  const refreshVersions = useCallback(async () => {
+    try {
+      setRefreshingVersions(true);
+      setError(null);
+      const result = await installerService.refreshVersions();
+      // Update packages with new versions / 使用新版本更新安装包
+      if (packages) {
+        setPackages({
+          ...packages,
+          versions: result.versions,
+        });
+      }
+      if (result.warning) {
+        setError(result.warning);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh versions');
+    } finally {
+      setRefreshingVersions(false);
+    }
+  }, [packages]);
+
   return {
     packages,
     loading,
@@ -139,6 +164,8 @@ export function usePackages(): UsePackagesReturn {
     startDownload,
     downloads,
     refreshDownloads: fetchDownloads,
+    refreshVersions,
+    refreshingVersions,
   };
 }
 

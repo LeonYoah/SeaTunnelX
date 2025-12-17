@@ -81,10 +81,20 @@ export function PackageTable({
     return downloads.find((d) => d.version === version);
   };
 
+  // Check if version is already downloaded (exists in local packages)
+  // 检查版本是否已下载（存在于本地安装包中）
+  const isVersionDownloaded = (version: string): boolean => {
+    return localPackages.some((pkg) => pkg.version === version);
+  };
+
   // Format speed / 格式化速度
   const formatSpeed = (bytesPerSecond: number): string => {
-    if (bytesPerSecond < 1024) return `${bytesPerSecond} B/s`;
-    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+    if (bytesPerSecond < 1024) {
+      return `${bytesPerSecond} B/s`;
+    }
+    if (bytesPerSecond < 1024 * 1024) {
+      return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+    }
     return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
   };
 
@@ -137,7 +147,19 @@ export function PackageTable({
               <TableCell>
                 {(() => {
                   const task = getDownloadTask(version);
-                  
+                  const isDownloaded = isVersionDownloaded(version);
+
+                  // Show downloaded status (check local files first)
+                  // 显示已下载状态（优先检查本地文件）
+                  if (isDownloaded) {
+                    return (
+                      <div className="flex items-center gap-2 text-green-600">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="text-sm">{t('installer.downloaded')}</span>
+                      </div>
+                    );
+                  }
+
                   // Show download progress / 显示下载进度
                   if (task && (task.status === 'downloading' || task.status === 'pending')) {
                     return (
@@ -152,8 +174,9 @@ export function PackageTable({
                       </div>
                     );
                   }
-                  
-                  // Show completed status / 显示完成状态
+
+                  // Show completed status (just finished downloading)
+                  // 显示完成状态（刚刚下载完成）
                   if (task?.status === 'completed') {
                     return (
                       <div className="flex items-center gap-2 text-green-600">
@@ -162,7 +185,7 @@ export function PackageTable({
                       </div>
                     );
                   }
-                  
+
                   // Show failed status / 显示失败状态
                   if (task?.status === 'failed') {
                     return (
@@ -190,7 +213,7 @@ export function PackageTable({
                       </div>
                     );
                   }
-                  
+
                   // Show download button / 显示下载按钮
                   return (
                     <DropdownMenu>

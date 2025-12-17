@@ -239,6 +239,28 @@ export async function listDownloads(): Promise<DownloadTask[]> {
   return response.data.data || [];
 }
 
+// ==================== Version Management 版本管理 ====================
+
+interface RefreshVersionsResponse {
+  error_msg?: string;
+  data: string[];
+}
+
+/**
+ * Refresh version list from Apache Archive
+ * 从 Apache Archive 刷新版本列表
+ */
+export async function refreshVersions(): Promise<{ versions: string[]; warning?: string }> {
+  const response = await apiClient.post<RefreshVersionsResponse>(
+    `${API_PREFIX}/packages/versions/refresh`,
+    {}
+  );
+  return {
+    versions: response.data.data || [],
+    warning: response.data.error_msg,
+  };
+}
+
 // ==================== Export all functions 导出所有函数 ====================
 
 export const installerService = {
@@ -252,6 +274,8 @@ export const installerService = {
   getDownloadStatus,
   cancelDownload,
   listDownloads,
+  // Version management / 版本管理
+  refreshVersions,
   // Precheck / 预检查
   runPrecheck,
   // Installation / 安装

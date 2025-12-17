@@ -110,6 +110,16 @@ type Service struct {
 	downloads   map[string]*DownloadTask
 	downloadsMu sync.RWMutex
 
+	// cachedVersions stores the cached version list from Apache Archive
+	// cachedVersions 存储从 Apache Archive 获取的缓存版本列表
+	cachedVersions []string
+	// versionsCacheTime is when the version cache was last updated
+	// versionsCacheTime 是版本缓存最后更新的时间
+	versionsCacheTime time.Time
+	// versionsMu protects version cache access
+	// versionsMu 保护版本缓存访问
+	versionsMu sync.RWMutex
+
 	// agentManager is used to communicate with agents
 	// agentManager 用于与 Agent 通信
 	// agentManager *agent.Manager // TODO: inject agent manager
@@ -149,13 +159,182 @@ func NewServiceWithDefaults() *Service {
 	return NewService("")
 }
 
+// ==================== Version Management 版本管理 ====================
+
+// getVersions returns the version list, using cache if valid, otherwise fetching from Apache Archive.
+// getVersions 返回版本列表，如果缓存有效则使用缓存，否则从 Apache Archive 获取。
+func (s *Service) getVersions(ctx context.Context) []string {
+	s.versionsMu.RLock()
+	// Check if cache is valid / 检查缓存是否有效
+	if len(s.cachedVersions) > 0 && time.Since(s.versionsCacheTime) < VersionCacheDuration {
+		versions := s.cachedVersions
+		s.versionsMu.RUnlock()
+		return versions
+	}
+	s.versionsMu.RUnlock()
+
+	// Try to fetch from Apache Archive / 尝试从 Apache Archive 获取
+	versions, err := s.fetchVersionsFromApache(ctx)
+	if err != nil {
+		// Use fallback versions on error / 出错时使用备用版本
+		return FallbackVersions
+	}
+
+	// Update cache / 更新缓存
+	s.versionsMu.Lock()
+	s.cachedVersions = versions
+	s.versionsCacheTime = time.Now()
+	s.versionsMu.Unlock()
+
+	return versions
+}
+
+// fetchVersionsFromApache fetches the version list from Apache Archive.
+// fetchVersionsFromApache 从 Apache Archive 获取版本列表。
+func (s *Service) fetchVersionsFromApache(ctx context.Context) ([]string, error) {
+	// Create HTTP request with timeout / 创建带超时的 HTTP 请求
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ApacheArchiveURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch versions: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read response body / 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse HTML to extract version directories / 解析 HTML 提取版本目录
+	// Apache Archive HTML format: <a href="2.3.12/">2.3.12/</a>
+	// Apache Archive HTML 格式: <a href="2.3.12/">2.3.12/</a>
+	versionRegex := regexp.MustCompile(`<a href="(\d+\.\d+\.\d+(?:-[a-zA-Z0-9]+)?)/?">\d+\.\d+\.\d+(?:-[a-zA-Z0-9]+)?/?</a>`)
+	matches := versionRegex.FindAllStringSubmatch(string(body), -1)
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no versions found in response")
+	}
+
+	// Extract versions and sort in descending order / 提取版本并按降序排序
+	versions := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) >= 2 {
+			version := strings.TrimSuffix(match[1], "/")
+			versions = append(versions, version)
+		}
+	}
+
+	// Sort versions in descending order (newest first) / 按降序排序（最新版本在前）
+	sort.Slice(versions, func(i, j int) bool {
+		return compareVersions(versions[i], versions[j]) > 0
+	})
+
+	return versions, nil
+}
+
+// RefreshVersions forces a refresh of the version list from Apache Archive.
+// RefreshVersions 强制从 Apache Archive 刷新版本列表。
+func (s *Service) RefreshVersions(ctx context.Context) ([]string, error) {
+	versions, err := s.fetchVersionsFromApache(ctx)
+	if err != nil {
+		return FallbackVersions, err
+	}
+
+	// Update cache / 更新缓存
+	s.versionsMu.Lock()
+	s.cachedVersions = versions
+	s.versionsCacheTime = time.Now()
+	s.versionsMu.Unlock()
+
+	return versions, nil
+}
+
+// compareVersions compares two version strings.
+// compareVersions 比较两个版本字符串。
+// Returns: >0 if v1 > v2, <0 if v1 < v2, 0 if equal
+// 返回: >0 如果 v1 > v2, <0 如果 v1 < v2, 0 如果相等
+func compareVersions(v1, v2 string) int {
+	// Split by dots and compare each part / 按点分割并比较每个部分
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var p1, p2 string
+		if i < len(parts1) {
+			p1 = parts1[i]
+		}
+		if i < len(parts2) {
+			p2 = parts2[i]
+		}
+
+		// Handle suffix like "-beta" / 处理后缀如 "-beta"
+		n1, s1 := parseVersionPart(p1)
+		n2, s2 := parseVersionPart(p2)
+
+		if n1 != n2 {
+			return n1 - n2
+		}
+		// If numbers are equal, compare suffixes (no suffix > with suffix)
+		// 如果数字相等，比较后缀（无后缀 > 有后缀）
+		if s1 != s2 {
+			if s1 == "" {
+				return 1
+			}
+			if s2 == "" {
+				return -1
+			}
+			return strings.Compare(s1, s2)
+		}
+	}
+	return 0
+}
+
+// parseVersionPart parses a version part like "12" or "0-beta".
+// parseVersionPart 解析版本部分如 "12" 或 "0-beta"。
+func parseVersionPart(part string) (int, string) {
+	if part == "" {
+		return 0, ""
+	}
+
+	// Split by hyphen for suffix / 按连字符分割后缀
+	idx := strings.Index(part, "-")
+	if idx == -1 {
+		var num int
+		fmt.Sscanf(part, "%d", &num)
+		return num, ""
+	}
+
+	var num int
+	fmt.Sscanf(part[:idx], "%d", &num)
+	return num, part[idx:]
+}
+
 // ==================== Package Management 安装包管理 ====================
 
 // ListAvailableVersions returns available SeaTunnel versions.
 // ListAvailableVersions 返回可用的 SeaTunnel 版本。
 func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions, error) {
+	// Get versions (from cache, online, or fallback)
+	// 获取版本（从缓存、在线或备用列表）
+	versions := s.getVersions(ctx)
+
 	result := &AvailableVersions{
-		Versions:           SupportedVersions,
+		Versions:           versions,
 		RecommendedVersion: RecommendedVersion,
 		LocalPackages:      make([]PackageInfo, 0),
 	}

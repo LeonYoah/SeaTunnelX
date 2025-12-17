@@ -17,7 +17,7 @@ import { useTranslations } from 'next-intl';
 
 export function PackageMain() {
   const t = useTranslations();
-  const { packages, loading, error, refresh, uploadPackage, deletePackage, startDownload, downloads } = usePackages();
+  const { packages, loading, error, refresh, uploadPackage, deletePackage, startDownload, downloads, refreshVersions, refreshingVersions } = usePackages();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'online' | 'local'>('online');
 
@@ -130,16 +130,28 @@ export function PackageMain() {
 
         <TabsContent value="online" className="mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>{t('installer.onlineVersions')}</CardTitle>
-              <CardDescription>
-                {t('installer.onlineVersionsDesc')}
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>{t('installer.onlineVersions')}</CardTitle>
+                <CardDescription>
+                  {t('installer.onlineVersionsDesc')}
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refreshVersions}
+                disabled={refreshingVersions}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${refreshingVersions ? 'animate-spin' : ''}`} />
+                {t('installer.refreshVersions')}
+              </Button>
             </CardHeader>
             <CardContent>
               <PackageTable
                 type="online"
                 versions={packages?.versions || []}
+                localPackages={packages?.local_packages || []}
                 recommendedVersion={packages?.recommended_version}
                 loading={loading}
                 onDownload={handleDownload}

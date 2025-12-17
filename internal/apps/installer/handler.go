@@ -71,6 +71,35 @@ type GetPackageInfoResponse struct {
 	Data     *PackageInfo `json:"data"`
 }
 
+// RefreshVersionsResponse represents the response for refreshing versions.
+// RefreshVersionsResponse 表示刷新版本列表的响应。
+type RefreshVersionsResponse struct {
+	ErrorMsg string   `json:"error_msg"`
+	Data     []string `json:"data"`
+}
+
+// RefreshVersions handles POST /api/v1/packages/versions/refresh - refreshes version list from Apache Archive.
+// RefreshVersions 处理 POST /api/v1/packages/versions/refresh - 从 Apache Archive 刷新版本列表。
+// @Tags packages
+// @Produce json
+// @Success 200 {object} RefreshVersionsResponse
+// @Router /api/v1/packages/versions/refresh [post]
+func (h *Handler) RefreshVersions(c *gin.Context) {
+	versions, err := h.service.RefreshVersions(c.Request.Context())
+	if err != nil {
+		// Return fallback versions with warning / 返回备用版本并带警告
+		logger.WarnF(c.Request.Context(), "[Installer] 刷新版本列表失败，使用备用列表: %v", err)
+		c.JSON(http.StatusOK, RefreshVersionsResponse{
+			ErrorMsg: "无法从 Apache Archive 获取版本列表，使用备用列表 / Failed to fetch from Apache Archive, using fallback list",
+			Data:     versions,
+		})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Installer] 刷新版本列表成功，共 %d 个版本", len(versions))
+	c.JSON(http.StatusOK, RefreshVersionsResponse{Data: versions})
+}
+
 // GetPackageInfo handles GET /api/v1/packages/:version - gets package info.
 // GetPackageInfo 处理 GET /api/v1/packages/:version - 获取安装包信息。
 // @Tags packages

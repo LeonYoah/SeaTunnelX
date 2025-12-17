@@ -266,6 +266,10 @@ func Serve() {
 				// GET /api/v1/packages - List available packages
 				packageRouter.GET("", installerHandler.ListPackages)
 
+				// POST /api/v1/packages/versions/refresh - 刷新版本列表
+				// POST /api/v1/packages/versions/refresh - Refresh version list
+				packageRouter.POST("/versions/refresh", installerHandler.RefreshVersions)
+
 				// GET /api/v1/packages/:version - 获取安装包信息
 				// GET /api/v1/packages/:version - Get package info
 				packageRouter.GET("/:version", installerHandler.GetPackageInfo)
