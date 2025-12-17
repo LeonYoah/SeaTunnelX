@@ -18,6 +18,7 @@ import {
   Database,
   Terminal,
   FileText,
+  Package,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -53,6 +54,7 @@ const StaticIcons = {
   database: <Database {...IconOptions} />,
   terminal: <Terminal {...IconOptions} />,
   fileText: <FileText {...IconOptions} />,
+  package: <Package {...IconOptions} />,
   divider: <div />,
 };
 
@@ -345,6 +347,13 @@ export function ManagementBar() {
       title: tDock('auditLogs'),
       icon: StaticIcons.fileText,
       href: '/audit-logs',
+    });
+
+    // 安装包管理入口 / Package management entry
+    items.push({
+      title: tDock('packageManagement'),
+      icon: StaticIcons.package,
+      href: '/packages',
     });
 
     // 管理员入口 / Admin entry

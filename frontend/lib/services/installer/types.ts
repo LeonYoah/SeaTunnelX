@@ -1,0 +1,272 @@
+/**
+ * SeaTunnel Installer Types
+ * SeaTunnel 安装管理类型定义
+ */
+
+// ==================== Enums 枚举 ====================
+
+/**
+ * Mirror source for downloading SeaTunnel packages
+ * 下载 SeaTunnel 安装包的镜像源
+ */
+export type MirrorSource = 'aliyun' | 'apache' | 'huaweicloud';
+
+/**
+ * Installation mode
+ * 安装模式
+ */
+export type InstallMode = 'online' | 'offline';
+
+/**
+ * Deployment mode for SeaTunnel cluster
+ * SeaTunnel 集群部署模式
+ */
+export type DeploymentMode = 'hybrid' | 'separated';
+
+/**
+ * Node role in separated deployment mode
+ * 分离部署模式下的节点角色
+ */
+export type NodeRole = 'master' | 'worker';
+
+/**
+ * Installation step status
+ * 安装步骤状态
+ */
+export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+
+/**
+ * Installation step names
+ * 安装步骤名称
+ */
+export type InstallStep =
+  | 'download'
+  | 'verify'
+  | 'extract'
+  | 'configure_cluster'
+  | 'configure_checkpoint'
+  | 'configure_jvm'
+  | 'install_plugins'
+  | 'register_cluster'
+  | 'complete';
+
+/**
+ * Precheck item status
+ * 预检查项状态
+ */
+export type CheckStatus = 'passed' | 'failed' | 'warning';
+
+/**
+ * Checkpoint storage type
+ * 检查点存储类型
+ */
+export type CheckpointStorageType = 'LOCAL_FILE' | 'HDFS' | 'OSS' | 'S3';
+
+// ==================== Package Types 安装包类型 ====================
+
+/**
+ * Package information
+ * 安装包信息
+ */
+export interface PackageInfo {
+  version: string;
+  file_name: string;
+  file_size: number;
+  checksum?: string;
+  download_urls: Record<MirrorSource, string>;
+  is_local: boolean;
+  local_path?: string;
+  uploaded_at?: string;
+}
+
+/**
+ * Available versions response
+ * 可用版本响应
+ */
+export interface AvailableVersions {
+  versions: string[];
+  recommended_version: string;
+  local_packages: PackageInfo[];
+}
+
+// ==================== Configuration Types 配置类型 ====================
+
+/**
+ * JVM memory configuration
+ * JVM 内存配置
+ */
+export interface JVMConfig {
+  hybrid_heap_size: number;
+  master_heap_size: number;
+  worker_heap_size: number;
+}
+
+/**
+ * Checkpoint storage configuration
+ * 检查点存储配置
+ */
+export interface CheckpointConfig {
+  storage_type: CheckpointStorageType;
+  namespace: string;
+  hdfs_namenode_host?: string;
+  hdfs_namenode_port?: number;
+  storage_endpoint?: string;
+  storage_access_key?: string;
+  storage_secret_key?: string;
+  storage_bucket?: string;
+}
+
+/**
+ * Connector installation configuration
+ * 连接器安装配置
+ */
+export interface ConnectorConfig {
+  install_connectors: boolean;
+  connectors?: string[];
+  plugin_repo?: MirrorSource;
+}
+
+// ==================== Installation Types 安装类型 ====================
+
+/**
+ * Installation request
+ * 安装请求
+ */
+export interface InstallationRequest {
+  host_id?: string;
+  cluster_id?: string;
+  version: string;
+  install_mode: InstallMode;
+  mirror?: MirrorSource;
+  package_path?: string;
+  deployment_mode: DeploymentMode;
+  node_role: NodeRole;
+  jvm?: JVMConfig;
+  checkpoint?: CheckpointConfig;
+  connector?: ConnectorConfig;
+}
+
+/**
+ * Step information
+ * 步骤信息
+ */
+export interface StepInfo {
+  step: InstallStep;
+  name: string;
+  description: string;
+  status: StepStatus;
+  progress: number;
+  message?: string;
+  error?: string;
+  start_time?: string;
+  end_time?: string;
+  retryable: boolean;
+}
+
+/**
+ * Installation status
+ * 安装状态
+ */
+export interface InstallationStatus {
+  id: string;
+  host_id: string;
+  status: StepStatus;
+  current_step: InstallStep;
+  steps: StepInfo[];
+  progress: number;
+  message?: string;
+  error?: string;
+  start_time: string;
+  end_time?: string;
+}
+
+// ==================== Precheck Types 预检查类型 ====================
+
+/**
+ * Precheck request options
+ * 预检查请求选项
+ */
+export interface PrecheckRequest {
+  min_memory_mb?: number;
+  min_cpu_cores?: number;
+  min_disk_space_mb?: number;
+  install_dir?: string;
+  ports?: number[];
+}
+
+/**
+ * Precheck item result
+ * 预检查项结果
+ */
+export interface PrecheckItem {
+  name: string;
+  status: CheckStatus;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Precheck result
+ * 预检查结果
+ */
+export interface PrecheckResult {
+  items: PrecheckItem[];
+  overall_status: CheckStatus;
+  summary: string;
+}
+
+// ==================== API Response Types API 响应类型 ====================
+
+/**
+ * List packages response
+ * 获取安装包列表响应
+ */
+export interface ListPackagesResponse {
+  error_msg: string;
+  data: AvailableVersions | null;
+}
+
+/**
+ * Get package info response
+ * 获取安装包信息响应
+ */
+export interface GetPackageInfoResponse {
+  error_msg: string;
+  data: PackageInfo | null;
+}
+
+/**
+ * Upload package response
+ * 上传安装包响应
+ */
+export interface UploadPackageResponse {
+  error_msg: string;
+  data: PackageInfo | null;
+}
+
+/**
+ * Delete package response
+ * 删除安装包响应
+ */
+export interface DeletePackageResponse {
+  error_msg: string;
+  data: unknown;
+}
+
+/**
+ * Precheck response
+ * 预检查响应
+ */
+export interface PrecheckResponse {
+  error_msg: string;
+  data: PrecheckResult | null;
+}
+
+/**
+ * Installation response
+ * 安装响应
+ */
+export interface InstallResponse {
+  error_msg: string;
+  data: InstallationStatus | null;
+}

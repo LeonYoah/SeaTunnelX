@@ -1,0 +1,37 @@
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw deploymentMode: "separated"
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw nodeRole: "master"
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw clusterName: "a--"
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw clusterPort: 1024
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw httpPort: 1024
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw numMasters: 0
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] [rapid] draw httpPortStr: 1024
+# 2025/12/17 22:24:57.048547 [TestProperty_ConfigGenerationConsistency] Separated mode configuration should contain 'dynamic-slot: false'
+# 
+v0.4.8#7611088185858270696
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0

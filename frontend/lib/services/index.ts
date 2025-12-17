@@ -5,6 +5,7 @@ import {AdminUserService} from './admin/index';
 import {HostService} from './host/index';
 import {ClusterService} from './cluster/index';
 import {AuditService} from './audit/index';
+import {installerService} from './installer/index';
 
 /**
  * 服务层架构说明：
@@ -109,6 +110,12 @@ const services = {
    * 审计日志服务
    */
   audit: AuditService,
+
+  /**
+   * 安装管理服务
+   * Installer management service
+   */
+  installer: installerService,
 };
 
 export default services;

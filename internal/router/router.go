@@ -33,6 +33,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
+	"github.com/seatunnel/seatunnelX/internal/apps/installer"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
@@ -248,6 +249,54 @@ func Serve() {
 				// GET /api/v1/audit-logs/:id - Get audit log details
 				auditLogRouter.GET("/:id", auditHandler.GetAuditLog)
 			}
+
+			// Installer SeaTunnel 安装管理
+			// Initialize installer service and handler
+			// 初始化安装服务和处理器
+			installerService := installer.NewService("./lib/packages")
+			installerHandler := installer.NewHandler(installerService)
+
+			// Package management routes 安装包管理路由
+			packageRouter := apiV1Router.Group("/packages")
+			packageRouter.Use(auth.LoginRequired())
+			{
+				// GET /api/v1/packages - 获取可用安装包列表
+				// GET /api/v1/packages - List available packages
+				packageRouter.GET("", installerHandler.ListPackages)
+
+				// GET /api/v1/packages/:version - 获取安装包信息
+				// GET /api/v1/packages/:version - Get package info
+				packageRouter.GET("/:version", installerHandler.GetPackageInfo)
+
+				// POST /api/v1/packages/upload - 上传安装包
+				// POST /api/v1/packages/upload - Upload package
+				packageRouter.POST("/upload", installerHandler.UploadPackage)
+
+				// DELETE /api/v1/packages/:version - 删除本地安装包
+				// DELETE /api/v1/packages/:version - Delete local package
+				packageRouter.DELETE("/:version", installerHandler.DeletePackage)
+			}
+
+			// Installation routes on hosts 主机安装路由
+			// POST /api/v1/hosts/:id/precheck - 运行预检查
+			// POST /api/v1/hosts/:id/precheck - Run precheck
+			hostRouter.POST("/:id/precheck", installerHandler.RunPrecheck)
+
+			// POST /api/v1/hosts/:id/install - 开始安装
+			// POST /api/v1/hosts/:id/install - Start installation
+			hostRouter.POST("/:id/install", installerHandler.StartInstallation)
+
+			// GET /api/v1/hosts/:id/install/status - 获取安装状态
+			// GET /api/v1/hosts/:id/install/status - Get installation status
+			hostRouter.GET("/:id/install/status", installerHandler.GetInstallationStatus)
+
+			// POST /api/v1/hosts/:id/install/retry - 重试失败步骤
+			// POST /api/v1/hosts/:id/install/retry - Retry failed step
+			hostRouter.POST("/:id/install/retry", installerHandler.RetryStep)
+
+			// POST /api/v1/hosts/:id/install/cancel - 取消安装
+			// POST /api/v1/hosts/:id/install/cancel - Cancel installation
+			hostRouter.POST("/:id/install/cancel", installerHandler.CancelInstallation)
 		}
 	}
 
