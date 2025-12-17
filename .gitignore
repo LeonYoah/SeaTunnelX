@@ -41,3 +41,7 @@ go.work
 go.work.sum
 cdk
 main
+
+# agent binary
+agent/seatunnelx-agent
+agent/seatunnelx-agent.exe
