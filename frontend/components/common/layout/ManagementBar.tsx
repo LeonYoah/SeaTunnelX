@@ -14,6 +14,7 @@ import {
   Check,
   GithubIcon,
   Users,
+  Server,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -37,6 +38,7 @@ const IconOptions = {
 } as const;
 
 // 预创建静态图标，避免每次渲染重新创建
+// Pre-create static icons to avoid re-creating on each render
 const StaticIcons = {
   barChart: <BarChartIcon {...IconOptions} />,
   folder: <FolderIcon {...IconOptions} />,
@@ -44,6 +46,7 @@ const StaticIcons = {
   plusCircle: <PlusCircle {...IconOptions} />,
   user: <User {...IconOptions} />,
   users: <Users {...IconOptions} />,
+  server: <Server {...IconOptions} />,
   divider: <div />,
 };
 
@@ -310,7 +313,14 @@ export function ManagementBar() {
       },
     ];
 
-    // 管理员入口
+    // 主机管理入口 / Host management entry
+    items.push({
+      title: tDock('hostManagement'),
+      icon: StaticIcons.server,
+      href: '/hosts',
+    });
+
+    // 管理员入口 / Admin entry
     if (user?.is_admin) {
       items.push({
         title: tDock('userManagement'),
@@ -319,7 +329,7 @@ export function ManagementBar() {
       });
     }
 
-    // 分隔符
+    // 分隔符 / Divider
     items.push({
       title: 'divider',
       icon: StaticIcons.divider,

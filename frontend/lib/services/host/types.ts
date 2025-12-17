@@ -1,0 +1,297 @@
+/**
+ * Host Service Types
+ * 主机服务类型定义
+ *
+ * This file defines all types related to host management.
+ * 本文件定义所有与主机管理相关的类型。
+ */
+
+/* eslint-disable no-unused-vars */
+
+/**
+ * Host type enumeration
+ * 主机类型枚举
+ */
+export enum HostType {
+  /** Physical machine or VM managed by Agent / 由 Agent 管理的物理机或虚拟机 */
+  BARE_METAL = 'bare_metal',
+  /** Docker host managed via Docker API / 通过 Docker API 管理的 Docker 主机 */
+  DOCKER = 'docker',
+  /** Kubernetes cluster managed via K8s API / 通过 K8s API 管理的 Kubernetes 集群 */
+  KUBERNETES = 'kubernetes',
+}
+
+/**
+ * Host connection status
+ * 主机连接状态
+ */
+export enum HostStatus {
+  /** Waiting for connection / 等待连接 */
+  PENDING = 'pending',
+  /** Connected and operational / 已连接并可操作 */
+  CONNECTED = 'connected',
+  /** Offline / 离线 */
+  OFFLINE = 'offline',
+  /** Error state / 错误状态 */
+  ERROR = 'error',
+}
+
+/**
+ * Agent installation status (for bare_metal hosts)
+ * Agent 安装状态（用于物理机/VM）
+ */
+export enum AgentStatus {
+  /** Agent not installed / Agent 未安装 */
+  NOT_INSTALLED = 'not_installed',
+  /** Agent installed and connected / Agent 已安装并已连接 */
+  INSTALLED = 'installed',
+  /** Agent installed but offline / Agent 已安装但离线 */
+  OFFLINE = 'offline',
+}
+
+/**
+ * Host information returned from API
+ * API 返回的主机信息
+ */
+export interface HostInfo {
+  /** Host ID / 主机 ID */
+  id: number;
+  /** Host name / 主机名称 */
+  name: string;
+  /** Host type / 主机类型 */
+  host_type: HostType;
+  /** Description / 描述 */
+  description: string;
+  /** Connection status / 连接状态 */
+  status: HostStatus;
+
+  /** CPU usage percentage (0-100) / CPU 使用率百分比 */
+  cpu_usage: number;
+  /** Memory usage percentage (0-100) / 内存使用率百分比 */
+  memory_usage: number;
+  /** Disk usage percentage (0-100) / 磁盘使用率百分比 */
+  disk_usage: number;
+  /** Whether the host is online / 主机是否在线 */
+  is_online: boolean;
+  /** Last check time / 最后检查时间 */
+  last_check: string | null;
+
+  // bare_metal specific fields / 物理机专用字段
+  /** IP address / IP 地址 */
+  ip_address?: string;
+  /** SSH port / SSH 端口 */
+  ssh_port?: number;
+  /** Agent ID / Agent ID */
+  agent_id?: string;
+  /** Agent status / Agent 状态 */
+  agent_status?: AgentStatus;
+  /** Agent version / Agent 版本 */
+  agent_version?: string;
+  /** Operating system type / 操作系统类型 */
+  os_type?: string;
+  /** CPU architecture / CPU 架构 */
+  arch?: string;
+  /** Number of CPU cores / CPU 核心数 */
+  cpu_cores?: number;
+  /** Total memory in bytes / 总内存（字节） */
+  total_memory?: number;
+  /** Total disk space in bytes / 总磁盘空间（字节） */
+  total_disk?: number;
+  /** Last heartbeat time / 最后心跳时间 */
+  last_heartbeat?: string | null;
+
+  // docker specific fields / Docker 专用字段
+  /** Docker API URL / Docker API 地址 */
+  docker_api_url?: string;
+  /** Whether TLS is enabled for Docker / Docker 是否启用 TLS */
+  docker_tls_enabled?: boolean;
+  /** Docker version / Docker 版本 */
+  docker_version?: string;
+
+  // kubernetes specific fields / Kubernetes 专用字段
+  /** Kubernetes API URL / Kubernetes API 地址 */
+  k8s_api_url?: string;
+  /** Kubernetes namespace / Kubernetes 命名空间 */
+  k8s_namespace?: string;
+  /** Kubernetes version / Kubernetes 版本 */
+  k8s_version?: string;
+
+  /** Creation time / 创建时间 */
+  created_at: string;
+  /** Update time / 更新时间 */
+  updated_at: string;
+}
+
+
+/**
+ * Request to create a new host
+ * 创建新主机的请求
+ */
+export interface CreateHostRequest {
+  /** Host name (required) / 主机名称（必填） */
+  name: string;
+  /** Host type / 主机类型 */
+  host_type?: HostType;
+  /** Description / 描述 */
+  description?: string;
+
+  // bare_metal fields / 物理机字段
+  /** IP address (required for bare_metal) / IP 地址（物理机必填） */
+  ip_address?: string;
+  /** SSH port / SSH 端口 */
+  ssh_port?: number;
+
+  // docker fields / Docker 字段
+  /** Docker API URL (required for docker) / Docker API 地址（Docker 必填） */
+  docker_api_url?: string;
+  /** Whether TLS is enabled / 是否启用 TLS */
+  docker_tls_enabled?: boolean;
+  /** Docker certificate path / Docker 证书路径 */
+  docker_cert_path?: string;
+
+  // kubernetes fields / Kubernetes 字段
+  /** Kubernetes API URL (required for kubernetes) / K8s API 地址（K8s 必填） */
+  k8s_api_url?: string;
+  /** Kubernetes namespace / K8s 命名空间 */
+  k8s_namespace?: string;
+  /** Kubeconfig content / Kubeconfig 内容 */
+  k8s_kubeconfig?: string;
+  /** Service account token / 服务账户令牌 */
+  k8s_token?: string;
+}
+
+/**
+ * Request to update an existing host
+ * 更新现有主机的请求
+ */
+export interface UpdateHostRequest {
+  /** Host name / 主机名称 */
+  name?: string;
+  /** Description / 描述 */
+  description?: string;
+
+  // bare_metal fields / 物理机字段
+  /** IP address / IP 地址 */
+  ip_address?: string;
+  /** SSH port / SSH 端口 */
+  ssh_port?: number;
+
+  // docker fields / Docker 字段
+  /** Docker API URL / Docker API 地址 */
+  docker_api_url?: string;
+  /** Whether TLS is enabled / 是否启用 TLS */
+  docker_tls_enabled?: boolean;
+  /** Docker certificate path / Docker 证书路径 */
+  docker_cert_path?: string;
+
+  // kubernetes fields / Kubernetes 字段
+  /** Kubernetes API URL / K8s API 地址 */
+  k8s_api_url?: string;
+  /** Kubernetes namespace / K8s 命名空间 */
+  k8s_namespace?: string;
+  /** Kubeconfig content / Kubeconfig 内容 */
+  k8s_kubeconfig?: string;
+  /** Service account token / 服务账户令牌 */
+  k8s_token?: string;
+}
+
+/**
+ * Request parameters for listing hosts
+ * 获取主机列表的请求参数
+ */
+export interface ListHostsRequest {
+  /** Current page number (1-based) / 当前页码（从 1 开始） */
+  current: number;
+  /** Page size / 每页数量 */
+  size: number;
+  /** Filter by name / 按名称过滤 */
+  name?: string;
+  /** Filter by host type / 按主机类型过滤 */
+  host_type?: HostType;
+  /** Filter by IP address / 按 IP 地址过滤 */
+  ip_address?: string;
+  /** Filter by status / 按状态过滤 */
+  status?: HostStatus;
+  /** Filter by agent status / 按 Agent 状态过滤 */
+  agent_status?: AgentStatus;
+  /** Filter by online status / 按在线状态过滤 */
+  is_online?: boolean;
+}
+
+/**
+ * Host list data
+ * 主机列表数据
+ */
+export interface HostListData {
+  /** Total count / 总数量 */
+  total: number;
+  /** Host list / 主机列表 */
+  hosts: HostInfo[];
+}
+
+/**
+ * Backend response structure
+ * 后端响应结构
+ */
+export interface BackendResponse<T = unknown> {
+  /** Error message, empty string means no error / 错误信息，空字符串表示无错误 */
+  error_msg: string;
+  /** Response data / 响应数据 */
+  data: T;
+}
+
+/**
+ * List hosts response type
+ * 获取主机列表响应类型
+ */
+export type ListHostsResponse = BackendResponse<HostListData>;
+
+/**
+ * Create host response type
+ * 创建主机响应类型
+ */
+export type CreateHostResponse = BackendResponse<HostInfo>;
+
+/**
+ * Get host response type
+ * 获取主机详情响应类型
+ */
+export type GetHostResponse = BackendResponse<HostInfo>;
+
+/**
+ * Update host response type
+ * 更新主机响应类型
+ */
+export type UpdateHostResponse = BackendResponse<HostInfo>;
+
+/**
+ * Delete host response type
+ * 删除主机响应类型
+ */
+export type DeleteHostResponse = BackendResponse<null>;
+
+/**
+ * Install command data
+ * 安装命令数据
+ */
+export interface InstallCommandData {
+  /** Install command / 安装命令 */
+  command: string;
+}
+
+/**
+ * Get install command response type
+ * 获取安装命令响应类型
+ */
+export type GetInstallCommandResponse = BackendResponse<InstallCommandData>;
+
+/**
+ * Associated cluster info (returned when deletion fails due to cluster association)
+ * 关联的集群信息（删除失败时返回）
+ */
+export interface AssociatedCluster {
+  /** Cluster ID / 集群 ID */
+  id: number;
+  /** Cluster name / 集群名称 */
+  name: string;
+}

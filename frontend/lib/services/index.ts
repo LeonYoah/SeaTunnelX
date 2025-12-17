@@ -2,6 +2,7 @@ import {AuthService} from './auth/index';
 import {ProjectService} from './project/index';
 import {DashboardService} from './dashboard/index';
 import {AdminUserService} from './admin/index';
+import {HostService} from './host/index';
 
 /**
  * 服务层架构说明：
@@ -91,6 +92,11 @@ const services = {
    * 管理员用户管理服务
    */
   adminUser: AdminUserService,
+
+  /**
+   * 主机管理服务
+   */
+  host: HostService,
 };
 
 export default services;

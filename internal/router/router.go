@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/seatunnel/seatunnelX/docs"
 	"github.com/seatunnel/seatunnelX/internal/apps/admin"
+	"github.com/seatunnel/seatunnelX/internal/apps/agent"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
@@ -165,6 +166,25 @@ func Serve() {
 				hostRouter.PUT("/:id", hostHandler.UpdateHost)
 				hostRouter.DELETE("/:id", hostHandler.DeleteHost)
 				hostRouter.GET("/:id/install-command", hostHandler.GetInstallCommand)
+			}
+
+			// Agent 分发 API（无需认证，供目标主机下载安装）
+			// Agent distribution API (no authentication required, for target hosts to download and install)
+			agentHandler := agent.NewHandler(&agent.HandlerConfig{
+				ControlPlaneAddr: config.Config.App.Addr,
+				AgentBinaryDir:   "./lib/agent",
+				GRPCPort:         "50051",
+			})
+
+			agentRouter := apiV1Router.Group("/agent")
+			{
+				// GET /api/v1/agent/install.sh - 获取安装脚本
+				// GET /api/v1/agent/install.sh - Get install script
+				agentRouter.GET("/install.sh", agentHandler.GetInstallScript)
+
+				// GET /api/v1/agent/download - 下载 Agent 二进制文件
+				// GET /api/v1/agent/download - Download Agent binary
+				agentRouter.GET("/download", agentHandler.DownloadAgent)
 			}
 		}
 	}

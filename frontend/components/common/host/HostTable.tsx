@@ -1,0 +1,369 @@
+'use client';
+
+/**
+ * Host Table Component
+ * 主机表格组件
+ *
+ * Displays a table of hosts with actions for viewing, editing, and deleting.
+ * 显示主机表格，支持查看、编辑和删除操作。
+ */
+
+import {useTranslations} from 'next-intl';
+import {Button} from '@/components/ui/button';
+import {Badge} from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {Eye, Pencil, Trash2, Server, Container, Cloud} from 'lucide-react';
+import {HostInfo, HostType, HostStatus, AgentStatus} from '@/lib/services/host/types';
+
+interface HostTableProps {
+  hosts: HostInfo[];
+  loading: boolean;
+  currentPage: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  onViewDetail: (host: HostInfo) => void;
+  onEdit: (host: HostInfo) => void;
+  onDelete: (host: HostInfo) => void;
+}
+
+/**
+ * Get host type icon
+ * 获取主机类型图标
+ */
+function getHostTypeIcon(hostType: HostType) {
+  switch (hostType) {
+    case HostType.BARE_METAL:
+      return <Server className='h-4 w-4' />;
+    case HostType.DOCKER:
+      return <Container className='h-4 w-4' />;
+    case HostType.KUBERNETES:
+      return <Cloud className='h-4 w-4' />;
+    default:
+      return <Server className='h-4 w-4' />;
+  }
+}
+
+
+/**
+ * Get status badge variant
+ * 获取状态徽章变体
+ */
+function getStatusBadgeVariant(
+  status: HostStatus,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  switch (status) {
+    case HostStatus.CONNECTED:
+      return 'default';
+    case HostStatus.PENDING:
+      return 'secondary';
+    case HostStatus.OFFLINE:
+      return 'outline';
+    case HostStatus.ERROR:
+      return 'destructive';
+    default:
+      return 'secondary';
+  }
+}
+
+/**
+ * Get agent status badge variant
+ * 获取 Agent 状态徽章变体
+ */
+function getAgentStatusBadgeVariant(
+  status: AgentStatus,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  switch (status) {
+    case AgentStatus.INSTALLED:
+      return 'default';
+    case AgentStatus.NOT_INSTALLED:
+      return 'secondary';
+    case AgentStatus.OFFLINE:
+      return 'outline';
+    default:
+      return 'secondary';
+  }
+}
+
+/**
+ * Format bytes to human readable string
+ * 格式化字节为人类可读字符串
+ */
+function formatBytes(bytes: number | undefined): string {
+  if (!bytes) {
+    return '-';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let unitIndex = 0;
+  let value = bytes;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/**
+ * Host Table Component
+ * 主机表格组件
+ */
+export function HostTable({
+  hosts,
+  loading,
+  currentPage,
+  totalPages,
+  total,
+  onPageChange,
+  onViewDetail,
+  onEdit,
+  onDelete,
+}: HostTableProps) {
+  const t = useTranslations();
+
+  return (
+    <div className='space-y-4'>
+      <div className='border rounded-lg'>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className='w-[50px]'>ID</TableHead>
+              <TableHead>{t('host.name')}</TableHead>
+              <TableHead>{t('host.hostType')}</TableHead>
+              <TableHead>{t('host.connectionInfo')}</TableHead>
+              <TableHead>{t('host.status')}</TableHead>
+              <TableHead>{t('host.resources')}</TableHead>
+              <TableHead>{t('host.createdAt')}</TableHead>
+              <TableHead className='w-[120px]'>{t('host.actions')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={8} className='text-center py-8'>
+                  {t('common.loading')}
+                </TableCell>
+              </TableRow>
+            ) : hosts.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className='text-center py-8 text-muted-foreground'
+                >
+                  {t('host.noHosts')}
+                </TableCell>
+              </TableRow>
+            ) : (
+              hosts.map((host) => (
+                <TableRow key={host.id}>
+                  <TableCell>{host.id}</TableCell>
+                  <TableCell>
+                    <div className='flex items-center gap-2'>
+                      {getHostTypeIcon(host.host_type)}
+                      <span className='font-medium'>{host.name}</span>
+                    </div>
+                    {host.description && (
+                      <p className='text-xs text-muted-foreground mt-1 truncate max-w-[200px]'>
+                        {host.description}
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant='outline'>
+                      {t(`host.types.${host.host_type === HostType.BARE_METAL ? 'bareMetal' : host.host_type}`)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {host.host_type === HostType.BARE_METAL && (
+                      <div className='text-sm'>
+                        <div>{host.ip_address || '-'}</div>
+                        {host.agent_status && (
+                          <Badge
+                            variant={getAgentStatusBadgeVariant(host.agent_status)}
+                            className='mt-1'
+                          >
+                            {t(`host.agentStatuses.${host.agent_status === AgentStatus.NOT_INSTALLED ? 'notInstalled' : host.agent_status}`)}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                    {host.host_type === HostType.DOCKER && (
+                      <div className='text-sm truncate max-w-[150px]'>
+                        {host.docker_api_url || '-'}
+                      </div>
+                    )}
+                    {host.host_type === HostType.KUBERNETES && (
+                      <div className='text-sm'>
+                        <div className='truncate max-w-[150px]'>
+                          {host.k8s_api_url || '-'}
+                        </div>
+                        {host.k8s_namespace && (
+                          <div className='text-xs text-muted-foreground'>
+                            ns: {host.k8s_namespace}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className='flex flex-col gap-1'>
+                      <Badge variant={getStatusBadgeVariant(host.status)}>
+                        {t(`host.statuses.${host.status}`)}
+                      </Badge>
+                      {host.is_online !== undefined && (
+                        <span
+                          className={`text-xs ${host.is_online ? 'text-green-600' : 'text-gray-400'}`}
+                        >
+                          {host.is_online ? t('host.online') : t('host.offline')}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className='text-sm space-y-1'>
+                      <div className='flex items-center gap-2'>
+                        <span className='text-muted-foreground'>CPU:</span>
+                        <span>{host.cpu_usage?.toFixed(1) || 0}%</span>
+                      </div>
+                      <div className='flex items-center gap-2'>
+                        <span className='text-muted-foreground'>Mem:</span>
+                        <span>{host.memory_usage?.toFixed(1) || 0}%</span>
+                      </div>
+                      {host.host_type === HostType.BARE_METAL && host.total_memory && (
+                        <div className='text-xs text-muted-foreground'>
+                          {formatBytes(host.total_memory)}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {new Date(host.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    <div className='flex gap-1'>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant='ghost'
+                              size='icon'
+                              onClick={() => onViewDetail(host)}
+                            >
+                              <Eye className='h-4 w-4' />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('common.view')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant='ghost'
+                              size='icon'
+                              onClick={() => onEdit(host)}
+                            >
+                              <Pencil className='h-4 w-4' />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('common.edit')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+
+                      <AlertDialog>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <AlertDialogTrigger asChild>
+                                <Button variant='ghost' size='icon'>
+                                  <Trash2 className='h-4 w-4 text-destructive' />
+                                </Button>
+                              </AlertDialogTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('common.delete')}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              {t('host.deleteHost')}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {t('host.deleteConfirm', {name: host.name})}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>
+                              {t('common.cancel')}
+                            </AlertDialogCancel>
+                            <AlertDialogAction onClick={() => onDelete(host)}>
+                              {t('common.delete')}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Pagination / 分页 */}
+      {totalPages > 1 && (
+        <div className='flex items-center justify-between'>
+          <div className='text-sm text-muted-foreground'>
+            {t('common.totalItems', {total})}
+          </div>
+          <div className='flex gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={currentPage === 1}
+              onClick={() => onPageChange(currentPage - 1)}
+            >
+              {t('common.previous')}
+            </Button>
+            <span className='flex items-center px-4 text-sm'>
+              {currentPage} / {totalPages}
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={currentPage === totalPages}
+              onClick={() => onPageChange(currentPage + 1)}
+            >
+              {t('common.next')}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

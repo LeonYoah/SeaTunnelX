@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
@@ -52,11 +53,14 @@ func Migrate() {
 
 	// 执行数据库表迁移，包含用户表
 	// 注意：auth.User 是统一的用户表，同时支持密码登录和 OAuth 登录
+	// Execute database table migration, including user table
+	// Note: auth.User is the unified user table, supporting both password and OAuth login
 	if err := db.GetDB(context.Background()).AutoMigrate(
-		&auth.User{}, // 统一用户表（支持密码认证和 OAuth 认证）
-		&project.Project{},
-		&project.ProjectItem{},
-		&project.ProjectTag{},
+		&auth.User{},           // 统一用户表（支持密码认证和 OAuth 认证）/ Unified user table
+		&host.Host{},           // 主机管理表 / Host management table
+		&project.Project{},     // 项目表 / Project table
+		&project.ProjectItem{}, // 项目条目表 / Project item table
+		&project.ProjectTag{},  // 项目标签表 / Project tag table
 		&project.ProjectReport{},
 	); err != nil {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
