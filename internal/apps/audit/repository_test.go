@@ -580,3 +580,462 @@ func TestProperty_AuditLogCombinedFiltering(t *testing.T) {
 
 	properties.TestingRun(t)
 }
+
+// ============================================================================
+// Property 17: Audit Log Completeness Tests
+// ============================================================================
+
+// genValidCommandID generates valid command IDs
+// genValidCommandID 生成有效的命令 ID
+func genValidCommandID() gopter.Gen {
+	return gen.RegexMatch("[a-zA-Z0-9_-]{8,36}").SuchThat(func(s string) bool {
+		return len(s) >= 8 && len(s) <= 36
+	})
+}
+
+// genValidAgentID generates valid agent IDs
+// genValidAgentID 生成有效的代理 ID
+func genValidAgentID() gopter.Gen {
+	return gen.RegexMatch("[a-zA-Z0-9_-]{8,50}").SuchThat(func(s string) bool {
+		return len(s) >= 8 && len(s) <= 50
+	})
+}
+
+// genValidCommandType generates valid command types
+// genValidCommandType 生成有效的命令类型
+func genValidCommandType() gopter.Gen {
+	return gen.OneConstOf(
+		"PRECHECK",
+		"INSTALL",
+		"UNINSTALL",
+		"UPGRADE",
+		"START",
+		"STOP",
+		"RESTART",
+		"STATUS",
+		"COLLECT_LOGS",
+		"UPDATE_CONFIG",
+	)
+}
+
+// genValidCommandStatus generates valid command statuses
+// genValidCommandStatus 生成有效的命令状态
+func genValidCommandStatus() gopter.Gen {
+	return gen.OneConstOf(
+		CommandStatusPending,
+		CommandStatusRunning,
+		CommandStatusSuccess,
+		CommandStatusFailed,
+		CommandStatusCancelled,
+	)
+}
+
+// CommandLogTestData represents test data for command log property tests
+// CommandLogTestData 表示命令日志属性测试的测试数据
+type CommandLogTestData struct {
+	CommandID   string
+	AgentID     string
+	CommandType string
+	Status      CommandStatus
+	Progress    int
+	Output      string
+	Error       string
+}
+
+// genCommandLogTestData generates valid command log test data
+// genCommandLogTestData 生成有效的命令日志测试数据
+func genCommandLogTestData() gopter.Gen {
+	return gopter.CombineGens(
+		genValidCommandID(),
+		genValidAgentID(),
+		genValidCommandType(),
+		genValidCommandStatus(),
+		gen.IntRange(0, 100),
+		gen.AlphaString().SuchThat(func(s string) bool { return len(s) <= 100 }),
+		gen.AlphaString().SuchThat(func(s string) bool { return len(s) <= 100 }),
+	).Map(func(vals []interface{}) CommandLogTestData {
+		return CommandLogTestData{
+			CommandID:   vals[0].(string),
+			AgentID:     vals[1].(string),
+			CommandType: vals[2].(string),
+			Status:      vals[3].(CommandStatus),
+			Progress:    vals[4].(int),
+			Output:      vals[5].(string),
+			Error:       vals[6].(string),
+		}
+	})
+}
+
+// **Feature: seatunnel-agent, Property 17: Audit Log Completeness**
+// **Validates: Requirements 10.1**
+// For any command execution, the audit log entry SHALL contain command_id, command_type,
+// start_time, end_time, and execution result.
+
+func TestProperty_AuditLogCompleteness(t *testing.T) {
+	// **Feature: seatunnel-agent, Property 17: Audit Log Completeness**
+	// **Validates: Requirements 10.1**
+
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+	parameters.Rng.Seed(42)
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property: Command log entries contain all required fields
+	// 属性：命令日志条目包含所有必需字段
+	properties.Property("command log entries contain all required fields", prop.ForAll(
+		func(testData CommandLogTestData) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			// Create a command log with all fields
+			// 创建包含所有字段的命令日志
+			now := time.Now()
+			startedAt := now.Add(-5 * time.Minute)
+			finishedAt := now
+
+			log := &CommandLog{
+				CommandID:   testData.CommandID,
+				AgentID:     testData.AgentID,
+				CommandType: testData.CommandType,
+				Status:      testData.Status,
+				Progress:    testData.Progress,
+				Output:      testData.Output,
+				Error:       testData.Error,
+				StartedAt:   &startedAt,
+				FinishedAt:  &finishedAt,
+			}
+
+			if err := repo.CreateCommandLog(ctx, log); err != nil {
+				t.Logf("Failed to create command log: %v", err)
+				return false
+			}
+
+			// Retrieve the log and verify all required fields are present
+			// 检索日志并验证所有必需字段都存在
+			retrieved, err := repo.GetCommandLogByCommandID(ctx, testData.CommandID)
+			if err != nil {
+				t.Logf("Failed to get command log: %v", err)
+				return false
+			}
+
+			// Verify command_id is present and matches
+			// 验证 command_id 存在且匹配
+			if retrieved.CommandID == "" {
+				t.Logf("Command ID is empty")
+				return false
+			}
+			if retrieved.CommandID != testData.CommandID {
+				t.Logf("Command ID mismatch: got %s, expected %s", retrieved.CommandID, testData.CommandID)
+				return false
+			}
+
+			// Verify command_type is present and matches
+			// 验证 command_type 存在且匹配
+			if retrieved.CommandType == "" {
+				t.Logf("Command type is empty")
+				return false
+			}
+			if retrieved.CommandType != testData.CommandType {
+				t.Logf("Command type mismatch: got %s, expected %s", retrieved.CommandType, testData.CommandType)
+				return false
+			}
+
+			// Verify start_time is present
+			// 验证 start_time 存在
+			if retrieved.StartedAt == nil {
+				t.Logf("Started at is nil")
+				return false
+			}
+
+			// Verify end_time is present
+			// 验证 end_time 存在
+			if retrieved.FinishedAt == nil {
+				t.Logf("Finished at is nil")
+				return false
+			}
+
+			// Verify execution result (status) is present
+			// 验证执行结果（状态）存在
+			if retrieved.Status == "" {
+				t.Logf("Status is empty")
+				return false
+			}
+			if retrieved.Status != testData.Status {
+				t.Logf("Status mismatch: got %s, expected %s", retrieved.Status, testData.Status)
+				return false
+			}
+
+			return true
+		},
+		genCommandLogTestData(),
+	))
+
+	// Property: Command log preserves all data through create and retrieve cycle
+	// 属性：命令日志在创建和检索周期中保留所有数据
+	properties.Property("command log preserves all data through create and retrieve cycle", prop.ForAll(
+		func(testData CommandLogTestData) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			// Create a command log
+			// 创建命令日志
+			now := time.Now()
+			startedAt := now.Add(-5 * time.Minute)
+			finishedAt := now
+			hostID := uint(123)
+
+			log := &CommandLog{
+				CommandID:   testData.CommandID,
+				AgentID:     testData.AgentID,
+				HostID:      &hostID,
+				CommandType: testData.CommandType,
+				Parameters:  CommandParameters{"key": "value", "count": 42},
+				Status:      testData.Status,
+				Progress:    testData.Progress,
+				Output:      testData.Output,
+				Error:       testData.Error,
+				StartedAt:   &startedAt,
+				FinishedAt:  &finishedAt,
+			}
+
+			if err := repo.CreateCommandLog(ctx, log); err != nil {
+				t.Logf("Failed to create command log: %v", err)
+				return false
+			}
+
+			// Retrieve and verify all fields
+			// 检索并验证所有字段
+			retrieved, err := repo.GetCommandLogByID(ctx, log.ID)
+			if err != nil {
+				t.Logf("Failed to get command log: %v", err)
+				return false
+			}
+
+			// Verify all fields match
+			// 验证所有字段匹配
+			if retrieved.CommandID != testData.CommandID {
+				t.Logf("CommandID mismatch")
+				return false
+			}
+			if retrieved.AgentID != testData.AgentID {
+				t.Logf("AgentID mismatch")
+				return false
+			}
+			if retrieved.HostID == nil || *retrieved.HostID != hostID {
+				t.Logf("HostID mismatch")
+				return false
+			}
+			if retrieved.CommandType != testData.CommandType {
+				t.Logf("CommandType mismatch")
+				return false
+			}
+			if retrieved.Status != testData.Status {
+				t.Logf("Status mismatch")
+				return false
+			}
+			if retrieved.Progress != testData.Progress {
+				t.Logf("Progress mismatch")
+				return false
+			}
+			if retrieved.Output != testData.Output {
+				t.Logf("Output mismatch")
+				return false
+			}
+			if retrieved.Error != testData.Error {
+				t.Logf("Error mismatch")
+				return false
+			}
+
+			// Verify parameters are preserved
+			// 验证参数被保留
+			if retrieved.Parameters == nil {
+				t.Logf("Parameters is nil")
+				return false
+			}
+			if retrieved.Parameters["key"] != "value" {
+				t.Logf("Parameters key mismatch")
+				return false
+			}
+
+			return true
+		},
+		genCommandLogTestData(),
+	))
+
+	// Property: Command log status updates preserve completeness
+	// 属性：命令日志状态更新保持完整性
+	properties.Property("command log status updates preserve completeness", prop.ForAll(
+		func(testData CommandLogTestData, newStatus CommandStatus) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			// Create initial command log
+			// 创建初始命令日志
+			startedAt := time.Now()
+			log := &CommandLog{
+				CommandID:   testData.CommandID,
+				AgentID:     testData.AgentID,
+				CommandType: testData.CommandType,
+				Status:      CommandStatusPending,
+				StartedAt:   &startedAt,
+			}
+
+			if err := repo.CreateCommandLog(ctx, log); err != nil {
+				t.Logf("Failed to create command log: %v", err)
+				return false
+			}
+
+			// Update status and finish time
+			// 更新状态和完成时间
+			finishedAt := time.Now()
+			updates := map[string]interface{}{
+				"status":      newStatus,
+				"finished_at": finishedAt,
+				"progress":    100,
+				"output":      "Command completed",
+			}
+
+			if err := repo.UpdateCommandLogStatus(ctx, log.ID, updates); err != nil {
+				t.Logf("Failed to update command log: %v", err)
+				return false
+			}
+
+			// Retrieve and verify completeness
+			// 检索并验证完整性
+			retrieved, err := repo.GetCommandLogByID(ctx, log.ID)
+			if err != nil {
+				t.Logf("Failed to get command log: %v", err)
+				return false
+			}
+
+			// Verify required fields are still present after update
+			// 验证更新后必需字段仍然存在
+			if retrieved.CommandID == "" {
+				t.Logf("CommandID is empty after update")
+				return false
+			}
+			if retrieved.CommandType == "" {
+				t.Logf("CommandType is empty after update")
+				return false
+			}
+			if retrieved.StartedAt == nil {
+				t.Logf("StartedAt is nil after update")
+				return false
+			}
+			if retrieved.FinishedAt == nil {
+				t.Logf("FinishedAt is nil after update")
+				return false
+			}
+			if retrieved.Status != newStatus {
+				t.Logf("Status not updated: got %s, expected %s", retrieved.Status, newStatus)
+				return false
+			}
+
+			return true
+		},
+		genCommandLogTestData(),
+		genValidCommandStatus(),
+	))
+
+	properties.TestingRun(t)
+}
+
+// TestProperty_CommandLogRequiredFields tests that required fields cannot be empty
+// TestProperty_CommandLogRequiredFields 测试必需字段不能为空
+func TestProperty_CommandLogRequiredFields(t *testing.T) {
+	// **Feature: seatunnel-agent, Property 17: Audit Log Completeness**
+	// **Validates: Requirements 10.1**
+
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+	parameters.Rng.Seed(42)
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property: Empty command_id is rejected
+	// 属性：空的 command_id 被拒绝
+	properties.Property("empty command_id is rejected", prop.ForAll(
+		func(testData CommandLogTestData) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			log := &CommandLog{
+				CommandID:   "", // Empty command ID
+				AgentID:     testData.AgentID,
+				CommandType: testData.CommandType,
+				Status:      testData.Status,
+			}
+
+			err := repo.CreateCommandLog(ctx, log)
+			// Should return error for empty command ID
+			// 应该为空的命令 ID 返回错误
+			return err == ErrCommandIDEmpty
+		},
+		genCommandLogTestData(),
+	))
+
+	// Property: Empty agent_id is rejected
+	// 属性：空的 agent_id 被拒绝
+	properties.Property("empty agent_id is rejected", prop.ForAll(
+		func(testData CommandLogTestData) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			log := &CommandLog{
+				CommandID:   testData.CommandID,
+				AgentID:     "", // Empty agent ID
+				CommandType: testData.CommandType,
+				Status:      testData.Status,
+			}
+
+			err := repo.CreateCommandLog(ctx, log)
+			// Should return error for empty agent ID
+			// 应该为空的代理 ID 返回错误
+			return err == ErrAgentIDEmpty
+		},
+		genCommandLogTestData(),
+	))
+
+	// Property: Empty command_type is rejected
+	// 属性：空的 command_type 被拒绝
+	properties.Property("empty command_type is rejected", prop.ForAll(
+		func(testData CommandLogTestData) bool {
+			db, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			repo := NewRepository(db)
+			ctx := context.Background()
+
+			log := &CommandLog{
+				CommandID:   testData.CommandID,
+				AgentID:     testData.AgentID,
+				CommandType: "", // Empty command type
+				Status:      testData.Status,
+			}
+
+			err := repo.CreateCommandLog(ctx, log)
+			// Should return error for empty command type
+			// 应该为空的命令类型返回错误
+			return err == ErrCommandTypeEmpty
+		},
+		genCommandLogTestData(),
+	))
+
+	properties.TestingRun(t)
+}

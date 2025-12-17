@@ -78,13 +78,13 @@ oauth_providers:
 database:
   enabled: true
   type: "sqlite"  # sqlite, mysql, postgres
-  sqlite_path: "./data/seatunnel.db"  # SQLite 文件路径
+  sqlite_path: "./data/seatunnelx.db"  # SQLite 文件路径
   # MySQL/PostgreSQL 配置（使用 sqlite 时可忽略）
   host: "127.0.0.1"
   port: 3306
   username: "root"
   password: ""
-  database: "seatunnel"
+  database: "seatunnelx"
   max_idle_conn: 10
   max_open_conn: 100
   conn_max_lifetime: 3600
@@ -97,7 +97,7 @@ clickhouse:
     - "127.0.0.1:9000"
   username: "default"
   password: ""
-  database: "seatunnel"
+  database: "seatunnelx"
   max_idle_conn: 10
   max_open_conn: 100
   conn_max_lifetime: 3600

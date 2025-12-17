@@ -27,6 +27,7 @@ import (
 	_ "github.com/seatunnel/seatunnelX/docs"
 	"github.com/seatunnel/seatunnelX/internal/apps/admin"
 	"github.com/seatunnel/seatunnelX/internal/apps/agent"
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
@@ -213,6 +214,39 @@ func Serve() {
 				// GET /api/v1/agent/download - 下载 Agent 二进制文件
 				// GET /api/v1/agent/download - Download Agent binary
 				agentRouter.GET("/download", agentHandler.DownloadAgent)
+			}
+
+			// Audit 审计日志 API
+			// Audit log API
+			// Initialize audit repository and handler
+			// 初始化审计仓库和处理器
+			auditRepo := audit.NewRepository(db.DB(context.Background()))
+			auditHandler := audit.NewHandler(auditRepo)
+
+			// Command logs 命令日志
+			commandRouter := apiV1Router.Group("/commands")
+			commandRouter.Use(auth.LoginRequired())
+			{
+				// GET /api/v1/commands - 获取命令日志列表
+				// GET /api/v1/commands - Get command logs list
+				commandRouter.GET("", auditHandler.ListCommandLogs)
+
+				// GET /api/v1/commands/:id - 获取命令日志详情
+				// GET /api/v1/commands/:id - Get command log details
+				commandRouter.GET("/:id", auditHandler.GetCommandLog)
+			}
+
+			// Audit logs 审计日志
+			auditLogRouter := apiV1Router.Group("/audit-logs")
+			auditLogRouter.Use(auth.LoginRequired())
+			{
+				// GET /api/v1/audit-logs - 获取审计日志列表
+				// GET /api/v1/audit-logs - Get audit logs list
+				auditLogRouter.GET("", auditHandler.ListAuditLogs)
+
+				// GET /api/v1/audit-logs/:id - 获取审计日志详情
+				// GET /api/v1/audit-logs/:id - Get audit log details
+				auditLogRouter.GET("/:id", auditHandler.GetAuditLog)
 			}
 		}
 	}

@@ -16,6 +16,8 @@ import {
   Users,
   Server,
   Database,
+  Terminal,
+  FileText,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -49,6 +51,8 @@ const StaticIcons = {
   users: <Users {...IconOptions} />,
   server: <Server {...IconOptions} />,
   database: <Database {...IconOptions} />,
+  terminal: <Terminal {...IconOptions} />,
+  fileText: <FileText {...IconOptions} />,
   divider: <div />,
 };
 
@@ -327,6 +331,20 @@ export function ManagementBar() {
       title: tDock('clusterManagement'),
       icon: StaticIcons.database,
       href: '/clusters',
+    });
+
+    // 命令记录入口 / Command logs entry
+    items.push({
+      title: tDock('commandLogs'),
+      icon: StaticIcons.terminal,
+      href: '/commands',
+    });
+
+    // 审计日志入口 / Audit logs entry
+    items.push({
+      title: tDock('auditLogs'),
+      icon: StaticIcons.fileText,
+      href: '/audit-logs',
     });
 
     // 管理员入口 / Admin entry

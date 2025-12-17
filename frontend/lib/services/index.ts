@@ -4,6 +4,7 @@ import {DashboardService} from './dashboard/index';
 import {AdminUserService} from './admin/index';
 import {HostService} from './host/index';
 import {ClusterService} from './cluster/index';
+import {AuditService} from './audit/index';
 
 /**
  * 服务层架构说明：
@@ -103,6 +104,11 @@ const services = {
    * 集群管理服务
    */
   cluster: ClusterService,
+
+  /**
+   * 审计日志服务
+   */
+  audit: AuditService,
 };
 
 export default services;
