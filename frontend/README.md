@@ -1,6 +1,6 @@
-# LINUX DO CDK Frontend
+# Seatunnel X Frontend
 
-🎨 Linux Do 社区 CDK 快速分享平台 - 前端应用
+🎨 Seatunnel X - 前端应用
 
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)

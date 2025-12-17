@@ -23,10 +23,10 @@ const notoSansSC = Noto_Sans_SC({
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - LINUX DO CDK',
-    default: 'LINUX DO CDK',
+    template: '%s - Seatunnel X',
+    default: 'Seatunnel X',
   },
-  description: 'Linux Do 社区 CDK 快速分享平台 - 让分享变得更简单',
+  description: 'Seatunnel X ,Seatunnel的一站式运维管理平台',
 };
 
 export default function RootLayout({

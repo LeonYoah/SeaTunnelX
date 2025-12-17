@@ -16,6 +16,7 @@ import {
   Terminal,
   FileText,
   Package,
+  Puzzle,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -47,6 +48,7 @@ const StaticIcons = {
   terminal: <Terminal {...IconOptions} />,
   fileText: <FileText {...IconOptions} />,
   package: <Package {...IconOptions} />,
+  puzzle: <Puzzle {...IconOptions} />,
   divider: <div />,
 };
 
@@ -322,6 +324,13 @@ export function ManagementBar() {
       title: tDock('packageManagement'),
       icon: StaticIcons.package,
       href: '/packages',
+    });
+
+    // 插件市场入口 / Plugin marketplace entry
+    items.push({
+      title: tDock('pluginMarketplace'),
+      icon: StaticIcons.puzzle,
+      href: '/plugins',
     });
 
     // 管理员入口 / Admin entry

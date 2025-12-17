@@ -110,21 +110,21 @@ type ListInstalledPluginsResponse struct {
 	Data     []InstalledPlugin `json:"data"`
 }
 
-// ListInstalledPlugins handles GET /api/v1/hosts/:id/plugins - lists installed plugins on a host.
-// ListInstalledPlugins 处理 GET /api/v1/hosts/:id/plugins - 获取主机已安装插件列表。
+// ListInstalledPlugins handles GET /api/v1/clusters/:id/plugins - lists installed plugins on a cluster.
+// ListInstalledPlugins 处理 GET /api/v1/clusters/:id/plugins - 获取集群已安装插件列表。
 // @Tags plugins
 // @Produce json
-// @Param id path int true "主机ID"
+// @Param id path int true "集群ID"
 // @Success 200 {object} ListInstalledPluginsResponse
-// @Router /api/v1/hosts/{id}/plugins [get]
+// @Router /api/v1/clusters/{id}/plugins [get]
 func (h *Handler) ListInstalledPlugins(c *gin.Context) {
-	hostID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, ListInstalledPluginsResponse{ErrorMsg: "无效的主机 ID / Invalid host ID"})
+		c.JSON(http.StatusBadRequest, ListInstalledPluginsResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
 		return
 	}
 
-	plugins, err := h.service.ListInstalledPlugins(c.Request.Context(), uint(hostID))
+	plugins, err := h.service.ListInstalledPlugins(c.Request.Context(), uint(clusterID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ListInstalledPluginsResponse{ErrorMsg: err.Error()})
 		return
@@ -142,19 +142,19 @@ type InstallPluginResponse struct {
 	Data     *InstalledPlugin `json:"data"`
 }
 
-// InstallPlugin handles POST /api/v1/hosts/:id/plugins - installs a plugin on a host.
-// InstallPlugin 处理 POST /api/v1/hosts/:id/plugins - 在主机上安装插件。
+// InstallPlugin handles POST /api/v1/clusters/:id/plugins - installs a plugin on a cluster.
+// InstallPlugin 处理 POST /api/v1/clusters/:id/plugins - 在集群上安装插件。
 // @Tags plugins
 // @Accept json
 // @Produce json
-// @Param id path int true "主机ID"
+// @Param id path int true "集群ID"
 // @Param request body InstallPluginRequest true "安装请求"
 // @Success 200 {object} InstallPluginResponse
-// @Router /api/v1/hosts/{id}/plugins [post]
+// @Router /api/v1/clusters/{id}/plugins [post]
 func (h *Handler) InstallPlugin(c *gin.Context) {
-	hostID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, InstallPluginResponse{ErrorMsg: "无效的主机 ID / Invalid host ID"})
+		c.JSON(http.StatusBadRequest, InstallPluginResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
 		return
 	}
 
@@ -164,13 +164,13 @@ func (h *Handler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
-	installed, err := h.service.InstallPlugin(c.Request.Context(), uint(hostID), &req)
+	installed, err := h.service.InstallPlugin(c.Request.Context(), uint(clusterID), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, InstallPluginResponse{ErrorMsg: err.Error()})
 		return
 	}
 
-	logger.InfoF(c.Request.Context(), "[Plugin] 安装插件成功: host=%d, plugin=%s", hostID, req.PluginName)
+	logger.InfoF(c.Request.Context(), "[Plugin] 安装插件成功: cluster=%d, plugin=%s", clusterID, req.PluginName)
 	c.JSON(http.StatusOK, InstallPluginResponse{Data: installed})
 }
 
@@ -181,18 +181,18 @@ type UninstallPluginResponse struct {
 	Data     any    `json:"data"`
 }
 
-// UninstallPlugin handles DELETE /api/v1/hosts/:id/plugins/:name - uninstalls a plugin from a host.
-// UninstallPlugin 处理 DELETE /api/v1/hosts/:id/plugins/:name - 从主机卸载插件。
+// UninstallPlugin handles DELETE /api/v1/clusters/:id/plugins/:name - uninstalls a plugin from a cluster.
+// UninstallPlugin 处理 DELETE /api/v1/clusters/:id/plugins/:name - 从集群卸载插件。
 // @Tags plugins
 // @Produce json
-// @Param id path int true "主机ID"
+// @Param id path int true "集群ID"
 // @Param name path string true "插件名称"
 // @Success 200 {object} UninstallPluginResponse
-// @Router /api/v1/hosts/{id}/plugins/{name} [delete]
+// @Router /api/v1/clusters/{id}/plugins/{name} [delete]
 func (h *Handler) UninstallPlugin(c *gin.Context) {
-	hostID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, UninstallPluginResponse{ErrorMsg: "无效的主机 ID / Invalid host ID"})
+		c.JSON(http.StatusBadRequest, UninstallPluginResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
 		return
 	}
 
@@ -202,12 +202,12 @@ func (h *Handler) UninstallPlugin(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.UninstallPlugin(c.Request.Context(), uint(hostID), pluginName); err != nil {
+	if err := h.service.UninstallPlugin(c.Request.Context(), uint(clusterID), pluginName); err != nil {
 		c.JSON(http.StatusInternalServerError, UninstallPluginResponse{ErrorMsg: err.Error()})
 		return
 	}
 
-	logger.InfoF(c.Request.Context(), "[Plugin] 卸载插件成功: host=%d, plugin=%s", hostID, pluginName)
+	logger.InfoF(c.Request.Context(), "[Plugin] 卸载插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, UninstallPluginResponse{})
 }
 
@@ -218,18 +218,18 @@ type EnableDisablePluginResponse struct {
 	Data     *InstalledPlugin `json:"data"`
 }
 
-// EnablePlugin handles PUT /api/v1/hosts/:id/plugins/:name/enable - enables a plugin.
-// EnablePlugin 处理 PUT /api/v1/hosts/:id/plugins/:name/enable - 启用插件。
+// EnablePlugin handles PUT /api/v1/clusters/:id/plugins/:name/enable - enables a plugin.
+// EnablePlugin 处理 PUT /api/v1/clusters/:id/plugins/:name/enable - 启用插件。
 // @Tags plugins
 // @Produce json
-// @Param id path int true "主机ID"
+// @Param id path int true "集群ID"
 // @Param name path string true "插件名称"
 // @Success 200 {object} EnableDisablePluginResponse
-// @Router /api/v1/hosts/{id}/plugins/{name}/enable [put]
+// @Router /api/v1/clusters/{id}/plugins/{name}/enable [put]
 func (h *Handler) EnablePlugin(c *gin.Context) {
-	hostID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, EnableDisablePluginResponse{ErrorMsg: "无效的主机 ID / Invalid host ID"})
+		c.JSON(http.StatusBadRequest, EnableDisablePluginResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
 		return
 	}
 
@@ -239,28 +239,28 @@ func (h *Handler) EnablePlugin(c *gin.Context) {
 		return
 	}
 
-	plugin, err := h.service.EnablePlugin(c.Request.Context(), uint(hostID), pluginName)
+	plugin, err := h.service.EnablePlugin(c.Request.Context(), uint(clusterID), pluginName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, EnableDisablePluginResponse{ErrorMsg: err.Error()})
 		return
 	}
 
-	logger.InfoF(c.Request.Context(), "[Plugin] 启用插件成功: host=%d, plugin=%s", hostID, pluginName)
+	logger.InfoF(c.Request.Context(), "[Plugin] 启用插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, EnableDisablePluginResponse{Data: plugin})
 }
 
-// DisablePlugin handles PUT /api/v1/hosts/:id/plugins/:name/disable - disables a plugin.
-// DisablePlugin 处理 PUT /api/v1/hosts/:id/plugins/:name/disable - 禁用插件。
+// DisablePlugin handles PUT /api/v1/clusters/:id/plugins/:name/disable - disables a plugin.
+// DisablePlugin 处理 PUT /api/v1/clusters/:id/plugins/:name/disable - 禁用插件。
 // @Tags plugins
 // @Produce json
-// @Param id path int true "主机ID"
+// @Param id path int true "集群ID"
 // @Param name path string true "插件名称"
 // @Success 200 {object} EnableDisablePluginResponse
-// @Router /api/v1/hosts/{id}/plugins/{name}/disable [put]
+// @Router /api/v1/clusters/{id}/plugins/{name}/disable [put]
 func (h *Handler) DisablePlugin(c *gin.Context) {
-	hostID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, EnableDisablePluginResponse{ErrorMsg: "无效的主机 ID / Invalid host ID"})
+		c.JSON(http.StatusBadRequest, EnableDisablePluginResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
 		return
 	}
 
@@ -270,12 +270,12 @@ func (h *Handler) DisablePlugin(c *gin.Context) {
 		return
 	}
 
-	plugin, err := h.service.DisablePlugin(c.Request.Context(), uint(hostID), pluginName)
+	plugin, err := h.service.DisablePlugin(c.Request.Context(), uint(clusterID), pluginName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, EnableDisablePluginResponse{ErrorMsg: err.Error()})
 		return
 	}
 
-	logger.InfoF(c.Request.Context(), "[Plugin] 禁用插件成功: host=%d, plugin=%s", hostID, pluginName)
+	logger.InfoF(c.Request.Context(), "[Plugin] 禁用插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, EnableDisablePluginResponse{Data: plugin})
 }

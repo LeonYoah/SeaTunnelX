@@ -439,7 +439,7 @@ definitions:
     type: object
 info:
   contact: {}
-  title: LINUX DO CDK
+  title: Seatunnel X
   version: 0.1.0
 paths:
   /api/v1/admin/projects:

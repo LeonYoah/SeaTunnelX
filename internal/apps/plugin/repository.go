@@ -26,8 +26,7 @@ import (
 
 // Common errors / 常见错误
 var (
-	ErrPluginNotFound      = errors.New("plugin not found / 插件未找到")
-	ErrPluginAlreadyExists = errors.New("plugin already installed / 插件已安装")
+	ErrPluginNotFound = errors.New("plugin not found / 插件未找到")
 )
 
 // Repository provides data access for installed plugins.
@@ -62,12 +61,12 @@ func (r *Repository) GetByID(ctx context.Context, id uint) (*InstalledPlugin, er
 }
 
 
-// GetByHostAndName retrieves an installed plugin by host ID and plugin name.
-// GetByHostAndName 通过主机 ID 和插件名称获取已安装插件。
-func (r *Repository) GetByHostAndName(ctx context.Context, hostID uint, pluginName string) (*InstalledPlugin, error) {
+// GetByClusterAndName retrieves an installed plugin by cluster ID and plugin name.
+// GetByClusterAndName 通过集群 ID 和插件名称获取已安装插件。
+func (r *Repository) GetByClusterAndName(ctx context.Context, clusterID uint, pluginName string) (*InstalledPlugin, error) {
 	var plugin InstalledPlugin
 	if err := r.db.WithContext(ctx).
-		Where("host_id = ? AND plugin_name = ?", hostID, pluginName).
+		Where("cluster_id = ? AND plugin_name = ?", clusterID, pluginName).
 		First(&plugin).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrPluginNotFound
@@ -87,8 +86,8 @@ func (r *Repository) List(ctx context.Context, filter *PluginFilter) ([]Installe
 
 	// Apply filters / 应用过滤条件
 	if filter != nil {
-		if filter.HostID > 0 {
-			query = query.Where("host_id = ?", filter.HostID)
+		if filter.ClusterID > 0 {
+			query = query.Where("cluster_id = ?", filter.ClusterID)
 		}
 		if filter.Category != "" {
 			query = query.Where("category = ?", filter.Category)
@@ -123,12 +122,12 @@ func (r *Repository) List(ctx context.Context, filter *PluginFilter) ([]Installe
 	return plugins, total, nil
 }
 
-// ListByHost retrieves all installed plugins for a specific host.
-// ListByHost 获取指定主机的所有已安装插件。
-func (r *Repository) ListByHost(ctx context.Context, hostID uint) ([]InstalledPlugin, error) {
+// ListByCluster retrieves all installed plugins for a specific cluster.
+// ListByCluster 获取指定集群的所有已安装插件。
+func (r *Repository) ListByCluster(ctx context.Context, clusterID uint) ([]InstalledPlugin, error) {
 	var plugins []InstalledPlugin
 	if err := r.db.WithContext(ctx).
-		Where("host_id = ?", hostID).
+		Where("cluster_id = ?", clusterID).
 		Order("installed_at DESC").
 		Find(&plugins).Error; err != nil {
 		return nil, err
@@ -164,11 +163,11 @@ func (r *Repository) Delete(ctx context.Context, id uint) error {
 	return nil
 }
 
-// DeleteByHostAndName deletes an installed plugin by host ID and plugin name.
-// DeleteByHostAndName 通过主机 ID 和插件名称删除已安装插件。
-func (r *Repository) DeleteByHostAndName(ctx context.Context, hostID uint, pluginName string) error {
+// DeleteByClusterAndName deletes an installed plugin by cluster ID and plugin name.
+// DeleteByClusterAndName 通过集群 ID 和插件名称删除已安装插件。
+func (r *Repository) DeleteByClusterAndName(ctx context.Context, clusterID uint, pluginName string) error {
 	result := r.db.WithContext(ctx).
-		Where("host_id = ? AND plugin_name = ?", hostID, pluginName).
+		Where("cluster_id = ? AND plugin_name = ?", clusterID, pluginName).
 		Delete(&InstalledPlugin{})
 	if result.Error != nil {
 		return result.Error
@@ -179,13 +178,13 @@ func (r *Repository) DeleteByHostAndName(ctx context.Context, hostID uint, plugi
 	return nil
 }
 
-// ExistsByHostAndName checks if a plugin is installed on a host.
-// ExistsByHostAndName 检查插件是否已安装在主机上。
-func (r *Repository) ExistsByHostAndName(ctx context.Context, hostID uint, pluginName string) (bool, error) {
+// ExistsByClusterAndName checks if a plugin is installed on a cluster.
+// ExistsByClusterAndName 检查插件是否已安装在集群上。
+func (r *Repository) ExistsByClusterAndName(ctx context.Context, clusterID uint, pluginName string) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).
 		Model(&InstalledPlugin{}).
-		Where("host_id = ? AND plugin_name = ?", hostID, pluginName).
+		Where("cluster_id = ? AND plugin_name = ?", clusterID, pluginName).
 		Count(&count).Error; err != nil {
 		return false, err
 	}

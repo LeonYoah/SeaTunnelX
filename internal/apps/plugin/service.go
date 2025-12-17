@@ -21,15 +21,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
 	"time"
 )
 
 // Common service errors / 常见服务错误
 var (
-	ErrInvalidVersion     = errors.New("invalid version / 无效的版本号")
-	ErrInvalidMirror      = errors.New("invalid mirror source / 无效的镜像源")
-	ErrPluginNotAvailable = errors.New("plugin not available / 插件不可用")
-	ErrHostNotFound       = errors.New("host not found / 主机未找到")
+	ErrInvalidVersion      = errors.New("invalid version / 无效的版本号")
+	ErrInvalidMirror       = errors.New("invalid mirror source / 无效的镜像源")
+	ErrPluginNotAvailable  = errors.New("plugin not available / 插件不可用")
+	ErrClusterNotFound     = errors.New("cluster not found / 集群未找到")
+	ErrPluginAlreadyExists = errors.New("plugin already installed / 插件已安装")
+)
+
+// SeaTunnel documentation URLs for fetching plugin lists
+// SeaTunnel 文档 URL，用于获取插件列表
+const (
+	SeaTunnelDocsBaseURL = "https://seatunnel.apache.org/docs"
+	PluginCacheDuration  = 1 * time.Hour
 )
 
 // Service provides plugin management functionality.
@@ -39,13 +52,20 @@ type Service struct {
 	// agentManager is used to communicate with agents for plugin installation
 	// agentManager 用于与 Agent 通信进行插件安装
 	// agentManager *agent.Manager // TODO: inject agent manager
+
+	// Plugin cache / 插件缓存
+	cachedPlugins     map[string][]Plugin // key: version
+	pluginsCacheTime  map[string]time.Time
+	pluginsMu         sync.RWMutex
 }
 
 // NewService creates a new Service instance.
 // NewService 创建一个新的 Service 实例。
 func NewService(repo *Repository) *Service {
 	return &Service{
-		repo: repo,
+		repo:             repo,
+		cachedPlugins:    make(map[string][]Plugin),
+		pluginsCacheTime: make(map[string]time.Time),
 	}
 }
 
@@ -69,9 +89,9 @@ func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirr
 		return nil, ErrInvalidMirror
 	}
 
-	// Get predefined plugin list for the version
-	// 获取该版本的预定义插件列表
-	plugins := getAvailablePluginsForVersion(version)
+	// Get plugins (from cache, online, or fallback)
+	// 获取插件（从缓存、在线或备用列表）
+	plugins := s.getPlugins(ctx, version)
 
 	return &AvailablePluginsResponse{
 		Plugins: plugins,
@@ -79,6 +99,212 @@ func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirr
 		Version: version,
 		Mirror:  string(mirror),
 	}, nil
+}
+
+// getPlugins returns the plugin list, using cache if valid, otherwise fetching from SeaTunnel docs.
+// getPlugins 返回插件列表，如果缓存有效则使用缓存，否则从 SeaTunnel 文档获取。
+func (s *Service) getPlugins(ctx context.Context, version string) []Plugin {
+	s.pluginsMu.RLock()
+	// Check if cache is valid / 检查缓存是否有效
+	if plugins, ok := s.cachedPlugins[version]; ok {
+		if cacheTime, exists := s.pluginsCacheTime[version]; exists {
+			if time.Since(cacheTime) < PluginCacheDuration {
+				s.pluginsMu.RUnlock()
+				return plugins
+			}
+		}
+	}
+	s.pluginsMu.RUnlock()
+
+	// Try to fetch from SeaTunnel docs / 尝试从 SeaTunnel 文档获取
+	plugins, err := s.fetchPluginsFromDocs(ctx, version)
+	if err != nil {
+		// Use fallback plugins on error / 出错时使用备用插件列表
+		return getAvailablePluginsForVersion(version)
+	}
+
+	// Update cache / 更新缓存
+	s.pluginsMu.Lock()
+	s.cachedPlugins[version] = plugins
+	s.pluginsCacheTime[version] = time.Now()
+	s.pluginsMu.Unlock()
+
+	return plugins
+}
+
+// fetchPluginsFromDocs fetches plugin list from SeaTunnel documentation.
+// fetchPluginsFromDocs 从 SeaTunnel 文档获取插件列表。
+func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string) ([]Plugin, error) {
+	var allPlugins []Plugin
+
+	// Fetch source connectors / 获取数据源连接器
+	sourcePlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySource)
+	if err == nil {
+		allPlugins = append(allPlugins, sourcePlugins...)
+	}
+
+	// Fetch sink connectors / 获取数据目标连接器
+	sinkPlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySink)
+	if err == nil {
+		allPlugins = append(allPlugins, sinkPlugins...)
+	}
+
+	// Fetch transform connectors / 获取数据转换连接器
+	transformPlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategoryTransform)
+	if err == nil {
+		allPlugins = append(allPlugins, transformPlugins...)
+	}
+
+	if len(allPlugins) == 0 {
+		return nil, fmt.Errorf("no plugins found from docs")
+	}
+
+	return allPlugins, nil
+}
+
+// fetchPluginsByCategory fetches plugins of a specific category from SeaTunnel docs.
+// fetchPluginsByCategory 从 SeaTunnel 文档获取特定分类的插件。
+func (s *Service) fetchPluginsByCategory(ctx context.Context, version string, category PluginCategory) ([]Plugin, error) {
+	// Build URL based on category / 根据分类构建 URL
+	var url string
+	switch category {
+	case PluginCategorySource:
+		url = fmt.Sprintf("%s/%s/connector-v2/source", SeaTunnelDocsBaseURL, version)
+	case PluginCategorySink:
+		url = fmt.Sprintf("%s/%s/connector-v2/sink", SeaTunnelDocsBaseURL, version)
+	case PluginCategoryTransform:
+		url = fmt.Sprintf("%s/%s/transform-v2", SeaTunnelDocsBaseURL, version)
+	default:
+		return nil, fmt.Errorf("unknown category: %s", category)
+	}
+
+	// Create HTTP request with timeout / 创建带超时的 HTTP 请求
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch plugins: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read response body / 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Parse HTML to extract plugin names / 解析 HTML 提取插件名称
+	return parsePluginsFromHTML(string(body), version, category), nil
+}
+
+// parsePluginsFromHTML parses plugin names from SeaTunnel docs HTML.
+// parsePluginsFromHTML 从 SeaTunnel 文档 HTML 解析插件名称。
+func parsePluginsFromHTML(html string, version string, category PluginCategory) []Plugin {
+	var plugins []Plugin
+
+	// Pattern to match connector links in the sidebar
+	// 匹配侧边栏中连接器链接的模式
+	// Example: <a href="/docs/2.3.12/connector-v2/source/Jdbc">Jdbc</a>
+	var pattern string
+	switch category {
+	case PluginCategorySource:
+		pattern = `<a[^>]*href="[^"]*connector-v2/source/([^"]+)"[^>]*>([^<]+)</a>`
+	case PluginCategorySink:
+		pattern = `<a[^>]*href="[^"]*connector-v2/sink/([^"]+)"[^>]*>([^<]+)</a>`
+	case PluginCategoryTransform:
+		pattern = `<a[^>]*href="[^"]*transform-v2/([^"]+)"[^>]*>([^<]+)</a>`
+	}
+
+	re := regexp.MustCompile(pattern)
+	matches := re.FindAllStringSubmatch(html, -1)
+
+	seen := make(map[string]bool)
+	for _, match := range matches {
+		if len(match) >= 3 {
+			// urlPath preserves original case for doc URL / urlPath 保留原始大小写用于文档 URL
+			urlPath := match[1]
+			// name is lowercase for internal identification / name 小写用于内部标识
+			name := strings.ToLower(urlPath)
+			displayName := match[2]
+
+			// Skip duplicates and common pages / 跳过重复项和通用页面
+			if seen[name] || name == "common-options" || name == "about" {
+				continue
+			}
+			seen[name] = true
+
+			plugin := Plugin{
+				Name:        name,
+				DisplayName: displayName,
+				Category:    category,
+				Version:     version,
+				GroupID:     "org.apache.seatunnel",
+				ArtifactID:  fmt.Sprintf("connector-%s", name),
+				// Use original urlPath for doc URL to preserve case / 使用原始 urlPath 构建文档 URL 以保留大小写
+				DocURL: buildDocURL(version, category, urlPath),
+			}
+
+			// Add description based on category / 根据分类添加描述
+			plugin.Description = generatePluginDescription(displayName, category)
+
+			plugins = append(plugins, plugin)
+		}
+	}
+
+	return plugins
+}
+
+// buildDocURL builds the documentation URL for a plugin.
+// buildDocURL 构建插件的文档 URL。
+func buildDocURL(version string, category PluginCategory, name string) string {
+	switch category {
+	case PluginCategorySource:
+		return fmt.Sprintf("%s/%s/connector-v2/source/%s", SeaTunnelDocsBaseURL, version, name)
+	case PluginCategorySink:
+		return fmt.Sprintf("%s/%s/connector-v2/sink/%s", SeaTunnelDocsBaseURL, version, name)
+	case PluginCategoryTransform:
+		return fmt.Sprintf("%s/%s/transform-v2/%s", SeaTunnelDocsBaseURL, version, name)
+	}
+	return ""
+}
+
+// generatePluginDescription generates a description for a plugin.
+// generatePluginDescription 为插件生成描述。
+func generatePluginDescription(displayName string, category PluginCategory) string {
+	switch category {
+	case PluginCategorySource:
+		return fmt.Sprintf("Read data from %s / 从 %s 读取数据", displayName, displayName)
+	case PluginCategorySink:
+		return fmt.Sprintf("Write data to %s / 将数据写入 %s", displayName, displayName)
+	case PluginCategoryTransform:
+		return fmt.Sprintf("Transform data using %s / 使用 %s 转换数据", displayName, displayName)
+	}
+	return ""
+}
+
+// RefreshPlugins forces a refresh of the plugin list from SeaTunnel docs.
+// RefreshPlugins 强制从 SeaTunnel 文档刷新插件列表。
+func (s *Service) RefreshPlugins(ctx context.Context, version string) ([]Plugin, error) {
+	plugins, err := s.fetchPluginsFromDocs(ctx, version)
+	if err != nil {
+		return getAvailablePluginsForVersion(version), err
+	}
+
+	// Update cache / 更新缓存
+	s.pluginsMu.Lock()
+	s.cachedPlugins[version] = plugins
+	s.pluginsCacheTime[version] = time.Now()
+	s.pluginsMu.Unlock()
+
+	return plugins, nil
 }
 
 // GetPluginInfo returns detailed information about a specific plugin.
@@ -100,25 +326,25 @@ func (s *Service) GetPluginInfo(ctx context.Context, name string, version string
 
 // ==================== Installed Plugins 已安装插件 ====================
 
-// ListInstalledPlugins returns installed plugins for a host.
-// ListInstalledPlugins 返回主机上已安装的插件列表。
-func (s *Service) ListInstalledPlugins(ctx context.Context, hostID uint) ([]InstalledPlugin, error) {
-	return s.repo.ListByHost(ctx, hostID)
+// ListInstalledPlugins returns installed plugins for a cluster.
+// ListInstalledPlugins 返回集群上已安装的插件列表。
+func (s *Service) ListInstalledPlugins(ctx context.Context, clusterID uint) ([]InstalledPlugin, error) {
+	return s.repo.ListByCluster(ctx, clusterID)
 }
 
-// GetInstalledPlugin returns an installed plugin by host and name.
-// GetInstalledPlugin 通过主机和名称获取已安装插件。
-func (s *Service) GetInstalledPlugin(ctx context.Context, hostID uint, pluginName string) (*InstalledPlugin, error) {
-	return s.repo.GetByHostAndName(ctx, hostID, pluginName)
+// GetInstalledPlugin returns an installed plugin by cluster and name.
+// GetInstalledPlugin 通过集群和名称获取已安装插件。
+func (s *Service) GetInstalledPlugin(ctx context.Context, clusterID uint, pluginName string) (*InstalledPlugin, error) {
+	return s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 }
 
 // ==================== Plugin Installation 插件安装 ====================
 
-// InstallPlugin installs a plugin on a host via Agent.
-// InstallPlugin 通过 Agent 在主机上安装插件。
-func (s *Service) InstallPlugin(ctx context.Context, hostID uint, req *InstallPluginRequest) (*InstalledPlugin, error) {
+// InstallPlugin installs a plugin on a cluster via Agent.
+// InstallPlugin 通过 Agent 在集群上安装插件。
+func (s *Service) InstallPlugin(ctx context.Context, clusterID uint, req *InstallPluginRequest) (*InstalledPlugin, error) {
 	// Check if plugin already installed / 检查插件是否已安装
-	exists, err := s.repo.ExistsByHostAndName(ctx, hostID, req.PluginName)
+	exists, err := s.repo.ExistsByClusterAndName(ctx, clusterID, req.PluginName)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +366,7 @@ func (s *Service) InstallPlugin(ctx context.Context, hostID uint, req *InstallPl
 
 	// Create installed plugin record / 创建已安装插件记录
 	installed := &InstalledPlugin{
-		HostID:      hostID,
+		ClusterID:   clusterID,
 		PluginName:  req.PluginName,
 		Category:    pluginInfo.Category,
 		Version:     req.Version,
@@ -157,11 +383,11 @@ func (s *Service) InstallPlugin(ctx context.Context, hostID uint, req *InstallPl
 	return installed, nil
 }
 
-// UninstallPlugin uninstalls a plugin from a host.
-// UninstallPlugin 从主机上卸载插件。
-func (s *Service) UninstallPlugin(ctx context.Context, hostID uint, pluginName string) error {
+// UninstallPlugin uninstalls a plugin from a cluster.
+// UninstallPlugin 从集群上卸载插件。
+func (s *Service) UninstallPlugin(ctx context.Context, clusterID uint, pluginName string) error {
 	// Check if plugin exists / 检查插件是否存在
-	_, err := s.repo.GetByHostAndName(ctx, hostID, pluginName)
+	_, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 	if err != nil {
 		return err
 	}
@@ -170,13 +396,13 @@ func (s *Service) UninstallPlugin(ctx context.Context, hostID uint, pluginName s
 	// TODO: 通过 gRPC 向 Agent 发送卸载命令
 
 	// Delete installed plugin record / 删除已安装插件记录
-	return s.repo.DeleteByHostAndName(ctx, hostID, pluginName)
+	return s.repo.DeleteByClusterAndName(ctx, clusterID, pluginName)
 }
 
 // EnablePlugin enables an installed plugin.
 // EnablePlugin 启用已安装的插件。
-func (s *Service) EnablePlugin(ctx context.Context, hostID uint, pluginName string) (*InstalledPlugin, error) {
-	plugin, err := s.repo.GetByHostAndName(ctx, hostID, pluginName)
+func (s *Service) EnablePlugin(ctx context.Context, clusterID uint, pluginName string) (*InstalledPlugin, error) {
+	plugin, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 	if err != nil {
 		return nil, err
 	}
@@ -193,8 +419,8 @@ func (s *Service) EnablePlugin(ctx context.Context, hostID uint, pluginName stri
 
 // DisablePlugin disables an installed plugin.
 // DisablePlugin 禁用已安装的插件。
-func (s *Service) DisablePlugin(ctx context.Context, hostID uint, pluginName string) (*InstalledPlugin, error) {
-	plugin, err := s.repo.GetByHostAndName(ctx, hostID, pluginName)
+func (s *Service) DisablePlugin(ctx context.Context, clusterID uint, pluginName string) (*InstalledPlugin, error) {
+	plugin, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 	if err != nil {
 		return nil, err
 	}

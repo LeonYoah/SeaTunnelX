@@ -359,26 +359,26 @@ func Serve() {
 				pluginRouter.GET("/:name", pluginHandler.GetPluginInfo)
 			}
 
-			// Host plugin routes 主机插件路由
-			// GET /api/v1/hosts/:id/plugins - 获取主机已安装插件
-			// GET /api/v1/hosts/:id/plugins - Get host installed plugins
-			hostRouter.GET("/:id/plugins", pluginHandler.ListInstalledPlugins)
+			// Cluster plugin routes 集群插件路由
+			// GET /api/v1/clusters/:id/plugins - 获取集群已安装插件
+			// GET /api/v1/clusters/:id/plugins - Get cluster installed plugins
+			clusterRouter.GET("/:id/plugins", pluginHandler.ListInstalledPlugins)
 
-			// POST /api/v1/hosts/:id/plugins - 安装插件到主机
-			// POST /api/v1/hosts/:id/plugins - Install plugin to host
-			hostRouter.POST("/:id/plugins", pluginHandler.InstallPlugin)
+			// POST /api/v1/clusters/:id/plugins - 安装插件到集群
+			// POST /api/v1/clusters/:id/plugins - Install plugin to cluster
+			clusterRouter.POST("/:id/plugins", pluginHandler.InstallPlugin)
 
-			// DELETE /api/v1/hosts/:id/plugins/:name - 卸载插件
-			// DELETE /api/v1/hosts/:id/plugins/:name - Uninstall plugin
-			hostRouter.DELETE("/:id/plugins/:name", pluginHandler.UninstallPlugin)
+			// DELETE /api/v1/clusters/:id/plugins/:name - 卸载插件
+			// DELETE /api/v1/clusters/:id/plugins/:name - Uninstall plugin
+			clusterRouter.DELETE("/:id/plugins/:name", pluginHandler.UninstallPlugin)
 
-			// PUT /api/v1/hosts/:id/plugins/:name/enable - 启用插件
-			// PUT /api/v1/hosts/:id/plugins/:name/enable - Enable plugin
-			hostRouter.PUT("/:id/plugins/:name/enable", pluginHandler.EnablePlugin)
+			// PUT /api/v1/clusters/:id/plugins/:name/enable - 启用插件
+			// PUT /api/v1/clusters/:id/plugins/:name/enable - Enable plugin
+			clusterRouter.PUT("/:id/plugins/:name/enable", pluginHandler.EnablePlugin)
 
-			// PUT /api/v1/hosts/:id/plugins/:name/disable - 禁用插件
-			// PUT /api/v1/hosts/:id/plugins/:name/disable - Disable plugin
-			hostRouter.PUT("/:id/plugins/:name/disable", pluginHandler.DisablePlugin)
+			// PUT /api/v1/clusters/:id/plugins/:name/disable - 禁用插件
+			// PUT /api/v1/clusters/:id/plugins/:name/disable - Disable plugin
+			clusterRouter.PUT("/:id/plugins/:name/disable", pluginHandler.DisablePlugin)
 
 			// Installation routes on hosts 主机安装路由
 			// POST /api/v1/hosts/:id/precheck - 运行预检查

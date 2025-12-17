@@ -29,6 +29,7 @@ frontend/.env
 .DS_Store
 Thumbs.db
 data/
+lib/
 
 # build
 /build/

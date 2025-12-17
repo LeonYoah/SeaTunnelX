@@ -26,7 +26,7 @@ package main
 
 import "github.com/seatunnel/seatunnelX/internal/cmd"
 
-// @title LINUX DO CDK
+// @title Seatunnel X
 // @version 0.1.0
 func main() {
 	cmd.Execute()

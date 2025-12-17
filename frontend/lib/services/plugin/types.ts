@@ -33,7 +33,7 @@ export interface PluginDependency {
   group_id: string;
   artifact_id: string;
   version: string;
-  target_dir: string; // 'connectors' or 'lib'
+  target_dir: string; // connectors/ or lib/
 }
 
 /**
@@ -54,12 +54,14 @@ export interface Plugin {
 }
 
 /**
- * Installed plugin on a host
- * 主机上已安装的插件
+ * Installed plugin on a cluster
+ * 集群上已安装的插件
+ * Note: Plugins are managed at cluster level, not host level.
+ * 注意：插件在集群级别管理，而非主机级别。
  */
 export interface InstalledPlugin {
   id: number;
-  host_id: number;
+  cluster_id: number;
   plugin_name: string;
   category: PluginCategory;
   version: string;
@@ -69,7 +71,6 @@ export interface InstalledPlugin {
   updated_at: string;
   installed_by?: number;
 }
-
 
 // ==================== Request Types 请求类型 ====================
 
@@ -88,7 +89,7 @@ export interface InstallPluginRequest {
  * 插件过滤选项
  */
 export interface PluginFilter {
-  host_id?: number;
+  cluster_id?: number;
   category?: PluginCategory;
   status?: PluginStatus;
   keyword?: string;
@@ -163,15 +164,14 @@ export interface EnableDisablePluginResponse {
   data: InstalledPlugin | null;
 }
 
-// ==================== Plugin Install Info 插件安装信息 ====================
-
 /**
- * Plugin installation info for install wizard
- * 安装向导中的插件安装信息
+ * Plugin installation status
+ * 插件安装状态
  */
-export interface PluginInstallInfo {
-  name: string;
-  category: PluginCategory;
-  version: string;
-  selected: boolean;
+export interface PluginInstallStatus {
+  plugin_name: string;
+  status: string;
+  progress: number;
+  message?: string;
+  error?: string;
 }

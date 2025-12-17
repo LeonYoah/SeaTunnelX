@@ -87,11 +87,13 @@ type Plugin struct {
 	DocURL       string             `json:"doc_url,omitempty"`      // 文档链接 / Documentation URL
 }
 
-// InstalledPlugin represents a plugin installed on a host (GORM model).
-// InstalledPlugin 表示安装在主机上的插件（GORM 模型）。
+// InstalledPlugin represents a plugin installed on a cluster (GORM model).
+// InstalledPlugin 表示安装在集群上的插件（GORM 模型）。
+// Note: Plugins are managed at cluster level, not host level.
+// 注意：插件在集群级别管理，而非主机级别。
 type InstalledPlugin struct {
 	ID          uint           `gorm:"primaryKey" json:"id"`
-	HostID      uint           `gorm:"index;not null" json:"host_id"`                                // 主机 ID / Host ID
+	ClusterID   uint           `gorm:"index;not null" json:"cluster_id"`                             // 集群 ID / Cluster ID
 	PluginName  string         `gorm:"size:100;not null;index" json:"plugin_name"`                   // 插件名称 / Plugin name
 	Category    PluginCategory `gorm:"size:20;not null" json:"category"`                             // 分类 / Category
 	Version     string         `gorm:"size:20;not null" json:"version"`                              // 版本号 / Version
@@ -111,12 +113,12 @@ func (InstalledPlugin) TableName() string {
 // PluginFilter represents filter options for querying plugins.
 // PluginFilter 表示查询插件的过滤选项。
 type PluginFilter struct {
-	HostID   uint           `json:"host_id,omitempty"`   // 主机 ID / Host ID
-	Category PluginCategory `json:"category,omitempty"`  // 分类 / Category
-	Status   PluginStatus   `json:"status,omitempty"`    // 状态 / Status
-	Keyword  string         `json:"keyword,omitempty"`   // 搜索关键词 / Search keyword
-	Page     int            `json:"page,omitempty"`      // 页码 / Page number
-	PageSize int            `json:"page_size,omitempty"` // 每页数量 / Page size
+	ClusterID uint           `json:"cluster_id,omitempty"` // 集群 ID / Cluster ID
+	Category  PluginCategory `json:"category,omitempty"`   // 分类 / Category
+	Status    PluginStatus   `json:"status,omitempty"`     // 状态 / Status
+	Keyword   string         `json:"keyword,omitempty"`    // 搜索关键词 / Search keyword
+	Page      int            `json:"page,omitempty"`       // 页码 / Page number
+	PageSize  int            `json:"page_size,omitempty"`  // 每页数量 / Page size
 }
 
 // InstallPluginRequest represents a request to install a plugin.
@@ -144,4 +146,55 @@ type AvailablePluginsResponse struct {
 	Total   int      `json:"total"`         // 总数 / Total count
 	Version string   `json:"version"`       // SeaTunnel 版本 / SeaTunnel version
 	Mirror  string   `json:"mirror"`        // 当前镜像源 / Current mirror
+}
+
+
+// ==================== Plugin Download Types 插件下载类型 ====================
+
+// PluginDownloadStatus represents the status of a plugin download task.
+// PluginDownloadStatus 表示插件下载任务的状态。
+type PluginDownloadStatus string
+
+const (
+	PluginDownloadPending     PluginDownloadStatus = "pending"     // 等待中 / Pending
+	PluginDownloadDownloading PluginDownloadStatus = "downloading" // 下载中 / Downloading
+	PluginDownloadCompleted   PluginDownloadStatus = "completed"   // 已完成 / Completed
+	PluginDownloadFailed      PluginDownloadStatus = "failed"      // 失败 / Failed
+	PluginDownloadCancelled   PluginDownloadStatus = "cancelled"   // 已取消 / Cancelled
+)
+
+// PluginDownloadTask represents a plugin download task.
+// PluginDownloadTask 表示插件下载任务。
+type PluginDownloadTask struct {
+	ID              string               `json:"id"`                         // 任务 ID / Task ID
+	ClusterID       uint                 `json:"cluster_id"`                 // 集群 ID / Cluster ID
+	PluginName      string               `json:"plugin_name"`                // 插件名称 / Plugin name
+	Version         string               `json:"version"`                    // 版本号 / Version
+	Mirror          MirrorSource         `json:"mirror"`                     // 镜像源 / Mirror source
+	Status          PluginDownloadStatus `json:"status"`                     // 状态 / Status
+	Progress        int                  `json:"progress"`                   // 进度 (0-100) / Progress
+	CurrentStep     string               `json:"current_step,omitempty"`     // 当前步骤 / Current step
+	DownloadedBytes int64                `json:"downloaded_bytes,omitempty"` // 已下载字节 / Downloaded bytes
+	TotalBytes      int64                `json:"total_bytes,omitempty"`      // 总字节 / Total bytes
+	Speed           int64                `json:"speed,omitempty"`            // 下载速度 (bytes/s) / Download speed
+	Message         string               `json:"message,omitempty"`          // 消息 / Message
+	Error           string               `json:"error,omitempty"`            // 错误信息 / Error message
+	StartTime       time.Time            `json:"start_time"`                 // 开始时间 / Start time
+	EndTime         *time.Time           `json:"end_time,omitempty"`         // 结束时间 / End time
+}
+
+// PluginDownloadRequest represents a request to download/install a plugin.
+// PluginDownloadRequest 表示下载/安装插件的请求。
+type PluginDownloadRequest struct {
+	PluginName string       `json:"plugin_name" binding:"required"` // 插件名称 / Plugin name
+	Version    string       `json:"version" binding:"required"`     // 版本号 / Version
+	Mirror     MirrorSource `json:"mirror,omitempty"`               // 镜像源 / Mirror source
+}
+
+// AvailableVersionsResponse represents the response for listing available versions.
+// AvailableVersionsResponse 表示获取可用版本列表的响应。
+type AvailableVersionsResponse struct {
+	Versions           []string `json:"versions"`            // 版本列表 / Version list
+	RecommendedVersion string   `json:"recommended_version"` // 推荐版本 / Recommended version
+	Warning            string   `json:"warning,omitempty"`   // 警告信息 / Warning message
 }
