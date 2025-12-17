@@ -1,0 +1,350 @@
+'use client';
+
+/**
+ * Cluster Card Component
+ * 集群卡片组件
+ *
+ * Displays a card for a single cluster with status, actions, and quick operations.
+ * 显示单个集群的卡片，包含状态、操作和快捷操作。
+ */
+
+import {useState} from 'react';
+import {useRouter} from 'next/navigation';
+import {useTranslations} from 'next-intl';
+import {Button} from '@/components/ui/button';
+import {Badge} from '@/components/ui/badge';
+import {Card, CardContent, CardFooter, CardHeader, CardTitle} from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  MoreVertical,
+  Play,
+  Square,
+  RotateCcw,
+  Pencil,
+  Trash2,
+  Eye,
+  Server,
+  Loader2,
+} from 'lucide-react';
+import {toast} from 'sonner';
+import services from '@/lib/services';
+import {ClusterInfo, ClusterStatus} from '@/lib/services/cluster/types';
+
+interface ClusterCardProps {
+  cluster: ClusterInfo;
+  onEdit: (cluster: ClusterInfo) => void;
+  onDelete: (cluster: ClusterInfo) => void;
+  onRefresh: () => void;
+}
+
+/**
+ * Get status badge variant
+ * 获取状态徽章变体
+ */
+function getStatusBadgeVariant(
+  status: ClusterStatus,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  switch (status) {
+    case ClusterStatus.RUNNING:
+      return 'default';
+    case ClusterStatus.CREATED:
+    case ClusterStatus.STOPPED:
+      return 'secondary';
+    case ClusterStatus.DEPLOYING:
+      return 'outline';
+    case ClusterStatus.ERROR:
+      return 'destructive';
+    default:
+      return 'secondary';
+  }
+}
+
+/**
+ * Get status color class
+ * 获取状态颜色类
+ */
+function getStatusColorClass(status: ClusterStatus): string {
+  switch (status) {
+    case ClusterStatus.RUNNING:
+      return 'bg-green-500';
+    case ClusterStatus.DEPLOYING:
+      return 'bg-yellow-500 animate-pulse';
+    case ClusterStatus.STOPPED:
+      return 'bg-gray-400';
+    case ClusterStatus.ERROR:
+      return 'bg-red-500';
+    default:
+      return 'bg-gray-300';
+  }
+}
+
+/**
+ * Cluster Card Component
+ * 集群卡片组件
+ */
+export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardProps) {
+  const t = useTranslations();
+  const router = useRouter();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isOperating, setIsOperating] = useState(false);
+
+  /**
+   * Handle start cluster
+   * 处理启动集群
+   */
+  const handleStart = async () => {
+    setIsOperating(true);
+    try {
+      const result = await services.cluster.startClusterSafe(cluster.id);
+      if (result.success) {
+        toast.success(t('cluster.startSuccess'));
+        onRefresh();
+      } else {
+        toast.error(result.error || t('cluster.startError'));
+      }
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  /**
+   * Handle stop cluster
+   * 处理停止集群
+   */
+  const handleStop = async () => {
+    setIsOperating(true);
+    try {
+      const result = await services.cluster.stopClusterSafe(cluster.id);
+      if (result.success) {
+        toast.success(t('cluster.stopSuccess'));
+        onRefresh();
+      } else {
+        toast.error(result.error || t('cluster.stopError'));
+      }
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  /**
+   * Handle restart cluster
+   * 处理重启集群
+   */
+  const handleRestart = async () => {
+    setIsOperating(true);
+    try {
+      const result = await services.cluster.restartClusterSafe(cluster.id);
+      if (result.success) {
+        toast.success(t('cluster.restartSuccess'));
+        onRefresh();
+      } else {
+        toast.error(result.error || t('cluster.restartError'));
+      }
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  /**
+   * Handle view detail
+   * 处理查看详情
+   */
+  const handleViewDetail = () => {
+    router.push(`/clusters/${cluster.id}`);
+  };
+
+  /**
+   * Handle confirm delete
+   * 处理确认删除
+   */
+  const handleConfirmDelete = () => {
+    setIsDeleteDialogOpen(false);
+    onDelete(cluster);
+  };
+
+  const canStart = cluster.status === ClusterStatus.CREATED || cluster.status === ClusterStatus.STOPPED;
+  const canStop = cluster.status === ClusterStatus.RUNNING;
+  const canRestart = cluster.status === ClusterStatus.RUNNING;
+  const canDelete = cluster.status !== ClusterStatus.RUNNING && cluster.status !== ClusterStatus.DEPLOYING;
+
+  return (
+    <>
+      <Card className='hover:shadow-md transition-shadow'>
+        <CardHeader className='pb-2'>
+          <div className='flex items-start justify-between'>
+            <div className='flex items-center gap-2'>
+              <div className={`w-2 h-2 rounded-full ${getStatusColorClass(cluster.status)}`} />
+              <CardTitle className='text-lg'>{cluster.name}</CardTitle>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8'>
+                  <MoreVertical className='h-4 w-4' />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end'>
+                <DropdownMenuItem onClick={handleViewDetail}>
+                  <Eye className='h-4 w-4 mr-2' />
+                  {t('common.view')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onEdit(cluster)}>
+                  <Pencil className='h-4 w-4 mr-2' />
+                  {t('common.edit')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleStart}
+                  disabled={!canStart || isOperating}
+                >
+                  <Play className='h-4 w-4 mr-2' />
+                  {t('cluster.start')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleStop}
+                  disabled={!canStop || isOperating}
+                >
+                  <Square className='h-4 w-4 mr-2' />
+                  {t('cluster.stop')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleRestart}
+                  disabled={!canRestart || isOperating}
+                >
+                  <RotateCcw className='h-4 w-4 mr-2' />
+                  {t('cluster.restart')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={!canDelete}
+                  className='text-destructive'
+                >
+                  <Trash2 className='h-4 w-4 mr-2' />
+                  {t('common.delete')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {cluster.description && (
+            <p className='text-sm text-muted-foreground mt-1 line-clamp-2'>
+              {cluster.description}
+            </p>
+          )}
+        </CardHeader>
+
+        <CardContent className='pb-2'>
+          <div className='space-y-3'>
+            <div className='flex items-center justify-between'>
+              <span className='text-sm text-muted-foreground'>{t('cluster.status')}</span>
+              <Badge variant={getStatusBadgeVariant(cluster.status)}>
+                {t(`cluster.statuses.${cluster.status}`)}
+              </Badge>
+            </div>
+
+            <div className='flex items-center justify-between'>
+              <span className='text-sm text-muted-foreground'>{t('cluster.deploymentMode')}</span>
+              <Badge variant='outline'>
+                {t(`cluster.modes.${cluster.deployment_mode}`)}
+              </Badge>
+            </div>
+
+            <div className='flex items-center justify-between'>
+              <span className='text-sm text-muted-foreground'>{t('cluster.nodes')}</span>
+              <div className='flex items-center gap-1'>
+                <Server className='h-4 w-4 text-muted-foreground' />
+                <span className='text-sm font-medium'>{cluster.node_count}</span>
+              </div>
+            </div>
+
+            {cluster.version && (
+              <div className='flex items-center justify-between'>
+                <span className='text-sm text-muted-foreground'>{t('cluster.version')}</span>
+                <span className='text-sm'>{cluster.version}</span>
+              </div>
+            )}
+          </div>
+        </CardContent>
+
+        <CardFooter className='pt-2'>
+          <div className='flex w-full gap-2'>
+            {canStart && (
+              <Button
+                variant='outline'
+                size='sm'
+                className='flex-1'
+                onClick={handleStart}
+                disabled={isOperating}
+              >
+                {isOperating ? (
+                  <Loader2 className='h-4 w-4 mr-1 animate-spin' />
+                ) : (
+                  <Play className='h-4 w-4 mr-1' />
+                )}
+                {t('cluster.start')}
+              </Button>
+            )}
+            {canStop && (
+              <Button
+                variant='outline'
+                size='sm'
+                className='flex-1'
+                onClick={handleStop}
+                disabled={isOperating}
+              >
+                {isOperating ? (
+                  <Loader2 className='h-4 w-4 mr-1 animate-spin' />
+                ) : (
+                  <Square className='h-4 w-4 mr-1' />
+                )}
+                {t('cluster.stop')}
+              </Button>
+            )}
+            <Button
+              variant='default'
+              size='sm'
+              className='flex-1'
+              onClick={handleViewDetail}
+            >
+              <Eye className='h-4 w-4 mr-1' />
+              {t('common.view')}
+            </Button>
+          </div>
+        </CardFooter>
+      </Card>
+
+      {/* Delete Confirmation Dialog / 删除确认对话框 */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cluster.deleteCluster')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('cluster.deleteConfirm', {name: cluster.name})}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>
+              {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}

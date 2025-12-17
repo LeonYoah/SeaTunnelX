@@ -1,0 +1,521 @@
+/**
+ * Cluster Service
+ * 集群服务
+ *
+ * Handles cluster management operations including CRUD, node management, and cluster operations.
+ * 处理集群管理操作，包括 CRUD、节点管理和集群操作。
+ */
+
+import {BaseService} from '../core/base.service';
+import apiClient from '../core/api-client';
+import {
+  ClusterInfo,
+  ClusterListData,
+  ClusterStatusInfo,
+  NodeInfo,
+  OperationResult,
+  CreateClusterRequest,
+  UpdateClusterRequest,
+  AddNodeRequest,
+  ListClustersRequest,
+  ListClustersResponse,
+  CreateClusterResponse,
+  GetClusterResponse,
+  UpdateClusterResponse,
+  DeleteClusterResponse,
+  GetNodesResponse,
+  AddNodeResponse,
+  RemoveNodeResponse,
+  ClusterOperationResponse,
+  GetClusterStatusResponse,
+} from './types';
+
+/**
+ * Cluster Service class
+ * 集群服务类
+ */
+export class ClusterService extends BaseService {
+  /**
+   * API base path
+   * API 基础路径
+   */
+  protected static readonly basePath = '/api/v1/clusters';
+
+  // ==================== Cluster CRUD Methods 集群 CRUD 方法 ====================
+
+  /**
+   * Get cluster list with filtering and pagination
+   * 获取集群列表（支持过滤和分页）
+   *
+   * @param params - Query parameters / 查询参数
+   * @returns Cluster list data / 集群列表数据
+   */
+  static async getClusters(params: ListClustersRequest): Promise<ClusterListData> {
+    const response = await apiClient.get<ListClustersResponse>(this.basePath, {
+      params: {
+        current: params.current,
+        size: params.size,
+        name: params.name,
+        status: params.status,
+        deployment_mode: params.deployment_mode,
+      },
+    });
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Get cluster by ID
+   * 根据 ID 获取集群详情
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Cluster information / 集群信息
+   */
+  static async getCluster(clusterId: number): Promise<ClusterInfo> {
+    const response = await apiClient.get<GetClusterResponse>(
+      `${this.basePath}/${clusterId}`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Create a new cluster
+   * 创建新集群
+   *
+   * @param data - Cluster creation data / 集群创建数据
+   * @returns Created cluster information / 创建的集群信息
+   */
+  static async createCluster(data: CreateClusterRequest): Promise<ClusterInfo> {
+    const response = await apiClient.post<CreateClusterResponse>(
+      this.basePath,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Update an existing cluster
+   * 更新现有集群
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param data - Cluster update data / 集群更新数据
+   * @returns Updated cluster information / 更新后的集群信息
+   */
+  static async updateCluster(
+    clusterId: number,
+    data: UpdateClusterRequest,
+  ): Promise<ClusterInfo> {
+    const response = await apiClient.put<UpdateClusterResponse>(
+      `${this.basePath}/${clusterId}`,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Delete a cluster
+   * 删除集群
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   */
+  static async deleteCluster(clusterId: number): Promise<void> {
+    const response = await apiClient.delete<DeleteClusterResponse>(
+      `${this.basePath}/${clusterId}`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+  }
+
+  // ==================== Node Management Methods 节点管理方法 ====================
+
+  /**
+   * Get all nodes for a cluster
+   * 获取集群的所有节点
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Node list / 节点列表
+   */
+  static async getNodes(clusterId: number): Promise<NodeInfo[]> {
+    const response = await apiClient.get<GetNodesResponse>(
+      `${this.basePath}/${clusterId}/nodes`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Add a node to a cluster
+   * 向集群添加节点
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param data - Add node request data / 添加节点请求数据
+   * @returns Added node information / 添加的节点信息
+   */
+  static async addNode(clusterId: number, data: AddNodeRequest): Promise<NodeInfo> {
+    const response = await apiClient.post<AddNodeResponse>(
+      `${this.basePath}/${clusterId}/nodes`,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Remove a node from a cluster
+   * 从集群移除节点
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param nodeId - Node ID / 节点 ID
+   */
+  static async removeNode(clusterId: number, nodeId: number): Promise<void> {
+    const response = await apiClient.delete<RemoveNodeResponse>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+  }
+
+  // ==================== Cluster Operation Methods 集群操作方法 ====================
+
+  /**
+   * Start a cluster
+   * 启动集群
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Operation result / 操作结果
+   */
+  static async startCluster(clusterId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/start`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Stop a cluster
+   * 停止集群
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Operation result / 操作结果
+   */
+  static async stopCluster(clusterId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/stop`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Restart a cluster
+   * 重启集群
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Operation result / 操作结果
+   */
+  static async restartCluster(clusterId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/restart`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Get cluster status
+   * 获取集群状态
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @returns Cluster status information / 集群状态信息
+   */
+  static async getClusterStatus(clusterId: number): Promise<ClusterStatusInfo> {
+    const response = await apiClient.get<GetClusterStatusResponse>(
+      `${this.basePath}/${clusterId}/status`,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  // ==================== Safe Methods (with error handling) 安全方法（带错误处理） ====================
+
+  /**
+   * Get cluster list (with error handling)
+   * 获取集群列表（带错误处理）
+   */
+  static async getClustersSafe(params: ListClustersRequest): Promise<{
+    success: boolean;
+    data?: ClusterListData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getClusters(params);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取集群列表失败';
+      return {
+        success: false,
+        data: {total: 0, clusters: []},
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Get cluster by ID (with error handling)
+   * 根据 ID 获取集群详情（带错误处理）
+   */
+  static async getClusterSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: ClusterInfo;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getCluster(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取集群详情失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Create a new cluster (with error handling)
+   * 创建新集群（带错误处理）
+   */
+  static async createClusterSafe(data: CreateClusterRequest): Promise<{
+    success: boolean;
+    data?: ClusterInfo;
+    error?: string;
+  }> {
+    try {
+      const result = await this.createCluster(data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '创建集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Update an existing cluster (with error handling)
+   * 更新现有集群（带错误处理）
+   */
+  static async updateClusterSafe(
+    clusterId: number,
+    data: UpdateClusterRequest,
+  ): Promise<{
+    success: boolean;
+    data?: ClusterInfo;
+    error?: string;
+  }> {
+    try {
+      const result = await this.updateCluster(clusterId, data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '更新集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Delete a cluster (with error handling)
+   * 删除集群（带错误处理）
+   */
+  static async deleteClusterSafe(clusterId: number): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      await this.deleteCluster(clusterId);
+      return {success: true};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '删除集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Get nodes (with error handling)
+   * 获取节点列表（带错误处理）
+   */
+  static async getNodesSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: NodeInfo[];
+    error?: string;
+  }> {
+    try {
+      const data = await this.getNodes(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取节点列表失败';
+      return {success: false, data: [], error: errorMessage};
+    }
+  }
+
+  /**
+   * Add node (with error handling)
+   * 添加节点（带错误处理）
+   */
+  static async addNodeSafe(clusterId: number, data: AddNodeRequest): Promise<{
+    success: boolean;
+    data?: NodeInfo;
+    error?: string;
+  }> {
+    try {
+      const result = await this.addNode(clusterId, data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '添加节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Remove node (with error handling)
+   * 移除节点（带错误处理）
+   */
+  static async removeNodeSafe(clusterId: number, nodeId: number): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      await this.removeNode(clusterId, nodeId);
+      return {success: true};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '移除节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Start cluster (with error handling)
+   * 启动集群（带错误处理）
+   */
+  static async startClusterSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.startCluster(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '启动集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Stop cluster (with error handling)
+   * 停止集群（带错误处理）
+   */
+  static async stopClusterSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.stopCluster(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '停止集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Restart cluster (with error handling)
+   * 重启集群（带错误处理）
+   */
+  static async restartClusterSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.restartCluster(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '重启集群失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Get cluster status (with error handling)
+   * 获取集群状态（带错误处理）
+   */
+  static async getClusterStatusSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: ClusterStatusInfo;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getClusterStatus(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取集群状态失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+}

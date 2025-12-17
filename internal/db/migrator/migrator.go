@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
@@ -58,6 +59,8 @@ func Migrate() {
 	if err := db.GetDB(context.Background()).AutoMigrate(
 		&auth.User{},           // 统一用户表（支持密码认证和 OAuth 认证）/ Unified user table
 		&host.Host{},           // 主机管理表 / Host management table
+		&cluster.Cluster{},     // 集群表 / Cluster table
+		&cluster.ClusterNode{}, // 集群节点表 / Cluster node table
 		&project.Project{},     // 项目表 / Project table
 		&project.ProjectItem{}, // 项目条目表 / Project item table
 		&project.ProjectTag{},  // 项目标签表 / Project tag table

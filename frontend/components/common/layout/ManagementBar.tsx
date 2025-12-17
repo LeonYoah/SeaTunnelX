@@ -15,6 +15,7 @@ import {
   GithubIcon,
   Users,
   Server,
+  Database,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -47,6 +48,7 @@ const StaticIcons = {
   user: <User {...IconOptions} />,
   users: <Users {...IconOptions} />,
   server: <Server {...IconOptions} />,
+  database: <Database {...IconOptions} />,
   divider: <div />,
 };
 
@@ -318,6 +320,13 @@ export function ManagementBar() {
       title: tDock('hostManagement'),
       icon: StaticIcons.server,
       href: '/hosts',
+    });
+
+    // 集群管理入口 / Cluster management entry
+    items.push({
+      title: tDock('clusterManagement'),
+      icon: StaticIcons.database,
+      href: '/clusters',
     });
 
     // 管理员入口 / Admin entry

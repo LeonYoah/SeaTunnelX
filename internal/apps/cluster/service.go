@@ -368,13 +368,19 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 		}
 	}
 
-	// Create node
-	// 创建节点
+	// Create node with install directory
+	// 创建节点，包含安装目录
+	installDir := req.InstallDir
+	if installDir == "" {
+		installDir = "/opt/seatunnel" // Default installation directory / 默认安装目录
+	}
+
 	node := &ClusterNode{
-		ClusterID: clusterID,
-		HostID:    req.HostID,
-		Role:      req.Role,
-		Status:    NodeStatusPending,
+		ClusterID:  clusterID,
+		HostID:     req.HostID,
+		Role:       req.Role,
+		InstallDir: installDir,
+		Status:     NodeStatusPending,
 	}
 
 	if err := s.repo.AddNode(ctx, node); err != nil {
@@ -424,6 +430,7 @@ func (s *Service) GetNodes(ctx context.Context, clusterID uint) ([]*NodeInfo, er
 			ClusterID:     node.ClusterID,
 			HostID:        node.HostID,
 			Role:          node.Role,
+			InstallDir:    node.InstallDir,
 			Status:        node.Status,
 			ProcessPID:    node.ProcessPID,
 			ProcessStatus: node.ProcessStatus,

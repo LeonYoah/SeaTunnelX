@@ -123,11 +123,13 @@ func (Cluster) TableName() string {
 }
 
 // ClusterNode represents a node within a SeaTunnel cluster.
+// 集群节点，每个节点可以有独立的安装目录
 type ClusterNode struct {
 	ID            uint       `json:"id" gorm:"primaryKey;autoIncrement"`
 	ClusterID     uint       `json:"cluster_id" gorm:"index;not null"`
 	HostID        uint       `json:"host_id" gorm:"index;not null"`
 	Role          NodeRole   `json:"role" gorm:"size:20;not null"`
+	InstallDir    string     `json:"install_dir" gorm:"size:255"` // SeaTunnel installation directory on this node / 此节点上的 SeaTunnel 安装目录
 	Status        NodeStatus `json:"status" gorm:"size:20;default:pending"`
 	ProcessPID    int        `json:"process_pid"`
 	ProcessStatus string     `json:"process_status" gorm:"size:20"`
@@ -201,12 +203,15 @@ type UpdateClusterRequest struct {
 }
 
 // AddNodeRequest represents a request to add a node to a cluster.
+// 添加节点请求，包含安装目录配置
 type AddNodeRequest struct {
-	HostID uint     `json:"host_id" binding:"required"`
-	Role   NodeRole `json:"role" binding:"required"`
+	HostID     uint     `json:"host_id" binding:"required"`
+	Role       NodeRole `json:"role" binding:"required"`
+	InstallDir string   `json:"install_dir"` // SeaTunnel installation directory / SeaTunnel 安装目录
 }
 
 // NodeInfo represents node information for API responses.
+// 节点信息，用于 API 响应
 type NodeInfo struct {
 	ID            uint       `json:"id"`
 	ClusterID     uint       `json:"cluster_id"`
@@ -214,6 +219,7 @@ type NodeInfo struct {
 	HostName      string     `json:"host_name"`
 	HostIP        string     `json:"host_ip"`
 	Role          NodeRole   `json:"role"`
+	InstallDir    string     `json:"install_dir"` // SeaTunnel installation directory / SeaTunnel 安装目录
 	Status        NodeStatus `json:"status"`
 	ProcessPID    int        `json:"process_pid"`
 	ProcessStatus string     `json:"process_status"`

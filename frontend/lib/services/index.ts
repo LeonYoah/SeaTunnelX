@@ -3,6 +3,7 @@ import {ProjectService} from './project/index';
 import {DashboardService} from './dashboard/index';
 import {AdminUserService} from './admin/index';
 import {HostService} from './host/index';
+import {ClusterService} from './cluster/index';
 
 /**
  * 服务层架构说明：
@@ -97,6 +98,11 @@ const services = {
    * 主机管理服务
    */
   host: HostService,
+
+  /**
+   * 集群管理服务
+   */
+  cluster: ClusterService,
 };
 
 export default services;

@@ -651,6 +651,27 @@ func (s *Service) GetHeartbeatTimeout() time.Duration {
 	return s.heartbeatTimeout
 }
 
+// GetHostByID implements cluster.HostProvider interface.
+// GetHostByID 实现 cluster.HostProvider 接口。
+// This method is used by cluster service to get host information.
+// 此方法由集群服务用于获取主机信息。
+func (s *Service) GetHostByID(ctx context.Context, id uint) (*cluster.HostInfo, error) {
+	host, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cluster.HostInfo{
+		ID:            host.ID,
+		Name:          host.Name,
+		HostType:      string(host.HostType),
+		IPAddress:     host.IPAddress,
+		AgentID:       host.AgentID,
+		AgentStatus:   string(host.AgentStatus),
+		LastHeartbeat: host.LastHeartbeat,
+	}, nil
+}
+
 // UpdateHostStatus updates the connection status for a host (used for Docker/K8s hosts).
 // UpdateHostStatus 更新主机的连接状态（用于 Docker/K8s 主机）。
 // This method is called after API connection test for Docker/K8s hosts.

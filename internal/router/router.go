@@ -168,6 +168,34 @@ func Serve() {
 				hostRouter.GET("/:id/install-command", hostHandler.GetInstallCommand)
 			}
 
+			// Cluster 集群管理
+			// Initialize cluster service and handler
+			// 初始化集群服务和处理器
+			clusterService := cluster.NewService(clusterRepo, hostService, &cluster.ServiceConfig{})
+			clusterHandler := cluster.NewHandler(clusterService)
+
+			clusterRouter := apiV1Router.Group("/clusters")
+			clusterRouter.Use(auth.LoginRequired())
+			{
+				// Cluster CRUD 集群增删改查
+				clusterRouter.POST("", clusterHandler.CreateCluster)
+				clusterRouter.GET("", clusterHandler.ListClusters)
+				clusterRouter.GET("/:id", clusterHandler.GetCluster)
+				clusterRouter.PUT("/:id", clusterHandler.UpdateCluster)
+				clusterRouter.DELETE("/:id", clusterHandler.DeleteCluster)
+
+				// Node management 节点管理
+				clusterRouter.POST("/:id/nodes", clusterHandler.AddNode)
+				clusterRouter.GET("/:id/nodes", clusterHandler.GetNodes)
+				clusterRouter.DELETE("/:id/nodes/:nodeId", clusterHandler.RemoveNode)
+
+				// Cluster operations 集群操作
+				clusterRouter.POST("/:id/start", clusterHandler.StartCluster)
+				clusterRouter.POST("/:id/stop", clusterHandler.StopCluster)
+				clusterRouter.POST("/:id/restart", clusterHandler.RestartCluster)
+				clusterRouter.GET("/:id/status", clusterHandler.GetClusterStatus)
+			}
+
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
 			agentHandler := agent.NewHandler(&agent.HandlerConfig{
