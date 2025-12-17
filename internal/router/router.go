@@ -27,8 +27,10 @@ import (
 	_ "github.com/seatunnel/seatunnelX/docs"
 	"github.com/seatunnel/seatunnelX/internal/apps/admin"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
+	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
@@ -142,6 +144,27 @@ func Serve() {
 					userAdminRouter.PUT("/:id", admin.UpdateUserHandler)
 					userAdminRouter.DELETE("/:id", admin.DeleteUserHandler)
 				}
+			}
+
+			// Host 主机管理
+			// Initialize host service and handler
+			// 初始化主机服务和处理器
+			hostRepo := host.NewRepository(db.DB(context.Background()))
+			clusterRepo := cluster.NewRepository(db.DB(context.Background()))
+			hostService := host.NewService(hostRepo, clusterRepo, &host.ServiceConfig{
+				ControlPlaneAddr: config.Config.App.Addr,
+			})
+			hostHandler := host.NewHandler(hostService)
+
+			hostRouter := apiV1Router.Group("/hosts")
+			hostRouter.Use(auth.LoginRequired())
+			{
+				hostRouter.POST("", hostHandler.CreateHost)
+				hostRouter.GET("", hostHandler.ListHosts)
+				hostRouter.GET("/:id", hostHandler.GetHost)
+				hostRouter.PUT("/:id", hostHandler.UpdateHost)
+				hostRouter.DELETE("/:id", hostHandler.DeleteHost)
+				hostRouter.GET("/:id/install-command", hostHandler.GetInstallCommand)
 			}
 		}
 	}
