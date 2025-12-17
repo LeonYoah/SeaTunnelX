@@ -36,20 +36,26 @@ func NewRepository(db *gorm.DB) *Repository {
 }
 
 // Create creates a new host record in the database.
+// Create 在数据库中创建新的主机记录。
 // Returns ErrHostNameDuplicate if a host with the same name already exists.
-// Returns ErrHostIPInvalid if the IP address format is invalid.
+// Returns ErrHostIPInvalid if the IP address format is invalid (for bare_metal).
 func (r *Repository) Create(ctx context.Context, host *Host) error {
-	// Validate IP address format
-	if !ValidateIPAddress(host.IPAddress) {
-		return ErrHostIPInvalid
-	}
-
 	// Validate host name is not empty
+	// 验证主机名不为空
 	if host.Name == "" {
 		return ErrHostNameEmpty
 	}
 
+	// Validate IP address format for bare_metal hosts
+	// 验证物理机/VM 的 IP 地址格式
+	if host.HostType == HostTypeBareMetal || host.HostType == "" {
+		if !ValidateIPAddress(host.IPAddress) {
+			return ErrHostIPInvalid
+		}
+	}
+
 	// Check for duplicate name
+	// 检查名称是否重复
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&Host{}).Where("name = ?", host.Name).Count(&count).Error; err != nil {
 		return err
@@ -114,17 +120,26 @@ func (r *Repository) GetByAgentID(ctx context.Context, agentID string) (*Host, e
 }
 
 // List retrieves hosts based on filter criteria with pagination.
+// List 根据过滤条件和分页获取主机列表。
 // Returns the list of hosts and total count.
 func (r *Repository) List(ctx context.Context, filter *HostFilter, heartbeatTimeout time.Duration) ([]*Host, int64, error) {
 	query := r.db.WithContext(ctx).Model(&Host{})
 
-	// Apply filters
+	// Apply filters / 应用过滤条件
 	if filter != nil {
 		if filter.Name != "" {
 			query = query.Where("name LIKE ?", "%"+filter.Name+"%")
 		}
+		// Filter by host type / 按主机类型过滤
+		if filter.HostType != "" {
+			query = query.Where("host_type = ?", filter.HostType)
+		}
 		if filter.IPAddress != "" {
 			query = query.Where("ip_address LIKE ?", "%"+filter.IPAddress+"%")
+		}
+		// Filter by host status / 按主机状态过滤
+		if filter.Status != "" {
+			query = query.Where("status = ?", filter.Status)
 		}
 		if filter.AgentStatus != "" {
 			query = query.Where("agent_status = ?", filter.AgentStatus)
