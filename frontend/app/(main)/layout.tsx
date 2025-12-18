@@ -1,6 +1,7 @@
 'use client';
 
 import {ManagementBar} from '@/components/common/layout/ManagementBar';
+import {AIAssistant} from '@/components/common/assistant';
 import {memo} from 'react';
 
 const MemoizedManagementBar = memo(ManagementBar);
@@ -16,6 +17,8 @@ export default function ProjectLayout({children}: {children: React.ReactNode}) {
           </div>
         </div>
       </div>
+      {/* 全局 AI 问答助手 / Global AI Assistant */}
+      <AIAssistant />
     </div>
   );
 }

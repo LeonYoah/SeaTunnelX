@@ -34,6 +34,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
+	"github.com/seatunnel/seatunnelX/internal/apps/deepwiki"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/installer"
@@ -473,6 +474,30 @@ func Serve() {
 			// POST /api/v1/hosts/:id/install/cancel - 取消安装
 			// POST /api/v1/hosts/:id/install/cancel - Cancel installation
 			hostRouter.POST("/:id/install/cancel", installerHandler.CancelInstallation)
+
+			// DeepWiki 文档服务
+			// DeepWiki documentation service
+			deepwikiService := deepwiki.NewService(deepwiki.ServiceConfig{
+				UseMCP:  false, // 使用直接 HTTP 模式 / Use direct HTTP mode
+				Timeout: 30 * time.Second,
+			})
+			deepwikiHandler := deepwiki.NewHandler(deepwikiService)
+
+			deepwikiRouter := apiV1Router.Group("/deepwiki")
+			deepwikiRouter.Use(auth.LoginRequired())
+			{
+				// GET /api/v1/deepwiki/docs - 获取 SeaTunnel 文档
+				// GET /api/v1/deepwiki/docs - Get SeaTunnel documentation
+				deepwikiRouter.GET("/docs", deepwikiHandler.GetDocs)
+
+				// POST /api/v1/deepwiki/fetch - 获取指定仓库文档
+				// POST /api/v1/deepwiki/fetch - Fetch documentation for specific repository
+				deepwikiRouter.POST("/fetch", deepwikiHandler.FetchDocs)
+
+				// POST /api/v1/deepwiki/search - 搜索文档
+				// POST /api/v1/deepwiki/search - Search documentation
+				deepwikiRouter.POST("/search", deepwikiHandler.Search)
+			}
 		}
 	}
 
