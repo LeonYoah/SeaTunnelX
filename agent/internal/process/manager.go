@@ -198,6 +198,10 @@ type StartParams struct {
 	// InstallDir 是 SeaTunnel 安装目录
 	InstallDir string `json:"install_dir"`
 
+	// Role is the node role: "master", "worker", or empty for hybrid mode
+	// Role 是节点角色："master"、"worker" 或空表示混合模式
+	Role string `json:"role,omitempty"`
+
 	// ConfigDir is the configuration directory (optional, defaults to InstallDir/config)
 	// ConfigDir 是配置目录（可选，默认为 InstallDir/config）
 	ConfigDir string `json:"config_dir,omitempty"`
@@ -229,6 +233,14 @@ type StopParams struct {
 	// Timeout is the timeout for graceful shutdown (defaults to DefaultGracefulTimeout)
 	// Timeout 是优雅关闭的超时时间（默认为 DefaultGracefulTimeout）
 	Timeout time.Duration `json:"timeout,omitempty"`
+
+	// InstallDir is the SeaTunnel installation directory (for stop script)
+	// InstallDir 是 SeaTunnel 安装目录（用于停止脚本）
+	InstallDir string `json:"install_dir,omitempty"`
+
+	// Role is the node role: "master", "worker", or empty for hybrid mode
+	// Role 是节点角色："master"、"worker" 或空表示混合模式
+	Role string `json:"role,omitempty"`
 }
 
 // ProcessEventHandler is a callback for process events
@@ -329,7 +341,6 @@ func (m *ProcessManager) SetEventHandler(handler ProcessEventHandler) {
 	defer m.mu.Unlock()
 	m.eventHandler = handler
 }
-
 
 // Start starts the process manager and begins monitoring
 // Start 启动进程管理器并开始监控
@@ -535,42 +546,126 @@ func (m *ProcessManager) StartProcess(ctx context.Context, name string, params *
 
 	// Update process info / 更新进程信息
 	proc.mu.Lock()
-	proc.PID = cmd.Process.Pid
 	proc.cmd = cmd
 	proc.StartTime = time.Now()
 	proc.mu.Unlock()
 
-	// Wait for process to be ready (check if it's still running after a short delay)
-	// 等待进程就绪（短暂延迟后检查是否仍在运行）
-	time.Sleep(2 * time.Second)
+	// Wait for the startup script to complete
+	// 等待启动脚本完成
+	// The script with -d flag will fork a daemon process and exit
+	// 使用 -d 参数的脚本会 fork 一个守护进程然后退出
+	err = cmd.Wait()
+	logWriter.Close()
 
-	if !isProcessAlive(cmd.Process.Pid) {
-		// Process died immediately, collect logs / 进程立即死亡，收集日志
-		logWriter.Close()
+	if err != nil {
+		// Script failed / 脚本失败
 		logs := collectStartupLogs(logFile, DefaultLogTailLines)
 		proc.mu.Lock()
 		proc.Status = StatusError
-		proc.LastError = fmt.Sprintf("Process exited immediately. Logs:\n%s / 进程立即退出。日志：\n%s", logs, logs)
+		proc.LastError = fmt.Sprintf("Start script failed: %v. Logs:\n%s / 启动脚本失败: %v。日志：\n%s", err, logs, err, logs)
 		proc.mu.Unlock()
-		return fmt.Errorf("%w: process exited immediately, check logs at %s", ErrStartFailed, logFile)
+		return fmt.Errorf("%w: start script failed: %v", ErrStartFailed, err)
+	}
+
+	// Wait a bit for the daemon process to start
+	// 等待守护进程启动
+	time.Sleep(3 * time.Second)
+
+	// Find the actual SeaTunnel process by searching for Java process
+	// 通过搜索 Java 进程找到实际的 SeaTunnel 进程
+	pid, err := findSeaTunnelProcess(params.InstallDir, params.Role)
+	if err != nil || pid <= 0 {
+		// Try to get logs for debugging / 尝试获取日志用于调试
+		logs := collectStartupLogs(logFile, DefaultLogTailLines)
+		proc.mu.Lock()
+		proc.Status = StatusError
+		proc.LastError = fmt.Sprintf("SeaTunnel process not found after start. Logs:\n%s / 启动后未找到 SeaTunnel 进程。日志：\n%s", logs, logs)
+		proc.mu.Unlock()
+		return fmt.Errorf("%w: SeaTunnel process not found after start", ErrStartFailed)
 	}
 
 	// Process started successfully / 进程启动成功
 	proc.mu.Lock()
+	proc.PID = pid
 	proc.Status = StatusRunning
 	proc.LastError = ""
 	proc.mu.Unlock()
 
 	m.notifyEvent(name, EventStarted, proc)
 
-	// Start a goroutine to wait for the process and handle exit
-	// 启动一个 goroutine 等待进程并处理退出
-	go func() {
-		cmd.Wait()
-		logWriter.Close()
-	}()
+	// Start a goroutine to monitor the process
+	// 启动一个 goroutine 监控进程
+	go m.monitorProcess(name, proc)
 
 	return nil
+}
+
+// findSeaTunnelProcess finds the SeaTunnel Java process by install dir and role
+// findSeaTunnelProcess 通过安装目录和角色查找 SeaTunnel Java 进程
+func findSeaTunnelProcess(installDir string, role string) (int, error) {
+	// Use pgrep or ps to find the process
+	// 使用 pgrep 或 ps 查找进程
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// On Windows, use wmic / 在 Windows 上使用 wmic
+		cmd = exec.Command("wmic", "process", "where", fmt.Sprintf("CommandLine like '%%%s%%' and CommandLine like '%%SeaTunnel%%'", installDir), "get", "ProcessId")
+	} else {
+		// On Linux, use pgrep / 在 Linux 上使用 pgrep
+		// Look for java process with SeaTunnel in command line
+		// 查找命令行中包含 SeaTunnel 的 java 进程
+		pattern := installDir
+		if role != "" && role != "hybrid" {
+			pattern = fmt.Sprintf("seatunnel.*%s", role)
+		}
+		cmd = exec.Command("pgrep", "-f", pattern)
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse the first PID / 解析第一个 PID
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "ProcessId" {
+			continue
+		}
+		pid, err := strconv.Atoi(line)
+		if err == nil && pid > 0 {
+			return pid, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no SeaTunnel process found / 未找到 SeaTunnel 进程")
+}
+
+// monitorProcess monitors a process and updates status when it exits
+// monitorProcess 监控进程并在退出时更新状态
+func (m *ProcessManager) monitorProcess(name string, proc *ManagedProcess) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		proc.mu.RLock()
+		pid := proc.PID
+		status := proc.Status
+		proc.mu.RUnlock()
+
+		if status != StatusRunning {
+			return
+		}
+
+		if pid <= 0 || !isProcessAlive(pid) {
+			proc.mu.Lock()
+			proc.Status = StatusStopped
+			proc.PID = 0
+			proc.mu.Unlock()
+			m.notifyEvent(name, EventCrashed, proc)
+			return
+		}
+	}
 }
 
 // StopProcess stops a SeaTunnel process
@@ -578,6 +673,12 @@ func (m *ProcessManager) StartProcess(ctx context.Context, name string, params *
 // Requirements 6.2: Send SIGTERM, wait for graceful shutdown (max 30s), send SIGKILL if timeout
 // 需求 6.2：发送 SIGTERM 信号、等待进程优雅关闭（最长 30 秒）、若超时则发送 SIGKILL
 func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *StopParams) error {
+	// If install_dir is provided, use stop script / 如果提供了安装目录，使用停止脚本
+	if params != nil && params.InstallDir != "" {
+		return m.stopProcessByScript(ctx, name, params)
+	}
+
+	// Otherwise, use tracked process / 否则使用跟踪的进程
 	value, ok := m.processes.Load(name)
 	if !ok {
 		return ErrProcessNotFound
@@ -668,37 +769,87 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 	return nil
 }
 
+// stopProcessByScript stops a process using the stop script
+// stopProcessByScript 使用停止脚本停止进程
+func (m *ProcessManager) stopProcessByScript(ctx context.Context, name string, params *StopParams) error {
+	stopScript := getStopScript(params.InstallDir)
+
+	// Check if stop script exists / 检查停止脚本是否存在
+	if _, err := os.Stat(stopScript); os.IsNotExist(err) {
+		return fmt.Errorf("stop script not found: %s / 停止脚本不存在: %s", stopScript, stopScript)
+	}
+
+	// Build arguments based on role / 根据角色构建参数
+	args := []string{stopScript}
+	if params.Role != "" && params.Role != "hybrid" {
+		args = append(args, "-r", params.Role)
+	}
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmdArgs := append([]string{"/c"}, args...)
+		cmd = exec.CommandContext(ctx, "cmd", cmdArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
+	}
+
+	cmd.Dir = params.InstallDir
+	cmd.Env = append(os.Environ(), fmt.Sprintf("SEATUNNEL_HOME=%s", params.InstallDir))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("stop script failed: %v, output: %s / 停止脚本失败: %v, 输出: %s", err, string(output), err, string(output))
+	}
+
+	// Update tracked process if exists / 如果存在则更新跟踪的进程
+	if value, ok := m.processes.Load(name); ok {
+		proc := value.(*ManagedProcess)
+		proc.mu.Lock()
+		proc.Status = StatusStopped
+		proc.PID = 0
+		proc.mu.Unlock()
+		m.notifyEvent(name, EventStopped, proc)
+	}
+
+	return nil
+}
+
 // RestartProcess restarts a SeaTunnel process
 // RestartProcess 重启 SeaTunnel 进程
 // Requirements 6.3: Stop first, wait for complete exit, then start
 // 需求 6.3：先执行停止操作、等待进程完全退出、再执行启动操作
 func (m *ProcessManager) RestartProcess(ctx context.Context, name string, startParams *StartParams, stopParams *StopParams) error {
-	// Check if process exists / 检查进程是否存在
-	value, ok := m.processes.Load(name)
-	if !ok {
-		// If not found, just start it / 如果未找到，直接启动
-		return m.StartProcess(ctx, name, startParams)
-	}
-
-	proc := value.(*ManagedProcess)
-	proc.mu.RLock()
-	status := proc.Status
-	proc.mu.RUnlock()
-
-	// Stop if running / 如果正在运行则停止
-	if status == StatusRunning {
-		if err := m.StopProcess(ctx, name, stopParams); err != nil {
-			return fmt.Errorf("failed to stop process for restart: %w / 重启时停止进程失败：%w", err, err)
-		}
-
+	// Always try to stop first using script if install_dir is provided
+	// 如果提供了安装目录，始终先尝试使用脚本停止
+	if stopParams != nil && stopParams.InstallDir != "" {
+		// Use stop script to stop any running process
+		// 使用停止脚本停止任何正在运行的进程
+		_ = m.StopProcess(ctx, name, stopParams)
 		// Wait for process to fully exit / 等待进程完全退出
-		time.Sleep(2 * time.Second)
+		time.Sleep(3 * time.Second)
+	} else {
+		// Check if process exists in tracking / 检查进程是否在跟踪列表中
+		value, ok := m.processes.Load(name)
+		if ok {
+			proc := value.(*ManagedProcess)
+			proc.mu.RLock()
+			status := proc.Status
+			proc.mu.RUnlock()
+
+			// Stop if running / 如果正在运行则停止
+			if status == StatusRunning {
+				if err := m.StopProcess(ctx, name, stopParams); err != nil {
+					return fmt.Errorf("failed to stop process for restart: %w / 重启时停止进程失败：%w", err, err)
+				}
+				// Wait for process to fully exit / 等待进程完全退出
+				time.Sleep(2 * time.Second)
+			}
+		}
 	}
 
 	// Start the process / 启动进程
 	return m.StartProcess(ctx, name, startParams)
 }
-
 
 // GetStatus returns the status of a managed process
 // GetStatus 返回托管进程的状态
@@ -837,11 +988,20 @@ func getStopScript(installDir string) string {
 func buildStartCommand(ctx context.Context, params *StartParams) *exec.Cmd {
 	startScript := getStartScript(params.InstallDir)
 
+	// Build arguments based on role / 根据角色构建参数
+	// -d: daemon mode / 守护进程模式
+	// -r: role (master/worker) / 角色
+	args := []string{startScript, "-d"}
+	if params.Role != "" && params.Role != "hybrid" {
+		args = append(args, "-r", params.Role)
+	}
+
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/c", startScript)
+		cmdArgs := append([]string{"/c"}, args...)
+		cmd = exec.CommandContext(ctx, "cmd", cmdArgs...)
 	} else {
-		cmd = exec.CommandContext(ctx, "/bin/bash", startScript)
+		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
 	}
 
 	// Set working directory / 设置工作目录

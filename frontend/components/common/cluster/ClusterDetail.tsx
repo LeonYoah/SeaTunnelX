@@ -142,6 +142,11 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [logContent, setLogContent] = useState<string>('');
   const [logLoading, setLogLoading] = useState(false);
   const [logNodeInfo, setLogNodeInfo] = useState<NodeInfo | null>(null);
+  // Log query parameters / 日志查询参数
+  const [logLines, setLogLines] = useState<number>(100);
+  const [logMode, setLogMode] = useState<string>('tail');
+  const [logFilter, setLogFilter] = useState<string>('');
+  const [logDate, setLogDate] = useState<string>('');
 
   /**
    * Load cluster data
@@ -401,10 +406,26 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const handleViewLogs = async (node: NodeInfo) => {
     setLogNodeInfo(node);
     setIsLogDialogOpen(true);
+    // Reset parameters / 重置参数
+    setLogLines(100);
+    setLogMode('tail');
+    setLogFilter('');
+    setLogDate('');
+    await fetchLogs(node.id, {lines: 100, mode: 'tail'});
+  };
+
+  /**
+   * Fetch logs with parameters
+   * 使用参数获取日志
+   */
+  const fetchLogs = async (
+    nodeId: number,
+    params: {lines?: number; mode?: string; filter?: string; date?: string},
+  ) => {
     setLogLoading(true);
     setLogContent('');
     try {
-      const result = await services.cluster.getNodeLogsSafe(clusterId, node.id);
+      const result = await services.cluster.getNodeLogsSafe(clusterId, nodeId, params);
       if (result.success && result.data) {
         setLogContent(result.data.logs || t('cluster.noLogs'));
       } else {
@@ -413,6 +434,20 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     } finally {
       setLogLoading(false);
     }
+  };
+
+  /**
+   * Handle refresh logs with current parameters
+   * 使用当前参数刷新日志
+   */
+  const handleRefreshLogs = () => {
+    if (!logNodeInfo) {return;}
+    fetchLogs(logNodeInfo.id, {
+      lines: logLines,
+      mode: logMode,
+      filter: logFilter || undefined,
+      date: logDate || undefined,
+    });
   };
 
   /**
@@ -636,14 +671,19 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <CardTitle className='flex items-center gap-2'>
               <Activity className='h-5 w-5' />
               {t('cluster.operations')}
+              {selectedNodeIds.size > 0 && (
+                <Badge variant='secondary' className='ml-2'>
+                  {t('cluster.selectedNodes', {count: selectedNodeIds.size})}
+                </Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className='flex gap-2'>
               <Button
                 variant='outline'
-                onClick={handleStart}
-                disabled={!canStart || isOperating}
+                onClick={handleBatchStart}
+                disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
                   <Loader2 className='h-4 w-4 mr-2 animate-spin' />
@@ -654,8 +694,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               </Button>
               <Button
                 variant='outline'
-                onClick={handleStop}
-                disabled={!canStop || isOperating}
+                onClick={handleBatchStop}
+                disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
                   <Loader2 className='h-4 w-4 mr-2 animate-spin' />
@@ -666,8 +706,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               </Button>
               <Button
                 variant='outline'
-                onClick={handleRestart}
-                disabled={!canRestart || isOperating}
+                onClick={handleBatchRestart}
+                disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
                   <Loader2 className='h-4 w-4 mr-2 animate-spin' />
@@ -677,6 +717,11 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                 {t('cluster.restart')}
               </Button>
             </div>
+            {selectedNodeIds.size === 0 && (
+              <p className='text-sm text-muted-foreground mt-2'>
+                {t('cluster.selectNodesToOperate')}
+              </p>
+            )}
           </CardContent>
         </Card>
       </motion.div>
@@ -698,6 +743,12 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className='w-12'>
+                    <Checkbox
+                      checked={nodes.length > 0 && selectedNodeIds.size === nodes.length}
+                      onCheckedChange={toggleAllNodes}
+                    />
+                  </TableHead>
                   <TableHead>ID</TableHead>
                   <TableHead>{t('cluster.hostName')}</TableHead>
                   <TableHead>{t('cluster.hostIP')}</TableHead>
@@ -711,13 +762,19 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               <TableBody>
                 {nodes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className='text-center py-8 text-muted-foreground'>
+                    <TableCell colSpan={9} className='text-center py-8 text-muted-foreground'>
                       {t('cluster.noNodes')}
                     </TableCell>
                   </TableRow>
                 ) : (
                   nodes.map((node) => (
                     <TableRow key={node.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedNodeIds.has(node.id)}
+                          onCheckedChange={() => toggleNodeSelection(node.id)}
+                        />
+                      </TableCell>
                       <TableCell>{node.id}</TableCell>
                       <TableCell>{node.host_name || '-'}</TableCell>
                       <TableCell>{node.host_ip || '-'}</TableCell>
@@ -735,6 +792,45 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                       <TableCell>{node.process_pid || '-'}</TableCell>
                       <TableCell>
                         <div className='flex items-center gap-1'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => handleNodeStart(node)}
+                            disabled={nodeOperating === node.id || node.status === NodeStatus.RUNNING}
+                            title={t('cluster.start')}
+                          >
+                            {nodeOperating === node.id ? (
+                              <Loader2 className='h-4 w-4 animate-spin' />
+                            ) : (
+                              <Play className='h-4 w-4 text-green-600' />
+                            )}
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => handleNodeStop(node)}
+                            disabled={nodeOperating === node.id || node.status !== NodeStatus.RUNNING}
+                            title={t('cluster.stop')}
+                          >
+                            <Square className='h-4 w-4 text-orange-600' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => handleNodeRestart(node)}
+                            disabled={nodeOperating === node.id || node.status !== NodeStatus.RUNNING}
+                            title={t('cluster.restart')}
+                          >
+                            <RotateCcw className='h-4 w-4 text-blue-600' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => handleViewLogs(node)}
+                            title={t('cluster.viewLogs')}
+                          >
+                            <FileText className='h-4 w-4' />
+                          </Button>
                           <Button
                             variant='ghost'
                             size='icon'
@@ -845,6 +941,88 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <AlertDialogAction onClick={handleRemoveNode}>
               {t('common.delete')}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* View Logs Dialog / 查看日志对话框 */}
+      <AlertDialog open={isLogDialogOpen} onOpenChange={setIsLogDialogOpen}>
+        <AlertDialogContent className='max-h-[90vh]' style={{maxWidth: '90vw', width: '1200px'}}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('cluster.viewLogs')} - {logNodeInfo?.host_name} ({t(`cluster.roles.${logNodeInfo?.role}`)})
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          {/* Log query parameters / 日志查询参数 */}
+          <div className='flex flex-wrap gap-3 items-end'>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs text-muted-foreground'>{t('cluster.logLines')}</label>
+              <input
+                type='number'
+                value={logLines}
+                onChange={(e) => setLogLines(Number(e.target.value) || 100)}
+                className='w-20 h-8 px-2 text-sm border rounded-md bg-background text-foreground'
+                min={1}
+                max={10000}
+              />
+            </div>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs text-muted-foreground'>{t('cluster.logMode')}</label>
+              <select
+                value={logMode}
+                onChange={(e) => setLogMode(e.target.value)}
+                className='h-8 px-2 text-sm border rounded-md bg-background text-foreground'
+              >
+                <option value='tail'>{t('cluster.logModeTail')}</option>
+                <option value='head'>{t('cluster.logModeHead')}</option>
+                <option value='all'>{t('cluster.logModeAll')}</option>
+              </select>
+            </div>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs text-muted-foreground'>{t('cluster.logFilter')}</label>
+              <input
+                type='text'
+                value={logFilter}
+                onChange={(e) => setLogFilter(e.target.value)}
+                placeholder='grep pattern'
+                className='w-32 h-8 px-2 text-sm border rounded-md bg-background text-foreground placeholder:text-muted-foreground'
+              />
+            </div>
+            <div className='flex flex-col gap-1'>
+              <label className='text-xs text-muted-foreground'>{t('cluster.logDate')}</label>
+              <input
+                type='text'
+                value={logDate}
+                onChange={(e) => setLogDate(e.target.value)}
+                placeholder='2025-11-12-1'
+                className='w-36 h-8 px-2 text-sm border rounded-md bg-background text-foreground placeholder:text-muted-foreground'
+              />
+            </div>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={handleRefreshLogs}
+              disabled={logLoading}
+            >
+              {logLoading ? (
+                <Loader2 className='h-4 w-4 animate-spin' />
+              ) : (
+                <RefreshCw className='h-4 w-4' />
+              )}
+              <span className='ml-1'>{t('common.refresh')}</span>
+            </Button>
+          </div>
+          <div className='overflow-auto h-[60vh] bg-muted rounded-md p-4'>
+            {logLoading ? (
+              <div className='flex items-center justify-center py-8'>
+                <Loader2 className='h-6 w-6 animate-spin' />
+              </div>
+            ) : (
+              <pre className='text-xs font-mono whitespace-pre-wrap'>{logContent}</pre>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.close')}</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

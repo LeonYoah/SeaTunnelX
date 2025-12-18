@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-// Package cluster provides cluster management functionality for the SeaTunnel Agent system.
-// cluster 包提供 SeaTunnel Agent 系统的集群管理功能。
+// Package cluster provides cluster management functionality for the SeaTunnelX Agent system.
+// cluster 包提供 SeaTunnelX Agent 系统的集群管理功能。
 package cluster
 
 import (
@@ -620,4 +620,136 @@ func (h *Handler) getStatusCodeForError(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// ==================== Node Operation Handlers 节点操作处理器 ====================
+
+// StartNode handles POST /api/v1/clusters/:id/nodes/:nodeId/start - starts a node.
+// StartNode 处理 POST /api/v1/clusters/:id/nodes/:nodeId/start - 启动节点。
+func (h *Handler) StartNode(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodeID, err := strconv.ParseUint(c.Param("nodeId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的节点 ID / Invalid node ID"})
+		return
+	}
+
+	result, err := h.service.StartNode(c.Request.Context(), uint(clusterID), uint(nodeID))
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Cluster] 启动节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
+	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
+}
+
+// StopNode handles POST /api/v1/clusters/:id/nodes/:nodeId/stop - stops a node.
+// StopNode 处理 POST /api/v1/clusters/:id/nodes/:nodeId/stop - 停止节点。
+func (h *Handler) StopNode(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodeID, err := strconv.ParseUint(c.Param("nodeId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的节点 ID / Invalid node ID"})
+		return
+	}
+
+	result, err := h.service.StopNode(c.Request.Context(), uint(clusterID), uint(nodeID))
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Cluster] 停止节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
+	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
+}
+
+// RestartNode handles POST /api/v1/clusters/:id/nodes/:nodeId/restart - restarts a node.
+// RestartNode 处理 POST /api/v1/clusters/:id/nodes/:nodeId/restart - 重启节点。
+func (h *Handler) RestartNode(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodeID, err := strconv.ParseUint(c.Param("nodeId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ClusterOperationResponse{ErrorMsg: "无效的节点 ID / Invalid node ID"})
+		return
+	}
+
+	result, err := h.service.RestartNode(c.Request.Context(), uint(clusterID), uint(nodeID))
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Cluster] 重启节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
+	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
+}
+
+// GetNodeLogsResponse represents the response for getting node logs.
+// GetNodeLogsResponse 表示获取节点日志的响应。
+type GetNodeLogsResponse struct {
+	ErrorMsg string `json:"error_msg"`
+	Data     *struct {
+		Logs string `json:"logs"`
+	} `json:"data"`
+}
+
+// GetNodeLogs handles GET /api/v1/clusters/:id/nodes/:nodeId/logs - gets node logs.
+// GetNodeLogs 处理 GET /api/v1/clusters/:id/nodes/:nodeId/logs - 获取节点日志。
+// Query parameters:
+// - lines: number of lines (default: 100) / 行数（默认：100）
+// - mode: "tail" (default), "head", "all" / 模式
+// - filter: grep pattern / 过滤模式
+// - date: date for rolling logs (e.g., "2025-11-12-1") / 滚动日志日期
+func (h *Handler) GetNodeLogs(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, GetNodeLogsResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodeID, err := strconv.ParseUint(c.Param("nodeId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, GetNodeLogsResponse{ErrorMsg: "无效的节点 ID / Invalid node ID"})
+		return
+	}
+
+	// Parse query parameters / 解析查询参数
+	req := &GetNodeLogsRequest{}
+	if linesStr := c.Query("lines"); linesStr != "" {
+		if lines, err := strconv.Atoi(linesStr); err == nil {
+			req.Lines = lines
+		}
+	}
+	req.Mode = c.Query("mode")
+	req.Filter = c.Query("filter")
+	req.Date = c.Query("date")
+
+	logs, err := h.service.GetNodeLogs(c.Request.Context(), uint(clusterID), uint(nodeID), req)
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, GetNodeLogsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, GetNodeLogsResponse{Data: &struct {
+		Logs string `json:"logs"`
+	}{Logs: logs}})
 }

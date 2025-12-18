@@ -152,6 +152,15 @@ tail -f $SEATUNNEL_HOME/logs/seatunnel-engine-worker.log
 
 # 服务端查看日志
 tail -f $SEATUNNEL_HOME/logs/seatunnel-engine-server.log
+
+
+ 15:12 seatunnel-engine-master.log
+-rw-r--r-- 1 root root       210 Dec 18 13:44 seatunnel-engine-master.out
+-rw-r--r-- 1 root root     43741 Dec 18 15:09 seatunnel-engine-worker.log
+-rw-r--r-- 1 root root   2547827 Nov 24 13:50 seatunnel-engine-worker.log.2025-11-12-1
+-rw-r--r-- 1 root root   3588462 Nov 24 13:50 seatunnel-engine-worker.log.2025-11-13-1
+-rw-r--r-- 1 root root   7967778 Nov 24 13:50 seatunnel-engine-worker.log.2025-11-14-1
+-rw-r--r-- 1 root root 104858004 Nov 24 13:50 seatunnel-engine-worker.log.2025-11-15-1
 ```
 
 ## Agent 进程管理器实现要点

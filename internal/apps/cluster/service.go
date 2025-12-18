@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-// Package cluster provides cluster management functionality for the SeaTunnel Agent system.
-// cluster 包提供 SeaTunnel Agent 系统的集群管理功能。
+// Package cluster provides cluster management functionality for the SeaTunnelX Agent system.
+// cluster 包提供 SeaTunnelX Agent 系统的集群管理功能。
 package cluster
 
 import (
@@ -1057,18 +1057,14 @@ func (s *Service) detectAndUpdateNodeProcess(ctx context.Context, node *ClusterN
 
 	success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_process", params)
 	if err != nil {
-		fmt.Printf("[detectAndUpdateNodeProcess] SendCommand error: %v\n", err)
 		return
 	}
-
-	fmt.Printf("[detectAndUpdateNodeProcess] check_process result: success=%v, message=%s\n", success, message)
 
 	if success {
 		// Process is running, try to extract PID from response
 		// 进程正在运行，尝试从响应中提取 PID
 		// Response format: {"success":true,"message":"SeaTunnel process found: PID=12345, role=hybrid","details":{"pid":"12345","role":"hybrid"}}
 		pid := extractPIDFromMessage(message)
-		fmt.Printf("[detectAndUpdateNodeProcess] extracted PID: %d\n", pid)
 		if pid > 0 {
 			_ = s.repo.UpdateNodeProcess(ctx, node.ID, pid, "running")
 			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
@@ -1115,4 +1111,250 @@ func extractPIDFromMessage(message string) int {
 	}
 
 	return 0
+}
+
+// ==================== Node Operation Methods 节点操作方法 ====================
+
+// StartNode starts a single node in a cluster.
+// StartNode 启动集群中的单个节点。
+func (s *Service) StartNode(ctx context.Context, clusterID uint, nodeID uint) (*OperationResult, error) {
+	return s.executeNodeOperation(ctx, clusterID, nodeID, OperationStart)
+}
+
+// StopNode stops a single node in a cluster.
+// StopNode 停止集群中的单个节点。
+func (s *Service) StopNode(ctx context.Context, clusterID uint, nodeID uint) (*OperationResult, error) {
+	return s.executeNodeOperation(ctx, clusterID, nodeID, OperationStop)
+}
+
+// RestartNode restarts a single node in a cluster.
+// RestartNode 重启集群中的单个节点。
+func (s *Service) RestartNode(ctx context.Context, clusterID uint, nodeID uint) (*OperationResult, error) {
+	return s.executeNodeOperation(ctx, clusterID, nodeID, OperationRestart)
+}
+
+// executeNodeOperation executes an operation on a single node.
+// executeNodeOperation 在单个节点上执行操作。
+func (s *Service) executeNodeOperation(ctx context.Context, clusterID uint, nodeID uint, operation OperationType) (*OperationResult, error) {
+	// Get node
+	// 获取节点
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	if node.ClusterID != clusterID {
+		return nil, ErrNodeNotFound
+	}
+
+	// Get cluster for install_dir
+	// 获取集群以获取安装目录
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &OperationResult{
+		ClusterID:   clusterID,
+		Operation:   operation,
+		Success:     true,
+		NodeResults: make([]*NodeOperationResult, 0, 1),
+	}
+
+	nodeResult := &NodeOperationResult{
+		NodeID: node.ID,
+		HostID: node.HostID,
+	}
+
+	// Get host information
+	// 获取主机信息
+	if s.hostProvider != nil {
+		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+		if err != nil {
+			nodeResult.Success = false
+			nodeResult.Message = "Failed to get host information: " + err.Error()
+			result.NodeResults = append(result.NodeResults, nodeResult)
+			result.Success = false
+			result.Message = nodeResult.Message
+			return result, nil
+		}
+
+		nodeResult.HostName = hostInfo.Name
+
+		// Check if host is online
+		// 检查主机是否在线
+		if !hostInfo.IsOnline(s.heartbeatTimeout) {
+			nodeResult.Success = false
+			nodeResult.Message = "Host is offline / 主机离线"
+			result.NodeResults = append(result.NodeResults, nodeResult)
+			result.Success = false
+			result.Message = nodeResult.Message
+			return result, nil
+		}
+
+		// Send command to agent
+		// 向 Agent 发送命令
+		if s.agentSender != nil && hostInfo.AgentID != "" {
+			installDir := node.InstallDir
+			if installDir == "" {
+				installDir = cluster.InstallDir
+			}
+
+			params := map[string]string{
+				"cluster_id":  fmt.Sprintf("%d", clusterID),
+				"node_id":     fmt.Sprintf("%d", node.ID),
+				"role":        string(node.Role),
+				"install_dir": installDir,
+			}
+
+			success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, string(operation), params)
+			if err != nil {
+				nodeResult.Success = false
+				nodeResult.Message = "Failed to send command: " + err.Error()
+				result.Success = false
+			} else {
+				nodeResult.Success = success
+				nodeResult.Message = message
+				if !success {
+					result.Success = false
+				}
+			}
+		} else {
+			nodeResult.Success = false
+			nodeResult.Message = "Agent sender not configured / Agent 发送器未配置"
+			result.Success = false
+		}
+	} else {
+		nodeResult.Success = false
+		nodeResult.Message = "Host provider not configured / 主机提供者未配置"
+		result.Success = false
+	}
+
+	// Update node status based on operation
+	// 根据操作更新节点状态
+	if nodeResult.Success {
+		switch operation {
+		case OperationStart:
+			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
+		case OperationStop:
+			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusStopped)
+			_ = s.repo.UpdateNodeProcess(ctx, node.ID, 0, "stopped")
+		case OperationRestart:
+			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
+		}
+		// Detect process after start/restart with a short delay
+		// 启动/重启后延迟检测进程（等待进程完全启动）
+		if operation == OperationStart || operation == OperationRestart {
+			// Wait 2 seconds for process to fully start
+			// 等待 2 秒让进程完全启动
+			time.Sleep(2 * time.Second)
+			s.detectAndUpdateNodeProcess(ctx, node, node.HostID)
+		}
+	} else {
+		_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusError)
+	}
+
+	result.NodeResults = append(result.NodeResults, nodeResult)
+	if result.Success {
+		result.Message = "Operation completed successfully / 操作成功完成"
+	} else {
+		result.Message = nodeResult.Message
+	}
+
+	return result, nil
+}
+
+// GetNodeLogsRequest represents the request for getting node logs.
+// GetNodeLogsRequest 表示获取节点日志的请求。
+type GetNodeLogsRequest struct {
+	Lines  int    `json:"lines" form:"lines"`   // Number of lines / 行数
+	Mode   string `json:"mode" form:"mode"`     // "tail" (default), "head", "all" / 模式
+	Filter string `json:"filter" form:"filter"` // Filter pattern / 过滤模式
+	Date   string `json:"date" form:"date"`     // Date for rolling logs / 滚动日志日期
+}
+
+// GetNodeLogs gets the logs of a node.
+// GetNodeLogs 获取节点的日志。
+func (s *Service) GetNodeLogs(ctx context.Context, clusterID uint, nodeID uint, req *GetNodeLogsRequest) (string, error) {
+	// Get node
+	// 获取节点
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil {
+		return "", err
+	}
+
+	if node.ClusterID != clusterID {
+		return "", ErrNodeNotFound
+	}
+
+	// Get host information
+	// 获取主机信息
+	if s.hostProvider == nil {
+		return "", fmt.Errorf("host provider not configured / 主机提供者未配置")
+	}
+
+	hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+	if err != nil {
+		return "", err
+	}
+
+	if !hostInfo.IsOnline(s.heartbeatTimeout) {
+		return "", fmt.Errorf("host is offline / 主机离线")
+	}
+
+	if s.agentSender == nil || hostInfo.AgentID == "" {
+		return "", fmt.Errorf("agent sender not configured / Agent 发送器未配置")
+	}
+
+	// Determine log file based on role
+	// 根据角色确定日志文件
+	installDir := node.InstallDir
+	if installDir == "" {
+		installDir = "/opt/seatunnel"
+	}
+
+	var logFile string
+	switch node.Role {
+	case NodeRoleMaster:
+		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-master.log", installDir)
+	case NodeRoleWorker:
+		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-worker.log", installDir)
+	default:
+		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-server.log", installDir)
+	}
+
+	// Set default values / 设置默认值
+	lines := req.Lines
+	if lines <= 0 {
+		lines = 100
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = "tail"
+	}
+
+	// Send get_logs command to agent
+	// 向 Agent 发送 get_logs 命令
+	params := map[string]string{
+		"log_file": logFile,
+		"lines":    fmt.Sprintf("%d", lines),
+		"mode":     mode,
+	}
+	if req.Filter != "" {
+		params["filter"] = req.Filter
+	}
+	if req.Date != "" {
+		params["date"] = req.Date
+	}
+
+	success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "get_logs", params)
+	if err != nil {
+		return "", fmt.Errorf("failed to get logs: %v / 获取日志失败: %v", err, err)
+	}
+
+	if !success {
+		return "", fmt.Errorf("failed to get logs: %s / 获取日志失败: %s", message, message)
+	}
+
+	return message, nil
 }

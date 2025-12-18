@@ -603,4 +603,151 @@ export class ClusterService extends BaseService {
       return {success: false, error: errorMessage};
     }
   }
+
+  // ==================== Node Operation Methods 节点操作方法 ====================
+
+  /**
+   * Start a node
+   * 启动节点
+   */
+  static async startNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}/start`,
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Stop a node
+   * 停止节点
+   */
+  static async stopNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}/stop`,
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Restart a node
+   * 重启节点
+   */
+  static async restartNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+    const response = await apiClient.post<ClusterOperationResponse>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}/restart`,
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Get node logs
+   * 获取节点日志
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param nodeId - Node ID / 节点 ID
+   * @param params - Log query parameters / 日志查询参数
+   * @param params.lines - Number of lines (default: 100) / 行数
+   * @param params.mode - "tail" (default), "head", "all" / 模式
+   * @param params.filter - Filter pattern / 过滤模式
+   * @param params.date - Date for rolling logs / 滚动日志日期
+   */
+  static async getNodeLogs(
+    clusterId: number,
+    nodeId: number,
+    params?: {lines?: number; mode?: string; filter?: string; date?: string},
+  ): Promise<{logs: string}> {
+    const response = await apiClient.get<{error_msg: string; data: {logs: string}}>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}/logs`,
+      {params},
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Start node (with error handling)
+   * 启动节点（带错误处理）
+   */
+  static async startNodeSafe(clusterId: number, nodeId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.startNode(clusterId, nodeId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '启动节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Stop node (with error handling)
+   * 停止节点（带错误处理）
+   */
+  static async stopNodeSafe(clusterId: number, nodeId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.stopNode(clusterId, nodeId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '停止节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Restart node (with error handling)
+   * 重启节点（带错误处理）
+   */
+  static async restartNodeSafe(clusterId: number, nodeId: number): Promise<{
+    success: boolean;
+    data?: OperationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.restartNode(clusterId, nodeId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '重启节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Get node logs (with error handling)
+   * 获取节点日志（带错误处理）
+   */
+  static async getNodeLogsSafe(
+    clusterId: number,
+    nodeId: number,
+    params?: {lines?: number; mode?: string; filter?: string; date?: string},
+  ): Promise<{
+    success: boolean;
+    data?: {logs: string};
+    error?: string;
+  }> {
+    try {
+      const data = await this.getNodeLogs(clusterId, nodeId, params);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '获取节点日志失败';
+      return {success: false, error: errorMessage};
+    }
+  }
 }

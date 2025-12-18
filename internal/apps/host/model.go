@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-// Package host provides host management functionality for the SeaTunnel Agent system.
-// host 包提供 SeaTunnel Agent 系统的主机管理功能。
+// Package host provides host management functionality for the SeaTunnelX Agent system.
+// host 包提供 SeaTunnelX Agent 系统的主机管理功能。
 package host
 
 import (

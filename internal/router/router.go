@@ -233,6 +233,12 @@ func Serve() {
 				clusterRouter.DELETE("/:id/nodes/:nodeId", clusterHandler.RemoveNode)
 				clusterRouter.POST("/:id/nodes/precheck", clusterHandler.PrecheckNode)
 
+				// Node operations 节点操作
+				clusterRouter.POST("/:id/nodes/:nodeId/start", clusterHandler.StartNode)
+				clusterRouter.POST("/:id/nodes/:nodeId/stop", clusterHandler.StopNode)
+				clusterRouter.POST("/:id/nodes/:nodeId/restart", clusterHandler.RestartNode)
+				clusterRouter.GET("/:id/nodes/:nodeId/logs", clusterHandler.GetNodeLogs)
+
 				// Cluster operations 集群操作
 				clusterRouter.POST("/:id/start", clusterHandler.StartCluster)
 				clusterRouter.POST("/:id/stop", clusterHandler.StopCluster)
@@ -631,6 +637,8 @@ func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.Comma
 		return pb.CommandType_RESTART
 	case "status":
 		return pb.CommandType_STATUS
+	case "get_logs":
+		return pb.CommandType_COLLECT_LOGS
 	default:
 		return pb.CommandType_PRECHECK
 	}

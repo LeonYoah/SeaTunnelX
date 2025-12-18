@@ -30,8 +30,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -639,11 +642,18 @@ func (a *Agent) handleUpgradeCommand(ctx context.Context, cmd *pb.CommandRequest
 func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	reporter.Report(10, "Starting SeaTunnel process... / 启动 SeaTunnel 进程...")
 
-	processName := getParamString(cmd.Parameters, "process_name", "seatunnel")
+	role := getParamString(cmd.Parameters, "role", "")
 	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+
+	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	processName := "seatunnel"
+	if role != "" && role != "hybrid" {
+		processName = "seatunnel-" + role
+	}
 
 	params := &process.StartParams{
 		InstallDir: installDir,
+		Role:       role,
 		ConfigDir:  getParamString(cmd.Parameters, "config_dir", ""),
 		LogDir:     getParamString(cmd.Parameters, "log_dir", ""),
 	}
@@ -654,18 +664,27 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 	}
 
 	reporter.Report(100, "Process started / 进程已启动")
-	return executor.CreateSuccessResponse(cmd.CommandId, "Process started successfully / 进程启动成功"), nil
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process started successfully (role: %s) / 进程启动成功（角色：%s）", role, role)), nil
 }
 
 func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	reporter.Report(10, "Stopping SeaTunnel process... / 停止 SeaTunnel 进程...")
 
-	processName := getParamString(cmd.Parameters, "process_name", "seatunnel")
+	role := getParamString(cmd.Parameters, "role", "")
+	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
 	graceful := getParamBool(cmd.Parameters, "graceful", true)
 
+	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	processName := "seatunnel"
+	if role != "" && role != "hybrid" {
+		processName = "seatunnel-" + role
+	}
+
 	params := &process.StopParams{
-		Graceful: graceful,
-		Timeout:  30 * time.Second,
+		Graceful:   graceful,
+		Timeout:    30 * time.Second,
+		InstallDir: installDir,
+		Role:       role,
 	}
 
 	err := a.processManager.StopProcess(ctx, processName, params)
@@ -674,21 +693,30 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 	}
 
 	reporter.Report(100, "Process stopped / 进程已停止")
-	return executor.CreateSuccessResponse(cmd.CommandId, "Process stopped successfully / 进程停止成功"), nil
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process stopped successfully (role: %s) / 进程停止成功（角色：%s）", role, role)), nil
 }
 
 func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	reporter.Report(10, "Restarting SeaTunnel process... / 重启 SeaTunnel 进程...")
 
-	processName := getParamString(cmd.Parameters, "process_name", "seatunnel")
+	role := getParamString(cmd.Parameters, "role", "")
 	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+
+	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	processName := "seatunnel"
+	if role != "" && role != "hybrid" {
+		processName = "seatunnel-" + role
+	}
 
 	startParams := &process.StartParams{
 		InstallDir: installDir,
+		Role:       role,
 	}
 	stopParams := &process.StopParams{
-		Graceful: true,
-		Timeout:  30 * time.Second,
+		Graceful:   true,
+		Timeout:    30 * time.Second,
+		InstallDir: installDir,
+		Role:       role,
 	}
 
 	err := a.processManager.RestartProcess(ctx, processName, startParams, stopParams)
@@ -697,7 +725,7 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 	}
 
 	reporter.Report(100, "Process restarted / 进程已重启")
-	return executor.CreateSuccessResponse(cmd.CommandId, "Process restarted successfully / 进程重启成功"), nil
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process restarted successfully (role: %s) / 进程重启成功（角色：%s）", role, role)), nil
 }
 
 func (a *Agent) handleStatusCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
@@ -719,10 +747,145 @@ func (a *Agent) handleStatusCommand(ctx context.Context, cmd *pb.CommandRequest,
 func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	reporter.Report(10, "Collecting logs... / 收集日志...")
 
-	// TODO: Implement log collection
-	// TODO: 实现日志收集
+	logFile := getParamString(cmd.Parameters, "log_file", "")
+	if logFile == "" {
+		return executor.CreateErrorResponse(cmd.CommandId, "log_file parameter is required / 需要 log_file 参数"), nil
+	}
 
-	return executor.CreateSuccessResponse(cmd.CommandId, "Log collection not yet implemented / 日志收集尚未实现"), nil
+	// Parameters / 参数
+	lines := getParamInt(cmd.Parameters, "lines", 100)
+	if lines <= 0 {
+		lines = 100
+	}
+	if lines > 2000 {
+		lines = 2000 // Max 2000 lines / 最多 2000 行
+	}
+
+	// mode: "tail" (default), "head", "all"
+	// mode: "tail"（默认）, "head", "all"
+	mode := getParamString(cmd.Parameters, "mode", "tail")
+
+	// filter: grep pattern (optional)
+	// filter: grep 过滤模式（可选）
+	filter := getParamString(cmd.Parameters, "filter", "")
+
+	// date: specific date for rolling log files (e.g., "2025-12-18")
+	// date: 滚动日志文件的特定日期（如 "2025-12-18"）
+	date := getParamString(cmd.Parameters, "date", "")
+
+	// If date is specified, try to find the dated log file
+	// 如果指定了日期，尝试查找带日期的日志文件
+	actualLogFile := logFile
+	if date != "" {
+		// Try common rolling log patterns / 尝试常见的滚动日志模式
+		// Pattern 1: seatunnel-engine-master.log.2025-12-18
+		// Pattern 2: seatunnel-engine-worker.log.2025-11-12-1 (with sequence number)
+		// User may input full suffix like "2025-11-12-1" directly
+		// 用户可能直接输入完整后缀如 "2025-11-12-1"
+		datedFile := logFile + "." + date
+		if _, err := os.Stat(datedFile); err == nil {
+			actualLogFile = datedFile
+		} else {
+			// Try glob pattern to find matching files / 尝试 glob 模式查找匹配文件
+			// This handles cases like user input "2025-11-12" and we find "2025-11-12-1"
+			// 这处理用户输入 "2025-11-12" 而我们找到 "2025-11-12-1" 的情况
+			matches, _ := filepath.Glob(logFile + "." + date + "*")
+			if len(matches) > 0 {
+				// Use the first match (or latest if multiple)
+				// 使用第一个匹配（如果有多个则使用最新的）
+				actualLogFile = matches[len(matches)-1]
+			} else {
+				// Still not found, keep the dated file path for error message
+				// 仍未找到，保留带日期的文件路径用于错误消息
+				actualLogFile = datedFile
+			}
+		}
+	}
+
+	// Check if file exists / 检查文件是否存在
+	if _, err := os.Stat(actualLogFile); os.IsNotExist(err) {
+		// List available log files / 列出可用的日志文件
+		dir := filepath.Dir(logFile)
+		base := filepath.Base(logFile)
+		files, _ := filepath.Glob(filepath.Join(dir, base+"*"))
+		availableFiles := strings.Join(files, ", ")
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Log file not found: %s. Available files: %s / 日志文件不存在: %s。可用文件: %s", actualLogFile, availableFiles, actualLogFile, availableFiles)), nil
+	}
+
+	var output []byte
+	var err error
+
+	switch mode {
+	case "head":
+		// Read first N lines / 读取前 N 行
+		headCmd := exec.CommandContext(ctx, "head", "-n", strconv.Itoa(lines), actualLogFile)
+		output, err = headCmd.Output()
+		if err != nil {
+			output, err = readFirstNLines(actualLogFile, lines)
+		}
+	case "all":
+		// Read entire file (limited) / 读取整个文件（有限制）
+		output, err = os.ReadFile(actualLogFile)
+		if err == nil && len(output) > 500*1024 {
+			// Limit to 500KB / 限制为 500KB
+			output = output[:500*1024]
+			output = append(output, []byte("\n... [truncated / 已截断] ...")...)
+		}
+	default: // tail
+		// Read last N lines / 读取最后 N 行
+		tailCmd := exec.CommandContext(ctx, "tail", "-n", strconv.Itoa(lines), actualLogFile)
+		output, err = tailCmd.Output()
+		if err != nil {
+			output, err = readLastNLines(actualLogFile, lines)
+		}
+	}
+
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to read log file: %v / 读取日志文件失败: %v", err, err)), nil
+	}
+
+	// Apply filter if specified / 如果指定了过滤器则应用
+	if filter != "" {
+		filteredLines := []string{}
+		for _, line := range strings.Split(string(output), "\n") {
+			if strings.Contains(line, filter) {
+				filteredLines = append(filteredLines, line)
+			}
+		}
+		output = []byte(strings.Join(filteredLines, "\n"))
+	}
+
+	reporter.Report(100, "Logs collected / 日志收集完成")
+	return executor.CreateSuccessResponse(cmd.CommandId, string(output)), nil
+}
+
+// readLastNLines reads the last N lines from a file
+// readLastNLines 从文件中读取最后 N 行
+func readLastNLines(filename string, n int) ([]byte, error) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(content), "\n")
+	startIdx := len(lines) - n
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	return []byte(strings.Join(lines[startIdx:], "\n")), nil
+}
+
+// readFirstNLines reads the first N lines from a file
+// readFirstNLines 从文件中读取前 N 行
+func readFirstNLines(filename string, n int) ([]byte, error) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(string(content), "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 // Shutdown gracefully stops the Agent service
