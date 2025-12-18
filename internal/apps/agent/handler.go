@@ -45,6 +45,10 @@ type Handler struct {
 	// grpcPort is the gRPC port for Agent to connect.
 	// grpcPort 是 Agent 连接的 gRPC 端口。
 	grpcPort string
+
+	// heartbeatInterval is the heartbeat interval in seconds from Control Plane config.
+	// heartbeatInterval 是来自 Control Plane 配置的心跳间隔（秒）。
+	heartbeatInterval int
 }
 
 // HandlerConfig holds configuration for the Agent Handler.
@@ -61,6 +65,10 @@ type HandlerConfig struct {
 	// GRPCPort is the gRPC port for Agent connections.
 	// GRPCPort 是 Agent 连接的 gRPC 端口。
 	GRPCPort string
+
+	// HeartbeatInterval is the heartbeat interval in seconds.
+	// HeartbeatInterval 是心跳间隔（秒）。
+	HeartbeatInterval int
 }
 
 // NewHandler creates a new Handler instance.
@@ -81,11 +89,15 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	if cfg.GRPCPort == "" {
 		cfg.GRPCPort = "50051"
 	}
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = 10 // Default 10 seconds
+	}
 
 	return &Handler{
-		controlPlaneAddr: cfg.ControlPlaneAddr,
-		agentBinaryDir:   cfg.AgentBinaryDir,
-		grpcPort:         cfg.GRPCPort,
+		controlPlaneAddr:  cfg.ControlPlaneAddr,
+		agentBinaryDir:    cfg.AgentBinaryDir,
+		grpcPort:          cfg.GRPCPort,
+		heartbeatInterval: cfg.HeartbeatInterval,
 	}
 }
 
@@ -110,8 +122,9 @@ func (h *Handler) GetInstallScript(c *gin.Context) {
 	// Use InstallScriptGenerator to generate the install script
 	// 使用 InstallScriptGenerator 生成安装脚本
 	generator, err := NewInstallScriptGenerator(&InstallScriptConfig{
-		ControlPlaneAddr: h.getControlPlaneURL(),
-		GRPCAddr:         h.getGRPCAddr(),
+		ControlPlaneAddr:  h.getControlPlaneURL(),
+		GRPCAddr:          h.getGRPCAddr(),
+		HeartbeatInterval: h.heartbeatInterval,
 	})
 	if err != nil {
 		logger.ErrorF(c.Request.Context(), "[Agent] Failed to create install script generator: %v", err)

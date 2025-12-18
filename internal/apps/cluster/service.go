@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // HealthStatus represents the health status of a cluster.
@@ -225,6 +227,10 @@ func (s *Service) Create(ctx context.Context, req *CreateClusterRequest) (*Clust
 // Get 根据 ID 获取集群，可选择预加载节点。
 // Requirements: 7.3 - Returns cluster name, status, node list, version info, creation time.
 func (s *Service) Get(ctx context.Context, id uint) (*Cluster, error) {
+	// Update cluster status based on nodes before returning
+	// 返回前根据节点状态更新集群状态
+	s.updateClusterStatusFromNodes(ctx, id)
+
 	return s.repo.GetByID(ctx, id, true)
 }
 
@@ -250,13 +256,26 @@ func (s *Service) GetByName(ctx context.Context, name string) (*Cluster, error) 
 // List 根据过滤条件获取集群列表。
 // Requirements: 7.3 - Returns cluster list with node count.
 func (s *Service) List(ctx context.Context, filter *ClusterFilter) ([]*Cluster, int64, error) {
+	clusters, _, err := s.repo.List(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Update each cluster's status based on nodes
+	// 根据节点状态更新每个集群的状态
+	for _, c := range clusters {
+		s.updateClusterStatusFromNodes(ctx, c.ID)
+	}
+
+	// Re-fetch to get updated statuses
+	// 重新获取以获得更新后的状态
 	return s.repo.List(ctx, filter)
 }
 
 // ListWithInfo retrieves clusters and converts them to ClusterInfo.
 // ListWithInfo 获取集群列表并转换为 ClusterInfo。
 func (s *Service) ListWithInfo(ctx context.Context, filter *ClusterFilter) ([]*ClusterInfo, int64, error) {
-	clusters, total, err := s.repo.List(ctx, filter)
+	clusters, total, err := s.List(ctx, filter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -441,6 +460,10 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 	// 保存后，通过 Agent 检测 SeaTunnel 进程状态
 	s.detectAndUpdateNodeProcess(ctx, node, req.HostID)
 
+	// Update cluster status based on all nodes
+	// 根据所有节点状态更新集群状态
+	s.updateClusterStatusFromNodes(ctx, clusterID)
+
 	return node, nil
 }
 
@@ -568,6 +591,10 @@ func (s *Service) UpdateNode(ctx context.Context, clusterID uint, nodeID uint, r
 	// After saving, detect SeaTunnel process status via Agent
 	// 保存后，通过 Agent 检测 SeaTunnel 进程状态
 	s.detectAndUpdateNodeProcess(ctx, node, node.HostID)
+
+	// Update cluster status based on all nodes
+	// 根据所有节点状态更新集群状态
+	s.updateClusterStatusFromNodes(ctx, clusterID)
 
 	return node, nil
 }
@@ -1171,63 +1198,55 @@ func (s *Service) executeNodeOperation(ctx context.Context, clusterID uint, node
 	if s.hostProvider != nil {
 		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
 		if err != nil {
-			nodeResult.Success = false
-			nodeResult.Message = "Failed to get host information: " + err.Error()
-			result.NodeResults = append(result.NodeResults, nodeResult)
-			result.Success = false
-			result.Message = nodeResult.Message
-			return result, nil
+			return nil, fmt.Errorf("failed to get host information: %w / 获取主机信息失败: %w", err, err)
 		}
 
 		nodeResult.HostName = hostInfo.Name
 
-		// Check if host is online
-		// 检查主机是否在线
+		// Check if host is online - return error immediately if offline
+		// 检查主机是否在线 - 如果离线立即返回错误
 		if !hostInfo.IsOnline(s.heartbeatTimeout) {
-			nodeResult.Success = false
-			nodeResult.Message = "Host is offline / 主机离线"
-			result.NodeResults = append(result.NodeResults, nodeResult)
-			result.Success = false
-			result.Message = nodeResult.Message
-			return result, nil
+			return nil, fmt.Errorf("host '%s' is offline, cannot execute %s operation / 主机 '%s' 离线，无法执行 %s 操作", hostInfo.Name, operation, hostInfo.Name, operation)
+		}
+
+		// Check if agent is connected
+		// 检查 Agent 是否已连接
+		if hostInfo.AgentID == "" {
+			return nil, fmt.Errorf("agent not installed on host '%s' / 主机 '%s' 未安装 Agent", hostInfo.Name, hostInfo.Name)
+		}
+
+		// Check if agent sender is available
+		// 检查 Agent 发送器是否可用
+		if s.agentSender == nil {
+			return nil, fmt.Errorf("agent sender not configured / Agent 发送器未配置")
 		}
 
 		// Send command to agent
 		// 向 Agent 发送命令
-		if s.agentSender != nil && hostInfo.AgentID != "" {
-			installDir := node.InstallDir
-			if installDir == "" {
-				installDir = cluster.InstallDir
-			}
+		installDir := node.InstallDir
+		if installDir == "" {
+			installDir = cluster.InstallDir
+		}
 
-			params := map[string]string{
-				"cluster_id":  fmt.Sprintf("%d", clusterID),
-				"node_id":     fmt.Sprintf("%d", node.ID),
-				"role":        string(node.Role),
-				"install_dir": installDir,
-			}
+		params := map[string]string{
+			"cluster_id":  fmt.Sprintf("%d", clusterID),
+			"node_id":     fmt.Sprintf("%d", node.ID),
+			"role":        string(node.Role),
+			"install_dir": installDir,
+		}
 
-			success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, string(operation), params)
-			if err != nil {
-				nodeResult.Success = false
-				nodeResult.Message = "Failed to send command: " + err.Error()
-				result.Success = false
-			} else {
-				nodeResult.Success = success
-				nodeResult.Message = message
-				if !success {
-					result.Success = false
-				}
-			}
-		} else {
-			nodeResult.Success = false
-			nodeResult.Message = "Agent sender not configured / Agent 发送器未配置"
+		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, string(operation), params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send command to agent: %w / 向 Agent 发送命令失败: %w", err, err)
+		}
+
+		nodeResult.Success = success
+		nodeResult.Message = message
+		if !success {
 			result.Success = false
 		}
 	} else {
-		nodeResult.Success = false
-		nodeResult.Message = "Host provider not configured / 主机提供者未配置"
-		result.Success = false
+		return nil, fmt.Errorf("host provider not configured / 主机提供者未配置")
 	}
 
 	// Update node status based on operation
@@ -1261,7 +1280,59 @@ func (s *Service) executeNodeOperation(ctx context.Context, clusterID uint, node
 		result.Message = nodeResult.Message
 	}
 
+	// Update cluster status based on all nodes' status
+	// 根据所有节点的状态更新集群状态
+	s.updateClusterStatusFromNodes(ctx, clusterID)
+
 	return result, nil
+}
+
+// updateClusterStatusFromNodes updates cluster status based on all nodes' status
+// updateClusterStatusFromNodes 根据所有节点的状态更新集群状态
+func (s *Service) updateClusterStatusFromNodes(ctx context.Context, clusterID uint) {
+	nodes, err := s.repo.GetNodesByClusterID(ctx, clusterID)
+	if err != nil || len(nodes) == 0 {
+		return
+	}
+
+	// Count node statuses / 统计节点状态
+	runningCount := 0
+	stoppedCount := 0
+	errorCount := 0
+	otherCount := 0
+
+	for _, node := range nodes {
+		switch node.Status {
+		case NodeStatusRunning:
+			runningCount++
+		case NodeStatusStopped:
+			stoppedCount++
+		case NodeStatusError:
+			errorCount++
+		default:
+			otherCount++
+		}
+	}
+
+	// Determine cluster status / 确定集群状态
+	var newStatus ClusterStatus
+	if errorCount > 0 {
+		newStatus = ClusterStatusError
+	} else if runningCount == len(nodes) {
+		newStatus = ClusterStatusRunning
+	} else if stoppedCount == len(nodes) {
+		newStatus = ClusterStatusStopped
+	} else if runningCount > 0 {
+		// Some nodes running, some stopped / 部分节点运行，部分停止
+		newStatus = ClusterStatusRunning
+	} else {
+		newStatus = ClusterStatusCreated
+	}
+
+	logger.DebugF(ctx, "[Cluster] updateClusterStatusFromNodes: cluster_id=%d, running=%d, stopped=%d, error=%d, other=%d, newStatus=%s",
+		clusterID, runningCount, stoppedCount, errorCount, otherCount, newStatus)
+
+	_ = s.repo.UpdateStatus(ctx, clusterID, newStatus)
 }
 
 // GetNodeLogsRequest represents the request for getting node logs.

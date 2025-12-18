@@ -286,12 +286,74 @@ func (a *Agent) registerWithControlPlane() error {
 // applyRemoteConfig applies configuration received from Control Plane
 // applyRemoteConfig 应用从 Control Plane 接收的配置
 func (a *Agent) applyRemoteConfig(cfg *pb.AgentConfig) {
+	fmt.Printf("Received remote config from Control Plane: HeartbeatInterval=%d seconds / 收到来自 Control Plane 的远程配置：HeartbeatInterval=%d 秒\n", cfg.HeartbeatInterval, cfg.HeartbeatInterval)
+	fmt.Printf("Current local heartbeat interval: %v / 当前本地心跳间隔：%v\n", a.config.Heartbeat.Interval, a.config.Heartbeat.Interval)
+
+	configChanged := false
+
 	if cfg.HeartbeatInterval > 0 {
 		newInterval := time.Duration(cfg.HeartbeatInterval) * time.Second
-		fmt.Printf("Applying heartbeat interval from Control Plane: %v / 应用来自 Control Plane 的心跳间隔：%v\n", newInterval, newInterval)
-		// Note: Heartbeat interval is applied when starting heartbeat
-		// 注意：心跳间隔在启动心跳时应用
+		if a.config.Heartbeat.Interval != newInterval {
+			a.config.Heartbeat.Interval = newInterval
+			configChanged = true
+			fmt.Printf("Applied heartbeat interval from Control Plane: %v / 已应用来自 Control Plane 的心跳间隔：%v\n", newInterval, newInterval)
+		}
+	} else {
+		fmt.Printf("Remote HeartbeatInterval is 0 or negative, keeping local config / 远程 HeartbeatInterval 为 0 或负数，保持本地配置\n")
 	}
+
+	// Persist config changes to local file / 将配置变更持久化到本地文件
+	if configChanged {
+		if err := a.persistConfigToFile(); err != nil {
+			fmt.Printf("Warning: Failed to persist config to file: %v / 警告：持久化配置到文件失败：%v\n", err, err)
+		} else {
+			fmt.Printf("Config persisted to local file / 配置已持久化到本地文件\n")
+		}
+	}
+}
+
+// persistConfigToFile saves the current config to the local config file
+// persistConfigToFile 将当前配置保存到本地配置文件
+func (a *Agent) persistConfigToFile() error {
+	configPath := config.DefaultConfigPath
+
+	// Read existing config file content
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Update heartbeat interval in the config content
+	// Format: "interval: 10s" -> "interval: 60s"
+	lines := strings.Split(string(content), "\n")
+	inHeartbeatSection := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Detect heartbeat section
+		if strings.Contains(strings.ToLower(trimmed), "heartbeat") {
+			inHeartbeatSection = true
+			continue
+		}
+		// Detect next section (non-indented line that's not empty or comment)
+		if inHeartbeatSection && len(trimmed) > 0 && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inHeartbeatSection = false
+		}
+		// Update interval in heartbeat section
+		if inHeartbeatSection && strings.HasPrefix(trimmed, "interval:") {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = fmt.Sprintf("%sinterval: %s", indent, a.config.Heartbeat.Interval.String())
+			fmt.Printf("Updated config line: %s\n", lines[i])
+			break
+		}
+	}
+
+	// Write back to file
+	newContent := strings.Join(lines, "\n")
+	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }
 
 // startBackgroundServices starts all background goroutines

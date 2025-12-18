@@ -187,6 +187,7 @@ func Serve() {
 			hostRepo := host.NewRepository(db.DB(context.Background()))
 			clusterRepo := cluster.NewRepository(db.DB(context.Background()))
 			hostService := host.NewService(hostRepo, clusterRepo, &host.ServiceConfig{
+				HeartbeatTimeout: time.Duration(config.Config.GRPC.HeartbeatTimeout) * time.Second,
 				ControlPlaneAddr: config.GetExternalURL(),
 			})
 			hostHandler := host.NewHandler(hostService)
@@ -205,7 +206,9 @@ func Serve() {
 			// Cluster 集群管理
 			// Initialize cluster service and handler
 			// 初始化集群服务和处理器
-			clusterService := cluster.NewService(clusterRepo, hostService, &cluster.ServiceConfig{})
+			clusterService := cluster.NewService(clusterRepo, hostService, &cluster.ServiceConfig{
+				HeartbeatTimeout: time.Duration(config.Config.GRPC.HeartbeatTimeout) * time.Second,
+			})
 
 			// Inject agent command sender if agent manager is available
 			// 如果 Agent Manager 可用，注入 Agent 命令发送器
@@ -249,9 +252,10 @@ func Serve() {
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
 			agentHandler := agent.NewHandler(&agent.HandlerConfig{
-				ControlPlaneAddr: config.GetExternalURL(),
-				AgentBinaryDir:   "./lib/agent",
-				GRPCPort:         fmt.Sprintf("%d", config.GetGRPCPort()),
+				ControlPlaneAddr:  config.GetExternalURL(),
+				AgentBinaryDir:    "./lib/agent",
+				GRPCPort:          fmt.Sprintf("%d", config.GetGRPCPort()),
+				HeartbeatInterval: config.Config.GRPC.HeartbeatInterval,
 			})
 
 			agentRouter := apiV1Router.Group("/agent")

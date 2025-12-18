@@ -673,33 +673,7 @@ func (m *ProcessManager) monitorProcess(name string, proc *ManagedProcess) {
 // Requirements 6.2: Send SIGTERM, wait for graceful shutdown (max 30s), send SIGKILL if timeout
 // 需求 6.2：发送 SIGTERM 信号、等待进程优雅关闭（最长 30 秒）、若超时则发送 SIGKILL
 func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *StopParams) error {
-	// If install_dir is provided, use stop script / 如果提供了安装目录，使用停止脚本
-	if params != nil && params.InstallDir != "" {
-		return m.stopProcessByScript(ctx, name, params)
-	}
-
-	// Otherwise, use tracked process / 否则使用跟踪的进程
-	value, ok := m.processes.Load(name)
-	if !ok {
-		return ErrProcessNotFound
-	}
-
-	proc := value.(*ManagedProcess)
-	proc.mu.Lock()
-
-	if proc.Status != StatusRunning {
-		proc.mu.Unlock()
-		return ErrProcessNotRunning
-	}
-
-	if proc.PID <= 0 {
-		proc.mu.Unlock()
-		return ErrProcessNotRunning
-	}
-
-	proc.Status = StatusStopping
-	pid := proc.PID
-	proc.mu.Unlock()
+	const appMain = "org.apache.seatunnel.core.starter.seatunnel.SeaTunnelServer"
 
 	// Set timeout / 设置超时
 	timeout := m.gracefulTimeout
@@ -707,98 +681,97 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 		timeout = params.Timeout
 	}
 
-	graceful := params == nil || params.Graceful
-
-	// Try graceful shutdown first / 首先尝试优雅关闭
-	if graceful {
-		if err := sendSignal(pid, syscall.SIGTERM); err != nil {
-			// Process might already be dead / 进程可能已经死亡
-			if !isProcessAlive(pid) {
-				proc.mu.Lock()
-				proc.Status = StatusStopped
-				proc.PID = 0
-				proc.mu.Unlock()
-				m.notifyEvent(name, EventStopped, proc)
-				return nil
-			}
-		}
-
-		// Wait for process to exit / 等待进程退出
-		deadline := time.Now().Add(timeout)
-		for time.Now().Before(deadline) {
-			if !isProcessAlive(pid) {
-				proc.mu.Lock()
-				proc.Status = StatusStopped
-				proc.PID = 0
-				proc.mu.Unlock()
-				m.notifyEvent(name, EventStopped, proc)
-				return nil
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
+	// Find SeaTunnel processes by role using ps command
+	// 使用 ps 命令根据角色查找 SeaTunnel 进程
+	role := ""
+	if params != nil {
+		role = params.Role
 	}
 
-	// Force kill if still running / 如果仍在运行则强制终止
-	if isProcessAlive(pid) {
-		if err := sendSignal(pid, syscall.SIGKILL); err != nil {
-			proc.mu.Lock()
-			proc.Status = StatusError
-			proc.LastError = fmt.Sprintf("Failed to kill process: %v / 终止进程失败：%v", err, err)
-			proc.mu.Unlock()
-			return fmt.Errorf("%w: %v", ErrStopFailed, err)
-		}
-
-		// Wait a bit for SIGKILL to take effect / 等待 SIGKILL 生效
-		time.Sleep(1 * time.Second)
-
-		if isProcessAlive(pid) {
-			proc.mu.Lock()
-			proc.Status = StatusError
-			proc.LastError = "Process did not respond to SIGKILL / 进程未响应 SIGKILL"
-			proc.mu.Unlock()
-			return ErrStopTimeout
-		}
-	}
-
-	proc.mu.Lock()
-	proc.Status = StatusStopped
-	proc.PID = 0
-	proc.mu.Unlock()
-
-	m.notifyEvent(name, EventStopped, proc)
-	return nil
-}
-
-// stopProcessByScript stops a process using the stop script
-// stopProcessByScript 使用停止脚本停止进程
-func (m *ProcessManager) stopProcessByScript(ctx context.Context, name string, params *StopParams) error {
-	stopScript := getStopScript(params.InstallDir)
-
-	// Check if stop script exists / 检查停止脚本是否存在
-	if _, err := os.Stat(stopScript); os.IsNotExist(err) {
-		return fmt.Errorf("stop script not found: %s / 停止脚本不存在: %s", stopScript, stopScript)
-	}
-
-	// Build arguments based on role / 根据角色构建参数
-	args := []string{stopScript}
-	if params.Role != "" && params.Role != "hybrid" {
-		args = append(args, "-r", params.Role)
-	}
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmdArgs := append([]string{"/c"}, args...)
-		cmd = exec.CommandContext(ctx, "cmd", cmdArgs...)
+	var grepCmd string
+	if role == "" || role == "hybrid" {
+		// For hybrid mode, find processes without -r flag / 混合模式，查找没有 -r 参数的进程
+		grepCmd = fmt.Sprintf("ps -ef | grep '%s' | grep -v '\\-r master' | grep -v '\\-r worker' | grep -v grep | awk '{print $2}'", appMain)
 	} else {
-		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
+		// For separated mode, find processes with specific role / 分离模式，查找特定角色的进程
+		grepCmd = fmt.Sprintf("ps -ef | grep '%s' | grep '\\-r %s' | grep -v grep | awk '{print $2}'", appMain, role)
 	}
 
-	cmd.Dir = params.InstallDir
-	cmd.Env = append(os.Environ(), fmt.Sprintf("SEATUNNEL_HOME=%s", params.InstallDir))
+	// Execute ps command to find PIDs / 执行 ps 命令查找 PID
+	var pids []int
+	if runtime.GOOS != "windows" {
+		cmd := exec.CommandContext(ctx, "/bin/bash", "-c", grepCmd)
+		output, _ := cmd.Output()
+		pidStrs := strings.Fields(strings.TrimSpace(string(output)))
+		for _, pidStr := range pidStrs {
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+	}
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("stop script failed: %v, output: %s / 停止脚本失败: %v, 输出: %s", err, string(output), err, string(output))
+	// Also check tracked process / 同时检查跟踪的进程
+	if value, ok := m.processes.Load(name); ok {
+		proc := value.(*ManagedProcess)
+		proc.mu.RLock()
+		if proc.PID > 0 && proc.Status == StatusRunning {
+			// Add tracked PID if not already in list / 如果不在列表中则添加跟踪的 PID
+			found := false
+			for _, p := range pids {
+				if p == proc.PID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				pids = append(pids, proc.PID)
+			}
+		}
+		proc.mu.RUnlock()
+	}
+
+	if len(pids) == 0 {
+		fmt.Printf("No SeaTunnel process found for role '%s' / 未找到角色 '%s' 的 SeaTunnel 进程\n", role, role)
+		// Update tracked process status / 更新跟踪的进程状态
+		if value, ok := m.processes.Load(name); ok {
+			proc := value.(*ManagedProcess)
+			proc.mu.Lock()
+			proc.Status = StatusStopped
+			proc.PID = 0
+			proc.mu.Unlock()
+		}
+		return nil
+	}
+
+	// Send SIGTERM to all found processes / 向所有找到的进程发送 SIGTERM
+	for _, pid := range pids {
+		if err := sendSignal(pid, syscall.SIGTERM); err == nil {
+			fmt.Printf("Sent SIGTERM to process %d / 向进程 %d 发送 SIGTERM\n", pid, pid)
+		}
+	}
+
+	// Wait for processes to exit gracefully / 等待进程优雅退出
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		allDead := true
+		for _, pid := range pids {
+			if isProcessAlive(pid) {
+				allDead = false
+				break
+			}
+		}
+		if allDead {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Force kill any remaining processes / 强制杀死任何剩余的进程
+	for _, pid := range pids {
+		if isProcessAlive(pid) {
+			_ = sendSignal(pid, syscall.SIGKILL)
+			fmt.Printf("Sent SIGKILL to process %d / 向进程 %d 发送 SIGKILL\n", pid, pid)
+		}
 	}
 
 	// Update tracked process if exists / 如果存在则更新跟踪的进程
@@ -811,6 +784,7 @@ func (m *ProcessManager) stopProcessByScript(ctx context.Context, name string, p
 		m.notifyEvent(name, EventStopped, proc)
 	}
 
+	fmt.Printf("Stopped %d SeaTunnel process(es) for role '%s' / 停止了 %d 个角色 '%s' 的 SeaTunnel 进程\n", len(pids), role, len(pids), role)
 	return nil
 }
 
@@ -819,33 +793,10 @@ func (m *ProcessManager) stopProcessByScript(ctx context.Context, name string, p
 // Requirements 6.3: Stop first, wait for complete exit, then start
 // 需求 6.3：先执行停止操作、等待进程完全退出、再执行启动操作
 func (m *ProcessManager) RestartProcess(ctx context.Context, name string, startParams *StartParams, stopParams *StopParams) error {
-	// Always try to stop first using script if install_dir is provided
-	// 如果提供了安装目录，始终先尝试使用脚本停止
-	if stopParams != nil && stopParams.InstallDir != "" {
-		// Use stop script to stop any running process
-		// 使用停止脚本停止任何正在运行的进程
-		_ = m.StopProcess(ctx, name, stopParams)
-		// Wait for process to fully exit / 等待进程完全退出
-		time.Sleep(3 * time.Second)
-	} else {
-		// Check if process exists in tracking / 检查进程是否在跟踪列表中
-		value, ok := m.processes.Load(name)
-		if ok {
-			proc := value.(*ManagedProcess)
-			proc.mu.RLock()
-			status := proc.Status
-			proc.mu.RUnlock()
-
-			// Stop if running / 如果正在运行则停止
-			if status == StatusRunning {
-				if err := m.StopProcess(ctx, name, stopParams); err != nil {
-					return fmt.Errorf("failed to stop process for restart: %w / 重启时停止进程失败：%w", err, err)
-				}
-				// Wait for process to fully exit / 等待进程完全退出
-				time.Sleep(2 * time.Second)
-			}
-		}
-	}
+	// Always try to stop first / 始终先尝试停止
+	_ = m.StopProcess(ctx, name, stopParams)
+	// Wait for process to fully exit / 等待进程完全退出
+	time.Sleep(3 * time.Second)
 
 	// Start the process / 启动进程
 	return m.StartProcess(ctx, name, startParams)

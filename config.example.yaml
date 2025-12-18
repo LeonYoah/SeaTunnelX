@@ -152,7 +152,7 @@ grpc:
   # Agent 心跳间隔（秒，默认 10）
   # Agent heartbeat interval in seconds (default: 10)
   heartbeat_interval: 10
-  # Agent 离线超时时间（秒，默认 30）
+  # Agent 离线超时时间（秒，默认 30）一定要大于heartbeat_interval
   # Agent offline timeout in seconds (default: 30)
   heartbeat_timeout: 30
 

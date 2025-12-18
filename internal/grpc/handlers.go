@@ -114,6 +114,11 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 
 	// Build response with configuration
 	// 构建带配置的响应
+	s.logger.Info("Sending heartbeat interval to Agent / 向 Agent 发送心跳间隔",
+		zap.Int("heartbeat_interval", s.config.HeartbeatInterval),
+		zap.String("agent_id", req.AgentId),
+	)
+
 	response := &pb.RegisterResponse{
 		Success:    true,
 		Message:    "registration successful",

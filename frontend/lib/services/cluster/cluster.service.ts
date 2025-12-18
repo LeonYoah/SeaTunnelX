@@ -539,6 +539,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.startCluster(clusterId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '启动集群失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -558,6 +562,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.stopCluster(clusterId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '停止集群失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -577,6 +585,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.restartCluster(clusterId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '重启集群失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -686,6 +698,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.startNode(clusterId, nodeId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '启动节点失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '启动节点失败';
@@ -704,6 +720,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.stopNode(clusterId, nodeId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '停止节点失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '停止节点失败';
@@ -722,6 +742,10 @@ export class ClusterService extends BaseService {
   }> {
     try {
       const data = await this.restartNode(clusterId, nodeId);
+      // Check operation result success / 检查操作结果是否成功
+      if (!data.success) {
+        return {success: false, data, error: data.message || '重启节点失败'};
+      }
       return {success: true, data};
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '重启节点失败';

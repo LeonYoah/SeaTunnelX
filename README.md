@@ -293,6 +293,11 @@ cp agent/seatunnelx-agent-arm64 lib/agent/seatunnelx-agent-linux-arm64
 # Windows PowerShell
 Copy-Item agent/seatunnelx-agent lib/agent/seatunnelx-agent-linux-amd64
 Copy-Item agent/seatunnelx-agent-arm64 lib/agent/seatunnelx-agent-linux-arm64
+
+# Windows PowerShell 一键操作
+
+cd agent; $env:GOOS="linux"; $env:GOARCH="amd64"; go build -o seatunnelx-agent ./cmd/main.go; cd ..; Copy-Item agent/seatunnelx-agent lib/agent/seatunnelx-agent-linux-amd64 -Force
+
 ```
 
 ## 🚀 部署

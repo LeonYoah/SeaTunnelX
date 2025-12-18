@@ -38,6 +38,10 @@ type InstallScriptGenerator struct {
 	// grpcAddr 是 Agent 连接的 gRPC 地址。
 	grpcAddr string
 
+	// heartbeatInterval is the heartbeat interval in seconds.
+	// heartbeatInterval 是心跳间隔（秒）。
+	heartbeatInterval int
+
 	// template is the parsed install script template.
 	// template 是解析后的安装脚本模板。
 	template *template.Template
@@ -53,6 +57,10 @@ type InstallScriptConfig struct {
 	// GRPCAddr is the gRPC address for Agent connection.
 	// GRPCAddr 是 Agent 连接的 gRPC 地址。
 	GRPCAddr string
+
+	// HeartbeatInterval is the heartbeat interval in seconds from Control Plane config.
+	// HeartbeatInterval 是来自 Control Plane 配置的心跳间隔（秒）。
+	HeartbeatInterval int
 }
 
 // InstallScriptData holds data for rendering the install script template.
@@ -81,6 +89,10 @@ type InstallScriptData struct {
 	// ServiceName is the systemd service name.
 	// ServiceName 是 systemd 服务名称。
 	ServiceName string
+
+	// HeartbeatInterval is the heartbeat interval string (e.g., "60s").
+	// HeartbeatInterval 是心跳间隔字符串（如 "60s"）。
+	HeartbeatInterval string
 }
 
 // SupportedPlatform represents a supported OS and architecture combination.
@@ -144,6 +156,11 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 		grpcAddr = "localhost:50051"
 	}
 
+	heartbeatInterval := cfg.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 10 // Default 10 seconds
+	}
+
 	// Parse template
 	// 解析模板
 	tmpl, err := template.New("install_script").Parse(installScriptTemplateContent)
@@ -152,9 +169,10 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 	}
 
 	return &InstallScriptGenerator{
-		controlPlaneAddr: controlPlaneAddr,
-		grpcAddr:         grpcAddr,
-		template:         tmpl,
+		controlPlaneAddr:  controlPlaneAddr,
+		grpcAddr:          grpcAddr,
+		heartbeatInterval: heartbeatInterval,
+		template:          tmpl,
 	}, nil
 }
 
@@ -163,12 +181,13 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 // Requirements: 2.1 - Returns shell script with auto-detection logic for OS and architecture.
 func (g *InstallScriptGenerator) Generate() (string, error) {
 	data := &InstallScriptData{
-		ControlPlaneAddr: g.formatControlPlaneURL(),
-		GRPCAddr:         g.grpcAddr,
-		InstallDir:       DefaultInstallDir,
-		ConfigDir:        DefaultConfigDir,
-		AgentBinary:      DefaultAgentBinary,
-		ServiceName:      DefaultServiceName,
+		ControlPlaneAddr:  g.formatControlPlaneURL(),
+		GRPCAddr:          g.grpcAddr,
+		InstallDir:        DefaultInstallDir,
+		ConfigDir:         DefaultConfigDir,
+		AgentBinary:       DefaultAgentBinary,
+		ServiceName:       DefaultServiceName,
+		HeartbeatInterval: fmt.Sprintf("%ds", g.heartbeatInterval),
 	}
 
 	return g.GenerateWithData(data)
@@ -572,7 +591,7 @@ control_plane:
 heartbeat:
   # Heartbeat interval
   # 心跳间隔
-  interval: 10s
+  interval: {{.HeartbeatInterval}}
 
 # Log settings
 # 日志设置
