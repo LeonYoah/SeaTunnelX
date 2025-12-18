@@ -45,6 +45,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/db"
 	grpcServer "github.com/seatunnel/seatunnelX/internal/grpc"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
+	pb "github.com/seatunnel/seatunnelX/internal/proto/agent"
 	"github.com/seatunnel/seatunnelX/internal/session"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -205,6 +206,14 @@ func Serve() {
 			// Initialize cluster service and handler
 			// 初始化集群服务和处理器
 			clusterService := cluster.NewService(clusterRepo, hostService, &cluster.ServiceConfig{})
+
+			// Inject agent command sender if agent manager is available
+			// 如果 Agent Manager 可用，注入 Agent 命令发送器
+			if agentManager != nil {
+				clusterService.SetAgentCommandSender(&agentCommandSenderAdapter{manager: agentManager})
+				log.Println("[API] Agent command sender injected into cluster service / Agent 命令发送器已注入集群服务")
+			}
+
 			clusterHandler := cluster.NewHandler(clusterService)
 
 			clusterRouter := apiV1Router.Group("/clusters")
@@ -563,4 +572,66 @@ func (a *hostStatusUpdaterAdapter) MarkHostOffline(ctx context.Context, agentID 
 		return err
 	}
 	return a.hostService.UpdateAgentStatusByID(ctx, h.ID, host.AgentStatusOffline, agentID, h.AgentVersion)
+}
+
+// agentCommandSenderAdapter adapts agent.Manager to cluster.AgentCommandSender interface.
+// agentCommandSenderAdapter 将 agent.Manager 适配到 cluster.AgentCommandSender 接口。
+type agentCommandSenderAdapter struct {
+	manager *agent.Manager
+}
+
+// SendCommand sends a command to an agent and returns the result.
+// SendCommand 向 Agent 发送命令并返回结果。
+func (a *agentCommandSenderAdapter) SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
+	// Convert command type string to pb.CommandType
+	// 将命令类型字符串转换为 pb.CommandType
+	cmdType := a.stringToCommandType(commandType)
+
+	// Add sub_command parameter for precheck commands
+	// 为预检查命令添加 sub_command 参数
+	if cmdType == pb.CommandType_PRECHECK && params["sub_command"] == "" {
+		params["sub_command"] = commandType
+	}
+
+	// Send command with 30 second timeout
+	// 使用 30 秒超时发送命令
+	resp, err := a.manager.SendCommand(ctx, agentID, cmdType, params, 30*time.Second)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Convert response to (bool, string, error)
+	// 将响应转换为 (bool, string, error)
+	success := resp.Status == pb.CommandStatus_SUCCESS
+	message := resp.Output
+	if resp.Error != "" {
+		message = resp.Error
+	}
+
+	return success, message, nil
+}
+
+// stringToCommandType converts a command type string to pb.CommandType.
+// stringToCommandType 将命令类型字符串转换为 pb.CommandType。
+func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.CommandType {
+	switch cmdType {
+	case "check_port", "check_directory", "check_http", "check_process", "full":
+		return pb.CommandType_PRECHECK
+	case "install":
+		return pb.CommandType_INSTALL
+	case "uninstall":
+		return pb.CommandType_UNINSTALL
+	case "upgrade":
+		return pb.CommandType_UPGRADE
+	case "start":
+		return pb.CommandType_START
+	case "stop":
+		return pb.CommandType_STOP
+	case "restart":
+		return pb.CommandType_RESTART
+	case "status":
+		return pb.CommandType_STATUS
+	default:
+		return pb.CommandType_PRECHECK
+	}
 }

@@ -137,6 +137,23 @@ netstat -tlnp | grep 5802
 netstat -tlnp | grep 8080
 ```
 
+
+
+### 查看日志
+
+#### 分离模式
+```bash
+# master查看日志
+tail -f $SEATUNNEL_HOME/logs/seatunnel-engine-master.log
+
+# worker查看日志
+tail -f $SEATUNNEL_HOME/logs/seatunnel-engine-worker.log
+
+
+# 服务端查看日志
+tail -f $SEATUNNEL_HOME/logs/seatunnel-engine-server.log
+```
+
 ## Agent 进程管理器实现要点
 
 在实现 `agent/internal/process/manager.go` 时需要考虑：

@@ -452,7 +452,9 @@
       "agent_status": "Agent 状态",
       "port_listening": "端口监听",
       "directory_check": "目录检查",
-      "seatunnel_api": "SeaTunnel API"
+      "seatunnel_api": "SeaTunnel API",
+      "seatunnel_api_v1": "SeaTunnel API V1",
+      "seatunnel_api_v2": "SeaTunnel API V2"
     }
   },
   "audit": {

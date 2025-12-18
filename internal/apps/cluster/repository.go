@@ -201,9 +201,12 @@ func (r *Repository) ExistsByName(ctx context.Context, name string) (bool, error
 
 // AddNode adds a node to a cluster.
 // Returns ErrClusterNotFound if the cluster does not exist.
-// Returns ErrNodeAlreadyExists if the host is already a node in the cluster.
+// Returns ErrNodeAlreadyExists if the host already has a node with the same role in the cluster.
+// 如果集群不存在返回 ErrClusterNotFound。
+// 如果主机在集群中已有相同角色的节点返回 ErrNodeAlreadyExists。
 func (r *Repository) AddNode(ctx context.Context, node *ClusterNode) error {
 	// Check if cluster exists
+	// 检查集群是否存在
 	var cluster Cluster
 	if err := r.db.WithContext(ctx).First(&cluster, node.ClusterID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -212,10 +215,13 @@ func (r *Repository) AddNode(ctx context.Context, node *ClusterNode) error {
 		return err
 	}
 
-	// Check if node already exists in this cluster
+	// Check if node with same role already exists for this host in this cluster
+	// 检查此主机在此集群中是否已有相同角色的节点
+	// In separated mode, a host can have both master and worker roles
+	// 在分离模式下，一个主机可以同时有 master 和 worker 角色
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ClusterNode{}).
-		Where("cluster_id = ? AND host_id = ?", node.ClusterID, node.HostID).
+		Where("cluster_id = ? AND host_id = ? AND role = ?", node.ClusterID, node.HostID, node.Role).
 		Count(&count).Error; err != nil {
 		return err
 	}

@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -354,6 +355,17 @@ func (a *Agent) sendHeartbeat() {
 	_, err := a.grpcClient.SendHeartbeat(a.ctx, usage, processes)
 	if err != nil {
 		fmt.Printf("Heartbeat failed: %v / 心跳失败：%v\n", err, err)
+
+		// Check if agent needs to re-register (Control Plane restarted)
+		// 检查是否需要重新注册（Control Plane 重启了）
+		if isNotFoundError(err) {
+			fmt.Println("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
+			go func() {
+				if regErr := a.registerWithControlPlane(); regErr != nil {
+					fmt.Printf("Re-registration failed: %v / 重新注册失败：%v\n", regErr, regErr)
+				}
+			}()
+		}
 	}
 }
 
@@ -383,6 +395,16 @@ func (a *Agent) runCommandStreamLoop() {
 		err := a.grpcClient.StartCommandStream(a.ctx, a.handleCommand)
 		if err != nil {
 			fmt.Printf("Command stream error: %v, will retry... / 命令流错误：%v，将重试...\n", err, err)
+
+			// Check if agent needs to re-register (Control Plane restarted)
+			// 检查是否需要重新注册（Control Plane 重启了）
+			if isNotFoundError(err) {
+				fmt.Println("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
+				if regErr := a.registerWithControlPlane(); regErr != nil {
+					fmt.Printf("Re-registration failed: %v / 重新注册失败：%v\n", regErr, regErr)
+				}
+			}
+
 			time.Sleep(5 * time.Second)
 		}
 	}
@@ -486,6 +508,15 @@ func (a *Agent) registerCommandHandlers() {
 // Command handler implementations / 命令处理器实现
 
 func (a *Agent) handlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	// Check if sub_command is specified for specific precheck operations
+	// 检查是否指定了 sub_command 用于特定的预检查操作
+	subCommand := cmd.Parameters["sub_command"]
+	if subCommand != "" && subCommand != "full" {
+		// Delegate to specific precheck handlers
+		// 委托给特定的预检查处理器
+		return executor.HandlePrecheckCommand(ctx, cmd, reporter)
+	}
+
 	reporter.Report(10, "Starting precheck... / 开始预检查...")
 
 	// Create precheck params from command parameters
@@ -965,4 +996,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// isNotFoundError checks if the error indicates agent not found on Control Plane
+// isNotFoundError 检查错误是否表示 Agent 在 Control Plane 上未找到
+// This typically happens when Control Plane restarts and loses in-memory agent state
+// 这通常发生在 Control Plane 重启并丢失内存中的 Agent 状态时
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "NotFound") ||
+		strings.Contains(errStr, "not found") ||
+		strings.Contains(errStr, "not registered") ||
+		strings.Contains(errStr, "re-register")
 }

@@ -46,7 +46,9 @@ import {
   Server,
   Activity,
   Loader2,
+  FileText,
 } from 'lucide-react';
+import {Checkbox} from '@/components/ui/checkbox';
 import {motion} from 'motion/react';
 import services from '@/lib/services';
 import {
@@ -132,6 +134,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [nodeToEdit, setNodeToEdit] = useState<NodeInfo | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [nodeToRemove, setNodeToRemove] = useState<NodeInfo | null>(null);
+
+  // Node selection state / 节点选择状态
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set());
+  const [nodeOperating, setNodeOperating] = useState<number | null>(null);
+  const [isLogDialogOpen, setIsLogDialogOpen] = useState(false);
+  const [logContent, setLogContent] = useState<string>('');
+  const [logLoading, setLogLoading] = useState(false);
+  const [logNodeInfo, setLogNodeInfo] = useState<NodeInfo | null>(null);
 
   /**
    * Load cluster data
@@ -297,6 +307,175 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const openEditNodeDialog = (node: NodeInfo) => {
     setNodeToEdit(node);
     setIsEditNodeDialogOpen(true);
+  };
+
+  /**
+   * Toggle node selection
+   * 切换节点选择
+   */
+  const toggleNodeSelection = (nodeId: number) => {
+    setSelectedNodeIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
+  };
+
+  /**
+   * Toggle all nodes selection
+   * 切换全选
+   */
+  const toggleAllNodes = () => {
+    if (selectedNodeIds.size === nodes.length) {
+      setSelectedNodeIds(new Set());
+    } else {
+      setSelectedNodeIds(new Set(nodes.map((n) => n.id)));
+    }
+  };
+
+  /**
+   * Handle single node start
+   * 处理单个节点启动
+   */
+  const handleNodeStart = async (node: NodeInfo) => {
+    setNodeOperating(node.id);
+    try {
+      const result = await services.cluster.startNodeSafe(clusterId, node.id);
+      if (result.success) {
+        toast.success(t('cluster.nodeStartSuccess'));
+        loadClusterData();
+      } else {
+        toast.error(result.error || t('cluster.nodeStartError'));
+      }
+    } finally {
+      setNodeOperating(null);
+    }
+  };
+
+  /**
+   * Handle single node stop
+   * 处理单个节点停止
+   */
+  const handleNodeStop = async (node: NodeInfo) => {
+    setNodeOperating(node.id);
+    try {
+      const result = await services.cluster.stopNodeSafe(clusterId, node.id);
+      if (result.success) {
+        toast.success(t('cluster.nodeStopSuccess'));
+        loadClusterData();
+      } else {
+        toast.error(result.error || t('cluster.nodeStopError'));
+      }
+    } finally {
+      setNodeOperating(null);
+    }
+  };
+
+  /**
+   * Handle single node restart
+   * 处理单个节点重启
+   */
+  const handleNodeRestart = async (node: NodeInfo) => {
+    setNodeOperating(node.id);
+    try {
+      const result = await services.cluster.restartNodeSafe(clusterId, node.id);
+      if (result.success) {
+        toast.success(t('cluster.nodeRestartSuccess'));
+        loadClusterData();
+      } else {
+        toast.error(result.error || t('cluster.nodeRestartError'));
+      }
+    } finally {
+      setNodeOperating(null);
+    }
+  };
+
+  /**
+   * Handle view node logs
+   * 处理查看节点日志
+   */
+  const handleViewLogs = async (node: NodeInfo) => {
+    setLogNodeInfo(node);
+    setIsLogDialogOpen(true);
+    setLogLoading(true);
+    setLogContent('');
+    try {
+      const result = await services.cluster.getNodeLogsSafe(clusterId, node.id);
+      if (result.success && result.data) {
+        setLogContent(result.data.logs || t('cluster.noLogs'));
+      } else {
+        setLogContent(result.error || t('cluster.getLogsError'));
+      }
+    } finally {
+      setLogLoading(false);
+    }
+  };
+
+  /**
+   * Handle batch start selected nodes
+   * 处理批量启动选中节点
+   */
+  const handleBatchStart = async () => {
+    if (selectedNodeIds.size === 0) {
+      toast.warning(t('cluster.selectNodesFirst'));
+      return;
+    }
+    setIsOperating(true);
+    try {
+      for (const nodeId of selectedNodeIds) {
+        await services.cluster.startNodeSafe(clusterId, nodeId);
+      }
+      toast.success(t('cluster.batchStartSuccess'));
+      loadClusterData();
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  /**
+   * Handle batch stop selected nodes
+   * 处理批量停止选中节点
+   */
+  const handleBatchStop = async () => {
+    if (selectedNodeIds.size === 0) {
+      toast.warning(t('cluster.selectNodesFirst'));
+      return;
+    }
+    setIsOperating(true);
+    try {
+      for (const nodeId of selectedNodeIds) {
+        await services.cluster.stopNodeSafe(clusterId, nodeId);
+      }
+      toast.success(t('cluster.batchStopSuccess'));
+      loadClusterData();
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  /**
+   * Handle batch restart selected nodes
+   * 处理批量重启选中节点
+   */
+  const handleBatchRestart = async () => {
+    if (selectedNodeIds.size === 0) {
+      toast.warning(t('cluster.selectNodesFirst'));
+      return;
+    }
+    setIsOperating(true);
+    try {
+      for (const nodeId of selectedNodeIds) {
+        await services.cluster.restartNodeSafe(clusterId, nodeId);
+      }
+      toast.success(t('cluster.batchRestartSuccess'));
+      loadClusterData();
+    } finally {
+      setIsOperating(false);
+    }
   };
 
   if (loading) {

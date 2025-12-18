@@ -542,37 +542,56 @@ install_agent() {
 # 由安装脚本生成
 # ============================================================================
 
-# Control Plane connection settings
-# Control Plane 连接设置
-control_plane:
-  # gRPC address of the Control Plane
-  # Control Plane 的 gRPC 地址
-  addr: "${GRPC_ADDR}"
-  # Enable TLS for gRPC connection (set to true for production)
-  # 启用 gRPC 连接的 TLS（生产环境建议设为 true）
-  tls_enabled: false
-  # Path to TLS certificate (required if tls_enabled is true)
-  # TLS 证书路径（如果 tls_enabled 为 true 则必需）
-  # tls_cert_path: ""
-
 # Agent settings
 # Agent 设置
 agent:
-  # Heartbeat interval in seconds
-  # 心跳间隔（秒）
-  heartbeat_interval: 10
+  # ID is auto-generated if empty
+  # 如果为空则自动生成 ID
+  id: ""
+
+# Control Plane connection settings
+# Control Plane 连接设置
+control_plane:
+  # gRPC addresses of the Control Plane (supports multiple for HA)
+  # Control Plane 的 gRPC 地址（支持多个用于高可用）
+  addresses:
+    - "${GRPC_ADDR}"
+  # TLS configuration
+  # TLS 配置
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+  # Authentication token
+  # 认证 Token
+  token: ""
+
+# Heartbeat settings
+# 心跳设置
+heartbeat:
+  # Heartbeat interval
+  # 心跳间隔
+  interval: 10s
+
+# Log settings
+# 日志设置
+log:
   # Log level (debug, info, warn, error)
   # 日志级别
-  log_level: info
-  # Log output path
-  # 日志输出路径
-  log_path: ${LOG_DIR}/agent.log
-  # Maximum log file size in MB before rotation
-  # 日志轮转前的最大文件大小（MB）
-  log_max_size: 100
-  # Maximum number of old log files to retain
-  # 保留的旧日志文件最大数量
-  log_max_backups: 5
+  level: info
+  # Log file path
+  # 日志文件路径
+  file: ${LOG_DIR}/agent.log
+  # Max log file size in MB
+  # 日志文件最大大小（MB）
+  max_size: 100
+  # Max number of old log files
+  # 保留的旧日志文件数量
+  max_backups: 5
+  # Max days to retain old logs
+  # 保留旧日志的天数
+  max_age: 7
 
 # SeaTunnel settings
 # SeaTunnel 设置
@@ -580,9 +599,6 @@ seatunnel:
   # Default installation directory for SeaTunnel
   # SeaTunnel 的默认安装目录
   install_dir: /opt/seatunnel
-  # Default Java home (auto-detect if empty)
-  # 默认 Java 主目录（为空则自动检测）
-  java_home: ""
 EOF
     
     log_info "Configuration file created at ${CONFIG_DIR}/config.yaml"
@@ -603,6 +619,76 @@ create_systemd_service() {
         return 0
     fi
     
+    # Create startup wrapper script to load environment variables
+    # 创建启动包装脚本以加载环境变量
+    cat > "${INSTALL_DIR}/${AGENT_BINARY}-start.sh" << 'WRAPPER_EOF'
+#!/bin/bash
+# ============================================================================
+# SeaTunnel Agent Startup Wrapper Script
+# SeaTunnel Agent 启动包装脚本
+# This script loads environment variables before starting the Agent
+# 此脚本在启动 Agent 前加载环境变量
+# ============================================================================
+
+# Load system-wide environment variables
+# 加载系统级环境变量
+if [ -f /etc/profile ]; then
+    source /etc/profile
+fi
+
+# Load user environment variables (for root user)
+# 加载用户环境变量（针对 root 用户）
+if [ -f /root/.bashrc ]; then
+    source /root/.bashrc
+fi
+
+if [ -f /root/.bash_profile ]; then
+    source /root/.bash_profile
+fi
+
+# Load common Java paths if JAVA_HOME is not set
+# 如果 JAVA_HOME 未设置，加载常见的 Java 路径
+if [ -z "$JAVA_HOME" ]; then
+    # Try common Java installation paths
+    # 尝试常见的 Java 安装路径
+    for java_dir in /usr/lib/jvm/java-* /usr/java/* /opt/java/* /usr/local/java*; do
+        if [ -d "$java_dir" ] && [ -x "$java_dir/bin/java" ]; then
+            export JAVA_HOME="$java_dir"
+            export PATH="$JAVA_HOME/bin:$PATH"
+            break
+        fi
+    done
+fi
+
+# Ensure JAVA_HOME/bin is in PATH if JAVA_HOME is set
+# 如果设置了 JAVA_HOME，确保 JAVA_HOME/bin 在 PATH 中
+if [ -n "$JAVA_HOME" ] && [ -d "$JAVA_HOME/bin" ]; then
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
+# Log environment info for debugging
+# 记录环境信息用于调试
+echo "[$(date)] Starting SeaTunnel Agent..."
+echo "[$(date)] JAVA_HOME=$JAVA_HOME"
+echo "[$(date)] PATH=$PATH"
+if command -v java &> /dev/null; then
+    echo "[$(date)] Java version: $(java -version 2>&1 | head -1)"
+fi
+
+# Start the Agent with all arguments passed to this script
+# 使用传递给此脚本的所有参数启动 Agent
+exec INSTALL_DIR_PLACEHOLDER/AGENT_BINARY_PLACEHOLDER "$@"
+WRAPPER_EOF
+
+    # Replace placeholders in wrapper script
+    # 替换包装脚本中的占位符
+    sed -i "s|INSTALL_DIR_PLACEHOLDER|${INSTALL_DIR}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    sed -i "s|AGENT_BINARY_PLACEHOLDER|${AGENT_BINARY}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    chmod +x "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    
+    log_info "Startup wrapper script created at ${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    log_info "启动包装脚本已创建于 ${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+
     # Create systemd service file
     # 创建 systemd 服务文件
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
@@ -616,7 +702,9 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=${INSTALL_DIR}/${AGENT_BINARY} --config ${CONFIG_DIR}/config.yaml
+# Use wrapper script to load environment variables before starting Agent
+# 使用包装脚本在启动 Agent 前加载环境变量
+ExecStart=/bin/bash ${INSTALL_DIR}/${AGENT_BINARY}-start.sh --config ${CONFIG_DIR}/config.yaml
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -635,8 +723,8 @@ LimitNOFILE=65536
 LimitNPROC=65536
 LimitCORE=infinity
 
-# Environment
-# 环境变量
+# Environment - base PATH, additional paths loaded by wrapper script
+# 环境变量 - 基础 PATH，额外路径由包装脚本加载
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [Install]

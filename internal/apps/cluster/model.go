@@ -134,8 +134,8 @@ type ClusterNode struct {
 	APIPort       int        `json:"api_port"`                    // REST API port (Master only) / REST API 端口（仅 Master）
 	WorkerPort    int        `json:"worker_port"`                 // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
 	Status        NodeStatus `json:"status" gorm:"size:20;default:pending"`
-	ProcessPID    int        `json:"process_pid"`
-	ProcessStatus string     `json:"process_status" gorm:"size:20"`
+	ProcessPID    int        `json:"process_pid" gorm:"column:process_pid"`
+	ProcessStatus string     `json:"process_status" gorm:"column:process_status;size:20"`
 	CreatedAt     time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt     time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 }

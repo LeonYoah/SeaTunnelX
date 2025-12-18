@@ -31,8 +31,9 @@ var (
 	ErrClusterHasRunningTask = errors.New("cluster: cluster has running tasks and cannot be deleted")
 	// ErrNodeNotFound indicates the requested cluster node does not exist.
 	ErrNodeNotFound = errors.New("cluster: node not found")
-	// ErrNodeAlreadyExists indicates the host is already a node in the cluster.
-	ErrNodeAlreadyExists = errors.New("cluster: host is already a node in this cluster")
+	// ErrNodeAlreadyExists indicates the host already has a node with the same role in the cluster.
+	// ErrNodeAlreadyExists 表示主机在集群中已有相同角色的节点。
+	ErrNodeAlreadyExists = errors.New("cluster: host already has a node with this role in the cluster / 主机在此集群中已有相同角色的节点")
 	// ErrNodeAgentNotInstalled indicates the host's agent is not installed.
 	ErrNodeAgentNotInstalled = errors.New("cluster: host agent is not installed")
 	// ErrInvalidDeploymentMode indicates an invalid deployment mode was specified.

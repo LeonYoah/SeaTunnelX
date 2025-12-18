@@ -21,7 +21,10 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -434,6 +437,10 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 		return nil, err
 	}
 
+	// After saving, detect SeaTunnel process status via Agent
+	// 保存后，通过 Agent 检测 SeaTunnel 进程状态
+	s.detectAndUpdateNodeProcess(ctx, node, req.HostID)
+
 	return node, nil
 }
 
@@ -557,6 +564,10 @@ func (s *Service) UpdateNode(ctx context.Context, clusterID uint, nodeID uint, r
 	if err := s.repo.UpdateNode(ctx, node); err != nil {
 		return nil, err
 	}
+
+	// After saving, detect SeaTunnel process status via Agent
+	// 保存后，通过 Agent 检测 SeaTunnel 进程状态
+	s.detectAndUpdateNodeProcess(ctx, node, node.HostID)
 
 	return node, nil
 }
@@ -876,6 +887,8 @@ func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *Prechec
 
 	// Check 2: Port is listening (via Agent command)
 	// 检查 2：端口正在监听（通过 Agent 命令）
+	// For node registration, port listening means SeaTunnel is running (PASSED)
+	// 对于节点注册，端口监听意味着 SeaTunnel 正在运行（通过）
 	portCheck := &PrecheckCheckItem{
 		Name: "port_listening",
 	}
@@ -883,17 +896,21 @@ func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *Prechec
 		params := map[string]string{
 			"port": fmt.Sprintf("%d", req.HazelcastPort),
 		}
-		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_port", params)
+		success, _, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_port", params)
 		if err != nil {
 			portCheck.Status = PrecheckStatusFailed
 			portCheck.Message = fmt.Sprintf("Failed to check port: %v / 检查端口失败: %v", err, err)
 			result.Success = false
 		} else if success {
+			// Port is listening = SeaTunnel service is running = PASSED
+			// 端口正在监听 = SeaTunnel 服务正在运行 = 通过
 			portCheck.Status = PrecheckStatusPassed
-			portCheck.Message = fmt.Sprintf("Port %d is listening / 端口 %d 正在监听: %s", req.HazelcastPort, req.HazelcastPort, message)
+			portCheck.Message = fmt.Sprintf("Port %d is listening (SeaTunnel is running) / 端口 %d 正在监听（SeaTunnel 正在运行）", req.HazelcastPort, req.HazelcastPort)
 		} else {
+			// Port is not listening = SeaTunnel service is not running = FAILED
+			// 端口未监听 = SeaTunnel 服务未运行 = 失败
 			portCheck.Status = PrecheckStatusFailed
-			portCheck.Message = fmt.Sprintf("Port %d is not listening / 端口 %d 未监听: %s", req.HazelcastPort, req.HazelcastPort, message)
+			portCheck.Message = fmt.Sprintf("Port %d is not listening (SeaTunnel is not running) / 端口 %d 未监听（SeaTunnel 未运行）", req.HazelcastPort, req.HazelcastPort)
 			result.Success = false
 		}
 	} else {
@@ -915,17 +932,17 @@ func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *Prechec
 		params := map[string]string{
 			"path": installDir,
 		}
-		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_directory", params)
+		success, _, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_directory", params)
 		if err != nil {
 			dirCheck.Status = PrecheckStatusFailed
 			dirCheck.Message = fmt.Sprintf("Failed to check directory: %v / 检查目录失败: %v", err, err)
 			result.Success = false
 		} else if success {
 			dirCheck.Status = PrecheckStatusPassed
-			dirCheck.Message = fmt.Sprintf("Directory %s exists and is writable / 目录 %s 存在且可写: %s", installDir, installDir, message)
+			dirCheck.Message = fmt.Sprintf("Directory %s exists and is writable / 目录 %s 存在且可写", installDir, installDir)
 		} else {
 			dirCheck.Status = PrecheckStatusFailed
-			dirCheck.Message = fmt.Sprintf("Directory %s check failed / 目录 %s 检查失败: %s", installDir, installDir, message)
+			dirCheck.Message = fmt.Sprintf("Directory %s does not exist or is not writable / 目录 %s 不存在或不可写", installDir, installDir)
 			result.Success = false
 		}
 	} else {
@@ -934,56 +951,65 @@ func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *Prechec
 	}
 	result.Checks = append(result.Checks, dirCheck)
 
-	// Check 4: SeaTunnel REST API connectivity (via Agent command)
-	// 检查 4：SeaTunnel REST API 连通性（通过 Agent 命令）
+	// Check 4: SeaTunnel REST API V1 connectivity (via Agent command)
+	// 检查 4：SeaTunnel REST API V1 连通性（通过 Agent 命令）
 	// REST API V1 on hazelcast port: /hazelcast/rest/maps/overview
-	// REST API V2 on api port (8080): /overview
-	apiCheck := &PrecheckCheckItem{
-		Name: "seatunnel_api",
+	apiV1Check := &PrecheckCheckItem{
+		Name: "seatunnel_api_v1",
 	}
 	if s.agentSender != nil && hostInfo.AgentID != "" {
-		// Try REST API V1 first (on hazelcast port)
-		// 首先尝试 REST API V1（在 hazelcast 端口上）
 		params := map[string]string{
 			"url": fmt.Sprintf("http://127.0.0.1:%d/hazelcast/rest/maps/overview", req.HazelcastPort),
 		}
-		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
+		success, _, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
 		if err != nil {
-			apiCheck.Status = PrecheckStatusFailed
-			apiCheck.Message = fmt.Sprintf("Failed to check SeaTunnel API: %v / 检查 SeaTunnel API 失败: %v", err, err)
+			apiV1Check.Status = PrecheckStatusFailed
+			apiV1Check.Message = fmt.Sprintf("Failed to check SeaTunnel API V1: %v / 检查 SeaTunnel API V1 失败: %v", err, err)
 			result.Success = false
 		} else if success {
-			apiCheck.Status = PrecheckStatusPassed
-			apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V1 is accessible / SeaTunnel REST API V1 可访问: %s", message)
+			apiV1Check.Status = PrecheckStatusPassed
+			apiV1Check.Message = "SeaTunnel REST API V1 is accessible / SeaTunnel REST API V1 可访问"
 		} else {
-			// Try REST API V2 if V1 failed and api_port is specified
-			// 如果 V1 失败且指定了 api_port，尝试 REST API V2
-			if req.APIPort > 0 {
-				params["url"] = fmt.Sprintf("http://127.0.0.1:%d/overview", req.APIPort)
-				success, message, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
-				if err != nil {
-					apiCheck.Status = PrecheckStatusFailed
-					apiCheck.Message = fmt.Sprintf("Failed to check SeaTunnel API V2: %v / 检查 SeaTunnel API V2 失败: %v", err, err)
-					result.Success = false
-				} else if success {
-					apiCheck.Status = PrecheckStatusPassed
-					apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V2 is accessible / SeaTunnel REST API V2 可访问: %s", message)
-				} else {
-					apiCheck.Status = PrecheckStatusFailed
-					apiCheck.Message = fmt.Sprintf("SeaTunnel REST API is not accessible / SeaTunnel REST API 不可访问: %s", message)
-					result.Success = false
-				}
-			} else {
-				apiCheck.Status = PrecheckStatusFailed
-				apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V1 is not accessible / SeaTunnel REST API V1 不可访问: %s", message)
-				result.Success = false
-			}
+			apiV1Check.Status = PrecheckStatusFailed
+			apiV1Check.Message = "SeaTunnel REST API V1 is not accessible / SeaTunnel REST API V1 不可访问"
+			result.Success = false
 		}
 	} else {
-		apiCheck.Status = PrecheckStatusSkipped
-		apiCheck.Message = "Agent command sender not configured / Agent 命令发送器未配置"
+		apiV1Check.Status = PrecheckStatusSkipped
+		apiV1Check.Message = "Agent command sender not configured / Agent 命令发送器未配置"
 	}
-	result.Checks = append(result.Checks, apiCheck)
+	result.Checks = append(result.Checks, apiV1Check)
+
+	// Check 5: SeaTunnel REST API V2 connectivity (if api_port is specified)
+	// 检查 5：SeaTunnel REST API V2 连通性（如果指定了 api_port）
+	// REST API V2 on api port (8080): /overview
+	if req.APIPort > 0 {
+		apiV2Check := &PrecheckCheckItem{
+			Name: "seatunnel_api_v2",
+		}
+		if s.agentSender != nil && hostInfo.AgentID != "" {
+			params := map[string]string{
+				"url": fmt.Sprintf("http://127.0.0.1:%d/overview", req.APIPort),
+			}
+			success, _, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
+			if err != nil {
+				apiV2Check.Status = PrecheckStatusFailed
+				apiV2Check.Message = fmt.Sprintf("Failed to check SeaTunnel API V2: %v / 检查 SeaTunnel API V2 失败: %v", err, err)
+				result.Success = false
+			} else if success {
+				apiV2Check.Status = PrecheckStatusPassed
+				apiV2Check.Message = "SeaTunnel REST API V2 is accessible / SeaTunnel REST API V2 可访问"
+			} else {
+				apiV2Check.Status = PrecheckStatusFailed
+				apiV2Check.Message = "SeaTunnel REST API V2 is not accessible / SeaTunnel REST API V2 不可访问"
+				result.Success = false
+			}
+		} else {
+			apiV2Check.Status = PrecheckStatusSkipped
+			apiV2Check.Message = "Agent command sender not configured / Agent 命令发送器未配置"
+		}
+		result.Checks = append(result.Checks, apiV2Check)
+	}
 
 	// Set overall message
 	// 设置总体消息
@@ -994,4 +1020,99 @@ func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *Prechec
 	}
 
 	return result, nil
+}
+
+// detectAndUpdateNodeProcess detects SeaTunnel process status via Agent and updates node.
+// detectAndUpdateNodeProcess 通过 Agent 检测 SeaTunnel 进程状态并更新节点。
+func (s *Service) detectAndUpdateNodeProcess(ctx context.Context, node *ClusterNode, hostID uint) {
+	if s.hostProvider == nil || s.agentSender == nil {
+		return
+	}
+
+	// Get host information
+	// 获取主机信息
+	hostInfo, err := s.hostProvider.GetHostByID(ctx, hostID)
+	if err != nil || hostInfo.AgentID == "" {
+		return
+	}
+
+	// Check if Agent is online
+	// 检查 Agent 是否在线
+	if !hostInfo.IsOnline(s.heartbeatTimeout) {
+		return
+	}
+
+	// Send check_process command to Agent
+	// 向 Agent 发送 check_process 命令
+	role := "hybrid"
+	if node.Role == NodeRoleMaster {
+		role = "master"
+	} else if node.Role == NodeRoleWorker {
+		role = "worker"
+	}
+
+	params := map[string]string{
+		"role": role,
+	}
+
+	success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_process", params)
+	if err != nil {
+		fmt.Printf("[detectAndUpdateNodeProcess] SendCommand error: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[detectAndUpdateNodeProcess] check_process result: success=%v, message=%s\n", success, message)
+
+	if success {
+		// Process is running, try to extract PID from response
+		// 进程正在运行，尝试从响应中提取 PID
+		// Response format: {"success":true,"message":"SeaTunnel process found: PID=12345, role=hybrid","details":{"pid":"12345","role":"hybrid"}}
+		pid := extractPIDFromMessage(message)
+		fmt.Printf("[detectAndUpdateNodeProcess] extracted PID: %d\n", pid)
+		if pid > 0 {
+			_ = s.repo.UpdateNodeProcess(ctx, node.ID, pid, "running")
+			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
+		} else {
+			// Process running but couldn't extract PID
+			// 进程运行中但无法提取 PID
+			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
+		}
+	}
+	// If process is not running, keep the pending status
+	// 如果进程未运行，保持待部署状态
+}
+
+// extractPIDFromMessage extracts PID from Agent response message.
+// extractPIDFromMessage 从 Agent 响应消息中提取 PID。
+func extractPIDFromMessage(message string) int {
+	// Try to parse as JSON first
+	// 首先尝试解析为 JSON
+	type ProcessResult struct {
+		Success bool              `json:"success"`
+		Message string            `json:"message"`
+		Details map[string]string `json:"details"`
+	}
+
+	var result ProcessResult
+	if err := json.Unmarshal([]byte(message), &result); err == nil {
+		if pidStr, ok := result.Details["pid"]; ok {
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				return pid
+			}
+		}
+	}
+
+	// Fallback: try to extract PID from message string "PID=12345"
+	// 回退：尝试从消息字符串 "PID=12345" 中提取 PID
+	if idx := strings.Index(message, "PID="); idx >= 0 {
+		pidStr := message[idx+4:]
+		if endIdx := strings.IndexAny(pidStr, ", \t\n"); endIdx > 0 {
+			pidStr = pidStr[:endIdx]
+		}
+		if pid, err := strconv.Atoi(pidStr); err == nil {
+			return pid
+		}
+	}
+
+	return 0
 }

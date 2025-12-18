@@ -21,10 +21,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {Loader2} from 'lucide-react';
+import {Loader2, CheckCircle2, XCircle, AlertCircle} from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
-import {NodeInfo, NodeRole, DeploymentMode, DefaultPorts} from '@/lib/services/cluster/types';
+import {NodeInfo, NodeRole, DeploymentMode, DefaultPorts, PrecheckResult, PrecheckCheckItem} from '@/lib/services/cluster/types';
 
 interface EditNodeDialogProps {
   open: boolean;
@@ -54,6 +54,10 @@ export function EditNodeDialog({
   const [apiPort, setApiPort] = useState<number>(0);
   const [workerPort, setWorkerPort] = useState<number>(0);
 
+  // Precheck state / 预检查状态
+  const [precheckLoading, setPrecheckLoading] = useState(false);
+  const [precheckResult, setPrecheckResult] = useState<PrecheckResult | null>(null);
+
   // Initialize form when node changes / 节点变化时初始化表单
   useEffect(() => {
     if (node) {
@@ -61,8 +65,65 @@ export function EditNodeDialog({
       setHazelcastPort(node.hazelcast_port || (node.role === NodeRole.MASTER ? DefaultPorts.MASTER_HAZELCAST : DefaultPorts.WORKER_HAZELCAST));
       setApiPort(node.api_port || 0);
       setWorkerPort(node.worker_port || DefaultPorts.WORKER_HAZELCAST);
+      setPrecheckResult(null);
     }
   }, [node]);
+
+  /**
+   * Handle precheck
+   * 处理预检查
+   */
+  const handlePrecheck = async () => {
+    if (!node) return;
+
+    if (!hazelcastPort || hazelcastPort <= 0) {
+      toast.error(t('cluster.hazelcastPortRequired'));
+      return;
+    }
+
+    setPrecheckLoading(true);
+    setPrecheckResult(null);
+    try {
+      const result = await services.cluster.precheckNodeSafe(node.cluster_id, {
+        host_id: node.host_id,
+        role: node.role,
+        install_dir: installDir.trim() || '/opt/seatunnel',
+        hazelcast_port: hazelcastPort,
+        api_port: node.role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
+        worker_port: deploymentMode === DeploymentMode.HYBRID && node.role === NodeRole.MASTER ? workerPort : undefined,
+      });
+
+      if (result.success && result.data) {
+        setPrecheckResult(result.data);
+        if (result.data.success) {
+          toast.success(t('cluster.precheckPassed'));
+        } else {
+          toast.warning(t('cluster.precheckFailed'));
+        }
+      } else {
+        toast.error(result.error || t('cluster.precheckError'));
+      }
+    } finally {
+      setPrecheckLoading(false);
+    }
+  };
+
+  /**
+   * Get status icon for precheck item
+   * 获取预检查项的状态图标
+   */
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'passed':
+        return <CheckCircle2 className='h-4 w-4 text-green-500' />;
+      case 'failed':
+        return <XCircle className='h-4 w-4 text-red-500' />;
+      case 'skipped':
+        return <AlertCircle className='h-4 w-4 text-yellow-500' />;
+      default:
+        return null;
+    }
+  };
 
   /**
    * Handle submit
@@ -205,13 +266,48 @@ export function EditNodeDialog({
               {t('cluster.portConfigDescription')}
             </p>
           </div>
+
+          {/* Precheck Results / 预检查结果 */}
+          {precheckResult && (
+            <div className='space-y-2 p-3 border rounded-md bg-muted/50'>
+              <div className='flex items-center gap-2'>
+                {precheckResult.success ? (
+                  <CheckCircle2 className='h-5 w-5 text-green-500' />
+                ) : (
+                  <XCircle className='h-5 w-5 text-red-500' />
+                )}
+                <span className='font-medium text-sm'>
+                  {precheckResult.success ? t('cluster.precheckPassed') : t('cluster.precheckFailed')}
+                </span>
+              </div>
+              <div className='space-y-1'>
+                {precheckResult.checks.map((check: PrecheckCheckItem, index: number) => (
+                  <div key={index} className='flex items-start gap-2 text-xs'>
+                    {getStatusIcon(check.status)}
+                    <div>
+                      <span className='font-medium'>{t(`cluster.precheckItems.${check.name}`, {defaultValue: check.name})}: </span>
+                      <span className='text-muted-foreground'>{check.message}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <DialogFooter>
-          <Button variant='outline' onClick={() => onOpenChange(false)} disabled={loading}>
+        <DialogFooter className='gap-2 sm:gap-0'>
+          <Button variant='outline' onClick={() => onOpenChange(false)} disabled={loading || precheckLoading}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={loading}>
+          <Button
+            variant='secondary'
+            onClick={handlePrecheck}
+            disabled={loading || precheckLoading || !hazelcastPort}
+          >
+            {precheckLoading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
+            {t('cluster.precheck')}
+          </Button>
+          <Button onClick={handleSubmit} disabled={loading || precheckLoading || !hazelcastPort}>
             {loading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
             {t('common.save')}
           </Button>

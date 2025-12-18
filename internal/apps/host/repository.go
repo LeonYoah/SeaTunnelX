@@ -229,12 +229,26 @@ func (r *Repository) Delete(ctx context.Context, id uint) error {
 }
 
 // UpdateAgentStatus updates the agent status and related fields for a host.
+// Also updates the host status based on agent status:
+// - AgentStatusInstalled -> HostStatusConnected
+// - AgentStatusOffline -> HostStatusOffline
 func (r *Repository) UpdateAgentStatus(ctx context.Context, id uint, status AgentStatus, agentID string, version string) error {
-	result := r.db.WithContext(ctx).Model(&Host{}).Where("id = ?", id).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"agent_status":  status,
 		"agent_id":      agentID,
 		"agent_version": version,
-	})
+	}
+
+	// Update host status based on agent status
+	// 根据 Agent 状态更新主机状态
+	switch status {
+	case AgentStatusInstalled:
+		updates["status"] = HostStatusConnected
+	case AgentStatusOffline:
+		updates["status"] = HostStatusOffline
+	}
+
+	result := r.db.WithContext(ctx).Model(&Host{}).Where("id = ?", id).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
