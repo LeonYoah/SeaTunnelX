@@ -225,6 +225,18 @@ func (s *Service) Get(ctx context.Context, id uint) (*Cluster, error) {
 	return s.repo.GetByID(ctx, id, true)
 }
 
+// GetClusterVersion retrieves the version of a cluster by ID.
+// GetClusterVersion 根据 ID 获取集群的版本。
+// This method implements the ClusterGetter interface for plugin version validation.
+// 此方法实现 ClusterGetter 接口用于插件版本校验。
+func (s *Service) GetClusterVersion(ctx context.Context, clusterID uint) (string, error) {
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return "", err
+	}
+	return cluster.Version, nil
+}
+
 // GetByName retrieves a cluster by name.
 // GetByName 根据名称获取集群。
 func (s *Service) GetByName(ctx context.Context, name string) (*Cluster, error) {

@@ -218,6 +218,7 @@
     }
   },
   "dock": {
+    "dashboard": "Dashboard",
     "realTimeData": "Real-time Data",
     "myProjects": "My Projects",
     "myReceived": "My Received",

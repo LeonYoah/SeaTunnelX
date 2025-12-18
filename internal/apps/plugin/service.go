@@ -36,6 +36,8 @@ var (
 	ErrPluginNotAvailable  = errors.New("plugin not available / 插件不可用")
 	ErrClusterNotFound     = errors.New("cluster not found / 集群未找到")
 	ErrPluginAlreadyExists = errors.New("plugin already installed / 插件已安装")
+	ErrVersionMismatch     = errors.New("plugin version does not match cluster version / 插件版本与集群版本不匹配")
+	ErrClusterVersionEmpty = errors.New("cluster version is not set / 集群版本未设置")
 )
 
 // SeaTunnel documentation URLs for fetching plugin lists
@@ -45,18 +47,25 @@ const (
 	PluginCacheDuration  = 1 * time.Hour
 )
 
+// ClusterGetter is an interface for getting cluster information.
+// ClusterGetter 是获取集群信息的接口。
+type ClusterGetter interface {
+	GetClusterVersion(ctx context.Context, clusterID uint) (string, error)
+}
+
 // Service provides plugin management functionality.
 // Service 提供插件管理功能。
 type Service struct {
-	repo *Repository
+	repo          *Repository
+	clusterGetter ClusterGetter
 	// agentManager is used to communicate with agents for plugin installation
 	// agentManager 用于与 Agent 通信进行插件安装
 	// agentManager *agent.Manager // TODO: inject agent manager
 
 	// Plugin cache / 插件缓存
-	cachedPlugins     map[string][]Plugin // key: version
-	pluginsCacheTime  map[string]time.Time
-	pluginsMu         sync.RWMutex
+	cachedPlugins    map[string][]Plugin // key: version
+	pluginsCacheTime map[string]time.Time
+	pluginsMu        sync.RWMutex
 }
 
 // NewService creates a new Service instance.
@@ -67,6 +76,12 @@ func NewService(repo *Repository) *Service {
 		cachedPlugins:    make(map[string][]Plugin),
 		pluginsCacheTime: make(map[string]time.Time),
 	}
+}
+
+// SetClusterGetter sets the cluster getter for version validation.
+// SetClusterGetter 设置集群获取器用于版本校验。
+func (s *Service) SetClusterGetter(getter ClusterGetter) {
+	s.clusterGetter = getter
 }
 
 // ==================== Available Plugins 可用插件 ====================
@@ -342,7 +357,25 @@ func (s *Service) GetInstalledPlugin(ctx context.Context, clusterID uint, plugin
 
 // InstallPlugin installs a plugin on a cluster via Agent.
 // InstallPlugin 通过 Agent 在集群上安装插件。
+// Requirements: Validates that plugin version matches cluster version.
+// 需求：校验插件版本与集群版本是否匹配。
 func (s *Service) InstallPlugin(ctx context.Context, clusterID uint, req *InstallPluginRequest) (*InstalledPlugin, error) {
+	// Validate plugin version matches cluster version / 校验插件版本与集群版本是否匹配
+	if s.clusterGetter != nil {
+		clusterVersion, err := s.clusterGetter.GetClusterVersion(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		if clusterVersion == "" {
+			return nil, ErrClusterVersionEmpty
+		}
+		// Compare versions - plugin version must match cluster version
+		// 比较版本 - 插件版本必须与集群版本匹配
+		if req.Version != clusterVersion {
+			return nil, fmt.Errorf("%w: plugin version %s, cluster version %s", ErrVersionMismatch, req.Version, clusterVersion)
+		}
+	}
+
 	// Check if plugin already installed / 检查插件是否已安装
 	exists, err := s.repo.ExistsByClusterAndName(ctx, clusterID, req.PluginName)
 	if err != nil {
@@ -434,7 +467,6 @@ func (s *Service) DisablePlugin(ctx context.Context, clusterID uint, pluginName 
 
 	return plugin, nil
 }
-
 
 // ==================== Helper Functions 辅助函数 ====================
 

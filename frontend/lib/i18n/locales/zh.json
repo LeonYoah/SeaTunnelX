@@ -218,6 +218,7 @@
     }
   },
   "dock": {
+    "dashboard": "控制台",
     "realTimeData": "实时数据",
     "myProjects": "我的项目",
     "myReceived": "我的领取",

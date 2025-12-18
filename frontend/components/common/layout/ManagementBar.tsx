@@ -17,6 +17,7 @@ import {
   FileText,
   Package,
   Puzzle,
+  LayoutDashboard,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -49,6 +50,7 @@ const StaticIcons = {
   fileText: <FileText {...IconOptions} />,
   package: <Package {...IconOptions} />,
   puzzle: <Puzzle {...IconOptions} />,
+  dashboard: <LayoutDashboard {...IconOptions} />,
   divider: <div />,
 };
 
@@ -291,6 +293,13 @@ export function ManagementBar() {
   const dockItems = useMemo((): DockItem[] => {
     const items: DockItem[] = [];
 
+    // 控制台入口 / Dashboard entry
+    items.push({
+      title: tDock('dashboard'),
+      icon: StaticIcons.dashboard,
+      href: '/dashboard',
+    });
+
     // 主机管理入口 / Host management entry
     items.push({
       title: tDock('hostManagement'),
@@ -303,20 +312,6 @@ export function ManagementBar() {
       title: tDock('clusterManagement'),
       icon: StaticIcons.database,
       href: '/clusters',
-    });
-
-    // 命令记录入口 / Command logs entry
-    items.push({
-      title: tDock('commandLogs'),
-      icon: StaticIcons.terminal,
-      href: '/commands',
-    });
-
-    // 审计日志入口 / Audit logs entry
-    items.push({
-      title: tDock('auditLogs'),
-      icon: StaticIcons.fileText,
-      href: '/audit-logs',
     });
 
     // 安装包管理入口 / Package management entry
@@ -332,6 +327,21 @@ export function ManagementBar() {
       icon: StaticIcons.puzzle,
       href: '/plugins',
     });
+
+        // 命令记录入口 / Command logs entry
+    items.push({
+      title: tDock('commandLogs'),
+      icon: StaticIcons.terminal,
+      href: '/commands',
+    });
+
+    // 审计日志入口 / Audit logs entry
+    items.push({
+      title: tDock('auditLogs'),
+      icon: StaticIcons.fileText,
+      href: '/audit-logs',
+    });
+
 
     // 管理员入口 / Admin entry
     if (user?.is_admin) {

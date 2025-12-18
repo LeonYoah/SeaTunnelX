@@ -344,6 +344,9 @@ func Serve() {
 			// 初始化插件仓库、服务和处理器
 			pluginRepo := plugin.NewRepository(db.DB(context.Background()))
 			pluginService := plugin.NewService(pluginRepo)
+			// Inject cluster service for version validation
+			// 注入集群服务用于版本校验
+			pluginService.SetClusterGetter(clusterService)
 			pluginHandler := plugin.NewHandler(pluginService)
 
 			// Plugin marketplace routes 插件市场路由
