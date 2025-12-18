@@ -14,6 +14,16 @@ import {
   RawActiveReceiverData,
   ActiveReceiverData,
   StatsSummary,
+  OverviewData,
+  OverviewStats,
+  ClusterSummary,
+  HostSummary,
+  RecentActivity,
+  OverviewApiResponse,
+  OverviewStatsApiResponse,
+  ClusterSummariesApiResponse,
+  HostSummariesApiResponse,
+  RecentActivitiesApiResponse,
 } from './types';
 
 /**
@@ -185,6 +195,119 @@ export class DashboardService extends BaseService {
         totalReceived: 0,
         recentReceived: 0,
       },
+    };
+  }
+}
+
+
+/**
+ * Overview Service / 概览服务
+ * Handles dashboard overview data for cluster/host/node management
+ * 处理集群/主机/节点管理的仪表盘概览数据
+ */
+export class OverviewService extends BaseService {
+  protected static readonly basePath = '/api/v1/dashboard/overview';
+
+  /**
+   * Get complete overview data / 获取完整概览数据
+   */
+  static async getOverviewData(): Promise<OverviewData> {
+    const response = await apiClient.get<OverviewApiResponse>(this.basePath);
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Get overview statistics / 获取概览统计数据
+   */
+  static async getOverviewStats(): Promise<OverviewStats> {
+    const response = await apiClient.get<OverviewStatsApiResponse>(`${this.basePath}/stats`);
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Get cluster summaries / 获取集群摘要列表
+   */
+  static async getClusterSummaries(): Promise<ClusterSummary[]> {
+    const response = await apiClient.get<ClusterSummariesApiResponse>(`${this.basePath}/clusters`);
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Get host summaries / 获取主机摘要列表
+   */
+  static async getHostSummaries(): Promise<HostSummary[]> {
+    const response = await apiClient.get<HostSummariesApiResponse>(`${this.basePath}/hosts`);
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  /**
+   * Get recent activities / 获取最近活动
+   */
+  static async getRecentActivities(): Promise<RecentActivity[]> {
+    const response = await apiClient.get<RecentActivitiesApiResponse>(`${this.basePath}/activities`);
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
+  }
+
+  // ==================== Safe Methods 安全方法 ====================
+
+  /**
+   * Get overview data (with error handling) / 获取概览数据（带错误处理）
+   */
+  static async getOverviewDataSafe(): Promise<{
+    success: boolean;
+    data?: OverviewData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getOverviewData();
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '获取概览数据失败';
+      return {
+        success: false,
+        data: this.getDefaultOverviewData(),
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Get default overview data / 获取默认概览数据
+   */
+  private static getDefaultOverviewData(): OverviewData {
+    return {
+      stats: {
+        total_hosts: 0,
+        online_hosts: 0,
+        total_clusters: 0,
+        running_clusters: 0,
+        stopped_clusters: 0,
+        error_clusters: 0,
+        total_nodes: 0,
+        running_nodes: 0,
+        stopped_nodes: 0,
+        error_nodes: 0,
+        total_agents: 0,
+        online_agents: 0,
+      },
+      cluster_summaries: [],
+      host_summaries: [],
+      recent_activities: [],
     };
   }
 }

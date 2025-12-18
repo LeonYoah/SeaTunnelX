@@ -273,3 +273,79 @@ export interface TooltipProps {
     payload?: Record<string, unknown>[],
   ) => ReactNode;
 }
+
+
+// ==================== Overview 概览相关类型定义 ====================
+
+/**
+ * Overview statistics / 概览统计数据
+ */
+export interface OverviewStats {
+  total_hosts: number;
+  online_hosts: number;
+  total_clusters: number;
+  running_clusters: number;
+  stopped_clusters: number;
+  error_clusters: number;
+  total_nodes: number;
+  running_nodes: number;
+  stopped_nodes: number;
+  error_nodes: number;
+  total_agents: number;
+  online_agents: number;
+}
+
+/**
+ * Cluster summary for dashboard / 仪表盘集群摘要
+ */
+export interface ClusterSummary {
+  id: number;
+  name: string;
+  status: string;
+  deployment_mode: string;
+  total_nodes: number;
+  master_nodes: number;
+  worker_nodes: number;
+  running_nodes: number;
+}
+
+/**
+ * Host summary for dashboard / 仪表盘主机摘要
+ */
+export interface HostSummary {
+  id: number;
+  name: string;
+  ip_address: string;
+  is_online: boolean;
+  agent_status: string;
+  node_count: number;
+}
+
+/**
+ * Recent activity / 最近活动
+ */
+export interface RecentActivity {
+  id: number;
+  type: 'success' | 'warning' | 'info' | 'error';
+  message: string;
+  timestamp: string;
+}
+
+/**
+ * Complete overview data / 完整概览数据
+ */
+export interface OverviewData {
+  stats: OverviewStats;
+  cluster_summaries: ClusterSummary[];
+  host_summaries: HostSummary[];
+  recent_activities: RecentActivity[];
+}
+
+/**
+ * Overview API response / 概览 API 响应
+ */
+export type OverviewApiResponse = ApiResponse<OverviewData>;
+export type OverviewStatsApiResponse = ApiResponse<OverviewStats>;
+export type ClusterSummariesApiResponse = ApiResponse<ClusterSummary[]>;
+export type HostSummariesApiResponse = ApiResponse<HostSummary[]>;
+export type RecentActivitiesApiResponse = ApiResponse<RecentActivity[]>;

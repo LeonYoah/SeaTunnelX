@@ -186,6 +186,7 @@ func Serve() {
 			// 初始化主机服务和处理器
 			hostRepo := host.NewRepository(db.DB(context.Background()))
 			clusterRepo := cluster.NewRepository(db.DB(context.Background()))
+			auditRepo := audit.NewRepository(db.DB(context.Background()))
 			hostService := host.NewService(hostRepo, clusterRepo, &host.ServiceConfig{
 				HeartbeatTimeout: time.Duration(config.Config.GRPC.HeartbeatTimeout) * time.Second,
 				ControlPlaneAddr: config.GetExternalURL(),
@@ -201,6 +202,22 @@ func Serve() {
 				hostRouter.PUT("/:id", hostHandler.UpdateHost)
 				hostRouter.DELETE("/:id", hostHandler.DeleteHost)
 				hostRouter.GET("/:id/install-command", hostHandler.GetInstallCommand)
+			}
+
+			// Dashboard Overview 仪表盘概览
+			// Initialize dashboard overview service and handler
+			// 初始化仪表盘概览服务和处理器
+			overviewService := dashboard.NewOverviewService(hostRepo, clusterRepo, auditRepo, time.Duration(config.Config.GRPC.HeartbeatTimeout)*time.Second)
+			overviewHandler := dashboard.NewOverviewHandler(overviewService)
+
+			overviewRouter := apiV1Router.Group("/dashboard/overview")
+			overviewRouter.Use(auth.LoginRequired())
+			{
+				overviewRouter.GET("", overviewHandler.GetOverviewData)
+				overviewRouter.GET("/stats", overviewHandler.GetOverviewStats)
+				overviewRouter.GET("/clusters", overviewHandler.GetClusterSummaries)
+				overviewRouter.GET("/hosts", overviewHandler.GetHostSummaries)
+				overviewRouter.GET("/activities", overviewHandler.GetRecentActivities)
 			}
 
 			// Cluster 集群管理
@@ -275,9 +292,8 @@ func Serve() {
 
 			// Audit 审计日志 API
 			// Audit log API
-			// Initialize audit repository and handler
-			// 初始化审计仓库和处理器
-			auditRepo := audit.NewRepository(db.DB(context.Background()))
+			// Initialize audit handler (auditRepo already created above)
+			// 初始化审计处理器（auditRepo 已在上面创建）
 			auditHandler := audit.NewHandler(auditRepo)
 
 			// Command logs 命令日志

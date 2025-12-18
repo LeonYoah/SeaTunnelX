@@ -6,4 +6,4 @@
 export * from './types';
 
 // 服务类
-export {DashboardService} from './dashboard.service';
+export {DashboardService, OverviewService} from './dashboard.service';

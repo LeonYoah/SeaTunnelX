@@ -1,0 +1,249 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package dashboard
+
+import (
+	"context"
+	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
+	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
+	"github.com/seatunnel/seatunnelX/internal/apps/host"
+)
+
+// OverviewService provides dashboard overview statistics.
+type OverviewService struct {
+	hostRepo         *host.Repository
+	clusterRepo      *cluster.Repository
+	auditRepo        *audit.Repository
+	heartbeatTimeout time.Duration
+}
+
+// NewOverviewService creates a new dashboard overview service.
+func NewOverviewService(hostRepo *host.Repository, clusterRepo *cluster.Repository, auditRepo *audit.Repository, heartbeatTimeout time.Duration) *OverviewService {
+	return &OverviewService{
+		hostRepo:         hostRepo,
+		clusterRepo:      clusterRepo,
+		auditRepo:        auditRepo,
+		heartbeatTimeout: heartbeatTimeout,
+	}
+}
+
+// GetOverviewStats returns dashboard overview statistics.
+func (s *OverviewService) GetOverviewStats(ctx context.Context) (*OverviewStats, error) {
+	stats := &OverviewStats{}
+
+	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: 1000}, s.heartbeatTimeout)
+	if err != nil {
+		return nil, err
+	}
+	stats.TotalHosts = len(hosts)
+	for _, h := range hosts {
+		if h.IsOnline(s.heartbeatTimeout) {
+			stats.OnlineHosts++
+		}
+		if h.AgentStatus == host.AgentStatusInstalled {
+			stats.TotalAgents++
+			if h.IsOnline(s.heartbeatTimeout) {
+				stats.OnlineAgents++
+			}
+		}
+	}
+
+	clusters, _, err := s.clusterRepo.List(ctx, &cluster.ClusterFilter{PageSize: 1000})
+	if err != nil {
+		return nil, err
+	}
+	stats.TotalClusters = len(clusters)
+	for _, c := range clusters {
+		switch c.Status {
+		case cluster.ClusterStatusRunning:
+			stats.RunningClusters++
+		case cluster.ClusterStatusStopped:
+			stats.StoppedClusters++
+		case cluster.ClusterStatusError:
+			stats.ErrorClusters++
+		}
+	}
+
+	for _, c := range clusters {
+		clusterWithNodes, err := s.clusterRepo.GetByID(ctx, c.ID, true)
+		if err != nil {
+			continue
+		}
+		stats.TotalNodes += len(clusterWithNodes.Nodes)
+		for _, n := range clusterWithNodes.Nodes {
+			switch n.Status {
+			case cluster.NodeStatusRunning:
+				stats.RunningNodes++
+			case cluster.NodeStatusStopped:
+				stats.StoppedNodes++
+			case cluster.NodeStatusError:
+				stats.ErrorNodes++
+			}
+		}
+	}
+
+	return stats, nil
+}
+
+// GetClusterSummaries returns cluster summaries for dashboard.
+func (s *OverviewService) GetClusterSummaries(ctx context.Context, limit int) ([]*ClusterSummary, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	clusters, _, err := s.clusterRepo.List(ctx, &cluster.ClusterFilter{PageSize: limit})
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]*ClusterSummary, 0, len(clusters))
+	for _, c := range clusters {
+		clusterWithNodes, err := s.clusterRepo.GetByID(ctx, c.ID, true)
+		if err != nil {
+			continue
+		}
+
+		summary := &ClusterSummary{
+			ID:             c.ID,
+			Name:           c.Name,
+			Status:         string(c.Status),
+			DeploymentMode: string(c.DeploymentMode),
+			TotalNodes:     len(clusterWithNodes.Nodes),
+		}
+
+		for _, n := range clusterWithNodes.Nodes {
+			if n.Role == cluster.NodeRoleMaster {
+				summary.MasterNodes++
+			} else {
+				summary.WorkerNodes++
+			}
+			if n.Status == cluster.NodeStatusRunning {
+				summary.RunningNodes++
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, nil
+}
+
+// GetHostSummaries returns host summaries for dashboard.
+func (s *OverviewService) GetHostSummaries(ctx context.Context, limit int) ([]*HostSummary, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: limit}, s.heartbeatTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	clusters, _, _ := s.clusterRepo.List(ctx, &cluster.ClusterFilter{PageSize: 1000})
+	hostNodeCount := make(map[uint]int)
+	for _, c := range clusters {
+		clusterWithNodes, err := s.clusterRepo.GetByID(ctx, c.ID, true)
+		if err != nil {
+			continue
+		}
+		for _, n := range clusterWithNodes.Nodes {
+			hostNodeCount[n.HostID]++
+		}
+	}
+
+	summaries := make([]*HostSummary, 0, len(hosts))
+	for _, h := range hosts {
+		summaries = append(summaries, &HostSummary{
+			ID:          h.ID,
+			Name:        h.Name,
+			IPAddress:   h.IPAddress,
+			IsOnline:    h.IsOnline(s.heartbeatTimeout),
+			AgentStatus: string(h.AgentStatus),
+			NodeCount:   hostNodeCount[h.ID],
+		})
+	}
+
+	return summaries, nil
+}
+
+// GetRecentActivities returns recent audit log activities.
+func (s *OverviewService) GetRecentActivities(ctx context.Context, limit int) ([]*RecentActivity, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	if s.auditRepo == nil {
+		return []*RecentActivity{}, nil
+	}
+
+	logs, _, err := s.auditRepo.ListAuditLogs(ctx, &audit.AuditLogFilter{PageSize: limit})
+	if err != nil {
+		return nil, err
+	}
+
+	activities := make([]*RecentActivity, 0, len(logs))
+	for _, log := range logs {
+		activityType := "info"
+		if log.Action == "create" || log.Action == "start" {
+			activityType = "success"
+		} else if log.Action == "delete" || log.Action == "stop" {
+			activityType = "warning"
+		}
+
+		activities = append(activities, &RecentActivity{
+			ID:        log.ID,
+			Type:      activityType,
+			Message:   log.Action + " " + log.ResourceType + " " + log.ResourceName,
+			Timestamp: log.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	return activities, nil
+}
+
+// GetOverviewData returns complete dashboard overview data.
+func (s *OverviewService) GetOverviewData(ctx context.Context) (*OverviewData, error) {
+	stats, err := s.GetOverviewStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	clusterSummaries, err := s.GetClusterSummaries(ctx, 5)
+	if err != nil {
+		return nil, err
+	}
+
+	hostSummaries, err := s.GetHostSummaries(ctx, 5)
+	if err != nil {
+		return nil, err
+	}
+
+	recentActivities, err := s.GetRecentActivities(ctx, 10)
+	if err != nil {
+		return nil, err
+	}
+
+	return &OverviewData{
+		Stats:            stats,
+		ClusterSummaries: clusterSummaries,
+		HostSummaries:    hostSummaries,
+		RecentActivities: recentActivities,
+	}, nil
+}
