@@ -565,14 +565,6 @@
       "stop": "Stop",
       "restart": "Restart"
     },
-    "actions": {
-      "create": "Create",
-      "update": "Update",
-      "delete": "Delete",
-      "start": "Start",
-      "stop": "Stop",
-      "restart": "Restart"
-    },
     "resourceTypes": {
       "host": "Host",
       "cluster": "Cluster",
@@ -631,6 +623,7 @@
     "enableSuccess": "Plugin enabled successfully",
     "disableSuccess": "Plugin disabled successfully",
     "category": {
+      "label": "Category",
       "all": "All Categories",
       "source": "Source",
       "sink": "Sink",
@@ -642,6 +635,24 @@
       "enabled": "Enabled",
       "disabled": "Disabled"
     },
+    "statuses": {
+      "installed": "Installed",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "installing": "Installing",
+      "error": "Error"
+    },
+    "installedPlugins": "Installed Plugins",
+    "noInstalledPlugins": "No installed plugins",
+    "addPlugin": "Add Plugin",
+    "browsePlugins": "Browse Plugins",
+    "installedAt": "Installed At",
+    "actions": "Actions",
+    "enableError": "Failed to enable plugin",
+    "disableError": "Failed to disable plugin",
+    "uninstallPlugin": "Uninstall Plugin",
+    "uninstallConfirm": "Are you sure you want to uninstall plugin {name}? This will remove the plugin from all nodes in the cluster.",
+    "uninstallError": "Failed to uninstall plugin",
     "installPlugin": "Install Plugin",
     "installPluginDesc": "Select a target cluster to install this plugin",
     "selectTargetCluster": "Select Target Cluster",
@@ -649,7 +660,28 @@
     "selectClusterPlaceholder": "Select a cluster...",
     "noClustersAvailable": "No clusters available. Please create a cluster first.",
     "installNote": "The plugin will be installed on all nodes of the selected cluster. Connector JAR files will be placed in the connectors directory, and dependencies will be placed in the lib directory.",
-    "installing": "Installing..."
+    "installing": "Installing...",
+    "download": "Download",
+    "downloading": "Downloading...",
+    "downloadStarted": "Download started for {name}",
+    "downloadFailed": "Download failed",
+    "downloadFirst": "Please download the plugin first",
+    "downloadComplete": "Download complete",
+    "localPlugins": "Local Plugins",
+    "localPluginsDesc": "Plugins downloaded to Control Plane local storage",
+    "noLocalPlugins": "No local plugins",
+    "downloaded": "Downloaded",
+    "downloadedDesc": "Plugins downloaded to Control Plane local storage, ready to install to clusters",
+    "noDownloadedPlugins": "No downloaded plugins",
+    "downloadFromAvailable": "Download plugins from the 'Available Plugins' tab",
+    "name": "Plugin Name",
+    "fileSize": "File Size",
+    "downloadedAt": "Downloaded At",
+    "deleteSuccess": "Plugin deleted successfully",
+    "deleteFailed": "Failed to delete plugin",
+    "deleteConfirmTitle": "Confirm Delete Plugin",
+    "deleteConfirmDesc": "Are you sure you want to delete local plugin {name}? You will need to download it again to install to clusters.",
+    "installToCluster": "Install to Cluster"
   },
   "installer": {
     "packageManagement": "Package Management",
@@ -782,7 +814,16 @@
     "downloadFailed": "Download Failed",
     "downloaded": "Downloaded",
     "retry": "Retry",
-    "refreshVersions": "Refresh Versions"
+    "refreshVersions": "Refresh Versions",
+    "seaTunnelInstallation": "SeaTunnel Installation",
+    "seaTunnelNotInstalled": "SeaTunnel is not installed on this host. Click the button below to start the installation wizard.",
+    "installed": "Installed",
+    "agentRequiredForInstall": "Agent must be installed and online before installing SeaTunnel.",
+    "installationProgress": "Installation Progress",
+    "installingSeaTunnel": "Installing SeaTunnel...",
+    "overallProgress": "Overall Progress",
+    "duration": "Duration",
+    "installationComplete": "SeaTunnel installation completed successfully!"
   },
   "admin": {
     "userManagement": {

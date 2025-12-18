@@ -155,7 +155,51 @@ type ConnectorConfig struct {
 	InstallConnectors bool         `json:"install_connectors"`
 	Connectors        []string     `json:"connectors,omitempty"`
 	PluginRepo        MirrorSource `json:"plugin_repo,omitempty"`
+	// SelectedPlugins is the list of plugin names to install during SeaTunnel setup
+	// SelectedPlugins 是 SeaTunnel 安装过程中要安装的插件名称列表
+	SelectedPlugins []string `json:"selected_plugins,omitempty"`
 }
+
+// PluginInstallInfo contains information about a plugin installation during SeaTunnel setup
+// PluginInstallInfo 包含 SeaTunnel 安装过程中插件安装的信息
+type PluginInstallInfo struct {
+	// Name is the plugin name / Name 是插件名称
+	Name string `json:"name"`
+	// Category is the plugin category (source/sink/transform) / Category 是插件分类
+	Category string `json:"category"`
+	// Version is the plugin version / Version 是插件版本
+	Version string `json:"version"`
+	// Status is the installation status / Status 是安装状态
+	Status PluginInstallStatus `json:"status"`
+	// Progress is the installation progress (0-100) / Progress 是安装进度
+	Progress int `json:"progress"`
+	// Message is the status message / Message 是状态消息
+	Message string `json:"message,omitempty"`
+	// Error is the error message if failed / Error 是失败时的错误信息
+	Error string `json:"error,omitempty"`
+}
+
+// PluginInstallStatus represents the status of a plugin installation
+// PluginInstallStatus 表示插件安装的状态
+type PluginInstallStatus string
+
+const (
+	// PluginInstallStatusPending indicates the plugin is waiting to be installed
+	// PluginInstallStatusPending 表示插件等待安装
+	PluginInstallStatusPending PluginInstallStatus = "pending"
+	// PluginInstallStatusDownloading indicates the plugin is being downloaded
+	// PluginInstallStatusDownloading 表示插件正在下载
+	PluginInstallStatusDownloading PluginInstallStatus = "downloading"
+	// PluginInstallStatusInstalling indicates the plugin is being installed
+	// PluginInstallStatusInstalling 表示插件正在安装
+	PluginInstallStatusInstalling PluginInstallStatus = "installing"
+	// PluginInstallStatusCompleted indicates the plugin installation is completed
+	// PluginInstallStatusCompleted 表示插件安装完成
+	PluginInstallStatusCompleted PluginInstallStatus = "completed"
+	// PluginInstallStatusFailed indicates the plugin installation failed
+	// PluginInstallStatusFailed 表示插件安装失败
+	PluginInstallStatusFailed PluginInstallStatus = "failed"
+)
 
 // InstallationRequest is the request for one-click installation
 // InstallationRequest 是一键安装的请求

@@ -566,6 +566,10 @@ func (a *Agent) registerCommandHandlers() {
 	// Register diagnostic handlers / 注册诊断处理器
 	a.executor.RegisterHandler(pb.CommandType_COLLECT_LOGS, a.handleCollectLogsCommand)
 
+	// Initialize plugin manager and register plugin handlers / 初始化插件管理器并注册插件处理器
+	executor.InitPluginManager(a.config.SeaTunnel.InstallDir)
+	executor.RegisterPluginHandlers(a.executor)
+
 	fmt.Printf("Registered %d command handlers / 已注册 %d 个命令处理器\n",
 		len(a.executor.GetRegisteredTypes()), len(a.executor.GetRegisteredTypes()))
 }

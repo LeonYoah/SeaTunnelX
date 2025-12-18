@@ -57,8 +57,8 @@ func TestFetchPluginsFromDocs(t *testing.T) {
 		}
 	}
 
-	t.Logf("Source plugins: %d / 数据源插件: %d", sourceCount, sourceCount)
-	t.Logf("Sink plugins: %d / 数据目标插件: %d", sinkCount, sinkCount)
+	t.Logf("Source plugins: %d / Source插件: %d", sourceCount, sourceCount)
+	t.Logf("Sink plugins: %d / Sink插件: %d", sinkCount, sinkCount)
 	t.Logf("Transform plugins: %d / 数据转换插件: %d", transformCount, transformCount)
 
 	// Verify we have plugins / 验证有插件
@@ -67,7 +67,7 @@ func TestFetchPluginsFromDocs(t *testing.T) {
 	}
 
 	// Print first 5 plugins of each category / 打印每个分类的前5个插件
-	t.Log("\n=== Sample Source Plugins / 示例数据源插件 ===")
+	t.Log("\n=== Sample Source Plugins / 示例Source插件 ===")
 	count := 0
 	for _, p := range plugins {
 		if p.Category == PluginCategorySource && count < 5 {
@@ -76,7 +76,7 @@ func TestFetchPluginsFromDocs(t *testing.T) {
 		}
 	}
 
-	t.Log("\n=== Sample Sink Plugins / 示例数据目标插件 ===")
+	t.Log("\n=== Sample Sink Plugins / 示例Sink插件 ===")
 	count = 0
 	for _, p := range plugins {
 		if p.Category == PluginCategorySink && count < 5 {

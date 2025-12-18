@@ -63,6 +63,7 @@ export interface InstalledPlugin {
   id: number;
   cluster_id: number;
   plugin_name: string;
+  artifact_id?: string; // Maven artifact ID (e.g., connector-cdc-mysql)
   category: PluginCategory;
   version: string;
   status: PluginStatus;
@@ -174,4 +175,75 @@ export interface PluginInstallStatus {
   progress: number;
   message?: string;
   error?: string;
+}
+
+
+// ==================== Plugin Download Types 插件下载类型 ====================
+
+/**
+ * Plugin download progress
+ * 插件下载进度
+ */
+export interface PluginDownloadProgress {
+  plugin_name: string;
+  version: string;
+  status: 'not_started' | 'downloading' | 'completed' | 'failed';
+  progress: number;
+  current_step?: string;
+  downloaded_bytes?: number;
+  total_bytes?: number;
+  speed?: number;
+  message?: string;
+  error?: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+/**
+ * Local plugin (downloaded to Control Plane)
+ * 本地插件（已下载到 Control Plane）
+ */
+export interface LocalPlugin {
+  name: string;
+  version: string;
+  category: PluginCategory;
+  connector_path: string;
+  size: number;
+  downloaded_at: string;
+}
+
+/**
+ * Download plugin request
+ * 下载插件请求
+ */
+export interface DownloadPluginRequest {
+  version: string;
+  mirror?: MirrorSource;
+}
+
+/**
+ * Download plugin response
+ * 下载插件响应
+ */
+export interface DownloadPluginResponse {
+  error_msg: string;
+  data: PluginDownloadProgress | null;
+}
+
+/**
+ * List local plugins response
+ * 获取本地插件列表响应
+ */
+export interface ListLocalPluginsResponse {
+  error_msg: string;
+  data: LocalPlugin[] | null;
+}
+
+/**
+ * Get install progress response
+ * 获取安装进度响应
+ */
+export interface GetInstallProgressResponse {
+  error_msg: string;
+  data: PluginInstallStatus | null;
 }

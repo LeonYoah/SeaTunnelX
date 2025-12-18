@@ -10,6 +10,9 @@ import type {
   AvailablePluginsResponse,
   MirrorSource,
   InstallPluginRequest,
+  PluginDownloadProgress,
+  LocalPlugin,
+  PluginInstallStatus,
 } from './types';
 
 /**
@@ -123,6 +126,93 @@ export class PluginService extends BaseService {
   static async disablePlugin(clusterId: number, pluginName: string): Promise<InstalledPlugin> {
     return this.put<InstalledPlugin>(
       `/clusters/${clusterId}/plugins/${encodeURIComponent(pluginName)}/disable`
+    );
+  }
+
+  // ==================== Plugin Download 插件下载 ====================
+
+  /**
+   * Download a plugin to Control Plane local storage
+   * 下载插件到 Control Plane 本地存储
+   * @param pluginName - Plugin name / 插件名称
+   * @param version - Plugin version / 插件版本
+   * @param mirror - Mirror source / 镜像源
+   * @returns Download progress / 下载进度
+   */
+  static async downloadPlugin(
+    pluginName: string,
+    version: string,
+    mirror?: MirrorSource
+  ): Promise<PluginDownloadProgress> {
+    return this.post<PluginDownloadProgress>(
+      `/plugins/${encodeURIComponent(pluginName)}/download`,
+      { version, mirror }
+    );
+  }
+
+  /**
+   * Get download status for a plugin
+   * 获取插件的下载状态
+   * @param pluginName - Plugin name / 插件名称
+   * @param version - Plugin version / 插件版本
+   * @returns Download progress / 下载进度
+   */
+  static async getDownloadStatus(
+    pluginName: string,
+    version: string
+  ): Promise<PluginDownloadProgress> {
+    return this.get<PluginDownloadProgress>(
+      `/plugins/${encodeURIComponent(pluginName)}/download/status`,
+      { version }
+    );
+  }
+
+  /**
+   * List locally downloaded plugins
+   * 获取已下载的本地插件列表
+   * @returns List of local plugins / 本地插件列表
+   */
+  static async listLocalPlugins(): Promise<LocalPlugin[]> {
+    return this.get<LocalPlugin[]>('/plugins/local');
+  }
+
+  /**
+   * List active download tasks
+   * 获取活动下载任务列表
+   * @returns List of active downloads / 活动下载列表
+   */
+  static async listActiveDownloads(): Promise<PluginDownloadProgress[]> {
+    return this.get<PluginDownloadProgress[]>('/plugins/downloads');
+  }
+
+  /**
+   * Delete a locally downloaded plugin
+   * 删除本地已下载的插件
+   * @param pluginName - Plugin name / 插件名称
+   * @param version - Plugin version / 插件版本
+   */
+  static async deleteLocalPlugin(pluginName: string, version: string): Promise<void> {
+    await this.delete<unknown>(
+      `/plugins/${encodeURIComponent(pluginName)}/local`,
+      { version }
+    );
+  }
+
+  // ==================== Plugin Installation Progress 插件安装进度 ====================
+
+  /**
+   * Get plugin installation progress on a cluster
+   * 获取集群上插件的安装进度
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param pluginName - Plugin name / 插件名称
+   * @returns Installation progress / 安装进度
+   */
+  static async getInstallProgress(
+    clusterId: number,
+    pluginName: string
+  ): Promise<PluginInstallStatus | null> {
+    return this.get<PluginInstallStatus | null>(
+      `/clusters/${clusterId}/plugins/${encodeURIComponent(pluginName)}/progress`
     );
   }
 }

@@ -239,7 +239,7 @@
     "about": "关于 SeaTunnelX",
     "version": "版本",
     "buildTime": "构建时间",
-    "description": "SeaTunnelX 是一个为数据集成打造的一站式运维管理平台，旨在提供快速、安全、便捷的数据同步服务。平台支持多种数据源，具备完善的任务管理和监控机制。",
+    "description": "SeaTunnelX 是一个为数据集成打造的一站式运维管理平台，旨在提供快速、安全、便捷的数据同步服务。平台支持多种Source，具备完善的任务管理和监控机制。",
     "trustLevel": {
       "newUser": "新用户",
       "basicUser": "基本用户",
@@ -565,14 +565,6 @@
       "stop": "停止",
       "restart": "重启"
     },
-    "actions": {
-      "create": "创建",
-      "update": "更新",
-      "delete": "删除",
-      "start": "启动",
-      "stop": "停止",
-      "restart": "重启"
-    },
     "resourceTypes": {
       "host": "主机",
       "cluster": "集群",
@@ -631,10 +623,11 @@
     "enableSuccess": "插件启用成功",
     "disableSuccess": "插件禁用成功",
     "category": {
+      "label": "分类",
       "all": "全部分类",
-      "source": "数据源",
-      "sink": "数据目标",
-      "transform": "数据转换"
+      "source": "Source",
+      "sink": "Sink",
+      "transform": "Transform"
     },
     "status": {
       "available": "可用",
@@ -642,6 +635,24 @@
       "enabled": "已启用",
       "disabled": "已禁用"
     },
+    "statuses": {
+      "installed": "已安装",
+      "enabled": "已启用",
+      "disabled": "已禁用",
+      "installing": "安装中",
+      "error": "错误"
+    },
+    "installedPlugins": "已安装插件",
+    "noInstalledPlugins": "暂无已安装的插件",
+    "addPlugin": "添加插件",
+    "browsePlugins": "浏览插件",
+    "installedAt": "安装时间",
+    "actions": "操作",
+    "enableError": "启用插件失败",
+    "disableError": "禁用插件失败",
+    "uninstallPlugin": "卸载插件",
+    "uninstallConfirm": "确定要卸载插件 {name} 吗？此操作将从集群的所有节点上移除该插件。",
+    "uninstallError": "卸载插件失败",
     "installPlugin": "安装插件",
     "installPluginDesc": "选择目标集群以安装此插件",
     "selectTargetCluster": "选择目标集群",
@@ -649,7 +660,28 @@
     "selectClusterPlaceholder": "选择集群...",
     "noClustersAvailable": "没有可用的集群，请先创建集群",
     "installNote": "插件将安装到所选集群的所有节点上。连接器 JAR 文件将放置在 connectors 目录，依赖库将放置在 lib 目录。",
-    "installing": "安装中..."
+    "installing": "安装中...",
+    "download": "下载",
+    "downloading": "下载中...",
+    "downloadStarted": "已开始下载 {name}",
+    "downloadFailed": "下载失败",
+    "downloadFirst": "请先下载插件",
+    "downloadComplete": "下载完成",
+    "localPlugins": "本地插件",
+    "localPluginsDesc": "已下载到 Control Plane 本地存储的插件",
+    "noLocalPlugins": "暂无本地插件",
+    "downloaded": "已下载",
+    "downloadedDesc": "已下载到 Control Plane 本地存储的插件，可安装到集群",
+    "noDownloadedPlugins": "暂无已下载的插件",
+    "downloadFromAvailable": "请从「可用插件」标签页下载插件",
+    "name": "插件名称",
+    "fileSize": "文件大小",
+    "downloadedAt": "下载时间",
+    "deleteSuccess": "插件删除成功",
+    "deleteFailed": "插件删除失败",
+    "deleteConfirmTitle": "确认删除插件",
+    "deleteConfirmDesc": "确定要删除本地插件 {name} 吗？删除后需要重新下载才能安装到集群。",
+    "installToCluster": "安装到集群"
   },
   "installer": {
     "packageManagement": "安装包管理",
@@ -782,7 +814,16 @@
     "downloadFailed": "下载失败",
     "downloaded": "已下载",
     "retry": "重试",
-    "refreshVersions": "刷新版本列表"
+    "refreshVersions": "刷新版本列表",
+    "seaTunnelInstallation": "SeaTunnel 安装",
+    "seaTunnelNotInstalled": "此主机尚未安装 SeaTunnel。点击下方按钮启动安装向导。",
+    "installed": "已安装",
+    "agentRequiredForInstall": "安装 SeaTunnel 前需要先安装并启动 Agent。",
+    "installationProgress": "安装进度",
+    "installingSeaTunnel": "正在安装 SeaTunnel...",
+    "overallProgress": "总体进度",
+    "duration": "耗时",
+    "installationComplete": "SeaTunnel 安装成功！"
   },
   "admin": {
     "userManagement": {

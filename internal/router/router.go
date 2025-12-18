@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -418,6 +418,16 @@ func Serve() {
 			// Inject cluster service for version validation
 			// 注入集群服务用于版本校验
 			pluginService.SetClusterGetter(clusterService)
+
+			// Inject agent command sender for plugin installation to cluster nodes
+			// 注入 Agent 命令发送器用于将插件安装到集群节点
+			if agentManager != nil {
+				pluginService.SetAgentCommandSender(&pluginAgentCommandSenderAdapter{manager: agentManager})
+				pluginService.SetClusterNodeGetter(&clusterNodeGetterAdapter{clusterService: clusterService})
+				pluginService.SetHostInfoGetter(&hostInfoGetterAdapter{hostService: hostService})
+				log.Println("[API] Agent command sender injected into plugin service / Agent 命令发送器已注入插件服务")
+			}
+
 			pluginHandler := plugin.NewHandler(pluginService)
 
 			// Plugin marketplace routes 插件市场路由
@@ -428,9 +438,29 @@ func Serve() {
 				// GET /api/v1/plugins - List available plugins
 				pluginRouter.GET("", pluginHandler.ListAvailablePlugins)
 
+				// GET /api/v1/plugins/local - 获取已下载的本地插件列表
+				// GET /api/v1/plugins/local - List locally downloaded plugins
+				pluginRouter.GET("/local", pluginHandler.ListLocalPlugins)
+
+				// GET /api/v1/plugins/downloads - 获取活动下载任务列表
+				// GET /api/v1/plugins/downloads - List active download tasks
+				pluginRouter.GET("/downloads", pluginHandler.ListActiveDownloads)
+
 				// GET /api/v1/plugins/:name - 获取插件详情
 				// GET /api/v1/plugins/:name - Get plugin info
 				pluginRouter.GET("/:name", pluginHandler.GetPluginInfo)
+
+				// POST /api/v1/plugins/:name/download - 下载插件到 Control Plane
+				// POST /api/v1/plugins/:name/download - Download plugin to Control Plane
+				pluginRouter.POST("/:name/download", pluginHandler.DownloadPlugin)
+
+				// GET /api/v1/plugins/:name/download/status - 获取下载状态
+				// GET /api/v1/plugins/:name/download/status - Get download status
+				pluginRouter.GET("/:name/download/status", pluginHandler.GetDownloadStatus)
+
+				// DELETE /api/v1/plugins/:name/local - 删除本地插件文件
+				// DELETE /api/v1/plugins/:name/local - Delete local plugin file
+				pluginRouter.DELETE("/:name/local", pluginHandler.DeleteLocalPlugin)
 			}
 
 			// Cluster plugin routes 集群插件路由
@@ -453,6 +483,10 @@ func Serve() {
 			// PUT /api/v1/clusters/:id/plugins/:name/disable - 禁用插件
 			// PUT /api/v1/clusters/:id/plugins/:name/disable - Disable plugin
 			clusterRouter.PUT("/:id/plugins/:name/disable", pluginHandler.DisablePlugin)
+
+			// GET /api/v1/clusters/:id/plugins/:name/progress - 获取插件安装进度
+			// GET /api/v1/clusters/:id/plugins/:name/progress - Get plugin installation progress
+			clusterRouter.GET("/:id/plugins/:name/progress", pluginHandler.GetInstallProgress)
 
 			// Installation routes on hosts 主机安装路由
 			// POST /api/v1/hosts/:id/precheck - 运行预检查
@@ -687,4 +721,106 @@ func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.Comma
 	default:
 		return pb.CommandType_PRECHECK
 	}
+}
+
+// ==================== Plugin Service Adapters 插件服务适配器 ====================
+
+// pluginAgentCommandSenderAdapter adapts agent.Manager to plugin.AgentCommandSender interface.
+// pluginAgentCommandSenderAdapter 将 agent.Manager 适配到 plugin.AgentCommandSender 接口。
+type pluginAgentCommandSenderAdapter struct {
+	manager *agent.Manager
+}
+
+// SendCommand sends a command to an agent and returns the result.
+// SendCommand 向 Agent 发送命令并返回结果。
+func (a *pluginAgentCommandSenderAdapter) SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
+	// Convert command type string to pb.CommandType
+	// 将命令类型字符串转换为 pb.CommandType
+	cmdType := a.stringToCommandType(commandType)
+
+	// Use longer timeout for plugin transfer (5 minutes)
+	// 插件传输使用更长的超时时间（5 分钟）
+	timeout := 5 * time.Minute
+	if commandType == "install_plugin" {
+		timeout = 2 * time.Minute
+	}
+
+	resp, err := a.manager.SendCommand(ctx, agentID, cmdType, params, timeout)
+	if err != nil {
+		return false, "", err
+	}
+
+	// For transfer_plugin command, RUNNING status means chunk received successfully
+	// 对于 transfer_plugin 命令，RUNNING 状态表示块接收成功
+	success := resp.Status == pb.CommandStatus_SUCCESS
+	if commandType == "transfer_plugin" {
+		// Accept both SUCCESS and RUNNING as success for chunk transfer
+		// 对于块传输，接受 SUCCESS 和 RUNNING 作为成功
+		success = resp.Status == pb.CommandStatus_SUCCESS || resp.Status == pb.CommandStatus_RUNNING
+	}
+
+	message := resp.Output
+	if resp.Error != "" {
+		message = resp.Error
+	}
+
+	return success, message, nil
+}
+
+// stringToCommandType converts a command type string to pb.CommandType for plugin operations.
+// stringToCommandType 将命令类型字符串转换为 pb.CommandType 用于插件操作。
+func (a *pluginAgentCommandSenderAdapter) stringToCommandType(cmdType string) pb.CommandType {
+	switch cmdType {
+	case "transfer_plugin":
+		return pb.CommandType_TRANSFER_PLUGIN
+	case "install_plugin":
+		return pb.CommandType_INSTALL_PLUGIN
+	case "uninstall_plugin":
+		return pb.CommandType_UNINSTALL_PLUGIN
+	case "list_plugins":
+		return pb.CommandType_LIST_PLUGINS
+	default:
+		return pb.CommandType_TRANSFER_PLUGIN
+	}
+}
+
+// clusterNodeGetterAdapter adapts cluster.Service to plugin.ClusterNodeGetter interface.
+// clusterNodeGetterAdapter 将 cluster.Service 适配到 plugin.ClusterNodeGetter 接口。
+type clusterNodeGetterAdapter struct {
+	clusterService *cluster.Service
+}
+
+// GetClusterNodes returns all nodes for a cluster.
+// GetClusterNodes 返回集群的所有节点。
+func (a *clusterNodeGetterAdapter) GetClusterNodes(ctx context.Context, clusterID uint) ([]plugin.ClusterNodeInfo, error) {
+	nodes, err := a.clusterService.GetNodes(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]plugin.ClusterNodeInfo, len(nodes))
+	for i, node := range nodes {
+		result[i] = plugin.ClusterNodeInfo{
+			NodeID:     node.ID,
+			HostID:     node.HostID,
+			InstallDir: node.InstallDir,
+		}
+	}
+	return result, nil
+}
+
+// hostInfoGetterAdapter adapts host.Service to plugin.HostInfoGetter interface.
+// hostInfoGetterAdapter 将 host.Service 适配到 plugin.HostInfoGetter 接口。
+type hostInfoGetterAdapter struct {
+	hostService *host.Service
+}
+
+// GetHostAgentID returns the Agent ID for a host.
+// GetHostAgentID 返回主机的 Agent ID。
+func (a *hostInfoGetterAdapter) GetHostAgentID(ctx context.Context, hostID uint) (string, error) {
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return "", err
+	}
+	return h.AgentID, nil
 }

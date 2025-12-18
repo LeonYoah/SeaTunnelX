@@ -19,6 +19,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -53,19 +54,53 @@ type ClusterGetter interface {
 	GetClusterVersion(ctx context.Context, clusterID uint) (string, error)
 }
 
+// ClusterNodeInfo represents node information needed for plugin installation.
+// ClusterNodeInfo 表示插件安装所需的节点信息。
+type ClusterNodeInfo struct {
+	NodeID     uint   // Node ID / 节点 ID
+	HostID     uint   // Host ID / 主机 ID
+	InstallDir string // SeaTunnel installation directory / SeaTunnel 安装目录
+}
+
+// ClusterNodeGetter is an interface for getting cluster nodes.
+// ClusterNodeGetter 是获取集群节点的接口。
+type ClusterNodeGetter interface {
+	GetClusterNodes(ctx context.Context, clusterID uint) ([]ClusterNodeInfo, error)
+}
+
+// HostInfoGetter is an interface for getting host information.
+// HostInfoGetter 是获取主机信息的接口。
+type HostInfoGetter interface {
+	GetHostAgentID(ctx context.Context, hostID uint) (string, error)
+}
+
 // Service provides plugin management functionality.
 // Service 提供插件管理功能。
 type Service struct {
 	repo          *Repository
 	clusterGetter ClusterGetter
-	// agentManager is used to communicate with agents for plugin installation
-	// agentManager 用于与 Agent 通信进行插件安装
-	// agentManager *agent.Manager // TODO: inject agent manager
+	downloader    *Downloader
+
+	// agentCommandSender is used to send commands to agents for plugin installation
+	// agentCommandSender 用于向 Agent 发送命令进行插件安装
+	agentCommandSender AgentCommandSender
+
+	// clusterNodeGetter is used to get cluster nodes for plugin installation
+	// clusterNodeGetter 用于获取集群节点进行插件安装
+	clusterNodeGetter ClusterNodeGetter
+
+	// hostInfoGetter is used to get host information (including AgentID)
+	// hostInfoGetter 用于获取主机信息（包括 AgentID）
+	hostInfoGetter HostInfoGetter
 
 	// Plugin cache / 插件缓存
 	cachedPlugins    map[string][]Plugin // key: version
 	pluginsCacheTime map[string]time.Time
 	pluginsMu        sync.RWMutex
+
+	// Installation progress tracking / 安装进度跟踪
+	installProgress   map[string]*PluginInstallStatus // key: clusterID:pluginName
+	installProgressMu sync.RWMutex
 }
 
 // NewService creates a new Service instance.
@@ -73,8 +108,22 @@ type Service struct {
 func NewService(repo *Repository) *Service {
 	return &Service{
 		repo:             repo,
+		downloader:       NewDownloader("./lib/plugins"),
 		cachedPlugins:    make(map[string][]Plugin),
 		pluginsCacheTime: make(map[string]time.Time),
+		installProgress:  make(map[string]*PluginInstallStatus),
+	}
+}
+
+// NewServiceWithDownloader creates a new Service instance with a custom downloader.
+// NewServiceWithDownloader 创建一个带有自定义下载器的新 Service 实例。
+func NewServiceWithDownloader(repo *Repository, pluginsDir string) *Service {
+	return &Service{
+		repo:             repo,
+		downloader:       NewDownloader(pluginsDir),
+		cachedPlugins:    make(map[string][]Plugin),
+		pluginsCacheTime: make(map[string]time.Time),
+		installProgress:  make(map[string]*PluginInstallStatus),
 	}
 }
 
@@ -152,13 +201,13 @@ func (s *Service) getPlugins(ctx context.Context, version string) []Plugin {
 func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string) ([]Plugin, error) {
 	var allPlugins []Plugin
 
-	// Fetch source connectors / 获取数据源连接器
+	// Fetch source connectors / 获取Source连接器
 	sourcePlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySource)
 	if err == nil {
 		allPlugins = append(allPlugins, sourcePlugins...)
 	}
 
-	// Fetch sink connectors / 获取数据目标连接器
+	// Fetch sink connectors / 获取Sink连接器
 	sinkPlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySink)
 	if err == nil {
 		allPlugins = append(allPlugins, sinkPlugins...)
@@ -262,7 +311,7 @@ func parsePluginsFromHTML(html string, version string, category PluginCategory) 
 				Category:    category,
 				Version:     version,
 				GroupID:     "org.apache.seatunnel",
-				ArtifactID:  fmt.Sprintf("connector-%s", name),
+				ArtifactID:  getArtifactID(name),
 				// Use original urlPath for doc URL to preserve case / 使用原始 urlPath 构建文档 URL 以保留大小写
 				DocURL: buildDocURL(version, category, urlPath),
 			}
@@ -275,6 +324,92 @@ func parsePluginsFromHTML(html string, version string, category PluginCategory) 
 	}
 
 	return plugins
+}
+
+// getArtifactID returns the correct Maven artifact ID for a plugin name.
+// pluginArtifactMappings contains all special plugin name to artifact ID mappings.
+// pluginArtifactMappings 包含所有特殊的插件名称到 artifact ID 的映射。
+// This mapping is based on SeaTunnel's Maven repository structure.
+// 此映射基于 SeaTunnel 的 Maven 仓库结构。
+var pluginArtifactMappings = map[string]string{
+	// CDC connectors / CDC 连接器
+	"mysql-cdc":     "connector-cdc-mysql",
+	"postgres-cdc":  "connector-cdc-postgres",
+	"sqlserver-cdc": "connector-cdc-sqlserver",
+	"oracle-cdc":    "connector-cdc-oracle",
+	"mongodb-cdc":   "connector-cdc-mongodb",
+	"tidb-cdc":      "connector-cdc-tidb",
+	"db2-cdc":       "connector-cdc-db2",
+	"opengauss-cdc": "connector-cdc-opengauss",
+
+	// File connectors / 文件连接器
+	"localfile": "connector-file-local",
+	"hdfsfile":  "connector-file-hadoop",
+	"s3file":    "connector-file-s3",
+	"ossfile":   "connector-file-oss",
+	"ftpfile":   "connector-file-ftp",
+	"sftpfile":  "connector-file-sftp",
+	"cosfile":   "connector-file-cos",
+	"obsfile":   "connector-file-obs",
+
+	// HTTP-based connectors / 基于 HTTP 的连接器
+	"http":      "connector-http-base",
+	"feishu":    "connector-http-feishu",
+	"github":    "connector-http-github",
+	"gitlab":    "connector-http-gitlab",
+	"jira":      "connector-http-jira",
+	"klaviyo":   "connector-http-klaviyo",
+	"lemlist":   "connector-http-lemlist",
+	"myhours":   "connector-http-myhours",
+	"notion":    "connector-http-notion",
+	"onesignal": "connector-http-onesignal",
+	"persistiq": "connector-http-persistiq",
+	"wechat":    "connector-http-wechat",
+
+	// JDBC connector and JDBC-based databases / JDBC 连接器和基于 JDBC 的数据库
+	// All these databases use connector-jdbc with their respective drivers
+	// 所有这些数据库都使用 connector-jdbc 配合各自的驱动
+	"jdbc":       "connector-jdbc",
+	"mysql":      "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver
+	"postgresql": "connector-jdbc", // Driver: org.postgresql.Driver
+	"dm":         "connector-jdbc", // Driver: dm.jdbc.driver.DmDriver (达梦数据库)
+	"phoenix":    "connector-jdbc", // Driver: org.apache.phoenix.queryserver.client.Driver
+	"sqlserver":  "connector-jdbc", // Driver: com.microsoft.sqlserver.jdbc.SQLServerDriver
+	"oracle":     "connector-jdbc", // Driver: oracle.jdbc.OracleDriver
+	"sqlite":     "connector-jdbc", // Driver: org.sqlite.JDBC
+	"gbase8a":    "connector-jdbc", // Driver: com.gbase.jdbc.Driver
+	"starrocks":  "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver (MySQL protocol)
+	"db2":        "connector-jdbc", // Driver: com.ibm.db2.jcc.DB2Driver
+	"tablestore": "connector-jdbc", // Driver: com.alicloud.openservices.tablestore.jdbc.OTSDriver
+	"saphana":    "connector-jdbc", // Driver: com.sap.db.jdbc.Driver
+	"doris":      "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver (MySQL protocol)
+	"teradata":   "connector-jdbc", // Driver: com.teradata.jdbc.TeraDriver
+	"snowflake":  "connector-jdbc", // Driver: net.snowflake.client.jdbc.SnowflakeDriver
+	"redshift":   "connector-jdbc", // Driver: com.amazon.redshift.jdbc42.Driver
+	"vertica":    "connector-jdbc", // Driver: com.vertica.jdbc.Driver
+	"kingbase":   "connector-jdbc", // Driver: com.kingbase8.Driver (人大金仓)
+	"oceanbase":  "connector-jdbc", // Driver: com.oceanbase.jdbc.Driver
+	"hive":       "connector-jdbc", // Driver: org.apache.hive.jdbc.HiveDriver
+	"xugu":       "connector-jdbc", // Driver: com.xugu.cloudjdbc.Driver (虚谷数据库)
+	"iris":       "connector-jdbc", // Driver: com.intersystems.jdbc.IRISDriver
+	"opengauss":  "connector-jdbc", // Driver: org.opengauss.Driver
+	"highgo":     "connector-jdbc", // Driver: com.highgo.jdbc.Driver (瀚高数据库)
+	"presto":     "connector-jdbc", // Driver: com.facebook.presto.jdbc.PrestoDriver
+	"trino":      "connector-jdbc", // Driver: io.trino.jdbc.TrinoDriver
+}
+
+// getArtifactID returns the correct Maven artifact ID for a plugin name.
+// getArtifactID 返回插件名称对应的正确 Maven artifact ID。
+// Some plugins have special naming conventions that differ from the standard connector-${name} pattern.
+// 某些插件有特殊的命名约定，与标准的 connector-${name} 模式不同。
+func getArtifactID(name string) string {
+	// Check special mappings first / 首先检查特殊映射
+	if artifactID, ok := pluginArtifactMappings[name]; ok {
+		return artifactID
+	}
+
+	// Default: connector-${name} / 默认：connector-${name}
+	return fmt.Sprintf("connector-%s", name)
 }
 
 // buildDocURL builds the documentation URL for a plugin.
@@ -329,9 +464,33 @@ func (s *Service) GetPluginInfo(ctx context.Context, name string, version string
 		version = "2.3.12"
 	}
 
+	// Normalize name to lowercase for comparison / 将名称转换为小写进行比较
+	normalizedName := strings.ToLower(name)
+
+	// First, try to find in cached plugins from docs / 首先尝试从文档缓存中查找
+	s.pluginsMu.RLock()
+	if cachedPlugins, ok := s.cachedPlugins[version]; ok {
+		for _, p := range cachedPlugins {
+			if strings.ToLower(p.Name) == normalizedName {
+				s.pluginsMu.RUnlock()
+				return &p, nil
+			}
+		}
+	}
+	s.pluginsMu.RUnlock()
+
+	// Then, try to find in fallback plugins / 然后尝试从备用插件列表中查找
 	plugins := getAvailablePluginsForVersion(version)
 	for _, p := range plugins {
-		if p.Name == name {
+		if strings.ToLower(p.Name) == normalizedName {
+			return &p, nil
+		}
+	}
+
+	// If not found in cache or fallback, try to fetch from docs / 如果缓存和备用列表都没有，尝试从文档获取
+	fetchedPlugins := s.getPlugins(ctx, version)
+	for _, p := range fetchedPlugins {
+		if strings.ToLower(p.Name) == normalizedName {
 			return &p, nil
 		}
 	}
@@ -360,60 +519,9 @@ func (s *Service) GetInstalledPlugin(ctx context.Context, clusterID uint, plugin
 // Requirements: Validates that plugin version matches cluster version.
 // 需求：校验插件版本与集群版本是否匹配。
 func (s *Service) InstallPlugin(ctx context.Context, clusterID uint, req *InstallPluginRequest) (*InstalledPlugin, error) {
-	// Validate plugin version matches cluster version / 校验插件版本与集群版本是否匹配
-	if s.clusterGetter != nil {
-		clusterVersion, err := s.clusterGetter.GetClusterVersion(ctx, clusterID)
-		if err != nil {
-			return nil, err
-		}
-		if clusterVersion == "" {
-			return nil, ErrClusterVersionEmpty
-		}
-		// Compare versions - plugin version must match cluster version
-		// 比较版本 - 插件版本必须与集群版本匹配
-		if req.Version != clusterVersion {
-			return nil, fmt.Errorf("%w: plugin version %s, cluster version %s", ErrVersionMismatch, req.Version, clusterVersion)
-		}
-	}
-
-	// Check if plugin already installed / 检查插件是否已安装
-	exists, err := s.repo.ExistsByClusterAndName(ctx, clusterID, req.PluginName)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, ErrPluginAlreadyExists
-	}
-
-	// Get plugin info / 获取插件信息
-	pluginInfo, err := s.GetPluginInfo(ctx, req.PluginName, req.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO: Send install command to Agent via gRPC
-	// TODO: 通过 gRPC 向 Agent 发送安装命令
-	// The Agent will:
-	// 1. Download connector jar to connectors/ directory
-	// 2. Download dependencies to lib/ directory
-
-	// Create installed plugin record / 创建已安装插件记录
-	installed := &InstalledPlugin{
-		ClusterID:   clusterID,
-		PluginName:  req.PluginName,
-		Category:    pluginInfo.Category,
-		Version:     req.Version,
-		Status:      PluginStatusInstalled,
-		InstallPath: fmt.Sprintf("connectors/connector-%s-%s.jar", req.PluginName, req.Version),
-		InstalledAt: time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	if err := s.repo.Create(ctx, installed); err != nil {
-		return nil, err
-	}
-
-	return installed, nil
+	// Delegate to InstallPluginToCluster which handles the full installation flow
+	// 委托给 InstallPluginToCluster 处理完整的安装流程
+	return s.InstallPluginToCluster(ctx, clusterID, req)
 }
 
 // UninstallPlugin uninstalls a plugin from a cluster.
@@ -478,7 +586,7 @@ func getAvailablePluginsForVersion(version string) []Plugin {
 	// Common plugins available for all supported versions
 	// 所有支持版本的通用插件
 	return []Plugin{
-		// Source connectors / 数据源连接器
+		// Source connectors / Source连接器
 		{
 			Name:        "jdbc",
 			DisplayName: "JDBC",
@@ -584,7 +692,7 @@ func getAvailablePluginsForVersion(version string) []Plugin {
 			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/MongoDB",
 		},
 
-		// Sink connectors / 数据目标连接器
+		// Sink connectors / Sink连接器
 		{
 			Name:        "jdbc-sink",
 			DisplayName: "JDBC Sink",
@@ -722,4 +830,499 @@ func getAvailablePluginsForVersion(version string) []Plugin {
 			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/split",
 		},
 	}
+}
+
+// ==================== Plugin Download Methods 插件下载方法 ====================
+
+// DownloadPlugin downloads a plugin to the Control Plane local storage.
+// DownloadPlugin 下载插件到 Control Plane 本地存储。
+func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirror MirrorSource) (*DownloadProgress, error) {
+	if version == "" {
+		version = "2.3.12" // Default version / 默认版本
+	}
+
+	if mirror == "" {
+		mirror = MirrorSourceApache
+	}
+
+	// Get plugin info / 获取插件信息
+	plugin, err := s.GetPluginInfo(ctx, name, version)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure artifact_id is set / 确保 artifact_id 已设置
+	if plugin.ArtifactID == "" {
+		plugin.ArtifactID = getArtifactID(name)
+		fmt.Printf("[DownloadPlugin] Warning: plugin.ArtifactID was empty for %s, set to: %s\n", name, plugin.ArtifactID)
+	}
+	fmt.Printf("[DownloadPlugin] Plugin: name=%s, artifactID=%s, version=%s\n", plugin.Name, plugin.ArtifactID, plugin.Version)
+
+	// Check if already downloaded / 检查是否已下载
+	if s.downloader.IsConnectorDownloaded(name, version) {
+		return &DownloadProgress{
+			PluginName:  name,
+			Version:     version,
+			Status:      "completed",
+			Progress:    100,
+			CurrentStep: "Already downloaded / 已下载",
+		}, nil
+	}
+
+	// Start download in background / 在后台开始下载
+	go func() {
+		downloadCtx := context.Background()
+		if err := s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, nil); err != nil {
+			// Log error for debugging / 记录错误用于调试
+			fmt.Printf("[Plugin Download Error] plugin=%s, version=%s, error=%v\n", name, version, err)
+		}
+	}()
+
+	// Return initial progress / 返回初始进度
+	return &DownloadProgress{
+		PluginName:  name,
+		Version:     version,
+		Status:      "downloading",
+		Progress:    0,
+		CurrentStep: "Starting download / 开始下载",
+		StartTime:   time.Now(),
+	}, nil
+}
+
+// GetDownloadStatus returns the current download status for a plugin.
+// GetDownloadStatus 返回插件的当前下载状态。
+func (s *Service) GetDownloadStatus(name, version string) *DownloadProgress {
+	// Check if download is in progress / 检查是否正在下载
+	progress := s.downloader.GetDownloadProgress(name, version)
+	if progress != nil {
+		return progress
+	}
+
+	// Check if already downloaded / 检查是否已下载
+	if s.downloader.IsConnectorDownloaded(name, version) {
+		return &DownloadProgress{
+			PluginName:  name,
+			Version:     version,
+			Status:      "completed",
+			Progress:    100,
+			CurrentStep: "Downloaded / 已下载",
+		}
+	}
+
+	// Not downloaded / 未下载
+	return &DownloadProgress{
+		PluginName:  name,
+		Version:     version,
+		Status:      "not_started",
+		Progress:    0,
+		CurrentStep: "Not downloaded / 未下载",
+	}
+}
+
+// ListLocalPlugins returns a list of locally downloaded plugins.
+// ListLocalPlugins 返回本地已下载的插件列表。
+func (s *Service) ListLocalPlugins() ([]LocalPlugin, error) {
+	return s.downloader.ListLocalPlugins()
+}
+
+// DeleteLocalPlugin deletes a locally downloaded plugin.
+// DeleteLocalPlugin 删除本地已下载的插件。
+func (s *Service) DeleteLocalPlugin(name, version string) error {
+	return s.downloader.DeleteLocalPlugin(name, version)
+}
+
+// IsPluginDownloaded checks if a plugin is downloaded locally.
+// IsPluginDownloaded 检查插件是否已在本地下载。
+func (s *Service) IsPluginDownloaded(name, version string) bool {
+	return s.downloader.IsConnectorDownloaded(name, version)
+}
+
+// ListActiveDownloads returns all active download tasks.
+// ListActiveDownloads 返回所有活动的下载任务。
+func (s *Service) ListActiveDownloads() []*DownloadProgress {
+	return s.downloader.ListActiveDownloads()
+}
+
+// ==================== Plugin Installation Progress Methods 插件安装进度方法 ====================
+
+// GetInstallProgress returns the installation progress for a plugin on a cluster.
+// GetInstallProgress 返回集群上插件的安装进度。
+func (s *Service) GetInstallProgress(clusterID uint, pluginName string) *PluginInstallStatus {
+	key := fmt.Sprintf("%d:%s", clusterID, pluginName)
+
+	s.installProgressMu.RLock()
+	defer s.installProgressMu.RUnlock()
+
+	if progress, exists := s.installProgress[key]; exists {
+		return progress
+	}
+
+	return nil
+}
+
+// setInstallProgress sets the installation progress for a plugin on a cluster.
+// setInstallProgress 设置集群上插件的安装进度。
+func (s *Service) setInstallProgress(clusterID uint, pluginName string, status *PluginInstallStatus) {
+	key := fmt.Sprintf("%d:%s", clusterID, pluginName)
+
+	s.installProgressMu.Lock()
+	defer s.installProgressMu.Unlock()
+
+	s.installProgress[key] = status
+}
+
+// clearInstallProgress clears the installation progress for a plugin on a cluster.
+// clearInstallProgress 清除集群上插件的安装进度。
+func (s *Service) clearInstallProgress(clusterID uint, pluginName string) {
+	key := fmt.Sprintf("%d:%s", clusterID, pluginName)
+
+	s.installProgressMu.Lock()
+	defer s.installProgressMu.Unlock()
+
+	delete(s.installProgress, key)
+}
+
+// ==================== Cluster Plugin Installation Methods 集群插件安装方法 ====================
+
+// AgentCommandSender is an interface for sending commands to agents.
+// AgentCommandSender 是向 Agent 发送命令的接口。
+type AgentCommandSender interface {
+	SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error)
+}
+
+// SetAgentCommandSender sets the agent command sender for plugin installation.
+// SetAgentCommandSender 设置用于插件安装的 Agent 命令发送器。
+func (s *Service) SetAgentCommandSender(sender AgentCommandSender) {
+	s.agentCommandSender = sender
+}
+
+// SetClusterNodeGetter sets the cluster node getter for plugin installation.
+// SetClusterNodeGetter 设置用于插件安装的集群节点获取器。
+func (s *Service) SetClusterNodeGetter(getter ClusterNodeGetter) {
+	s.clusterNodeGetter = getter
+}
+
+// SetHostInfoGetter sets the host info getter for plugin installation.
+// SetHostInfoGetter 设置用于插件安装的主机信息获取器。
+func (s *Service) SetHostInfoGetter(getter HostInfoGetter) {
+	s.hostInfoGetter = getter
+}
+
+// InstallPluginToCluster installs a plugin to all nodes in a cluster.
+// InstallPluginToCluster 将插件安装到集群中的所有节点。
+// This method:
+// 1. Checks if plugin is downloaded locally (downloads if not)
+// 2. Gets all cluster nodes
+// 3. Transfers plugin files to each node's Agent
+// 4. Sends install command to each Agent
+// 5. Updates database record
+func (s *Service) InstallPluginToCluster(ctx context.Context, clusterID uint, req *InstallPluginRequest) (*InstalledPlugin, error) {
+	// Validate plugin version matches cluster version / 校验插件版本与集群版本是否匹配
+	if s.clusterGetter != nil {
+		clusterVersion, err := s.clusterGetter.GetClusterVersion(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		if clusterVersion == "" {
+			return nil, ErrClusterVersionEmpty
+		}
+		if req.Version != clusterVersion {
+			return nil, fmt.Errorf("%w: plugin version %s, cluster version %s", ErrVersionMismatch, req.Version, clusterVersion)
+		}
+	}
+
+	// Check if plugin already installed / 检查插件是否已安装
+	exists, err := s.repo.ExistsByClusterAndName(ctx, clusterID, req.PluginName)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrPluginAlreadyExists
+	}
+
+	// Get plugin info / 获取插件信息
+	pluginInfo, err := s.GetPluginInfo(ctx, req.PluginName, req.Version)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize progress / 初始化进度
+	progress := &PluginInstallStatus{
+		PluginName: req.PluginName,
+		Status:     "downloading",
+		Progress:   0,
+		Message:    "Checking local plugin files / 检查本地插件文件",
+	}
+	s.setInstallProgress(clusterID, req.PluginName, progress)
+
+	// Check if plugin is downloaded locally / 检查插件是否已在本地下载
+	if !s.downloader.IsConnectorDownloaded(req.PluginName, req.Version) {
+		progress.Message = "Downloading plugin / 下载插件"
+		s.setInstallProgress(clusterID, req.PluginName, progress)
+
+		// Download plugin / 下载插件
+		mirror := req.Mirror
+		if mirror == "" {
+			mirror = MirrorSourceApache
+		}
+
+		if err := s.downloader.DownloadPlugin(ctx, pluginInfo, mirror, func(p *DownloadProgress) {
+			progress.Progress = p.Progress / 2 // First half is download / 前半部分是下载
+			progress.Message = p.CurrentStep
+			s.setInstallProgress(clusterID, req.PluginName, progress)
+		}); err != nil {
+			progress.Status = "failed"
+			progress.Error = err.Error()
+			s.setInstallProgress(clusterID, req.PluginName, progress)
+			return nil, fmt.Errorf("failed to download plugin: %w", err)
+		}
+	}
+
+	// Update progress / 更新进度
+	progress.Progress = 50
+	progress.Status = "installing"
+	progress.Message = "Plugin downloaded, preparing installation / 插件已下载，准备安装"
+	s.setInstallProgress(clusterID, req.PluginName, progress)
+
+	// Get cluster nodes / 获取集群节点
+	// Log dependency status for debugging / 记录依赖状态用于调试
+	fmt.Printf("[Plugin Install] Dependencies: clusterNodeGetter=%v, agentCommandSender=%v, hostInfoGetter=%v\n",
+		s.clusterNodeGetter != nil, s.agentCommandSender != nil, s.hostInfoGetter != nil)
+	fmt.Printf("[Plugin Install] Installing plugin %s v%s to cluster %d\n", req.PluginName, req.Version, clusterID)
+
+	// Get artifact ID from plugin info, use mapping as fallback
+	// 从插件信息获取 artifact ID，使用映射作为备用
+	artifactID := pluginInfo.ArtifactID
+	if artifactID == "" {
+		artifactID = getArtifactID(req.PluginName)
+	}
+	fmt.Printf("[Plugin Install] Plugin %s -> ArtifactID: %s\n", req.PluginName, artifactID)
+
+	if s.clusterNodeGetter != nil && s.agentCommandSender != nil && s.hostInfoGetter != nil {
+		nodes, err := s.clusterNodeGetter.GetClusterNodes(ctx, clusterID)
+		if err != nil {
+			progress.Status = "failed"
+			progress.Error = fmt.Sprintf("Failed to get cluster nodes: %v / 获取集群节点失败: %v", err, err)
+			s.setInstallProgress(clusterID, req.PluginName, progress)
+			return nil, fmt.Errorf("failed to get cluster nodes: %w", err)
+		}
+
+		fmt.Printf("[Plugin Install] Found %d nodes in cluster %d\n", len(nodes), clusterID)
+
+		if len(nodes) == 0 {
+			progress.Status = "failed"
+			progress.Error = "No nodes found in cluster / 集群中没有节点"
+			s.setInstallProgress(clusterID, req.PluginName, progress)
+			return nil, fmt.Errorf("no nodes found in cluster")
+		}
+
+		// Transfer and install plugin to each node / 将插件传输并安装到每个节点
+		totalNodes := len(nodes)
+		for i, node := range nodes {
+			// Update progress / 更新进度
+			nodeProgress := 50 + (i * 50 / totalNodes)
+			progress.Progress = nodeProgress
+			progress.Message = fmt.Sprintf("Installing to node %d/%d / 正在安装到节点 %d/%d", i+1, totalNodes, i+1, totalNodes)
+			s.setInstallProgress(clusterID, req.PluginName, progress)
+
+			// Get agent ID for this host / 获取此主机的 Agent ID
+			agentID, err := s.hostInfoGetter.GetHostAgentID(ctx, node.HostID)
+			if err != nil {
+				progress.Status = "failed"
+				progress.Error = fmt.Sprintf("Failed to get agent ID for host %d: %v / 获取主机 %d 的 Agent ID 失败: %v", node.HostID, err, node.HostID, err)
+				s.setInstallProgress(clusterID, req.PluginName, progress)
+				return nil, fmt.Errorf("failed to get agent ID for host %d: %w", node.HostID, err)
+			}
+
+			fmt.Printf("[Plugin Install] Node %d: HostID=%d, AgentID=%s, InstallDir=%s\n", node.NodeID, node.HostID, agentID, node.InstallDir)
+
+			if agentID == "" {
+				progress.Status = "failed"
+				progress.Error = fmt.Sprintf("Agent not installed on host %d / 主机 %d 未安装 Agent", node.HostID, node.HostID)
+				s.setInstallProgress(clusterID, req.PluginName, progress)
+				return nil, fmt.Errorf("agent not installed on host %d", node.HostID)
+			}
+
+			// Transfer plugin file to agent using artifact ID / 使用 artifact ID 传输插件文件到 Agent
+			fmt.Printf("[Plugin Install] Transferring plugin %s (artifact: %s) to agent %s...\n", req.PluginName, artifactID, agentID)
+			if err := s.transferPluginToAgent(ctx, agentID, artifactID, req.PluginName, req.Version, node.InstallDir); err != nil {
+				progress.Status = "failed"
+				progress.Error = fmt.Sprintf("Failed to transfer plugin to node %d: %v / 传输插件到节点 %d 失败: %v", node.NodeID, err, node.NodeID, err)
+				s.setInstallProgress(clusterID, req.PluginName, progress)
+				return nil, fmt.Errorf("failed to transfer plugin to node %d: %w", node.NodeID, err)
+			}
+		}
+	}
+
+	// Create database record / 创建数据库记录
+	installed := &InstalledPlugin{
+		ClusterID:   clusterID,
+		PluginName:  req.PluginName,
+		ArtifactID:  artifactID,
+		Category:    pluginInfo.Category,
+		Version:     req.Version,
+		Status:      PluginStatusInstalled,
+		InstallPath: fmt.Sprintf("connectors/%s-%s.jar", artifactID, req.Version),
+		InstalledAt: time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.repo.Create(ctx, installed); err != nil {
+		progress.Status = "failed"
+		progress.Error = err.Error()
+		s.setInstallProgress(clusterID, req.PluginName, progress)
+		return nil, err
+	}
+
+	// Mark as completed / 标记为完成
+	progress.Status = "completed"
+	progress.Progress = 100
+	progress.Message = "Plugin installed successfully / 插件安装成功"
+	s.setInstallProgress(clusterID, req.PluginName, progress)
+
+	// Clear progress after a delay / 延迟后清除进度
+	go func() {
+		time.Sleep(30 * time.Second)
+		s.clearInstallProgress(clusterID, req.PluginName)
+	}()
+
+	return installed, nil
+}
+
+// UninstallPluginFromCluster uninstalls a plugin from all nodes in a cluster.
+// UninstallPluginFromCluster 从集群中的所有节点卸载插件。
+func (s *Service) UninstallPluginFromCluster(ctx context.Context, clusterID uint, pluginName string) error {
+	// Check if plugin exists / 检查插件是否存在
+	plugin, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
+	if err != nil {
+		return err
+	}
+
+	// Initialize progress / 初始化进度
+	progress := &PluginInstallStatus{
+		PluginName: pluginName,
+		Status:     "uninstalling",
+		Progress:   0,
+		Message:    "Uninstalling plugin / 正在卸载插件",
+	}
+	s.setInstallProgress(clusterID, pluginName, progress)
+
+	// TODO: Get cluster nodes and send uninstall commands to each Agent
+	// TODO: 获取集群节点并向每个 Agent 发送卸载命令
+
+	// Delete database record / 删除数据库记录
+	if err := s.repo.Delete(ctx, plugin.ID); err != nil {
+		progress.Status = "failed"
+		progress.Error = err.Error()
+		s.setInstallProgress(clusterID, pluginName, progress)
+		return err
+	}
+
+	// Mark as completed / 标记为完成
+	progress.Status = "completed"
+	progress.Progress = 100
+	progress.Message = "Plugin uninstalled successfully / 插件卸载成功"
+	s.setInstallProgress(clusterID, pluginName, progress)
+
+	// Clear progress after a delay / 延迟后清除进度
+	go func() {
+		time.Sleep(30 * time.Second)
+		s.clearInstallProgress(clusterID, pluginName)
+	}()
+
+	return nil
+}
+
+// ==================== Plugin Transfer Methods 插件传输方法 ====================
+
+// transferPluginToAgent transfers a plugin file to an Agent and installs it.
+// transferPluginToAgent 将插件文件传输到 Agent 并安装。
+// This method:
+// 1. Reads the plugin file from local storage
+// 2. Sends file chunks to Agent via TRANSFER_PLUGIN command
+// 3. Sends INSTALL_PLUGIN command to finalize installation
+// Parameters:
+// - artifactID: Maven artifact ID (e.g., connector-cdc-mysql, connector-file-cos)
+// - pluginName: Plugin display name (e.g., mysql-cdc, cosfile)
+func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID, pluginName, version, installDir string) error {
+	if s.agentCommandSender == nil {
+		return fmt.Errorf("agent command sender not configured / Agent 命令发送器未配置")
+	}
+
+	// Use artifact ID directly for file name / 直接使用 artifact ID 作为文件名
+	fileName := fmt.Sprintf("%s-%s.jar", artifactID, version)
+
+	// Read plugin file using artifact ID / 使用 artifact ID 读取插件文件
+	fileData, err := s.downloader.ReadPluginFileByArtifactID(artifactID, version)
+	if err != nil {
+		return fmt.Errorf("failed to read plugin file: %w / 读取插件文件失败: %w", err, err)
+	}
+
+	// Transfer file in chunks / 分块传输文件
+	// Chunk size: 1MB / 块大小: 1MB
+	const chunkSize = 1024 * 1024
+	totalSize := int64(len(fileData))
+	var offset int64 = 0
+
+	for offset < totalSize {
+		end := offset + chunkSize
+		if end > totalSize {
+			end = totalSize
+		}
+
+		chunk := fileData[offset:end]
+		isLast := end >= totalSize
+
+		// Encode chunk as base64 / 将块编码为 base64
+		chunkBase64 := encodeBase64(chunk)
+
+		// Send transfer command / 发送传输命令
+		params := map[string]string{
+			"plugin_name":  pluginName,
+			"version":      version,
+			"file_type":    "connector",
+			"file_name":    fileName,
+			"chunk":        chunkBase64,
+			"offset":       fmt.Sprintf("%d", offset),
+			"total_size":   fmt.Sprintf("%d", totalSize),
+			"is_last":      fmt.Sprintf("%t", isLast),
+			"install_path": installDir,
+		}
+
+		success, message, err := s.agentCommandSender.SendCommand(ctx, agentID, "transfer_plugin", params)
+		if err != nil {
+			return fmt.Errorf("failed to transfer chunk at offset %d: %w / 传输偏移 %d 处的块失败: %w", offset, err, offset, err)
+		}
+		if !success {
+			return fmt.Errorf("transfer chunk failed: %s / 传输块失败: %s", message, message)
+		}
+
+		offset = end
+	}
+
+	// Send install command / 发送安装命令
+	// Pass artifact_id so Agent can find the file directly
+	// 传递 artifact_id 以便 Agent 可以直接找到文件
+	installParams := map[string]string{
+		"plugin_name":  pluginName,
+		"artifact_id":  artifactID,
+		"version":      version,
+		"install_path": installDir,
+	}
+
+	success, message, err := s.agentCommandSender.SendCommand(ctx, agentID, "install_plugin", installParams)
+	if err != nil {
+		return fmt.Errorf("failed to send install command: %w / 发送安装命令失败: %w", err, err)
+	}
+	if !success {
+		return fmt.Errorf("plugin installation failed: %s / 插件安装失败: %s", message, message)
+	}
+
+	return nil
+}
+
+// encodeBase64 encodes data to base64 string.
+// encodeBase64 将数据编码为 base64 字符串。
+func encodeBase64(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
 }

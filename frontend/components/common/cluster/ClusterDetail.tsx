@@ -62,6 +62,7 @@ import {
 import {EditClusterDialog} from './EditClusterDialog';
 import {AddNodeDialog} from './AddNodeDialog';
 import {EditNodeDialog} from './EditNodeDialog';
+import {ClusterPlugins} from './ClusterPlugins';
 
 interface ClusterDetailProps {
   clusterId: number;
@@ -856,6 +857,11 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             </Table>
           </CardContent>
         </Card>
+      </motion.div>
+
+      {/* Installed Plugins / 已安装插件 */}
+      <motion.div variants={itemVariants}>
+        <ClusterPlugins clusterId={clusterId} />
       </motion.div>
 
       {/* Cluster Info / 集群信息 */}

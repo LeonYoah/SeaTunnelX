@@ -117,6 +117,20 @@ export interface CheckpointConfig {
 }
 
 /**
+ * Plugin installation info for tracking plugin installation during SeaTunnel setup
+ * 插件安装信息，用于跟踪 SeaTunnel 安装过程中的插件安装
+ */
+export interface PluginInstallInfo {
+  name: string;           // 插件名称 / Plugin name
+  category: string;       // 插件分类 (source/sink/transform) / Plugin category
+  version: string;        // 插件版本 / Plugin version
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed';  // 安装状态 / Install status
+  progress: number;       // 安装进度 (0-100) / Install progress
+  message?: string;       // 状态消息 / Status message
+  error?: string;         // 错误信息 / Error message
+}
+
+/**
  * Connector installation configuration
  * 连接器安装配置
  */
@@ -124,6 +138,8 @@ export interface ConnectorConfig {
   install_connectors: boolean;
   connectors?: string[];
   plugin_repo?: MirrorSource;
+  /** Selected plugins for installation / 选择安装的插件列表 */
+  selected_plugins?: string[];
 }
 
 // ==================== Installation Types 安装类型 ====================

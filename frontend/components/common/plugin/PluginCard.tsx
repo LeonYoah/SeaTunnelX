@@ -18,7 +18,11 @@ interface PluginCardProps {
   showInstallButton?: boolean;
   isBuiltIn?: boolean;
   isInstalled?: boolean;
+  isDownloaded?: boolean;
+  isDownloading?: boolean;
+  downloadProgress?: number;
   onInstall?: () => void;
+  onDownload?: () => void;
 }
 
 /**
@@ -65,7 +69,11 @@ export function PluginCard({
   showInstallButton = false,
   isBuiltIn = false,
   isInstalled = false,
+  isDownloaded = false,
+  isDownloading = false,
+  downloadProgress = 0,
   onInstall,
+  onDownload,
 }: PluginCardProps) {
   const t = useTranslations();
 
@@ -76,6 +84,15 @@ export function PluginCard({
   const handleInstallClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onInstall?.();
+  };
+
+  /**
+   * Handle download button click
+   * 处理下载按钮点击
+   */
+  const handleDownloadClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDownload?.();
   };
 
   return (
@@ -136,7 +153,7 @@ export function PluginCard({
           </div>
         )}
         
-        {/* Install/Status button / 安装/状态按钮 */}
+        {/* Install/Download/Status button / 安装/下载/状态按钮 */}
         {showInstallButton && !isBuiltIn && (
           <div className="mt-3 pt-3 border-t">
             {isInstalled ? (
@@ -144,7 +161,20 @@ export function PluginCard({
                 <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
                 {t('plugin.installed')}
               </Button>
-            ) : (
+            ) : isDownloading ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{t('plugin.downloading')}</span>
+                  <span>{downloadProgress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5 dark:bg-gray-700">
+                  <div 
+                    className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${downloadProgress}%` }}
+                  />
+                </div>
+              </div>
+            ) : isDownloaded ? (
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -153,6 +183,16 @@ export function PluginCard({
               >
                 <Download className="h-4 w-4 mr-2" />
                 {t('plugin.install')}
+              </Button>
+            ) : (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full"
+                onClick={handleDownloadClick}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {t('plugin.download')}
               </Button>
             )}
           </div>

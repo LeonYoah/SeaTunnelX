@@ -28,8 +28,8 @@ import (
 type PluginCategory string
 
 const (
-	PluginCategorySource    PluginCategory = "source"    // 数据源 / Data source
-	PluginCategorySink      PluginCategory = "sink"      // 数据目标 / Data sink
+	PluginCategorySource    PluginCategory = "source"    // Source / Data source
+	PluginCategorySink      PluginCategory = "sink"      // Sink / Data sink
 	PluginCategoryTransform PluginCategory = "transform" // 数据转换 / Data transform
 )
 
@@ -95,6 +95,7 @@ type InstalledPlugin struct {
 	ID          uint           `gorm:"primaryKey" json:"id"`
 	ClusterID   uint           `gorm:"index;not null" json:"cluster_id"`                             // 集群 ID / Cluster ID
 	PluginName  string         `gorm:"size:100;not null;index" json:"plugin_name"`                   // 插件名称 / Plugin name
+	ArtifactID  string         `gorm:"size:100" json:"artifact_id"`                                  // Maven artifact ID (e.g., connector-cdc-mysql)
 	Category    PluginCategory `gorm:"size:20;not null" json:"category"`                             // 分类 / Category
 	Version     string         `gorm:"size:20;not null" json:"version"`                              // 版本号 / Version
 	Status      PluginStatus   `gorm:"size:20;not null;default:installed" json:"status"`             // 状态 / Status

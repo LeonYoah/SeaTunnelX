@@ -137,6 +137,12 @@ enum CommandType {
   // 配置类
   UPDATE_CONFIG = 40;
   ROLLBACK_CONFIG = 41;
+  
+  // 插件管理
+  TRANSFER_PLUGIN = 50;     // 传输插件文件
+  INSTALL_PLUGIN = 51;      // 安装插件
+  UNINSTALL_PLUGIN = 52;    // 卸载插件
+  LIST_PLUGINS = 53;        // 列出已安装插件
 }
 
 // CommandResponse - 指令执行结果 (Agent -> Control Plane)
@@ -186,4 +192,81 @@ enum LogLevel {
 message LogStreamResponse {
   bool success = 1;           // 是否成功
   int64 received_count = 2;   // 已接收的日志条数
+}
+
+// ============================================================================
+// 插件安装相关消息 (Requirements 5.5, 5.6)
+// ============================================================================
+
+// TransferPluginRequest - 传输插件文件请求 (复用文件传输流)
+message TransferPluginRequest {
+  string plugin_name = 1;     // 插件名称
+  string version = 2;         // 版本号
+  string file_type = 3;       // 文件类型: connector, dependency
+  string file_name = 4;       // 文件名
+  bytes chunk = 5;            // 文件块数据
+  int64 offset = 6;           // 偏移量
+  int64 total_size = 7;       // 总大小
+  bool is_last = 8;           // 是否最后一块
+  string checksum = 9;        // SHA1 校验和 (仅最后一块)
+}
+
+// TransferPluginResponse - 传输插件文件响应
+message TransferPluginResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  int64 received_bytes = 3;   // 已接收字节数
+}
+
+// InstallPluginRequest - 安装插件请求
+message InstallPluginRequest {
+  string plugin_name = 1;     // 插件名称
+  string version = 2;         // 版本号
+  string install_path = 3;    // SeaTunnel 安装路径
+  repeated string dependencies = 4; // 依赖库文件名列表
+}
+
+// InstallPluginResponse - 安装插件响应
+message InstallPluginResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  string error = 3;           // 错误信息
+  string connector_path = 4;  // 连接器安装路径
+  repeated string lib_paths = 5; // 依赖库安装路径列表
+}
+
+// UninstallPluginRequest - 卸载插件请求
+message UninstallPluginRequest {
+  string plugin_name = 1;     // 插件名称
+  string version = 2;         // 版本号
+  string install_path = 3;    // SeaTunnel 安装路径
+  bool remove_dependencies = 4; // 是否删除依赖库
+}
+
+// UninstallPluginResponse - 卸载插件响应
+message UninstallPluginResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  string error = 3;           // 错误信息
+}
+
+// ListInstalledPluginsRequest - 获取已安装插件列表请求
+message ListInstalledPluginsRequest {
+  string install_path = 1;    // SeaTunnel 安装路径
+}
+
+// InstalledPluginInfo - 已安装插件信息
+message InstalledPluginInfo {
+  string name = 1;            // 插件名称
+  string version = 2;         // 版本号
+  string connector_path = 3;  // 连接器路径
+  int64 size = 4;             // 文件大小
+  int64 installed_at = 5;     // 安装时间 (Unix 毫秒)
+}
+
+// ListInstalledPluginsResponse - 获取已安装插件列表响应
+message ListInstalledPluginsResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  repeated InstalledPluginInfo plugins = 3; // 插件列表
 }

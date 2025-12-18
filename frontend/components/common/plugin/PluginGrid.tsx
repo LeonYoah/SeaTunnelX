@@ -19,6 +19,11 @@ interface PluginGridProps {
   showInstallButton?: boolean;
   isTransformBuiltIn?: boolean;
   onInstall?: (plugin: Plugin) => void;
+  onDownload?: (plugin: Plugin) => void;
+  /** Map of plugin name to download status / 插件名称到下载状态的映射 */
+  downloadingPlugins?: Set<string>;
+  /** Map of plugin name to downloaded status / 插件名称到已下载状态的映射 */
+  downloadedPlugins?: Set<string>;
 }
 
 // Default page size / 默认每页数量
@@ -35,6 +40,9 @@ export function PluginGrid({
   showInstallButton = false,
   isTransformBuiltIn = false,
   onInstall,
+  onDownload,
+  downloadingPlugins = new Set(),
+  downloadedPlugins = new Set(),
 }: PluginGridProps) {
   const t = useTranslations();
 
@@ -111,7 +119,10 @@ export function PluginGrid({
             onClick={() => onViewDetail(plugin)}
             showInstallButton={showInstallButton}
             isBuiltIn={isTransformBuiltIn && plugin.category === 'transform'}
+            isDownloading={downloadingPlugins.has(plugin.name)}
+            isDownloaded={downloadedPlugins.has(plugin.name)}
             onInstall={onInstall ? () => onInstall(plugin) : undefined}
+            onDownload={onDownload ? () => onDownload(plugin) : undefined}
           />
         ))}
       </div>

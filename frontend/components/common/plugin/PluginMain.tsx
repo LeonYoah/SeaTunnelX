@@ -21,13 +21,32 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { RefreshCw, Search, Puzzle, Package, Download, CheckCircle, Info, Upload } from 'lucide-react';
+import { RefreshCw, Search, Puzzle, Package, Download, CheckCircle, Info, Upload, HardDrive, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PluginService } from '@/lib/services/plugin';
-import type { Plugin, MirrorSource, AvailablePluginsResponse } from '@/lib/services/plugin';
+import type { Plugin, MirrorSource, AvailablePluginsResponse, LocalPlugin, PluginDownloadProgress } from '@/lib/services/plugin';
+import { Progress } from '@/components/ui/progress';
 import { PluginGrid } from './PluginGrid';
 import { PluginDetailDialog } from './PluginDetailDialog';
 import { InstallPluginDialog } from './InstallPluginDialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // Available SeaTunnel versions / 可用的 SeaTunnel 版本
 const AVAILABLE_VERSIONS = [
@@ -59,13 +78,26 @@ export function PluginMain() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [selectedMirror, setSelectedMirror] = useState<MirrorSource>('aliyun');
   const [selectedVersion, setSelectedVersion] = useState<string>('2.3.12');
-  const [activeTab, setActiveTab] = useState<'available' | 'installed' | 'custom'>('available');
+  const [activeTab, setActiveTab] = useState<'available' | 'local' | 'custom'>('available');
+
+  // Local plugins state / 本地插件状态
+  const [localPlugins, setLocalPlugins] = useState<LocalPlugin[]>([]);
+  const [localPluginsLoading, setLocalPluginsLoading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pluginToDelete, setPluginToDelete] = useState<LocalPlugin | null>(null);
 
   // Dialog state / 对话框状态
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isInstallOpen, setIsInstallOpen] = useState(false);
   const [pluginToInstall, setPluginToInstall] = useState<Plugin | null>(null);
+
+  // Download state / 下载状态
+  const [downloadingPlugins, setDownloadingPlugins] = useState<Set<string>>(new Set());
+  const [downloadedPlugins, setDownloadedPlugins] = useState<Set<string>>(new Set());
+
+  // Active downloads state / 活动下载状态
+  const [activeDownloads, setActiveDownloads] = useState<PluginDownloadProgress[]>([]);
 
   /**
    * Load available plugins
@@ -113,9 +145,53 @@ export function PluginMain() {
     }
   }, [selectedVersion, selectedMirror, filterCategory, searchKeyword, t]);
 
+  /**
+   * Load local downloaded plugins
+   * 加载本地已下载插件列表
+   */
+  const loadLocalPlugins = useCallback(async () => {
+    setLocalPluginsLoading(true);
+    try {
+      const [localResult, downloadsResult] = await Promise.all([
+        PluginService.listLocalPlugins(),
+        PluginService.listActiveDownloads()
+      ]);
+      setLocalPlugins(localResult || []);
+      setActiveDownloads(downloadsResult || []);
+      // Update downloadingPlugins set / 更新下载中集合
+      const downloading = new Set(downloadsResult?.filter(d => d.status === 'downloading').map(d => d.plugin_name) || []);
+      setDownloadingPlugins(downloading);
+    } catch (err) {
+      console.error('Failed to load local plugins:', err);
+      setLocalPlugins([]);
+    } finally {
+      setLocalPluginsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadPlugins();
   }, [loadPlugins]);
+
+  // Load local plugins when switching to local tab / 切换到本地插件标签时加载
+  useEffect(() => {
+    if (activeTab === 'local') {
+      loadLocalPlugins();
+    }
+  }, [activeTab, loadLocalPlugins]);
+
+  // Poll for active downloads when there are downloading plugins / 有下载中的插件时轮询
+  useEffect(() => {
+    if (activeTab !== 'local' || activeDownloads.filter(d => d.status === 'downloading').length === 0) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadLocalPlugins();
+    }, 2000); // Poll every 2 seconds / 每2秒轮询一次
+
+    return () => clearInterval(interval);
+  }, [activeTab, activeDownloads, loadLocalPlugins]);
 
   /**
    * Handle search
@@ -130,7 +206,49 @@ export function PluginMain() {
    * 处理刷新
    */
   const handleRefresh = () => {
-    loadPlugins();
+    if (activeTab === 'local') {
+      loadLocalPlugins();
+    } else {
+      loadPlugins();
+    }
+  };
+
+  /**
+   * Handle delete local plugin
+   * 处理删除本地插件
+   */
+  const handleDeleteLocalPlugin = async () => {
+    if (!pluginToDelete) {return;}
+    
+    try {
+      await PluginService.deleteLocalPlugin(pluginToDelete.name, pluginToDelete.version);
+      toast.success(t('plugin.deleteSuccess'));
+      loadLocalPlugins();
+      // Also remove from downloadedPlugins set / 同时从已下载集合中移除
+      setDownloadedPlugins(prev => {
+        const next = new Set(prev);
+        next.delete(pluginToDelete.name);
+        return next;
+      });
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : t('plugin.deleteFailed');
+      toast.error(errorMsg);
+    } finally {
+      setDeleteDialogOpen(false);
+      setPluginToDelete(null);
+    }
+  };
+
+  /**
+   * Format file size
+   * 格式化文件大小
+   */
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) {return '0 B';}
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   /**
@@ -158,6 +276,42 @@ export function PluginMain() {
   const handleInstallPlugin = (plugin: Plugin) => {
     setPluginToInstall(plugin);
     setIsInstallOpen(true);
+  };
+
+  /**
+   * Handle download plugin
+   * 处理下载插件到 Control Plane
+   */
+  const handleDownloadPlugin = async (plugin: Plugin) => {
+    try {
+      // Add to downloading set / 添加到下载中集合
+      setDownloadingPlugins(prev => new Set(prev).add(plugin.name));
+      
+      toast.info(t('plugin.downloadStarted', { name: plugin.display_name || plugin.name }));
+      
+      // Call download API / 调用下载 API
+      await PluginService.downloadPlugin(plugin.name, selectedVersion, selectedMirror);
+      
+      // Move to downloaded set / 移动到已下载集合
+      setDownloadingPlugins(prev => {
+        const next = new Set(prev);
+        next.delete(plugin.name);
+        return next;
+      });
+      setDownloadedPlugins(prev => new Set(prev).add(plugin.name));
+      
+      toast.success(t('plugin.downloadComplete'));
+    } catch (err) {
+      // Remove from downloading set / 从下载中集合移除
+      setDownloadingPlugins(prev => {
+        const next = new Set(prev);
+        next.delete(plugin.name);
+        return next;
+      });
+      
+      const errorMsg = err instanceof Error ? err.message : t('plugin.downloadFailed');
+      toast.error(errorMsg);
+    }
   };
 
   // Count plugins by category / 按分类统计插件数量
@@ -362,15 +516,23 @@ export function PluginMain() {
       )}
 
       {/* Plugin tabs / 插件标签页 */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'available' | 'installed' | 'custom')}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'available' | 'local' | 'custom')}>
         <TabsList>
           <TabsTrigger value="available" className="flex items-center gap-2">
             <Package className="h-4 w-4" />
             {t('plugin.available')}
           </TabsTrigger>
-          <TabsTrigger value="installed" className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4" />
-            {t('plugin.installed')}
+          <TabsTrigger value="local" className="flex items-center gap-2">
+            <HardDrive className="h-4 w-4" />
+            {t('plugin.localPlugins')}
+            {(localPlugins.length > 0 || activeDownloads.filter(d => d.status === 'downloading').length > 0) && (
+              <Badge variant="secondary" className="ml-1">
+                {localPlugins.length}
+                {activeDownloads.filter(d => d.status === 'downloading').length > 0 && (
+                  <span className="ml-1 text-blue-500">+{activeDownloads.filter(d => d.status === 'downloading').length}</span>
+                )}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="custom" className="flex items-center gap-2">
             <Upload className="h-4 w-4" />
@@ -397,24 +559,163 @@ export function PluginMain() {
                 showInstallButton={true}
                 isTransformBuiltIn={true}
                 onInstall={handleInstallPlugin}
+                onDownload={handleDownloadPlugin}
+                downloadingPlugins={downloadingPlugins}
+                downloadedPlugins={downloadedPlugins}
               />
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="installed" className="mt-4">
+        <TabsContent value="local" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>{t('plugin.installed')}</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                {t('plugin.localPlugins')}
+                <Badge variant="secondary">{localPlugins.length}</Badge>
+              </CardTitle>
               <CardDescription>
-                {t('plugin.installedDesc')}
+                {t('plugin.localPluginsDesc')}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8 text-muted-foreground">
-                <p>{t('plugin.selectClusterToViewInstalled')}</p>
-                <p className="text-sm mt-2">{t('plugin.goToClusterDetail')}</p>
-              </div>
+              {localPluginsLoading && localPlugins.length === 0 && activeDownloads.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <RefreshCw className="h-8 w-8 mx-auto animate-spin mb-4" />
+                  <p>{t('common.loading')}</p>
+                </div>
+              ) : localPlugins.length === 0 && activeDownloads.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <HardDrive className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>{t('plugin.noDownloadedPlugins')}</p>
+                  <p className="text-sm mt-2">{t('plugin.downloadFromAvailable')}</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('plugin.name')}</TableHead>
+                      <TableHead>{t('plugin.category.label')}</TableHead>
+                      <TableHead>{t('plugin.version')}</TableHead>
+                      <TableHead>{t('plugin.fileSize')}</TableHead>
+                      <TableHead>{t('plugin.downloadedAt')}</TableHead>
+                      <TableHead className="text-right">{t('common.actions')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {/* Active downloads / 活动下载 */}
+                    {activeDownloads.filter(d => d.status === 'downloading').map((download) => (
+                      <TableRow key={`downloading-${download.plugin_name}-${download.version}`} className="bg-blue-50 dark:bg-blue-950">
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />
+                            {download.plugin_name}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{t('plugin.downloading')}</Badge>
+                        </TableCell>
+                        <TableCell>v{download.version}</TableCell>
+                        <TableCell colSpan={2}>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-sm">
+                              <span>{download.current_step || t('plugin.downloading')}</span>
+                              <span>{download.progress}%</span>
+                            </div>
+                            <Progress value={download.progress} className="h-2" />
+                            {download.total_bytes && download.total_bytes > 0 && (
+                              <div className="text-xs text-muted-foreground">
+                                {formatFileSize(download.downloaded_bytes || 0)} / {formatFileSize(download.total_bytes)}
+                                {download.speed && download.speed > 0 && (
+                                  <span className="ml-2">({formatFileSize(download.speed)}/s)</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant="secondary">{t('plugin.downloading')}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {/* Filter local plugins by search keyword, category and version / 按搜索关键词、分类和版本过滤本地插件 */}
+                    {localPlugins
+                      .filter(plugin => {
+                        // Apply search filter / 应用搜索过滤
+                        if (searchKeyword) {
+                          const keyword = searchKeyword.toLowerCase();
+                          if (!plugin.name.toLowerCase().includes(keyword)) {
+                            return false;
+                          }
+                        }
+                        // Apply category filter / 应用分类过滤
+                        if (filterCategory !== 'all' && plugin.category !== filterCategory) {
+                          return false;
+                        }
+                        // Apply version filter / 应用版本过滤
+                        if (selectedVersion && plugin.version !== selectedVersion) {
+                          return false;
+                        }
+                        return true;
+                      })
+                      .map((plugin) => (
+                      <TableRow key={`${plugin.name}-${plugin.version}`}>
+                        <TableCell className="font-medium">{plugin.name}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {plugin.category === 'source' ? t('plugin.category.source') :
+                             plugin.category === 'sink' ? t('plugin.category.sink') :
+                             plugin.category === 'transform' ? t('plugin.category.transform') :
+                             plugin.category}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>v{plugin.version}</TableCell>
+                        <TableCell>{formatFileSize(plugin.size)}</TableCell>
+                        <TableCell>
+                          {plugin.downloaded_at 
+                            ? new Date(plugin.downloaded_at).toLocaleString() 
+                            : '-'}
+                        </TableCell>
+                        <TableCell className="text-right space-x-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              // Convert LocalPlugin to Plugin for install dialog
+                              // 将 LocalPlugin 转换为 Plugin 用于安装对话框
+                              const pluginForInstall: Plugin = {
+                                name: plugin.name,
+                                display_name: plugin.name,
+                                category: plugin.category,
+                                version: plugin.version,
+                                description: '',
+                                group_id: 'org.apache.seatunnel',
+                                artifact_id: `connector-${plugin.name}`,
+                              };
+                              setPluginToInstall(pluginForInstall);
+                              setIsInstallOpen(true);
+                            }}
+                          >
+                            <CheckCircle className="h-4 w-4 mr-1" />
+                            {t('plugin.installToCluster')}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => {
+                              setPluginToDelete(plugin);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -462,6 +763,27 @@ export function PluginMain() {
           version={selectedVersion}
         />
       )}
+
+      {/* Delete Confirmation Dialog / 删除确认对话框 */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('plugin.deleteConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('plugin.deleteConfirmDesc', { name: pluginToDelete?.name || '' })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteLocalPlugin}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </motion.div>
   );
 }

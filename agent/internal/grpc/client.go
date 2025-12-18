@@ -522,6 +522,8 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 		return fmt.Errorf("failed to send init message: %w", err)
 	}
 
+	fmt.Printf("Command stream established successfully for agent %s / 命令流建立成功，Agent: %s\n", agentID, agentID)
+
 	// Start goroutine to receive commands and send responses
 	// 启动 goroutine 接收指令并发送响应
 	for {

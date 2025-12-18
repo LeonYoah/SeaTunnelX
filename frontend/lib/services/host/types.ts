@@ -100,6 +100,14 @@ export interface HostInfo {
   /** Last heartbeat time / 最后心跳时间 */
   last_heartbeat?: string | null;
 
+  // SeaTunnel installation fields / SeaTunnel 安装字段
+  /** Whether SeaTunnel is installed / SeaTunnel 是否已安装 */
+  seatunnel_installed?: boolean;
+  /** SeaTunnel version / SeaTunnel 版本 */
+  seatunnel_version?: string;
+  /** SeaTunnel installation path / SeaTunnel 安装路径 */
+  seatunnel_path?: string;
+
   // docker specific fields / Docker 专用字段
   /** Docker API URL / Docker API 地址 */
   docker_api_url?: string;

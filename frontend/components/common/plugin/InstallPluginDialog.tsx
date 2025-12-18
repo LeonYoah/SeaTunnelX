@@ -8,7 +8,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Dialog,
@@ -29,9 +29,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, Download, Server, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Loader2, Download, Server, AlertCircle, CheckCircle, Info, CloudDownload } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Plugin } from '@/lib/services/plugin';
+import type { Plugin, PluginDownloadProgress } from '@/lib/services/plugin';
 import { PluginService } from '@/lib/services/plugin';
 import { ClusterService } from '@/lib/services/cluster';
 import type { ClusterInfo } from '@/lib/services/cluster';
@@ -60,17 +61,55 @@ export function InstallPluginDialog({
   const [selectedClusterId, setSelectedClusterId] = useState<string>('');
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [installing, setInstalling] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<PluginDownloadProgress | null>(null);
+  const [isDownloaded, setIsDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Load available clusters
-   * 加载可用集群列表
+   * Check download status
+   * 检查下载状态
+   */
+  const checkDownloadStatus = useCallback(async () => {
+    try {
+      const status = await PluginService.getDownloadStatus(plugin.name, version);
+      setDownloadProgress(status);
+      if (status.status === 'completed') {
+        setIsDownloaded(true);
+        setDownloading(false);
+      } else if (status.status === 'downloading') {
+        setDownloading(true);
+      } else if (status.status === 'failed') {
+        setDownloading(false);
+        setError(status.error || t('plugin.downloadFailed'));
+      }
+    } catch {
+      // If status check fails, assume not downloaded / 如果状态检查失败，假设未下载
+      setIsDownloaded(false);
+    }
+  }, [plugin.name, version, t]);
+
+  /**
+   * Load available clusters and check download status
+   * 加载可用集群列表并检查下载状态
    */
   useEffect(() => {
     if (open) {
       loadClusters();
+      checkDownloadStatus();
     }
-  }, [open]);
+  }, [open, checkDownloadStatus]);
+
+  /**
+   * Poll download status while downloading
+   * 下载时轮询下载状态
+   */
+  useEffect(() => {
+    if (!downloading) return;
+
+    const interval = setInterval(checkDownloadStatus, 1000);
+    return () => clearInterval(interval);
+  }, [downloading, checkDownloadStatus]);
 
   const loadClusters = async () => {
     setLoadingClusters(true);
@@ -97,12 +136,36 @@ export function InstallPluginDialog({
   };
 
   /**
+   * Handle download plugin
+   * 处理下载插件
+   */
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      await PluginService.downloadPlugin(plugin.name, version);
+      toast.info(t('plugin.downloadStarted', { name: plugin.display_name || plugin.name }));
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : t('plugin.downloadFailed');
+      setError(errorMsg);
+      toast.error(errorMsg);
+      setDownloading(false);
+    }
+  };
+
+  /**
    * Handle install plugin
    * 处理安装插件
    */
   const handleInstall = async () => {
     if (!selectedClusterId) {
       toast.error(t('plugin.selectClusterFirst'));
+      return;
+    }
+
+    // Check if plugin is downloaded first / 首先检查插件是否已下载
+    if (!isDownloaded) {
+      toast.error(t('plugin.downloadFirst'));
       return;
     }
 
@@ -130,9 +193,10 @@ export function InstallPluginDialog({
    * 处理对话框关闭
    */
   const handleClose = () => {
-    if (!installing) {
+    if (!installing && !downloading) {
       setSelectedClusterId('');
       setError(null);
+      setDownloadProgress(null);
       onOpenChange(false);
     }
   };
@@ -203,7 +267,7 @@ export function InstallPluginDialog({
                           variant={cluster.status === 'running' ? 'default' : 'secondary'}
                           className="ml-2"
                         >
-                          {t(`cluster.status.${cluster.status}`)}
+                          {t(`cluster.statuses.${cluster.status}`)}
                         </Badge>
                       </div>
                     </SelectItem>
@@ -238,26 +302,48 @@ export function InstallPluginDialog({
           </Card>
         </div>
 
+        {/* Download progress / 下载进度 */}
+        {downloading && downloadProgress && (
+          <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+            <CardContent className="pt-4 pb-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-blue-800 dark:text-blue-200">
+                  {downloadProgress.current_step || t('plugin.downloading')}
+                </span>
+                <span className="text-blue-600">{downloadProgress.progress}%</span>
+              </div>
+              <Progress value={downloadProgress.progress} className="h-2" />
+            </CardContent>
+          </Card>
+        )}
+
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={installing}>
+          <Button variant="outline" onClick={handleClose} disabled={installing || downloading}>
             {t('common.cancel')}
           </Button>
-          <Button
-            onClick={handleInstall}
-            disabled={!selectedClusterId || installing || clusters.length === 0}
-          >
-            {installing ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {t('plugin.installing')}
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4 mr-2" />
-                {t('plugin.install')}
-              </>
-            )}
-          </Button>
+          {!isDownloaded && !downloading ? (
+            <Button onClick={handleDownload}>
+              <CloudDownload className="h-4 w-4 mr-2" />
+              {t('plugin.download')}
+            </Button>
+          ) : (
+            <Button
+              onClick={handleInstall}
+              disabled={!selectedClusterId || installing || clusters.length === 0 || !isDownloaded}
+            >
+              {installing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  {t('plugin.installing')}
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  {t('plugin.install')}
+                </>
+              )}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

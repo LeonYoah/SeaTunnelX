@@ -47,6 +47,11 @@ const (
 	// 配置类
 	CommandType_UPDATE_CONFIG   CommandType = 40
 	CommandType_ROLLBACK_CONFIG CommandType = 41
+	// 插件管理
+	CommandType_TRANSFER_PLUGIN  CommandType = 50
+	CommandType_INSTALL_PLUGIN   CommandType = 51
+	CommandType_UNINSTALL_PLUGIN CommandType = 52
+	CommandType_LIST_PLUGINS     CommandType = 53
 )
 
 // Enum value maps for CommandType.
@@ -66,6 +71,10 @@ var (
 		32: "THREAD_DUMP",
 		40: "UPDATE_CONFIG",
 		41: "ROLLBACK_CONFIG",
+		50: "TRANSFER_PLUGIN",
+		51: "INSTALL_PLUGIN",
+		52: "UNINSTALL_PLUGIN",
+		53: "LIST_PLUGINS",
 	}
 	CommandType_value = map[string]int32{
 		"COMMAND_TYPE_UNSPECIFIED": 0,
@@ -82,6 +91,10 @@ var (
 		"THREAD_DUMP":              32,
 		"UPDATE_CONFIG":            40,
 		"ROLLBACK_CONFIG":          41,
+		"TRANSFER_PLUGIN":          50,
+		"INSTALL_PLUGIN":           51,
+		"UNINSTALL_PLUGIN":         52,
+		"LIST_PLUGINS":             53,
 	}
 )
 

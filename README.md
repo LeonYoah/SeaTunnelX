@@ -203,11 +203,11 @@ protoc --proto_path=. \
 1. **下载并安装 protoc 编译器**
 
 ```powershell
-# 一键下载并配置 protoc（临时安装到 TEMP 目录）
+# 一键下载并配置 protoc（安装到 D:\protoc 目录）
 $protocVersion = "28.3"
 $protocZip = "protoc-$protocVersion-win64.zip"
 $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
-$protocDir = "$env:TEMP\protoc"
+$protocDir = "D:\protoc"
 
 if (!(Test-Path $protocDir)) { 
     New-Item -ItemType Directory -Path $protocDir -Force 
@@ -224,9 +224,11 @@ protoc --version
 
 ```powershell
 # 设置环境变量（每次新开 PowerShell 需要执行）
-$protocDir = "$env:TEMP\protoc"
+$protocDir = "D:\protoc"
 $env:PATH = "$protocDir\bin;$env:USERPROFILE\go\bin;$env:PATH"
 
+
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 # 生成 protobuf 代码
 protoc --proto_path=. `
     --go_out=. --go_opt=paths=source_relative `
@@ -234,10 +236,11 @@ protoc --proto_path=. `
     internal/proto/agent/agent.proto
 ```
 
-> 💡 **提示**: Windows 用户也可以选择永久安装 protoc：
-> - 从 [GitHub Releases](https://github.com/protocolbuffers/protobuf/releases) 下载对应版本
-> - 解压到固定目录（如 `C:\protoc`）
-> - 将 `C:\protoc\bin` 添加到系统 PATH 环境变量
+> 💡 **提示**: 为了避免每次都设置环境变量，建议将 `D:\protoc\bin` 添加到系统 PATH 环境变量：
+> - 右键 "此电脑" → "属性" → "高级系统设置" → "环境变量"
+> - 在 "系统变量" 中找到 `Path`，点击 "编辑"
+> - 添加新条目：`D:\protoc\bin`
+> - 点击 "确定" 保存，重启 PowerShell 即可全局使用
 
 #### 验证生成结果
 
