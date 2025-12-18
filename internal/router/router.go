@@ -16,11 +16,14 @@
  */
 
 // Package router 提供 HTTP 路由配置
+// Package router provides HTTP routing configuration
 package router
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -40,40 +43,66 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/task"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
+	grpcServer "github.com/seatunnel/seatunnelX/internal/grpc"
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
 	"github.com/seatunnel/seatunnelX/internal/session"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.uber.org/zap"
 )
 
 func Serve() {
-	defer otel_trace.Shutdown(context.Background())
+	ctx := context.Background()
+	defer otel_trace.Shutdown(ctx)
 
 	// 运行模式
+	// Set run mode
 	if config.Config.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	// 初始化数据库（根据配置自动选择 SQLite、MySQL 或 PostgreSQL）
+	// Initialize database (auto-select SQLite, MySQL or PostgreSQL based on config)
 	if err := db.InitDatabase(); err != nil {
 		log.Fatalf("[API] 初始化数据库失败: %v\n", err)
 	}
 
+	// 初始化 gRPC 服务器（如果启用）
+	// Initialize gRPC server (if enabled)
+	// Requirements: 1.1, 3.4 - Starts gRPC server and heartbeat timeout detection
+	var grpcSrv *grpcServer.Server
+	var agentManager *agent.Manager
+	if config.IsGRPCEnabled() {
+		grpcSrv, agentManager = initGRPCServer(ctx)
+		if grpcSrv != nil {
+			defer grpcSrv.Stop()
+		}
+		if agentManager != nil {
+			defer agentManager.Stop()
+		}
+	} else {
+		log.Println("[API] gRPC 服务器已禁用 / gRPC server is disabled")
+	}
+
 	// 初始化路由
+	// Initialize router
 	r := gin.New()
 	r.Use(gin.Recovery())
 
 	// 初始化会话存储（根据配置自动选择内存或 Redis）
+	// Initialize session store (auto-select memory or Redis based on config)
 	if err := session.InitSessionStore(); err != nil {
 		log.Fatalf("[API] 初始化会话存储失败: %v\n", err)
 	}
 	r.Use(sessions.Sessions(config.Config.App.SessionCookieName, session.GinStore))
 
 	// 初始化 OAuth 提供商（GitHub、Google）
+	// Initialize OAuth providers (GitHub, Google)
 	oauth.InitOAuthProviders()
 
 	// 补充中间件
+	// Add middleware
 	r.Use(otelgin.Middleware(config.Config.App.AppName), loggerMiddleware())
 
 	apiGroup := r.Group(config.Config.App.APIPrefix)
@@ -157,7 +186,7 @@ func Serve() {
 			hostRepo := host.NewRepository(db.DB(context.Background()))
 			clusterRepo := cluster.NewRepository(db.DB(context.Background()))
 			hostService := host.NewService(hostRepo, clusterRepo, &host.ServiceConfig{
-				ControlPlaneAddr: config.Config.App.Addr,
+				ControlPlaneAddr: config.GetExternalURL(),
 			})
 			hostHandler := host.NewHandler(hostService)
 
@@ -191,7 +220,9 @@ func Serve() {
 				// Node management 节点管理
 				clusterRouter.POST("/:id/nodes", clusterHandler.AddNode)
 				clusterRouter.GET("/:id/nodes", clusterHandler.GetNodes)
+				clusterRouter.PUT("/:id/nodes/:nodeId", clusterHandler.UpdateNode)
 				clusterRouter.DELETE("/:id/nodes/:nodeId", clusterHandler.RemoveNode)
+				clusterRouter.POST("/:id/nodes/precheck", clusterHandler.PrecheckNode)
 
 				// Cluster operations 集群操作
 				clusterRouter.POST("/:id/start", clusterHandler.StartCluster)
@@ -203,9 +234,9 @@ func Serve() {
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
 			agentHandler := agent.NewHandler(&agent.HandlerConfig{
-				ControlPlaneAddr: config.Config.App.Addr,
+				ControlPlaneAddr: config.GetExternalURL(),
 				AgentBinaryDir:   "./lib/agent",
-				GRPCPort:         "50051",
+				GRPCPort:         fmt.Sprintf("%d", config.GetGRPCPort()),
 			})
 
 			agentRouter := apiV1Router.Group("/agent")
@@ -213,6 +244,10 @@ func Serve() {
 				// GET /api/v1/agent/install.sh - 获取安装脚本
 				// GET /api/v1/agent/install.sh - Get install script
 				agentRouter.GET("/install.sh", agentHandler.GetInstallScript)
+
+				// GET /api/v1/agent/uninstall.sh - 获取卸载脚本
+				// GET /api/v1/agent/uninstall.sh - Get uninstall script
+				agentRouter.GET("/uninstall.sh", agentHandler.GetUninstallScript)
 
 				// GET /api/v1/agent/download - 下载 Agent 二进制文件
 				// GET /api/v1/agent/download - Download Agent binary
@@ -406,8 +441,126 @@ func Serve() {
 		}
 	}
 
-	// Serve
+	// Serve HTTP API
+	// 启动 HTTP API 服务
+	log.Printf("[API] HTTP 服务器启动于 %s / HTTP server starting on %s\n", config.Config.App.Addr, config.Config.App.Addr)
 	if err := r.Run(config.Config.App.Addr); err != nil {
 		log.Fatalf("[API] serve api failed: %v\n", err)
 	}
+}
+
+// initGRPCServer initializes and starts the gRPC server for Agent communication.
+// initGRPCServer 初始化并启动用于 Agent 通信的 gRPC 服务器。
+// Requirements: 1.1, 3.4 - Starts gRPC server and heartbeat timeout detection.
+func initGRPCServer(ctx context.Context) (*grpcServer.Server, *agent.Manager) {
+	grpcConfig := config.GetGRPCConfig()
+
+	// 创建 logger
+	// Create logger
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Printf("[gRPC] 创建 logger 失败: %v / Failed to create logger: %v\n", err, err)
+		logger, _ = zap.NewDevelopment()
+	}
+
+	// 初始化 Agent Manager
+	// Initialize Agent Manager
+	// Requirements: 3.4 - Starts heartbeat timeout detection goroutine
+	agentManager := agent.NewManager(&agent.ManagerConfig{
+		HeartbeatInterval: time.Duration(grpcConfig.HeartbeatInterval) * time.Second,
+		HeartbeatTimeout:  time.Duration(grpcConfig.HeartbeatTimeout) * time.Second,
+		CheckInterval:     5 * time.Second,
+	})
+
+	// 初始化 Host Service 用于 Agent 状态更新
+	// Initialize Host Service for Agent status updates
+	hostRepo := host.NewRepository(db.DB(ctx))
+	clusterRepo := cluster.NewRepository(db.DB(ctx))
+	hostService := host.NewService(hostRepo, clusterRepo, &host.ServiceConfig{
+		HeartbeatTimeout: time.Duration(grpcConfig.HeartbeatTimeout) * time.Second,
+		ControlPlaneAddr: config.GetExternalURL(),
+	})
+
+	// 设置 Host 状态更新器
+	// Set Host status updater
+	agentManager.SetHostUpdater(&hostStatusUpdaterAdapter{hostService: hostService})
+
+	// 初始化 Audit Repository 用于日志记录
+	// Initialize Audit Repository for logging
+	auditRepo := audit.NewRepository(db.DB(ctx))
+
+	// 创建 gRPC 服务器配置
+	// Create gRPC server configuration
+	serverConfig := &grpcServer.ServerConfig{
+		Port:              grpcConfig.Port,
+		TLSEnabled:        grpcConfig.TLSEnabled,
+		CertFile:          grpcConfig.CertFile,
+		KeyFile:           grpcConfig.KeyFile,
+		CAFile:            grpcConfig.CAFile,
+		MaxRecvMsgSize:    grpcConfig.MaxRecvMsgSize * 1024 * 1024, // MB to bytes
+		MaxSendMsgSize:    grpcConfig.MaxSendMsgSize * 1024 * 1024, // MB to bytes
+		HeartbeatInterval: grpcConfig.HeartbeatInterval,
+	}
+
+	// 创建并启动 gRPC 服务器
+	// Create and start gRPC server
+	srv := grpcServer.NewServer(serverConfig, agentManager, hostService, auditRepo, logger)
+
+	if err := srv.Start(ctx); err != nil {
+		log.Printf("[gRPC] 启动 gRPC 服务器失败: %v / Failed to start gRPC server: %v\n", err, err)
+		return nil, nil
+	}
+
+	log.Printf("[gRPC] gRPC 服务器启动于端口 %d / gRPC server started on port %d\n", grpcConfig.Port, grpcConfig.Port)
+
+	// 启动 Agent Manager 后台任务（心跳超时检测）
+	// Start Agent Manager background tasks (heartbeat timeout detection)
+	if err := agentManager.Start(ctx); err != nil {
+		log.Printf("[gRPC] 启动 Agent Manager 失败: %v / Failed to start Agent Manager: %v\n", err, err)
+	}
+
+	return srv, agentManager
+}
+
+// hostStatusUpdaterAdapter adapts host.Service to agent.HostStatusUpdater interface.
+// hostStatusUpdaterAdapter 将 host.Service 适配到 agent.HostStatusUpdater 接口。
+type hostStatusUpdaterAdapter struct {
+	hostService *host.Service
+}
+
+// UpdateAgentStatus updates the agent status for a host by IP address.
+// UpdateAgentStatus 根据 IP 地址更新主机的 Agent 状态。
+func (a *hostStatusUpdaterAdapter) UpdateAgentStatus(ctx context.Context, ipAddress string, agentID string, version string, systemInfo *agent.SystemInfo) (hostID uint, err error) {
+	var sysInfo *host.SystemInfo
+	if systemInfo != nil {
+		sysInfo = &host.SystemInfo{
+			OSType:      systemInfo.OSType,
+			Arch:        systemInfo.Arch,
+			CPUCores:    systemInfo.CPUCores,
+			TotalMemory: systemInfo.TotalMemory,
+			TotalDisk:   systemInfo.TotalDisk,
+		}
+	}
+
+	h, err := a.hostService.UpdateAgentStatus(ctx, ipAddress, agentID, version, sysInfo)
+	if err != nil {
+		return 0, err
+	}
+	return h.ID, nil
+}
+
+// UpdateHeartbeat updates the heartbeat data for a host.
+// UpdateHeartbeat 更新主机的心跳数据。
+func (a *hostStatusUpdaterAdapter) UpdateHeartbeat(ctx context.Context, agentID string, cpuUsage, memoryUsage, diskUsage float64) error {
+	return a.hostService.UpdateHeartbeat(ctx, agentID, cpuUsage, memoryUsage, diskUsage)
+}
+
+// MarkHostOffline marks a host as offline by agent ID.
+// MarkHostOffline 根据 Agent ID 将主机标记为离线。
+func (a *hostStatusUpdaterAdapter) MarkHostOffline(ctx context.Context, agentID string) error {
+	h, err := a.hostService.GetByAgentID(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	return a.hostService.UpdateAgentStatusByID(ctx, h.ID, host.AgentStatusOffline, agentID, h.AgentVersion)
 }

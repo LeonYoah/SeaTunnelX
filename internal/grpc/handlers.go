@@ -19,6 +19,8 @@ package grpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"time"
 
@@ -46,18 +48,22 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 
 	// Validate request
 	// 验证请求
-	if req.AgentId == "" {
-		return &pb.RegisterResponse{
-			Success: false,
-			Message: "agent_id is required",
-		}, nil
-	}
-
 	if req.IpAddress == "" {
 		return &pb.RegisterResponse{
 			Success: false,
 			Message: "ip_address is required",
 		}, nil
+	}
+
+	// Generate agent_id if not provided (first-time registration)
+	// 如果未提供 agent_id，则生成一个（首次注册）
+	if req.AgentId == "" {
+		req.AgentId = generateAgentID(req.Hostname, req.IpAddress)
+		s.logger.Info("Generated agent_id for new Agent",
+			zap.String("agent_id", req.AgentId),
+			zap.String("hostname", req.Hostname),
+			zap.String("ip_address", req.IpAddress),
+		)
 	}
 
 	// Register Agent with manager
@@ -475,4 +481,16 @@ func extractAgentIDFromResponse(resp *pb.CommandResponse) string {
 		return resp.Output
 	}
 	return ""
+}
+
+// generateAgentID generates a unique agent ID based on hostname and IP address.
+// generateAgentID 根据主机名和 IP 地址生成唯一的 Agent ID。
+func generateAgentID(hostname, ipAddress string) string {
+	// Create a deterministic ID based on hostname and IP
+	// 根据主机名和 IP 创建确定性 ID
+	data := fmt.Sprintf("%s-%s-%d", hostname, ipAddress, time.Now().UnixNano())
+	hash := sha256.Sum256([]byte(data))
+	// Use first 16 characters of hex hash as agent ID
+	// 使用十六进制哈希的前 16 个字符作为 Agent ID
+	return fmt.Sprintf("agent-%x", hash[:8])
 }

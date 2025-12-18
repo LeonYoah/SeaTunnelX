@@ -24,7 +24,8 @@
     "no": "否",
     "clearFilters": "清除筛选",
     "totalItems": "共 {total} 条",
-    "actions": "操作"
+    "actions": "操作",
+    "optional": "可选"
   },
   "auth": {
     "login": {
@@ -286,7 +287,9 @@
     "lastCheck": "最后检查",
     "installCommand": "Agent 安装命令",
     "noInstallCommand": "安装命令不可用",
-    "commandCopied": "安装命令已复制到剪贴板",
+    "uninstallCommand": "Agent 卸载命令",
+    "uninstallCommandTip": "添加 --remove-logs 参数可同时删除日志文件",
+    "commandCopied": "命令已复制到剪贴板",
     "copyFailed": "复制命令失败",
     "createSuccess": "主机创建成功",
     "updateSuccess": "主机更新成功",
@@ -386,6 +389,10 @@
     "addNodeDescription": "将主机添加为此集群的节点",
     "addNodeSuccess": "节点添加成功",
     "addNodeError": "添加节点失败",
+    "editNode": "编辑节点",
+    "editNodeDescription": "编辑节点 {host} ({ip}) 的配置",
+    "editNodeSuccess": "节点更新成功",
+    "updateNodeError": "更新节点失败",
     "removeNode": "移除节点",
     "removeNodeConfirm": "确定要从此集群移除节点 {name} 吗？",
     "removeNodeSuccess": "节点移除成功",
@@ -398,6 +405,11 @@
     "nodeRole": "节点角色",
     "masterRoleDescription": "Master 节点负责集群协调",
     "workerRoleDescription": "Worker 节点执行数据同步任务",
+    "portConfig": "端口配置",
+    "hazelcastPort": "Hazelcast 端口",
+    "apiPort": "API 端口",
+    "workerPort": "Worker 端口",
+    "portConfigDescription": "端口将在添加节点时通过 Agent 进行可用性校验",
     "hostName": "主机名称",
     "hostIP": "主机 IP",
     "nodeStatus": "节点状态",
@@ -430,6 +442,17 @@
       "healthy": "健康",
       "unhealthy": "异常",
       "unknown": "未知"
+    },
+    "precheck": "预检查",
+    "precheckPassed": "预检查通过",
+    "precheckFailed": "预检查失败",
+    "precheckError": "预检查出错",
+    "hazelcastPortRequired": "Hazelcast 端口是必填项",
+    "precheckItems": {
+      "agent_status": "Agent 状态",
+      "port_listening": "端口监听",
+      "directory_check": "目录检查",
+      "seatunnel_api": "SeaTunnel API"
     }
   },
   "audit": {

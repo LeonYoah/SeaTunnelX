@@ -302,7 +302,7 @@ func TestDownloadAgentSuccess(t *testing.T) {
 	// Create test binary file
 	// 创建测试二进制文件
 	testBinaryContent := []byte("test binary content")
-	testBinaryPath := filepath.Join(tempDir, "agent-linux-amd64")
+	testBinaryPath := filepath.Join(tempDir, "seatunnelx-agent-linux-amd64")
 	if err := os.WriteFile(testBinaryPath, testBinaryContent, 0755); err != nil {
 		t.Fatalf("Failed to create test binary: %v", err)
 	}
@@ -330,8 +330,8 @@ func TestDownloadAgentSuccess(t *testing.T) {
 	// Verify content disposition
 	// 验证内容处置
 	contentDisposition := w.Header().Get("Content-Disposition")
-	if !strings.Contains(contentDisposition, "agent-linux-amd64") {
-		t.Errorf("Expected content disposition with 'agent-linux-amd64', got '%s'", contentDisposition)
+	if !strings.Contains(contentDisposition, "seatunnelx-agent-linux-amd64") {
+		t.Errorf("Expected content disposition with 'seatunnelx-agent-linux-amd64', got '%s'", contentDisposition)
 	}
 
 	// Verify content
@@ -359,10 +359,10 @@ func TestDownloadAgentAllArchitectures(t *testing.T) {
 		arch     string
 		filename string
 	}{
-		{"linux", "amd64", "agent-linux-amd64"},
-		{"linux", "arm64", "agent-linux-arm64"},
-		{"darwin", "amd64", "agent-darwin-amd64"},
-		{"darwin", "arm64", "agent-darwin-arm64"},
+		{"linux", "amd64", "seatunnelx-agent-linux-amd64"},
+		{"linux", "arm64", "seatunnelx-agent-linux-arm64"},
+		{"darwin", "amd64", "seatunnelx-agent-darwin-amd64"},
+		{"darwin", "arm64", "seatunnelx-agent-darwin-arm64"},
 	}
 
 	for _, tc := range testCases {
@@ -500,7 +500,7 @@ func TestDownloadAgentCaseInsensitive(t *testing.T) {
 
 	// Create test binary
 	// 创建测试二进制文件
-	testBinaryPath := filepath.Join(tempDir, "agent-linux-amd64")
+	testBinaryPath := filepath.Join(tempDir, "seatunnelx-agent-linux-amd64")
 	if err := os.WriteFile(testBinaryPath, []byte("test"), 0755); err != nil {
 		t.Fatalf("Failed to create test binary: %v", err)
 	}

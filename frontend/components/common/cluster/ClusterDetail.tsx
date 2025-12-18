@@ -59,6 +59,7 @@ import {
 } from '@/lib/services/cluster/types';
 import {EditClusterDialog} from './EditClusterDialog';
 import {AddNodeDialog} from './AddNodeDialog';
+import {EditNodeDialog} from './EditNodeDialog';
 
 interface ClusterDetailProps {
   clusterId: number;
@@ -127,6 +128,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   // Dialog state / 对话框状态
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isAddNodeDialogOpen, setIsAddNodeDialogOpen] = useState(false);
+  const [isEditNodeDialogOpen, setIsEditNodeDialogOpen] = useState(false);
+  const [nodeToEdit, setNodeToEdit] = useState<NodeInfo | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [nodeToRemove, setNodeToRemove] = useState<NodeInfo | null>(null);
 
@@ -274,6 +277,26 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     setIsAddNodeDialogOpen(false);
     loadClusterData();
     toast.success(t('cluster.addNodeSuccess'));
+  };
+
+  /**
+   * Handle node edited
+   * 处理节点编辑完成
+   */
+  const handleNodeEdited = () => {
+    setIsEditNodeDialogOpen(false);
+    setNodeToEdit(null);
+    loadClusterData();
+    toast.success(t('cluster.editNodeSuccess'));
+  };
+
+  /**
+   * Open edit node dialog
+   * 打开编辑节点对话框
+   */
+  const openEditNodeDialog = (node: NodeInfo) => {
+    setNodeToEdit(node);
+    setIsEditNodeDialogOpen(true);
   };
 
   if (loading) {
@@ -532,13 +555,24 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                       </TableCell>
                       <TableCell>{node.process_pid || '-'}</TableCell>
                       <TableCell>
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          onClick={() => setNodeToRemove(node)}
-                        >
-                          <Trash2 className='h-4 w-4 text-destructive' />
-                        </Button>
+                        <div className='flex items-center gap-1'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => openEditNodeDialog(node)}
+                            title={t('cluster.editNode')}
+                          >
+                            <Pencil className='h-4 w-4' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => setNodeToRemove(node)}
+                            title={t('cluster.removeNode')}
+                          >
+                            <Trash2 className='h-4 w-4 text-destructive' />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -587,7 +621,17 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         open={isAddNodeDialogOpen}
         onOpenChange={setIsAddNodeDialogOpen}
         clusterId={clusterId}
+        deploymentMode={cluster.deployment_mode}
         onSuccess={handleNodeAdded}
+      />
+
+      {/* Edit Node Dialog / 编辑节点对话框 */}
+      <EditNodeDialog
+        open={isEditNodeDialogOpen}
+        onOpenChange={setIsEditNodeDialogOpen}
+        node={nodeToEdit}
+        deploymentMode={cluster.deployment_mode}
+        onSuccess={handleNodeEdited}
       />
 
       {/* Delete Cluster Dialog / 删除集群对话框 */}

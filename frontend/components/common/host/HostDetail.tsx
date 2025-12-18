@@ -349,10 +349,11 @@ export function HostDetail({open, onOpenChange, host, onEdit}: HostDetailProps) 
             </div>
           </div>
 
-          {/* Install Command (for bare_metal) / 安装命令（物理机） */}
+          {/* Install & Uninstall Commands (for bare_metal) / 安装和卸载命令（物理机） */}
           {host.host_type === HostType.BARE_METAL && (
             <>
               <Separator />
+              {/* Install Command / 安装命令 */}
               <div>
                 <h3 className='text-sm font-medium mb-3 flex items-center gap-2'>
                   <Terminal className='h-4 w-4' />
@@ -379,6 +380,39 @@ export function HostDetail({open, onOpenChange, host, onEdit}: HostDetailProps) 
                     {t('host.noInstallCommand')}
                   </div>
                 )}
+              </div>
+
+              {/* Uninstall Command / 卸载命令 */}
+              <div>
+                <h3 className='text-sm font-medium mb-3 flex items-center gap-2'>
+                  <Terminal className='h-4 w-4' />
+                  {t('host.uninstallCommand')}
+                </h3>
+                {installCommand ? (
+                  <div className='relative'>
+                    <pre className='bg-muted p-3 rounded-md text-xs overflow-x-auto'>
+                      {installCommand.replace('/install.sh', '/uninstall.sh')}
+                    </pre>
+                    <Button
+                      variant='ghost'
+                      size='icon'
+                      className='absolute top-2 right-2'
+                      onClick={() => {
+                        navigator.clipboard.writeText(installCommand.replace('/install.sh', '/uninstall.sh'));
+                        toast.success(t('host.commandCopied'));
+                      }}
+                    >
+                      <Copy className='h-4 w-4' />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className='text-sm text-muted-foreground'>
+                    {t('host.noInstallCommand')}
+                  </div>
+                )}
+                <p className='text-xs text-muted-foreground mt-2'>
+                  {t('host.uninstallCommandTip')}
+                </p>
               </div>
             </>
           )}

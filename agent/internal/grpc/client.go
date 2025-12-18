@@ -492,10 +492,15 @@ func (c *Client) GetLastHeartbeat() time.Time {
 func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler) error {
 	c.mu.RLock()
 	client := c.client
+	agentID := c.agentID
 	c.mu.RUnlock()
 
 	if client == nil {
 		return errors.New("client not connected")
+	}
+
+	if agentID == "" {
+		return errors.New("agent ID not set, please register first")
 	}
 
 	// Create bidirectional stream
@@ -505,55 +510,62 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 		return fmt.Errorf("failed to create command stream: %w", err)
 	}
 
+	// Send initial message with Agent ID to identify ourselves
+	// 发送包含 Agent ID 的初始消息来标识自己
+	initMsg := &pb.CommandResponse{
+		CommandId: "AGENT_INIT",
+		Output:    agentID, // Agent ID is sent in the output field
+		Status:    pb.CommandStatus_SUCCESS,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	if err := stream.Send(initMsg); err != nil {
+		return fmt.Errorf("failed to send init message: %w", err)
+	}
+
 	// Start goroutine to receive commands and send responses
 	// 启动 goroutine 接收指令并发送响应
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-c.stopCh:
-				return
-			default:
-			}
-
-			// Receive command from Control Plane
-			// 从 Control Plane 接收指令
-			cmd, err := stream.Recv()
-			if err != nil {
-				// Log error and exit (in production, handle reconnection)
-				// 记录错误并退出（生产环境处理重连）
-				fmt.Printf("Command stream receive error: %v\n", err)
-				return
-			}
-
-			// Handle command in a separate goroutine
-			// 在单独的 goroutine 中处理指令
-			go func(cmd *pb.CommandRequest) {
-				// Execute command handler
-				// 执行指令处理器
-				resp, err := handler(ctx, cmd)
-				if err != nil {
-					// Create error response
-					// 创建错误响应
-					resp = &pb.CommandResponse{
-						CommandId: cmd.CommandId,
-						Status:    pb.CommandStatus_FAILED,
-						Error:     err.Error(),
-						Timestamp: time.Now().UnixMilli(),
-					}
-				}
-
-				// Send response back to Control Plane
-				// 将响应发送回 Control Plane
-				if sendErr := stream.Send(resp); sendErr != nil {
-					fmt.Printf("Failed to send command response: %v\n", sendErr)
-				}
-			}(cmd)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.stopCh:
+			return nil
+		default:
 		}
-	}()
 
-	return nil
+		// Receive command from Control Plane
+		// 从 Control Plane 接收指令
+		cmd, err := stream.Recv()
+		if err != nil {
+			// Log error and exit (in production, handle reconnection)
+			// 记录错误并退出（生产环境处理重连）
+			return fmt.Errorf("command stream receive error: %w", err)
+		}
+
+		// Handle command in a separate goroutine
+		// 在单独的 goroutine 中处理指令
+		go func(cmd *pb.CommandRequest) {
+			// Execute command handler
+			// 执行指令处理器
+			resp, err := handler(ctx, cmd)
+			if err != nil {
+				// Create error response
+				// 创建错误响应
+				resp = &pb.CommandResponse{
+					CommandId: cmd.CommandId,
+					Status:    pb.CommandStatus_FAILED,
+					Error:     err.Error(),
+					Timestamp: time.Now().UnixMilli(),
+				}
+			}
+
+			// Send response back to Control Plane
+			// 将响应发送回 Control Plane
+			if sendErr := stream.Send(resp); sendErr != nil {
+				fmt.Printf("Failed to send command response: %v\n", sendErr)
+			}
+		}(cmd)
+	}
 }
 
 // ReportCommandResult sends a command execution result to Control Plane

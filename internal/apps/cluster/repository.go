@@ -311,6 +311,19 @@ func (r *Repository) UpdateNodeProcess(ctx context.Context, nodeID uint, pid int
 	return nil
 }
 
+// UpdateNode updates a cluster node's configuration.
+// UpdateNode 更新集群节点的配置。
+func (r *Repository) UpdateNode(ctx context.Context, node *ClusterNode) error {
+	result := r.db.WithContext(ctx).Save(node)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
 // CountNodesByClusterID returns the number of nodes in a cluster.
 func (r *Repository) CountNodesByClusterID(ctx context.Context, clusterID uint) (int64, error) {
 	var count int64

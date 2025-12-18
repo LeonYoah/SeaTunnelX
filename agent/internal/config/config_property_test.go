@@ -85,8 +85,6 @@ func generateValidConfig(t *rapid.T) *Config {
 	// Generate paths / 生成路径
 	logFile := "/var/log/" + rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "logFileName") + ".log"
 	installDir := "/opt/" + rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "installDirName")
-	configDir := installDir + "/config"
-	logDir := installDir + "/logs"
 
 	// Generate TLS config / 生成 TLS 配置
 	tlsEnabled := rapid.Bool().Draw(t, "tlsEnabled")
@@ -128,8 +126,6 @@ func generateValidConfig(t *rapid.T) *Config {
 		},
 		SeaTunnel: SeaTunnelConfig{
 			InstallDir: installDir,
-			ConfigDir:  configDir,
-			LogDir:     logDir,
 		},
 	}
 }

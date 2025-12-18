@@ -105,6 +105,23 @@ func setDefaults(c *configModel) {
 		c.Log.Output = "stdout"
 	}
 
+	// gRPC 默认配置
+	if c.GRPC.Port == 0 {
+		c.GRPC.Port = 9000
+	}
+	if c.GRPC.MaxRecvMsgSize == 0 {
+		c.GRPC.MaxRecvMsgSize = 16 // 16MB
+	}
+	if c.GRPC.MaxSendMsgSize == 0 {
+		c.GRPC.MaxSendMsgSize = 16 // 16MB
+	}
+	if c.GRPC.HeartbeatInterval == 0 {
+		c.GRPC.HeartbeatInterval = 10 // 10 seconds
+	}
+	if c.GRPC.HeartbeatTimeout == 0 {
+		c.GRPC.HeartbeatTimeout = 30 // 30 seconds
+	}
+
 	// 存储默认配置
 	if c.Storage.BaseDir == "" {
 		c.Storage.BaseDir = "./data/storage"
@@ -181,4 +198,38 @@ func GetMaxPackageSize() int64 {
 		return Config.Storage.MaxPackageSize * 1024 * 1024 // MB to bytes
 	}
 	return 2048 * 1024 * 1024 // 默认 2GB
+}
+
+// GetGRPCConfig 获取 gRPC 配置
+// GetGRPCConfig returns the gRPC configuration
+func GetGRPCConfig() GRPCConfig {
+	return Config.GRPC
+}
+
+// GetExternalURL 获取外部访问 URL
+// GetExternalURL returns the external URL for accessing the Control Plane
+func GetExternalURL() string {
+	if Config.App.ExternalURL != "" {
+		return Config.App.ExternalURL
+	}
+	// Fallback: if external_url is not set, return empty string
+	// 回退：如果未设置 external_url，返回空字符串
+	// The caller should handle this case appropriately
+	// 调用者应适当处理这种情况
+	return ""
+}
+
+// IsGRPCEnabled 检查 gRPC 是否启用
+// IsGRPCEnabled checks if gRPC server is enabled
+func IsGRPCEnabled() bool {
+	return Config.GRPC.Enabled
+}
+
+// GetGRPCPort 获取 gRPC 端口
+// GetGRPCPort returns the gRPC server port
+func GetGRPCPort() int {
+	if Config.GRPC.Port > 0 {
+		return Config.GRPC.Port
+	}
+	return 9000
 }

@@ -492,7 +492,9 @@ func (s *Service) GetInstallCommand(ctx context.Context, hostID uint) (string, e
 	// 生成安装命令
 	// The command uses curl to download and execute the install script from Control Plane
 	// 该命令使用 curl 从 Control Plane 下载并执行安装脚本
-	installCmd := fmt.Sprintf("curl -sSL http://%s/api/v1/agent/install.sh | bash", s.controlPlaneAddr)
+	// controlPlaneAddr should be a full URL like "http://192.168.1.100:8000"
+	// controlPlaneAddr 应该是完整的 URL，如 "http://192.168.1.100:8000"
+	installCmd := fmt.Sprintf("curl -sSL %s/api/v1/agent/install.sh | bash", s.controlPlaneAddr)
 
 	return installCmd, nil
 }

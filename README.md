@@ -250,6 +250,51 @@ protoc --proto_path=. `
 go test ./internal/proto/agent/...
 ```
 
+### Agent 打包
+
+Agent 是部署在目标主机上的守护进程，需要交叉编译为 Linux 二进制文件。
+
+#### Linux / macOS
+
+```bash
+cd agent
+
+# 打包 Linux amd64
+GOOS=linux GOARCH=amd64 go build -o seatunnelx-agent ./cmd/main.go
+
+# 打包 Linux arm64
+GOOS=linux GOARCH=arm64 go build -o seatunnelx-agent-arm64 ./cmd/main.go
+```
+
+#### Windows (PowerShell)
+
+```powershell
+cd agent
+
+# 打包 Linux amd64
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o seatunnelx-agent ./cmd/main.go
+
+# 打包 Linux arm64
+$env:GOOS="linux"; $env:GOARCH="arm64"; go build -o seatunnelx-agent-arm64 ./cmd/main.go
+
+# 恢复环境变量（可选）
+Remove-Item Env:GOOS; Remove-Item Env:GOARCH
+```
+
+#### 部署 Agent 二进制
+
+打包完成后，将 `seatunnelx-agent` 复制到 `lib/agent/` 目录：
+
+```bash
+# Linux/macOS
+cp agent/seatunnelx-agent lib/agent/seatunnelx-agent-linux-amd64
+cp agent/seatunnelx-agent-arm64 lib/agent/seatunnelx-agent-linux-arm64
+
+# Windows PowerShell
+Copy-Item agent/seatunnelx-agent lib/agent/seatunnelx-agent-linux-amd64
+Copy-Item agent/seatunnelx-agent-arm64 lib/agent/seatunnelx-agent-linux-arm64
+```
+
 ## 🚀 部署
 
 ### Docker 部署

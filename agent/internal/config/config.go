@@ -144,18 +144,15 @@ type LogConfig struct {
 
 // SeaTunnelConfig contains SeaTunnel-related settings
 // SeaTunnelConfig 包含 SeaTunnel 相关设置
+// Note: SeaTunnel manages its own config and log directories internally
+// 注意：SeaTunnel 内部自己管理配置目录和日志目录
 type SeaTunnelConfig struct {
-	// InstallDir is the SeaTunnel installation directory
-	// InstallDir 是 SeaTunnel 安装目录
+	// InstallDir is the default SeaTunnel installation directory
+	// InstallDir 是默认的 SeaTunnel 安装目录
+	// This is only used as a fallback; actual install_dir is specified
+	// by Control Plane commands when installing SeaTunnel
+	// 这只是作为后备使用；实际的 install_dir 在安装 SeaTunnel 时由 Control Plane 命令指定
 	InstallDir string `mapstructure:"install_dir"`
-
-	// ConfigDir is the SeaTunnel configuration directory
-	// ConfigDir 是 SeaTunnel 配置目录
-	ConfigDir string `mapstructure:"config_dir"`
-
-	// LogDir is the SeaTunnel log directory
-	// LogDir 是 SeaTunnel 日志目录
-	LogDir string `mapstructure:"log_dir"`
 }
 
 // Load loads configuration from file and environment variables
@@ -229,9 +226,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.max_age", DefaultLogMaxAge)
 
 	// SeaTunnel defaults / SeaTunnel 默认值
+	// Note: config_dir and log_dir are automatically derived from install_dir
+	// 注意：config_dir 和 log_dir 自动基于 install_dir 计算
 	v.SetDefault("seatunnel.install_dir", DefaultSeaTunnelInstallDir)
-	v.SetDefault("seatunnel.config_dir", DefaultSeaTunnelInstallDir+"/config")
-	v.SetDefault("seatunnel.log_dir", DefaultSeaTunnelInstallDir+"/logs")
 }
 
 // Validate validates the configuration
@@ -306,9 +303,9 @@ log:
   max_age: %d
 
 seatunnel:
+  # Note: config_dir and log_dir are automatically derived from install_dir
+  # 注意：config_dir 和 log_dir 自动基于 install_dir 计算
   install_dir: "%s"
-  config_dir: "%s"
-  log_dir: "%s"
 `,
 		c.Agent.ID,
 		formatAddresses(c.ControlPlane.Addresses),
@@ -324,8 +321,6 @@ seatunnel:
 		c.Log.MaxBackups,
 		c.Log.MaxAge,
 		c.SeaTunnel.InstallDir,
-		c.SeaTunnel.ConfigDir,
-		c.SeaTunnel.LogDir,
 	)
 	return []byte(yamlContent), nil
 }
@@ -412,9 +407,9 @@ func (c *Config) Equal(other *Config) bool {
 	}
 
 	// Compare SeaTunnel / 比较 SeaTunnel
-	if c.SeaTunnel.InstallDir != other.SeaTunnel.InstallDir ||
-		c.SeaTunnel.ConfigDir != other.SeaTunnel.ConfigDir ||
-		c.SeaTunnel.LogDir != other.SeaTunnel.LogDir {
+	// Note: Only compare InstallDir since ConfigDir and LogDir are derived from it
+	// 注意：只比较 InstallDir，因为 ConfigDir 和 LogDir 是从它派生的
+	if c.SeaTunnel.InstallDir != other.SeaTunnel.InstallDir {
 		return false
 	}
 

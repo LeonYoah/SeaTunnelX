@@ -28,16 +28,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {Loader2, Server} from 'lucide-react';
+import {Loader2, Server, CheckCircle2, XCircle, AlertCircle} from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
-import {NodeRole, AddNodeRequest} from '@/lib/services/cluster/types';
+import {NodeRole, AddNodeRequest, DefaultPorts, DeploymentMode, PrecheckResult, PrecheckCheckItem} from '@/lib/services/cluster/types';
 import {HostInfo, AgentStatus} from '@/lib/services/host/types';
 
 interface AddNodeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   clusterId: number;
+  deploymentMode: DeploymentMode;
   onSuccess: () => void;
 }
 
@@ -49,6 +50,7 @@ export function AddNodeDialog({
   open,
   onOpenChange,
   clusterId,
+  deploymentMode,
   onSuccess,
 }: AddNodeDialogProps) {
   const t = useTranslations();
@@ -60,8 +62,30 @@ export function AddNodeDialog({
   const [role, setRole] = useState<NodeRole>(NodeRole.WORKER);
   const [installDir, setInstallDir] = useState('/opt/seatunnel');
 
+  // Port configuration / 端口配置
+  const [hazelcastPort, setHazelcastPort] = useState<number>(DefaultPorts.WORKER_HAZELCAST);
+  const [apiPort, setApiPort] = useState<number>(DefaultPorts.MASTER_API);
+  const [workerPort, setWorkerPort] = useState<number>(DefaultPorts.WORKER_HAZELCAST);
+
   // Available hosts / 可用主机
   const [availableHosts, setAvailableHosts] = useState<HostInfo[]>([]);
+
+  // Precheck state / 预检查状态
+  const [precheckLoading, setPrecheckLoading] = useState(false);
+  const [precheckResult, setPrecheckResult] = useState<PrecheckResult | null>(null);
+
+  // Update default ports when role changes / 角色变化时更新默认端口
+  useEffect(() => {
+    if (role === NodeRole.MASTER) {
+      setHazelcastPort(DefaultPorts.MASTER_HAZELCAST);
+      setApiPort(DefaultPorts.MASTER_API);
+      if (deploymentMode === DeploymentMode.HYBRID) {
+        setWorkerPort(DefaultPorts.WORKER_HAZELCAST);
+      }
+    } else {
+      setHazelcastPort(DefaultPorts.WORKER_HAZELCAST);
+    }
+  }, [role, deploymentMode]);
 
   /**
    * Load available hosts
@@ -106,6 +130,69 @@ export function AddNodeDialog({
     setHostId('');
     setRole(NodeRole.WORKER);
     setInstallDir('/opt/seatunnel');
+    setHazelcastPort(DefaultPorts.WORKER_HAZELCAST);
+    setApiPort(DefaultPorts.MASTER_API);
+    setWorkerPort(DefaultPorts.WORKER_HAZELCAST);
+    setPrecheckResult(null);
+  };
+
+  /**
+   * Handle precheck
+   * 处理预检查
+   */
+  const handlePrecheck = async () => {
+    if (!hostId) {
+      toast.error(t('cluster.hostRequired'));
+      return;
+    }
+
+    if (!hazelcastPort || hazelcastPort <= 0) {
+      toast.error(t('cluster.hazelcastPortRequired'));
+      return;
+    }
+
+    setPrecheckLoading(true);
+    setPrecheckResult(null);
+    try {
+      const result = await services.cluster.precheckNodeSafe(clusterId, {
+        host_id: parseInt(hostId, 10),
+        role: role,
+        install_dir: installDir.trim() || '/opt/seatunnel',
+        hazelcast_port: hazelcastPort,
+        api_port: role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
+        worker_port: deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER ? workerPort : undefined,
+      });
+
+      if (result.success && result.data) {
+        setPrecheckResult(result.data);
+        if (result.data.success) {
+          toast.success(t('cluster.precheckPassed'));
+        } else {
+          toast.warning(t('cluster.precheckFailed'));
+        }
+      } else {
+        toast.error(result.error || t('cluster.precheckError'));
+      }
+    } finally {
+      setPrecheckLoading(false);
+    }
+  };
+
+  /**
+   * Get status icon for precheck item
+   * 获取预检查项的状态图标
+   */
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'passed':
+        return <CheckCircle2 className='h-4 w-4 text-green-500' />;
+      case 'failed':
+        return <XCircle className='h-4 w-4 text-red-500' />;
+      case 'skipped':
+        return <AlertCircle className='h-4 w-4 text-yellow-500' />;
+      default:
+        return null;
+    }
   };
 
   /**
@@ -129,6 +216,10 @@ export function AddNodeDialog({
         host_id: parseInt(hostId, 10),
         role: role,
         install_dir: installDir.trim(),
+        hazelcast_port: hazelcastPort,
+        // API port is optional, only send if > 0 / API 端口可选，仅当 > 0 时发送
+        api_port: role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
+        worker_port: deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER ? workerPort : undefined,
       };
 
       const result = await services.cluster.addNodeSafe(clusterId, data);
@@ -243,15 +334,107 @@ export function AddNodeDialog({
               {t('cluster.nodeInstallDirDescription')}
             </p>
           </div>
+
+          {/* Port Configuration / 端口配置 */}
+          <div className='space-y-3'>
+            <Label>{t('cluster.portConfig')}</Label>
+            
+            {/* Hazelcast Port / Hazelcast 端口 */}
+            <div className='grid grid-cols-2 gap-4'>
+              <div className='space-y-1'>
+                <Label htmlFor='hazelcastPort' className='text-xs'>
+                  {t('cluster.hazelcastPort')} <span className='text-destructive'>*</span>
+                </Label>
+                <Input
+                  id='hazelcastPort'
+                  type='number'
+                  value={hazelcastPort}
+                  onChange={(e) => setHazelcastPort(parseInt(e.target.value, 10) || 0)}
+                  placeholder={role === NodeRole.MASTER ? '5801' : '5802'}
+                  required
+                />
+              </div>
+
+              {/* API Port (Master only, optional) / API 端口（仅 Master，可选） */}
+              {role === NodeRole.MASTER && (
+                <div className='space-y-1'>
+                  <Label htmlFor='apiPort' className='text-xs'>
+                    {t('cluster.apiPort')} <span className='text-muted-foreground'>({t('common.optional')})</span>
+                  </Label>
+                  <Input
+                    id='apiPort'
+                    type='number'
+                    value={apiPort || ''}
+                    onChange={(e) => setApiPort(parseInt(e.target.value, 10) || 0)}
+                    placeholder='8080'
+                  />
+                </div>
+              )}
+
+              {/* Worker Port (Hybrid mode Master only) / Worker 端口（仅混合模式 Master） */}
+              {deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER && (
+                <div className='space-y-1'>
+                  <Label htmlFor='workerPort' className='text-xs'>
+                    {t('cluster.workerPort')}
+                  </Label>
+                  <Input
+                    id='workerPort'
+                    type='number'
+                    value={workerPort}
+                    onChange={(e) => setWorkerPort(parseInt(e.target.value, 10) || 0)}
+                    placeholder='5802'
+                  />
+                </div>
+              )}
+            </div>
+            <p className='text-xs text-muted-foreground'>
+              {t('cluster.portConfigDescription')}
+            </p>
+          </div>
+
+          {/* Precheck Results / 预检查结果 */}
+          {precheckResult && (
+            <div className='space-y-2 p-3 border rounded-md bg-muted/50'>
+              <div className='flex items-center gap-2'>
+                {precheckResult.success ? (
+                  <CheckCircle2 className='h-5 w-5 text-green-500' />
+                ) : (
+                  <XCircle className='h-5 w-5 text-red-500' />
+                )}
+                <span className='font-medium text-sm'>
+                  {precheckResult.success ? t('cluster.precheckPassed') : t('cluster.precheckFailed')}
+                </span>
+              </div>
+              <div className='space-y-1'>
+                {precheckResult.checks.map((check: PrecheckCheckItem, index: number) => (
+                  <div key={index} className='flex items-start gap-2 text-xs'>
+                    {getStatusIcon(check.status)}
+                    <div>
+                      <span className='font-medium'>{t(`cluster.precheckItems.${check.name}`, {defaultValue: check.name})}: </span>
+                      <span className='text-muted-foreground'>{check.message}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <DialogFooter>
-          <Button variant='outline' onClick={() => handleClose(false)} disabled={loading}>
+        <DialogFooter className='gap-2 sm:gap-0'>
+          <Button variant='outline' onClick={() => handleClose(false)} disabled={loading || precheckLoading}>
             {t('common.cancel')}
           </Button>
           <Button
+            variant='secondary'
+            onClick={handlePrecheck}
+            disabled={loading || precheckLoading || !hostId || !hazelcastPort}
+          >
+            {precheckLoading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
+            {t('cluster.precheck')}
+          </Button>
+          <Button
             onClick={handleSubmit}
-            disabled={loading || !hostId || availableHosts.length === 0}
+            disabled={loading || precheckLoading || !hostId || !hazelcastPort || availableHosts.length === 0}
           >
             {loading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
             {t('cluster.addNode')}

@@ -356,11 +356,17 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 		return nil, ErrInvalidNodeRole
 	}
 
-	// Check if cluster exists
-	// 检查集群是否存在
-	_, err := s.repo.GetByID(ctx, clusterID, false)
+	// Get cluster to determine deployment mode
+	// 获取集群以确定部署模式
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
 	if err != nil {
 		return nil, err
+	}
+
+	// Validate hazelcast port is provided (required field)
+	// 验证 Hazelcast 端口已提供（必填字段）
+	if req.HazelcastPort <= 0 || req.HazelcastPort > 65535 {
+		return nil, ErrInvalidHazelcastPort
 	}
 
 	// Check if host exists and has Agent installed
@@ -387,12 +393,41 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 		installDir = "/opt/seatunnel" // Default installation directory / 默认安装目录
 	}
 
+	// Set default ports based on role and deployment mode
+	// 根据角色和部署模式设置默认端口
+	hazelcastPort := req.HazelcastPort
+	apiPort := req.APIPort
+	workerPort := req.WorkerPort
+
+	if hazelcastPort == 0 {
+		if req.Role == NodeRoleMaster {
+			hazelcastPort = DefaultPorts.MasterHazelcast
+		} else {
+			hazelcastPort = DefaultPorts.WorkerHazelcast
+		}
+	}
+
+	// API port is optional for Master nodes
+	// API 端口对于 Master 节点是可选的
+	if req.Role == NodeRoleMaster && apiPort == 0 {
+		apiPort = DefaultPorts.MasterAPI
+	}
+
+	// Worker port for hybrid mode Master nodes
+	// 混合模式 Master 节点的 Worker 端口
+	if cluster.DeploymentMode == DeploymentModeHybrid && req.Role == NodeRoleMaster && workerPort == 0 {
+		workerPort = DefaultPorts.WorkerHazelcast
+	}
+
 	node := &ClusterNode{
-		ClusterID:  clusterID,
-		HostID:     req.HostID,
-		Role:       req.Role,
-		InstallDir: installDir,
-		Status:     NodeStatusPending,
+		ClusterID:     clusterID,
+		HostID:        req.HostID,
+		Role:          req.Role,
+		InstallDir:    installDir,
+		HazelcastPort: hazelcastPort,
+		APIPort:       apiPort,
+		WorkerPort:    workerPort,
+		Status:        NodeStatusPending,
 	}
 
 	if err := s.repo.AddNode(ctx, node); err != nil {
@@ -443,6 +478,9 @@ func (s *Service) GetNodes(ctx context.Context, clusterID uint) ([]*NodeInfo, er
 			HostID:        node.HostID,
 			Role:          node.Role,
 			InstallDir:    node.InstallDir,
+			HazelcastPort: node.HazelcastPort,
+			APIPort:       node.APIPort,
+			WorkerPort:    node.WorkerPort,
 			Status:        node.Status,
 			ProcessPID:    node.ProcessPID,
 			ProcessStatus: node.ProcessStatus,
@@ -482,6 +520,45 @@ func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID uint, status Node
 // UpdateNodeProcess 更新集群节点的进程信息。
 func (s *Service) UpdateNodeProcess(ctx context.Context, nodeID uint, pid int, processStatus string) error {
 	return s.repo.UpdateNodeProcess(ctx, nodeID, pid, processStatus)
+}
+
+// UpdateNode updates a node's configuration (install_dir, ports).
+// UpdateNode 更新节点配置（安装目录、端口）。
+func (s *Service) UpdateNode(ctx context.Context, clusterID uint, nodeID uint, req *UpdateNodeRequest) (*ClusterNode, error) {
+	// Verify node belongs to the cluster
+	// 验证节点属于该集群
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+
+	if node.ClusterID != clusterID {
+		return nil, ErrNodeNotFound
+	}
+
+	// Update fields if provided
+	// 如果提供了字段则更新
+	if req.InstallDir != nil {
+		node.InstallDir = *req.InstallDir
+	}
+
+	if req.HazelcastPort != nil {
+		node.HazelcastPort = *req.HazelcastPort
+	}
+
+	if req.APIPort != nil {
+		node.APIPort = *req.APIPort
+	}
+
+	if req.WorkerPort != nil {
+		node.WorkerPort = *req.WorkerPort
+	}
+
+	if err := s.repo.UpdateNode(ctx, node); err != nil {
+		return nil, err
+	}
+
+	return node, nil
 }
 
 // GetStatus retrieves the detailed status of a cluster including node health.
@@ -727,4 +804,194 @@ func (s *Service) executeOperation(ctx context.Context, clusterID uint, operatio
 // GetClustersByHostID 获取将特定主机作为节点的所有集群。
 func (s *Service) GetClustersByHostID(ctx context.Context, hostID uint) ([]*Cluster, error) {
 	return s.repo.GetClustersWithHostID(ctx, hostID)
+}
+
+// PrecheckNode performs precheck on a node before adding to cluster.
+// PrecheckNode 在将节点添加到集群之前执行预检查。
+// Checks:
+// 1. Port is listening (SeaTunnel service is running) / 端口正在监听（SeaTunnel 服务正在运行）
+// 2. Directory exists and is writable / 目录存在且可写
+// 3. SeaTunnel REST API connectivity / SeaTunnel REST API 连通性
+func (s *Service) PrecheckNode(ctx context.Context, clusterID uint, req *PrecheckRequest) (*PrecheckResult, error) {
+	// Validate cluster exists
+	// 验证集群存在
+	_, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate hazelcast port
+	// 验证 Hazelcast 端口
+	if req.HazelcastPort <= 0 || req.HazelcastPort > 65535 {
+		return nil, ErrInvalidHazelcastPort
+	}
+
+	// Get host information
+	// 获取主机信息
+	if s.hostProvider == nil {
+		return &PrecheckResult{
+			Success: false,
+			Message: "Host provider not configured / 主机提供者未配置",
+			Checks:  []*PrecheckCheckItem{},
+		}, nil
+	}
+
+	hostInfo, err := s.hostProvider.GetHostByID(ctx, req.HostID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize result
+	// 初始化结果
+	result := &PrecheckResult{
+		Success: true,
+		Checks:  make([]*PrecheckCheckItem, 0),
+	}
+
+	// Check 1: Agent is installed and online
+	// 检查 1：Agent 已安装且在线
+	agentCheck := &PrecheckCheckItem{
+		Name: "agent_status",
+	}
+	if hostInfo.AgentStatus != "installed" {
+		agentCheck.Status = PrecheckStatusFailed
+		agentCheck.Message = "Agent is not installed / Agent 未安装"
+		result.Success = false
+	} else if !hostInfo.IsOnline(s.heartbeatTimeout) {
+		agentCheck.Status = PrecheckStatusFailed
+		agentCheck.Message = "Agent is offline / Agent 离线"
+		result.Success = false
+	} else {
+		agentCheck.Status = PrecheckStatusPassed
+		agentCheck.Message = "Agent is installed and online / Agent 已安装且在线"
+	}
+	result.Checks = append(result.Checks, agentCheck)
+
+	// If agent is not available, skip remaining checks
+	// 如果 Agent 不可用，跳过剩余检查
+	if agentCheck.Status == PrecheckStatusFailed {
+		result.Message = "Agent is not available, cannot perform precheck / Agent 不可用，无法执行预检查"
+		return result, nil
+	}
+
+	// Check 2: Port is listening (via Agent command)
+	// 检查 2：端口正在监听（通过 Agent 命令）
+	portCheck := &PrecheckCheckItem{
+		Name: "port_listening",
+	}
+	if s.agentSender != nil && hostInfo.AgentID != "" {
+		params := map[string]string{
+			"port": fmt.Sprintf("%d", req.HazelcastPort),
+		}
+		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_port", params)
+		if err != nil {
+			portCheck.Status = PrecheckStatusFailed
+			portCheck.Message = fmt.Sprintf("Failed to check port: %v / 检查端口失败: %v", err, err)
+			result.Success = false
+		} else if success {
+			portCheck.Status = PrecheckStatusPassed
+			portCheck.Message = fmt.Sprintf("Port %d is listening / 端口 %d 正在监听: %s", req.HazelcastPort, req.HazelcastPort, message)
+		} else {
+			portCheck.Status = PrecheckStatusFailed
+			portCheck.Message = fmt.Sprintf("Port %d is not listening / 端口 %d 未监听: %s", req.HazelcastPort, req.HazelcastPort, message)
+			result.Success = false
+		}
+	} else {
+		portCheck.Status = PrecheckStatusSkipped
+		portCheck.Message = "Agent command sender not configured / Agent 命令发送器未配置"
+	}
+	result.Checks = append(result.Checks, portCheck)
+
+	// Check 3: Directory exists and is writable (via Agent command)
+	// 检查 3：目录存在且可写（通过 Agent 命令）
+	installDir := req.InstallDir
+	if installDir == "" {
+		installDir = "/opt/seatunnel"
+	}
+	dirCheck := &PrecheckCheckItem{
+		Name: "directory_check",
+	}
+	if s.agentSender != nil && hostInfo.AgentID != "" {
+		params := map[string]string{
+			"path": installDir,
+		}
+		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_directory", params)
+		if err != nil {
+			dirCheck.Status = PrecheckStatusFailed
+			dirCheck.Message = fmt.Sprintf("Failed to check directory: %v / 检查目录失败: %v", err, err)
+			result.Success = false
+		} else if success {
+			dirCheck.Status = PrecheckStatusPassed
+			dirCheck.Message = fmt.Sprintf("Directory %s exists and is writable / 目录 %s 存在且可写: %s", installDir, installDir, message)
+		} else {
+			dirCheck.Status = PrecheckStatusFailed
+			dirCheck.Message = fmt.Sprintf("Directory %s check failed / 目录 %s 检查失败: %s", installDir, installDir, message)
+			result.Success = false
+		}
+	} else {
+		dirCheck.Status = PrecheckStatusSkipped
+		dirCheck.Message = "Agent command sender not configured / Agent 命令发送器未配置"
+	}
+	result.Checks = append(result.Checks, dirCheck)
+
+	// Check 4: SeaTunnel REST API connectivity (via Agent command)
+	// 检查 4：SeaTunnel REST API 连通性（通过 Agent 命令）
+	// REST API V1 on hazelcast port: /hazelcast/rest/maps/overview
+	// REST API V2 on api port (8080): /overview
+	apiCheck := &PrecheckCheckItem{
+		Name: "seatunnel_api",
+	}
+	if s.agentSender != nil && hostInfo.AgentID != "" {
+		// Try REST API V1 first (on hazelcast port)
+		// 首先尝试 REST API V1（在 hazelcast 端口上）
+		params := map[string]string{
+			"url": fmt.Sprintf("http://127.0.0.1:%d/hazelcast/rest/maps/overview", req.HazelcastPort),
+		}
+		success, message, err := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
+		if err != nil {
+			apiCheck.Status = PrecheckStatusFailed
+			apiCheck.Message = fmt.Sprintf("Failed to check SeaTunnel API: %v / 检查 SeaTunnel API 失败: %v", err, err)
+			result.Success = false
+		} else if success {
+			apiCheck.Status = PrecheckStatusPassed
+			apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V1 is accessible / SeaTunnel REST API V1 可访问: %s", message)
+		} else {
+			// Try REST API V2 if V1 failed and api_port is specified
+			// 如果 V1 失败且指定了 api_port，尝试 REST API V2
+			if req.APIPort > 0 {
+				params["url"] = fmt.Sprintf("http://127.0.0.1:%d/overview", req.APIPort)
+				success, message, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, "check_http", params)
+				if err != nil {
+					apiCheck.Status = PrecheckStatusFailed
+					apiCheck.Message = fmt.Sprintf("Failed to check SeaTunnel API V2: %v / 检查 SeaTunnel API V2 失败: %v", err, err)
+					result.Success = false
+				} else if success {
+					apiCheck.Status = PrecheckStatusPassed
+					apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V2 is accessible / SeaTunnel REST API V2 可访问: %s", message)
+				} else {
+					apiCheck.Status = PrecheckStatusFailed
+					apiCheck.Message = fmt.Sprintf("SeaTunnel REST API is not accessible / SeaTunnel REST API 不可访问: %s", message)
+					result.Success = false
+				}
+			} else {
+				apiCheck.Status = PrecheckStatusFailed
+				apiCheck.Message = fmt.Sprintf("SeaTunnel REST API V1 is not accessible / SeaTunnel REST API V1 不可访问: %s", message)
+				result.Success = false
+			}
+		}
+	} else {
+		apiCheck.Status = PrecheckStatusSkipped
+		apiCheck.Message = "Agent command sender not configured / Agent 命令发送器未配置"
+	}
+	result.Checks = append(result.Checks, apiCheck)
+
+	// Set overall message
+	// 设置总体消息
+	if result.Success {
+		result.Message = "All precheck passed / 所有预检查通过"
+	} else {
+		result.Message = "Some precheck failed / 部分预检查失败"
+	}
+
+	return result, nil
 }

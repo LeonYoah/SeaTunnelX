@@ -123,13 +123,16 @@ func (Cluster) TableName() string {
 }
 
 // ClusterNode represents a node within a SeaTunnel cluster.
-// 集群节点，每个节点可以有独立的安装目录
+// 集群节点，每个节点可以有独立的安装目录和端口配置
 type ClusterNode struct {
 	ID            uint       `json:"id" gorm:"primaryKey;autoIncrement"`
 	ClusterID     uint       `json:"cluster_id" gorm:"index;not null"`
 	HostID        uint       `json:"host_id" gorm:"index;not null"`
 	Role          NodeRole   `json:"role" gorm:"size:20;not null"`
 	InstallDir    string     `json:"install_dir" gorm:"size:255"` // SeaTunnel installation directory on this node / 此节点上的 SeaTunnel 安装目录
+	HazelcastPort int        `json:"hazelcast_port"`              // Hazelcast cluster port / Hazelcast 集群端口
+	APIPort       int        `json:"api_port"`                    // REST API port (Master only) / REST API 端口（仅 Master）
+	WorkerPort    int        `json:"worker_port"`                 // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
 	Status        NodeStatus `json:"status" gorm:"size:20;default:pending"`
 	ProcessPID    int        `json:"process_pid"`
 	ProcessStatus string     `json:"process_status" gorm:"size:20"`
@@ -203,11 +206,31 @@ type UpdateClusterRequest struct {
 }
 
 // AddNodeRequest represents a request to add a node to a cluster.
-// 添加节点请求，包含安装目录配置
+// 添加节点请求，包含安装目录和端口配置
 type AddNodeRequest struct {
 	HostID     uint     `json:"host_id" binding:"required"`
 	Role       NodeRole `json:"role" binding:"required"`
 	InstallDir string   `json:"install_dir"` // SeaTunnel installation directory / SeaTunnel 安装目录
+
+	// Port configuration based on node role / 基于节点角色的端口配置
+	// Master: hazelcast_port (default 5801) + api_port (default 8080, optional)
+	// Worker: hazelcast_port (default 5802)
+	// Hybrid: hazelcast_port (5801) + worker_port (5802)
+	HazelcastPort int `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
+	APIPort       int `json:"api_port"`       // REST API port (Master only, optional) / REST API 端口（仅 Master，可选）
+	WorkerPort    int `json:"worker_port"`    // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
+
+	// Whether to skip precheck / 是否跳过预检查
+	SkipPrecheck bool `json:"skip_precheck"`
+}
+
+// UpdateNodeRequest represents a request to update a node in a cluster.
+// 更新节点请求，包含安装目录和端口配置
+type UpdateNodeRequest struct {
+	InstallDir    *string `json:"install_dir"`    // SeaTunnel installation directory / SeaTunnel 安装目录
+	HazelcastPort *int    `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
+	APIPort       *int    `json:"api_port"`       // REST API port (Master only, optional) / REST API 端口（仅 Master，可选）
+	WorkerPort    *int    `json:"worker_port"`    // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
 }
 
 // NodeInfo represents node information for API responses.
@@ -219,10 +242,76 @@ type NodeInfo struct {
 	HostName      string     `json:"host_name"`
 	HostIP        string     `json:"host_ip"`
 	Role          NodeRole   `json:"role"`
-	InstallDir    string     `json:"install_dir"` // SeaTunnel installation directory / SeaTunnel 安装目录
+	InstallDir    string     `json:"install_dir"`    // SeaTunnel installation directory / SeaTunnel 安装目录
+	HazelcastPort int        `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
+	APIPort       int        `json:"api_port"`       // REST API port (Master only) / REST API 端口（仅 Master）
+	WorkerPort    int        `json:"worker_port"`    // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
 	Status        NodeStatus `json:"status"`
 	ProcessPID    int        `json:"process_pid"`
 	ProcessStatus string     `json:"process_status"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
+
+// DefaultPorts defines default port values for different node roles
+// DefaultPorts 定义不同节点角色的默认端口值
+var DefaultPorts = struct {
+	MasterHazelcast int // Master hazelcast port / Master Hazelcast 端口
+	MasterAPI       int // Master REST API port / Master REST API 端口
+	WorkerHazelcast int // Worker hazelcast port / Worker Hazelcast 端口
+}{
+	MasterHazelcast: 5801,
+	MasterAPI:       8080,
+	WorkerHazelcast: 5802,
+}
+
+// GetDefaultPorts returns default ports based on node role and deployment mode
+// GetDefaultPorts 根据节点角色和部署模式返回默认端口
+func GetDefaultPorts(role NodeRole, deploymentMode DeploymentMode) (hazelcastPort, apiPort, workerPort int) {
+	switch role {
+	case NodeRoleMaster:
+		hazelcastPort = DefaultPorts.MasterHazelcast
+		apiPort = DefaultPorts.MasterAPI
+		if deploymentMode == DeploymentModeHybrid {
+			workerPort = DefaultPorts.WorkerHazelcast
+		}
+	case NodeRoleWorker:
+		hazelcastPort = DefaultPorts.WorkerHazelcast
+	}
+	return
+}
+
+// PrecheckRequest represents a request to precheck a node before adding.
+// PrecheckRequest 表示添加节点前的预检查请求。
+type PrecheckRequest struct {
+	HostID        uint     `json:"host_id" binding:"required"`
+	Role          NodeRole `json:"role" binding:"required"`
+	InstallDir    string   `json:"install_dir"`
+	HazelcastPort int      `json:"hazelcast_port" binding:"required"`
+	APIPort       int      `json:"api_port"`
+	WorkerPort    int      `json:"worker_port"`
+}
+
+// PrecheckResult represents the result of a node precheck.
+// PrecheckResult 表示节点预检查的结果。
+type PrecheckResult struct {
+	Success bool                 `json:"success"`
+	Message string               `json:"message"`
+	Checks  []*PrecheckCheckItem `json:"checks"`
+}
+
+// PrecheckCheckItem represents a single check item in precheck.
+// PrecheckCheckItem 表示预检查中的单个检查项。
+type PrecheckCheckItem struct {
+	Name    string `json:"name"`    // Check name / 检查名称
+	Status  string `json:"status"`  // passed, failed, skipped / 通过、失败、跳过
+	Message string `json:"message"` // Detail message / 详细信息
+}
+
+// PrecheckStatus constants
+// 预检查状态常量
+const (
+	PrecheckStatusPassed  = "passed"
+	PrecheckStatusFailed  = "failed"
+	PrecheckStatusSkipped = "skipped"
+)

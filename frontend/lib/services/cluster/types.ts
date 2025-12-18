@@ -144,6 +144,12 @@ export interface NodeInfo {
   role: NodeRole;
   /** SeaTunnel installation directory / SeaTunnel 安装目录 */
   install_dir: string;
+  /** Hazelcast cluster port / Hazelcast 集群端口 */
+  hazelcast_port: number;
+  /** REST API port (Master only) / REST API 端口（仅 Master） */
+  api_port: number;
+  /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
+  worker_port: number;
   /** Node status / 节点状态 */
   status: NodeStatus;
   /** Process PID / 进程 PID */
@@ -285,7 +291,43 @@ export interface AddNodeRequest {
   role: NodeRole;
   /** SeaTunnel installation directory / SeaTunnel 安装目录 */
   install_dir?: string;
+  /** Hazelcast cluster port / Hazelcast 集群端口 */
+  hazelcast_port?: number;
+  /** REST API port (Master only, optional) / REST API 端口（仅 Master，可选） */
+  api_port?: number;
+  /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
+  worker_port?: number;
+  /** Whether to skip precheck / 是否跳过预检查 */
+  skip_precheck?: boolean;
 }
+
+/**
+ * Request to update a node in a cluster
+ * 更新集群中节点的请求
+ */
+export interface UpdateNodeRequest {
+  /** SeaTunnel installation directory / SeaTunnel 安装目录 */
+  install_dir?: string;
+  /** Hazelcast cluster port / Hazelcast 集群端口 */
+  hazelcast_port?: number;
+  /** REST API port (Master only, optional) / REST API 端口（仅 Master，可选） */
+  api_port?: number;
+  /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
+  worker_port?: number;
+}
+
+/**
+ * Default port values for different node roles
+ * 不同节点角色的默认端口值
+ */
+export const DefaultPorts = {
+  /** Master hazelcast port / Master Hazelcast 端口 */
+  MASTER_HAZELCAST: 5801,
+  /** Master REST API port / Master REST API 端口 */
+  MASTER_API: 8080,
+  /** Worker hazelcast port / Worker Hazelcast 端口 */
+  WORKER_HAZELCAST: 5802,
+};
 
 /**
  * Request parameters for listing clusters
@@ -357,3 +399,54 @@ export type ClusterOperationResponse = BackendResponse<OperationResult>;
 
 /** Get cluster status response type / 获取集群状态响应类型 */
 export type GetClusterStatusResponse = BackendResponse<ClusterStatusInfo>;
+
+/**
+ * Request to precheck a node before adding
+ * 添加节点前的预检查请求
+ */
+export interface PrecheckRequest {
+  /** Host ID (required) / 主机 ID（必填） */
+  host_id: number;
+  /** Node role (required) / 节点角色（必填） */
+  role: NodeRole;
+  /** SeaTunnel installation directory / SeaTunnel 安装目录 */
+  install_dir?: string;
+  /** Hazelcast cluster port (required) / Hazelcast 集群端口（必填） */
+  hazelcast_port: number;
+  /** REST API port (Master only, optional) / REST API 端口（仅 Master，可选） */
+  api_port?: number;
+  /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
+  worker_port?: number;
+}
+
+/**
+ * Precheck check item
+ * 预检查检查项
+ */
+export interface PrecheckCheckItem {
+  /** Check name / 检查名称 */
+  name: string;
+  /** Check status: passed, failed, skipped / 检查状态：通过、失败、跳过 */
+  status: 'passed' | 'failed' | 'skipped';
+  /** Detail message / 详细信息 */
+  message: string;
+}
+
+/**
+ * Precheck result
+ * 预检查结果
+ */
+export interface PrecheckResult {
+  /** Whether all checks passed / 是否所有检查都通过 */
+  success: boolean;
+  /** Overall message / 总体消息 */
+  message: string;
+  /** Individual check items / 各个检查项 */
+  checks: PrecheckCheckItem[];
+}
+
+/** Precheck node response type / 节点预检查响应类型 */
+export type PrecheckNodeResponse = BackendResponse<PrecheckResult>;
+
+/** Update node response type / 更新节点响应类型 */
+export type UpdateNodeResponse = BackendResponse<NodeInfo>;

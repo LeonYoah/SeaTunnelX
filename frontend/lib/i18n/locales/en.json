@@ -24,7 +24,8 @@
     "no": "No",
     "clearFilters": "Clear Filters",
     "totalItems": "{total} items total",
-    "actions": "Actions"
+    "actions": "Actions",
+    "optional": "optional"
   },
   "auth": {
     "login": {
@@ -286,7 +287,9 @@
     "lastCheck": "Last Check",
     "installCommand": "Agent Install Command",
     "noInstallCommand": "Install command not available",
-    "commandCopied": "Install command copied to clipboard",
+    "uninstallCommand": "Agent Uninstall Command",
+    "uninstallCommandTip": "Add --remove-logs to also remove log files",
+    "commandCopied": "Command copied to clipboard",
     "copyFailed": "Failed to copy command",
     "createSuccess": "Host created successfully",
     "updateSuccess": "Host updated successfully",
@@ -386,6 +389,10 @@
     "addNodeDescription": "Add a host as a node to this cluster",
     "addNodeSuccess": "Node added successfully",
     "addNodeError": "Failed to add node",
+    "editNode": "Edit Node",
+    "editNodeDescription": "Edit configuration for node {host} ({ip})",
+    "editNodeSuccess": "Node updated successfully",
+    "updateNodeError": "Failed to update node",
     "removeNode": "Remove Node",
     "removeNodeConfirm": "Are you sure you want to remove node {name} from this cluster?",
     "removeNodeSuccess": "Node removed successfully",
@@ -398,6 +405,11 @@
     "nodeRole": "Node Role",
     "masterRoleDescription": "Master node manages cluster coordination",
     "workerRoleDescription": "Worker node executes data synchronization tasks",
+    "portConfig": "Port Configuration",
+    "hazelcastPort": "Hazelcast Port",
+    "apiPort": "API Port",
+    "workerPort": "Worker Port",
+    "portConfigDescription": "Ports will be validated via Agent when adding the node",
     "hostName": "Host Name",
     "hostIP": "Host IP",
     "nodeStatus": "Node Status",
@@ -430,6 +442,17 @@
       "healthy": "Healthy",
       "unhealthy": "Unhealthy",
       "unknown": "Unknown"
+    },
+    "precheck": "Precheck",
+    "precheckPassed": "Precheck Passed",
+    "precheckFailed": "Precheck Failed",
+    "precheckError": "Precheck Error",
+    "hazelcastPortRequired": "Hazelcast port is required",
+    "precheckItems": {
+      "agent_status": "Agent Status",
+      "port_listening": "Port Listening",
+      "directory_check": "Directory Check",
+      "seatunnel_api": "SeaTunnel API"
     }
   },
   "audit": {

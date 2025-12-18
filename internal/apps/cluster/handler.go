@@ -125,6 +125,13 @@ type GetClusterStatusResponse struct {
 	Data     *ClusterStatusInfo `json:"data"`
 }
 
+// PrecheckNodeResponse represents the response for node precheck.
+// PrecheckNodeResponse 表示节点预检查的响应。
+type PrecheckNodeResponse struct {
+	ErrorMsg string          `json:"error_msg"`
+	Data     *PrecheckResult `json:"data"`
+}
+
 // ==================== Cluster CRUD Handlers 集群 CRUD 处理器 ====================
 
 // CreateCluster handles POST /api/v1/clusters - creates a new cluster.
@@ -322,6 +329,10 @@ func (h *Handler) AddNode(c *gin.Context) {
 		ClusterID:     node.ClusterID,
 		HostID:        node.HostID,
 		Role:          node.Role,
+		InstallDir:    node.InstallDir,
+		HazelcastPort: node.HazelcastPort,
+		APIPort:       node.APIPort,
+		WorkerPort:    node.WorkerPort,
 		Status:        node.Status,
 		ProcessPID:    node.ProcessPID,
 		ProcessStatus: node.ProcessStatus,
@@ -329,7 +340,7 @@ func (h *Handler) AddNode(c *gin.Context) {
 		UpdatedAt:     node.UpdatedAt,
 	}
 
-	logger.InfoF(c.Request.Context(), "[Cluster] 添加节点成功: cluster_id=%d, host_id=%d, role=%s", clusterID, req.HostID, req.Role)
+	logger.InfoF(c.Request.Context(), "[Cluster] 添加节点成功: cluster_id=%d, host_id=%d, role=%s, hazelcast_port=%d", clusterID, req.HostID, req.Role, node.HazelcastPort)
 	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
 }
 
@@ -362,6 +373,64 @@ func (h *Handler) RemoveNode(c *gin.Context) {
 
 	logger.InfoF(c.Request.Context(), "[Cluster] 移除节点成功: cluster_id=%d, node_id=%d", clusterID, nodeID)
 	c.JSON(http.StatusOK, RemoveNodeResponse{})
+}
+
+// UpdateNode handles PUT /api/v1/clusters/:id/nodes/:nodeId - updates a node in a cluster.
+// UpdateNode 处理 PUT /api/v1/clusters/:id/nodes/:nodeId - 更新集群中的节点。
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Param id path int true "集群ID"
+// @Param nodeId path int true "节点ID"
+// @Param request body UpdateNodeRequest true "更新节点请求"
+// @Success 200 {object} AddNodeResponse
+// @Router /api/v1/clusters/{id}/nodes/{nodeId} [put]
+func (h *Handler) UpdateNode(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, AddNodeResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodeID, err := strconv.ParseUint(c.Param("nodeId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, AddNodeResponse{ErrorMsg: "无效的节点 ID / Invalid node ID"})
+		return
+	}
+
+	var req UpdateNodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, AddNodeResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	node, err := h.service.UpdateNode(c.Request.Context(), uint(clusterID), uint(nodeID), &req)
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, AddNodeResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	// Convert ClusterNode to NodeInfo
+	// 将 ClusterNode 转换为 NodeInfo
+	nodeInfo := &NodeInfo{
+		ID:            node.ID,
+		ClusterID:     node.ClusterID,
+		HostID:        node.HostID,
+		Role:          node.Role,
+		InstallDir:    node.InstallDir,
+		HazelcastPort: node.HazelcastPort,
+		APIPort:       node.APIPort,
+		WorkerPort:    node.WorkerPort,
+		Status:        node.Status,
+		ProcessPID:    node.ProcessPID,
+		ProcessStatus: node.ProcessStatus,
+		CreatedAt:     node.CreatedAt,
+		UpdatedAt:     node.UpdatedAt,
+	}
+
+	logger.InfoF(c.Request.Context(), "[Cluster] 更新节点成功: cluster_id=%d, node_id=%d", clusterID, nodeID)
+	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
 }
 
 // GetNodes handles GET /api/v1/clusters/:id/nodes - gets all nodes for a cluster.
@@ -489,6 +558,41 @@ func (h *Handler) GetClusterStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, GetClusterStatusResponse{Data: status})
 }
 
+// ==================== Node Precheck Handlers 节点预检查处理器 ====================
+
+// PrecheckNode handles POST /api/v1/clusters/:id/nodes/precheck - prechecks a node before adding.
+// PrecheckNode 处理 POST /api/v1/clusters/:id/nodes/precheck - 添加节点前的预检查。
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Param id path int true "集群ID"
+// @Param request body PrecheckRequest true "预检查请求"
+// @Success 200 {object} PrecheckNodeResponse
+// @Router /api/v1/clusters/{id}/nodes/precheck [post]
+func (h *Handler) PrecheckNode(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, PrecheckNodeResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	var req PrecheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, PrecheckNodeResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	result, err := h.service.PrecheckNode(c.Request.Context(), uint(clusterID), &req)
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, PrecheckNodeResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Cluster] 节点预检查完成: cluster_id=%d, host_id=%d, success=%v", clusterID, req.HostID, result.Success)
+	c.JSON(http.StatusOK, PrecheckNodeResponse{Data: result})
+}
+
 // ==================== Helper Methods 辅助方法 ====================
 
 // getStatusCodeForError returns the appropriate HTTP status code for an error.
@@ -509,7 +613,9 @@ func (h *Handler) getStatusCodeForError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrNodeAlreadyExists):
 		return http.StatusConflict
-	case errors.Is(err, ErrNodeAgentNotInstalled):
+	case errors.Is(err, ErrNodeAgentNotInstalled),
+		errors.Is(err, ErrInvalidHazelcastPort),
+		errors.Is(err, ErrPrecheckFailed):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

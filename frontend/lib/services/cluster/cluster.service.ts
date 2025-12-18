@@ -17,6 +17,9 @@ import {
   CreateClusterRequest,
   UpdateClusterRequest,
   AddNodeRequest,
+  UpdateNodeRequest,
+  PrecheckRequest,
+  PrecheckResult,
   ListClustersRequest,
   ListClustersResponse,
   CreateClusterResponse,
@@ -28,6 +31,7 @@ import {
   RemoveNodeResponse,
   ClusterOperationResponse,
   GetClusterStatusResponse,
+  PrecheckNodeResponse,
 } from './types';
 
 /**
@@ -190,6 +194,28 @@ export class ClusterService extends BaseService {
   }
 
   /**
+   * Update a node in a cluster
+   * 更新集群中的节点
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param nodeId - Node ID / 节点 ID
+   * @param data - Update node request data / 更新节点请求数据
+   * @returns Updated node information / 更新后的节点信息
+   */
+  static async updateNode(clusterId: number, nodeId: number, data: UpdateNodeRequest): Promise<NodeInfo> {
+    const response = await apiClient.put<AddNodeResponse>(
+      `${this.basePath}/${clusterId}/nodes/${nodeId}`,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
    * Remove a node from a cluster
    * 从集群移除节点
    *
@@ -204,6 +230,27 @@ export class ClusterService extends BaseService {
     if (response.data.error_msg) {
       throw new Error(response.data.error_msg);
     }
+  }
+
+  /**
+   * Precheck a node before adding to cluster
+   * 添加节点前的预检查
+   *
+   * @param clusterId - Cluster ID / 集群 ID
+   * @param data - Precheck request data / 预检查请求数据
+   * @returns Precheck result / 预检查结果
+   */
+  static async precheckNode(clusterId: number, data: PrecheckRequest): Promise<PrecheckResult> {
+    const response = await apiClient.post<PrecheckNodeResponse>(
+      `${this.basePath}/${clusterId}/nodes/precheck`,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
   }
 
   // ==================== Cluster Operation Methods 集群操作方法 ====================
@@ -426,6 +473,25 @@ export class ClusterService extends BaseService {
   }
 
   /**
+   * Update node (with error handling)
+   * 更新节点（带错误处理）
+   */
+  static async updateNodeSafe(clusterId: number, nodeId: number, data: UpdateNodeRequest): Promise<{
+    success: boolean;
+    data?: NodeInfo;
+    error?: string;
+  }> {
+    try {
+      const result = await this.updateNode(clusterId, nodeId, data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '更新节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
    * Remove node (with error handling)
    * 移除节点（带错误处理）
    */
@@ -439,6 +505,25 @@ export class ClusterService extends BaseService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : '移除节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Precheck node (with error handling)
+   * 节点预检查（带错误处理）
+   */
+  static async precheckNodeSafe(clusterId: number, data: PrecheckRequest): Promise<{
+    success: boolean;
+    data?: PrecheckResult;
+    error?: string;
+  }> {
+    try {
+      const result = await this.precheckNode(clusterId, data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '节点预检查失败';
       return {success: false, error: errorMessage};
     }
   }

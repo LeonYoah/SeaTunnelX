@@ -26,6 +26,7 @@ type configModel struct {
 	Database       DatabaseConfig       `mapstructure:"database"`
 	Redis          RedisConfig          `mapstructure:"redis"`
 	Storage        StorageConfig        `mapstructure:"storage"`
+	GRPC           GRPCConfig           `mapstructure:"grpc"`
 	Log            logConfig            `mapstructure:"log"`
 	Schedule       scheduleConfig       `mapstructure:"schedule"`
 	Worker         workerConfig         `mapstructure:"worker"`
@@ -63,6 +64,7 @@ type OAuthProvidersConfig struct {
 }
 
 // AppConfig 应用基本配置（导出供其他包使用）
+// AppConfig holds basic application configuration (exported for other packages)
 type AppConfig struct {
 	AppName           string `mapstructure:"app_name"`
 	Env               string `mapstructure:"env"`
@@ -74,6 +76,14 @@ type AppConfig struct {
 	SessionAge        int    `mapstructure:"session_age"`
 	SessionHttpOnly   bool   `mapstructure:"session_http_only"`
 	SessionSecure     bool   `mapstructure:"session_secure"`
+
+	// ExternalURL is the external URL for accessing the Control Plane.
+	// ExternalURL 是访问 Control Plane 的外部 URL。
+	// This is used for generating Agent install commands and other external references.
+	// 用于生成 Agent 安装命令和其他外部引用。
+	// Example: "http://192.168.1.100:8000" or "https://seatunnel.example.com"
+	// 示例: "http://192.168.1.100:8000" 或 "https://seatunnel.example.com"
+	ExternalURL string `mapstructure:"external_url"`
 }
 
 // projectAppConfig 项目相关配置
@@ -135,6 +145,50 @@ type RedisConfig struct {
 	DialTimeout  int    `mapstructure:"dial_timeout"`
 	ReadTimeout  int    `mapstructure:"read_timeout"`
 	WriteTimeout int    `mapstructure:"write_timeout"`
+}
+
+// GRPCConfig gRPC 服务器配置
+// GRPCConfig holds configuration for the gRPC server
+type GRPCConfig struct {
+	// Enabled indicates whether gRPC server is enabled
+	// Enabled 表示是否启用 gRPC 服务器
+	Enabled bool `mapstructure:"enabled"`
+
+	// Port is the port number for the gRPC server (default: 9000)
+	// Port 是 gRPC 服务器的端口号（默认：9000）
+	Port int `mapstructure:"port"`
+
+	// TLSEnabled indicates whether TLS is enabled
+	// TLSEnabled 表示是否启用 TLS
+	TLSEnabled bool `mapstructure:"tls_enabled"`
+
+	// CertFile is the path to the TLS certificate file
+	// CertFile 是 TLS 证书文件的路径
+	CertFile string `mapstructure:"cert_file"`
+
+	// KeyFile is the path to the TLS key file
+	// KeyFile 是 TLS 密钥文件的路径
+	KeyFile string `mapstructure:"key_file"`
+
+	// CAFile is the path to the CA certificate file for client verification
+	// CAFile 是用于客户端验证的 CA 证书文件路径
+	CAFile string `mapstructure:"ca_file"`
+
+	// MaxRecvMsgSize is the maximum receive message size in MB (default: 16)
+	// MaxRecvMsgSize 是最大接收消息大小（MB，默认：16）
+	MaxRecvMsgSize int `mapstructure:"max_recv_msg_size"`
+
+	// MaxSendMsgSize is the maximum send message size in MB (default: 16)
+	// MaxSendMsgSize 是最大发送消息大小（MB，默认：16）
+	MaxSendMsgSize int `mapstructure:"max_send_msg_size"`
+
+	// HeartbeatInterval is the heartbeat interval to send to Agents (seconds, default: 10)
+	// HeartbeatInterval 是发送给 Agent 的心跳间隔（秒，默认：10）
+	HeartbeatInterval int `mapstructure:"heartbeat_interval"`
+
+	// HeartbeatTimeout is the timeout for considering an Agent offline (seconds, default: 30)
+	// HeartbeatTimeout 是判断 Agent 离线的超时时间（秒，默认：30）
+	HeartbeatTimeout int `mapstructure:"heartbeat_timeout"`
 }
 
 // StorageConfig 存储配置（本地文件存储目录）

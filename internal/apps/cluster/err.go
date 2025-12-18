@@ -39,6 +39,12 @@ var (
 	ErrInvalidDeploymentMode = errors.New("cluster: invalid deployment mode")
 	// ErrInvalidNodeRole indicates an invalid node role was specified.
 	ErrInvalidNodeRole = errors.New("cluster: invalid node role")
+	// ErrInvalidHazelcastPort indicates an invalid or missing hazelcast port.
+	// ErrInvalidHazelcastPort 表示无效或缺失的 Hazelcast 端口。
+	ErrInvalidHazelcastPort = errors.New("cluster: hazelcast port is required and must be valid")
+	// ErrPrecheckFailed indicates the node precheck failed.
+	// ErrPrecheckFailed 表示节点预检查失败。
+	ErrPrecheckFailed = errors.New("cluster: node precheck failed")
 )
 
 // Error codes for cluster management operations.
