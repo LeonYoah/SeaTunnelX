@@ -459,7 +459,8 @@
     },
     "roles": {
       "master": "Master",
-      "worker": "Worker"
+      "worker": "Worker",
+      "undefined": "未知"
     },
     "nodeStatuses": {
       "pending": "待部署",

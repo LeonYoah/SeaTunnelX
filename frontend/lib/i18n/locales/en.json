@@ -459,7 +459,8 @@
     },
     "roles": {
       "master": "Master",
-      "worker": "Worker"
+      "worker": "Worker",
+      "undefined": "Unknown"
     },
     "nodeStatuses": {
       "pending": "Pending",
