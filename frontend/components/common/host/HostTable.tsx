@@ -234,11 +234,12 @@ export function HostTable({
                         {t(`host.statuses.${host.status}`)}
                       </Badge>
                       {host.is_online !== undefined && (
-                        <span
-                          className={`text-xs ${host.is_online ? 'text-green-600' : 'text-gray-400'}`}
+                        <Badge
+                          variant={host.is_online ? 'default' : 'outline'}
+                          className={`text-xs ${host.is_online ? 'bg-green-100 text-green-700 border-green-300' : ''}`}
                         >
-                          {host.is_online ? t('host.online') : t('host.offline')}
-                        </span>
+                          Agent: {host.is_online ? t('host.online') : t('host.offline')}
+                        </Badge>
                       )}
                     </div>
                   </TableCell>

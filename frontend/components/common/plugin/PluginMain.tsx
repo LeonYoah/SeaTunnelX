@@ -20,15 +20,19 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { RefreshCw, Search, Puzzle, Package, Download, CheckCircle, Info, Upload, HardDrive, Trash2 } from 'lucide-react';
+import { RefreshCw, Search, Puzzle, Package, Download, CheckCircle, Info, Upload, HardDrive, Trash2, CheckSquare, Server } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PluginService } from '@/lib/services/plugin';
-import type { Plugin, MirrorSource, AvailablePluginsResponse, LocalPlugin, PluginDownloadProgress } from '@/lib/services/plugin';
+import { ClusterService } from '@/lib/services/cluster';
+import type { Plugin, MirrorSource, AvailablePluginsResponse, LocalPlugin, PluginDownloadProgress, InstalledPlugin } from '@/lib/services/plugin';
+import type { ClusterInfo } from '@/lib/services/cluster';
 import { Progress } from '@/components/ui/progress';
 import { PluginGrid } from './PluginGrid';
 import { PluginDetailDialog } from './PluginDetailDialog';
 import { InstallPluginDialog } from './InstallPluginDialog';
+import { BatchInstallDialog } from './BatchInstallDialog';
 import {
   Table,
   TableBody,
@@ -99,6 +103,15 @@ export function PluginMain() {
   // Active downloads state / 活动下载状态
   const [activeDownloads, setActiveDownloads] = useState<PluginDownloadProgress[]>([]);
 
+  // Batch selection state / 批量选择状态
+  const [selectedLocalPlugins, setSelectedLocalPlugins] = useState<Set<string>>(new Set());
+  const [isBatchInstallOpen, setIsBatchInstallOpen] = useState(false);
+
+  // Plugin installation status per cluster / 每个集群的插件安装状态
+  // Map: pluginName -> { clusterId -> InstalledPlugin }
+  const [pluginClusterStatus, setPluginClusterStatus] = useState<Map<string, Map<number, InstalledPlugin>>>(new Map());
+  const [clusters, setClusters] = useState<ClusterInfo[]>([]);
+
   /**
    * Load available plugins
    * 加载可用插件列表
@@ -146,21 +159,50 @@ export function PluginMain() {
   }, [selectedVersion, selectedMirror, filterCategory, searchKeyword, t]);
 
   /**
-   * Load local downloaded plugins
-   * 加载本地已下载插件列表
+   * Load local downloaded plugins and their cluster installation status
+   * 加载本地已下载插件列表及其集群安装状态
    */
   const loadLocalPlugins = useCallback(async () => {
     setLocalPluginsLoading(true);
     try {
-      const [localResult, downloadsResult] = await Promise.all([
+      // Load local plugins, active downloads, and clusters in parallel / 并行加载本地插件、活动下载和集群
+      const [localResult, downloadsResult, clustersResult] = await Promise.all([
         PluginService.listLocalPlugins(),
-        PluginService.listActiveDownloads()
+        PluginService.listActiveDownloads(),
+        ClusterService.getClusters({ current: 1, size: 100 })
       ]);
+      
       setLocalPlugins(localResult || []);
       setActiveDownloads(downloadsResult || []);
+      
+      // Filter available clusters / 过滤可用集群
+      const availableClusters = (clustersResult?.clusters || []).filter(
+        (c: ClusterInfo) => c.status === 'running' || c.status === 'stopped'
+      );
+      setClusters(availableClusters);
+      
       // Update downloadingPlugins set / 更新下载中集合
       const downloading = new Set(downloadsResult?.filter(d => d.status === 'downloading').map(d => d.plugin_name) || []);
       setDownloadingPlugins(downloading);
+      
+      // Load installed plugins for each cluster / 加载每个集群的已安装插件
+      const statusMap = new Map<string, Map<number, InstalledPlugin>>();
+      await Promise.all(
+        availableClusters.map(async (cluster: ClusterInfo) => {
+          try {
+            const installedPlugins = await PluginService.listInstalledPlugins(cluster.id);
+            for (const plugin of installedPlugins) {
+              if (!statusMap.has(plugin.plugin_name)) {
+                statusMap.set(plugin.plugin_name, new Map());
+              }
+              statusMap.get(plugin.plugin_name)!.set(cluster.id, plugin);
+            }
+          } catch {
+            // Ignore errors / 忽略错误
+          }
+        })
+      );
+      setPluginClusterStatus(statusMap);
     } catch (err) {
       console.error('Failed to load local plugins:', err);
       setLocalPlugins([]);
@@ -249,6 +291,77 @@ export function PluginMain() {
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  /**
+   * Get filtered local plugins
+   * 获取过滤后的本地插件
+   */
+  const getFilteredLocalPlugins = useCallback(() => {
+    return localPlugins.filter(plugin => {
+      if (searchKeyword) {
+        const keyword = searchKeyword.toLowerCase();
+        if (!plugin.name.toLowerCase().includes(keyword)) {
+          return false;
+        }
+      }
+      if (filterCategory !== 'all' && plugin.category !== filterCategory) {
+        return false;
+      }
+      if (selectedVersion && plugin.version !== selectedVersion) {
+        return false;
+      }
+      return true;
+    });
+  }, [localPlugins, searchKeyword, filterCategory, selectedVersion]);
+
+  /**
+   * Handle select all local plugins
+   * 处理全选本地插件
+   */
+  const handleSelectAllLocalPlugins = (checked: boolean) => {
+    if (checked) {
+      const filteredPlugins = getFilteredLocalPlugins();
+      const allKeys = new Set(filteredPlugins.map(p => `${p.name}:${p.version}`));
+      setSelectedLocalPlugins(allKeys);
+    } else {
+      setSelectedLocalPlugins(new Set());
+    }
+  };
+
+  /**
+   * Handle select single local plugin
+   * 处理选择单个本地插件
+   */
+  const handleSelectLocalPlugin = (plugin: LocalPlugin, checked: boolean) => {
+    const key = `${plugin.name}:${plugin.version}`;
+    setSelectedLocalPlugins(prev => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Get selected plugins for batch install
+   * 获取批量安装的选中插件
+   */
+  const getSelectedPluginsForBatchInstall = (): Plugin[] => {
+    return localPlugins
+      .filter(p => selectedLocalPlugins.has(`${p.name}:${p.version}`))
+      .map(p => ({
+        name: p.name,
+        display_name: p.name,
+        category: p.category,
+        version: p.version,
+        description: '',
+        group_id: 'org.apache.seatunnel',
+        artifact_id: `connector-${p.name}`,
+      }));
   };
 
   /**
@@ -569,14 +682,31 @@ export function PluginMain() {
 
         <TabsContent value="local" className="mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {t('plugin.localPlugins')}
-                <Badge variant="secondary">{localPlugins.length}</Badge>
-              </CardTitle>
-              <CardDescription>
-                {t('plugin.localPluginsDesc')}
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  {t('plugin.localPlugins')}
+                  <Badge variant="secondary">{localPlugins.length}</Badge>
+                </CardTitle>
+                <CardDescription>
+                  {t('plugin.localPluginsDesc')}
+                </CardDescription>
+              </div>
+              {/* Batch actions / 批量操作 */}
+              {selectedLocalPlugins.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    {t('plugin.selectedCount', { count: selectedLocalPlugins.size })}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    onClick={() => setIsBatchInstallOpen(true)}
+                  >
+                    <CheckSquare className="h-4 w-4 mr-2" />
+                    {t('plugin.batchInstall')}
+                  </Button>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {localPluginsLoading && localPlugins.length === 0 && activeDownloads.length === 0 ? (
@@ -594,11 +724,20 @@ export function PluginMain() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-[50px]">
+                        <Checkbox
+                          checked={
+                            getFilteredLocalPlugins().length > 0 &&
+                            getFilteredLocalPlugins().every(p => selectedLocalPlugins.has(`${p.name}:${p.version}`))
+                          }
+                          onCheckedChange={handleSelectAllLocalPlugins}
+                        />
+                      </TableHead>
                       <TableHead>{t('plugin.name')}</TableHead>
                       <TableHead>{t('plugin.category.label')}</TableHead>
                       <TableHead>{t('plugin.version')}</TableHead>
+                      <TableHead>{t('plugin.installedClusters')}</TableHead>
                       <TableHead>{t('plugin.fileSize')}</TableHead>
-                      <TableHead>{t('plugin.downloadedAt')}</TableHead>
                       <TableHead className="text-right">{t('common.actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -606,6 +745,9 @@ export function PluginMain() {
                     {/* Active downloads / 活动下载 */}
                     {activeDownloads.filter(d => d.status === 'downloading').map((download) => (
                       <TableRow key={`downloading-${download.plugin_name}-${download.version}`} className="bg-blue-50 dark:bg-blue-950">
+                        <TableCell>
+                          <Checkbox disabled />
+                        </TableCell>
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-2">
                             <RefreshCw className="h-4 w-4 animate-spin text-blue-500" />
@@ -616,7 +758,10 @@ export function PluginMain() {
                           <Badge variant="outline">{t('plugin.downloading')}</Badge>
                         </TableCell>
                         <TableCell>v{download.version}</TableCell>
-                        <TableCell colSpan={2}>
+                        <TableCell>
+                          <span className="text-muted-foreground text-sm">-</span>
+                        </TableCell>
+                        <TableCell>
                           <div className="space-y-1">
                             <div className="flex items-center justify-between text-sm">
                               <span>{download.current_step || t('plugin.downloading')}</span>
@@ -638,81 +783,91 @@ export function PluginMain() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {/* Filter local plugins by search keyword, category and version / 按搜索关键词、分类和版本过滤本地插件 */}
-                    {localPlugins
-                      .filter(plugin => {
-                        // Apply search filter / 应用搜索过滤
-                        if (searchKeyword) {
-                          const keyword = searchKeyword.toLowerCase();
-                          if (!plugin.name.toLowerCase().includes(keyword)) {
-                            return false;
-                          }
-                        }
-                        // Apply category filter / 应用分类过滤
-                        if (filterCategory !== 'all' && plugin.category !== filterCategory) {
-                          return false;
-                        }
-                        // Apply version filter / 应用版本过滤
-                        if (selectedVersion && plugin.version !== selectedVersion) {
-                          return false;
-                        }
-                        return true;
-                      })
-                      .map((plugin) => (
-                      <TableRow key={`${plugin.name}-${plugin.version}`}>
-                        <TableCell className="font-medium">{plugin.name}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {plugin.category === 'source' ? t('plugin.category.source') :
-                             plugin.category === 'sink' ? t('plugin.category.sink') :
-                             plugin.category === 'transform' ? t('plugin.category.transform') :
-                             plugin.category}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>v{plugin.version}</TableCell>
-                        <TableCell>{formatFileSize(plugin.size)}</TableCell>
-                        <TableCell>
-                          {plugin.downloaded_at 
-                            ? new Date(plugin.downloaded_at).toLocaleString() 
-                            : '-'}
-                        </TableCell>
-                        <TableCell className="text-right space-x-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              // Convert LocalPlugin to Plugin for install dialog
-                              // 将 LocalPlugin 转换为 Plugin 用于安装对话框
-                              const pluginForInstall: Plugin = {
-                                name: plugin.name,
-                                display_name: plugin.name,
-                                category: plugin.category,
-                                version: plugin.version,
-                                description: '',
-                                group_id: 'org.apache.seatunnel',
-                                artifact_id: `connector-${plugin.name}`,
-                              };
-                              setPluginToInstall(pluginForInstall);
-                              setIsInstallOpen(true);
-                            }}
-                          >
-                            <CheckCircle className="h-4 w-4 mr-1" />
-                            {t('plugin.installToCluster')}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => {
-                              setPluginToDelete(plugin);
-                              setDeleteDialogOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {/* Filtered local plugins / 过滤后的本地插件 */}
+                    {getFilteredLocalPlugins().map((plugin) => {
+                      // Get cluster installation status for this plugin / 获取此插件的集群安装状态
+                      const clusterStatusMap = pluginClusterStatus.get(plugin.name);
+                      const installedClusters = clusterStatusMap 
+                        ? clusters.filter(c => clusterStatusMap.has(c.id))
+                        : [];
+                      
+                      return (
+                        <TableRow key={`${plugin.name}-${plugin.version}`}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedLocalPlugins.has(`${plugin.name}:${plugin.version}`)}
+                              onCheckedChange={(checked) => handleSelectLocalPlugin(plugin, checked as boolean)}
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{plugin.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {plugin.category === 'source' ? t('plugin.category.source') :
+                               plugin.category === 'sink' ? t('plugin.category.sink') :
+                               plugin.category === 'transform' ? t('plugin.category.transform') :
+                               plugin.category}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>v{plugin.version}</TableCell>
+                          <TableCell>
+                            {installedClusters.length === 0 ? (
+                              <span className="text-muted-foreground text-sm">{t('plugin.notInstalled')}</span>
+                            ) : (
+                              <div className="flex flex-wrap gap-1">
+                                {installedClusters.map(cluster => {
+                                  const status = clusterStatusMap?.get(cluster.id);
+                                  const isEnabled = status?.status === 'enabled' || status?.status === 'installed';
+                                  return (
+                                    <Badge 
+                                      key={cluster.id} 
+                                      variant={isEnabled ? 'default' : 'secondary'}
+                                      className="text-xs"
+                                    >
+                                      {cluster.name}
+                                      {!isEnabled && <span className="ml-1 opacity-70">({t('plugin.status.disabled')})</span>}
+                                    </Badge>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>{formatFileSize(plugin.size)}</TableCell>
+                          <TableCell className="text-right space-x-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const pluginForInstall: Plugin = {
+                                  name: plugin.name,
+                                  display_name: plugin.name,
+                                  category: plugin.category,
+                                  version: plugin.version,
+                                  description: '',
+                                  group_id: 'org.apache.seatunnel',
+                                  artifact_id: `connector-${plugin.name}`,
+                                };
+                                setPluginToInstall(pluginForInstall);
+                                setIsInstallOpen(true);
+                              }}
+                            >
+                              <Server className="h-4 w-4 mr-1" />
+                              {t('plugin.managePlugin')}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => {
+                                setPluginToDelete(plugin);
+                                setDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -784,6 +939,19 @@ export function PluginMain() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Batch Install Dialog / 批量安装对话框 */}
+      <BatchInstallDialog
+        open={isBatchInstallOpen}
+        onOpenChange={(open: boolean) => {
+          setIsBatchInstallOpen(open);
+          if (!open) {
+            setSelectedLocalPlugins(new Set());
+          }
+        }}
+        plugins={getSelectedPluginsForBatchInstall()}
+        version={selectedVersion}
+      />
     </motion.div>
   );
 }
