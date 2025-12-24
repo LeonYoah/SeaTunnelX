@@ -465,6 +465,18 @@ func Serve() {
 				// DELETE /api/v1/plugins/:name/local - 删除本地插件文件
 				// DELETE /api/v1/plugins/:name/local - Delete local plugin file
 				pluginRouter.DELETE("/:name/local", pluginHandler.DeleteLocalPlugin)
+
+				// GET /api/v1/plugins/:name/dependencies - 获取插件依赖配置
+				// GET /api/v1/plugins/:name/dependencies - Get plugin dependencies
+				pluginRouter.GET("/:name/dependencies", pluginHandler.ListDependencies)
+
+				// POST /api/v1/plugins/:name/dependencies - 添加插件依赖
+				// POST /api/v1/plugins/:name/dependencies - Add plugin dependency
+				pluginRouter.POST("/:name/dependencies", pluginHandler.AddDependency)
+
+				// DELETE /api/v1/plugins/:name/dependencies/:depId - 删除插件依赖
+				// DELETE /api/v1/plugins/:name/dependencies/:depId - Delete plugin dependency
+				pluginRouter.DELETE("/:name/dependencies/:depId", pluginHandler.DeleteDependency)
 			}
 
 			// Cluster plugin routes 集群插件路由

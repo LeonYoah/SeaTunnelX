@@ -5,6 +5,7 @@
 
 'use client';
 
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Dialog,
@@ -25,8 +26,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Database, Upload, Shuffle, ExternalLink, Package, FolderOpen } from 'lucide-react';
-import type { Plugin, PluginCategory } from '@/lib/services/plugin';
+import { Database, Upload, Shuffle, ExternalLink, Package, FolderOpen, RefreshCw } from 'lucide-react';
+import type { Plugin, PluginCategory, PluginDependencyConfig } from '@/lib/services/plugin';
+import { PluginService } from '@/lib/services/plugin';
 
 interface PluginDetailDialogProps {
   open: boolean;
@@ -74,6 +76,34 @@ function getCategoryColor(category: PluginCategory): string {
  */
 export function PluginDetailDialog({ open, onOpenChange, plugin }: PluginDetailDialogProps) {
   const t = useTranslations();
+
+  // Configured dependencies state / 已配置的依赖状态
+  const [configuredDeps, setConfiguredDeps] = useState<PluginDependencyConfig[]>([]);
+  const [loadingDeps, setLoadingDeps] = useState(false);
+
+  /**
+   * Load configured dependencies / 加载已配置的依赖
+   */
+  const loadConfiguredDeps = useCallback(async () => {
+    if (!plugin?.name) return;
+    setLoadingDeps(true);
+    try {
+      const deps = await PluginService.listDependencies(plugin.name);
+      setConfiguredDeps(deps || []);
+    } catch (err) {
+      console.error('Failed to load configured dependencies:', err);
+      setConfiguredDeps([]);
+    } finally {
+      setLoadingDeps(false);
+    }
+  }, [plugin?.name]);
+
+  // Load dependencies when dialog opens / 对话框打开时加载依赖
+  useEffect(() => {
+    if (open && plugin?.name) {
+      loadConfiguredDeps();
+    }
+  }, [open, plugin?.name, loadConfiguredDeps]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -191,6 +221,50 @@ export function PluginDetailDialog({ open, onOpenChange, plugin }: PluginDetailD
                 </div>
               </>
             )}
+
+            {/* Configured Dependencies / 已配置的依赖库 */}
+            <Separator />
+            <div className="space-y-3">
+              <h4 className="font-medium flex items-center gap-2">
+                <Package className="h-4 w-4" />
+                {t('plugin.configuredDependencies')}
+                {loadingDeps && <RefreshCw className="h-4 w-4 animate-spin" />}
+              </h4>
+              {loadingDeps ? (
+                <div className="text-sm text-muted-foreground py-4 text-center">
+                  {t('common.loading')}
+                </div>
+              ) : configuredDeps.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-4 text-center bg-muted/30 rounded-md">
+                  {t('plugin.noConfiguredDependencies')}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('plugin.groupId')}</TableHead>
+                      <TableHead>{t('plugin.artifactId')}</TableHead>
+                      <TableHead>{t('plugin.version')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {configuredDeps.map((dep) => (
+                      <TableRow key={dep.id}>
+                        <TableCell className="font-mono text-xs">
+                          {dep.group_id}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {dep.artifact_id}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {dep.version}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
 
             {/* Version Note / 版本说明 */}
             <Separator />

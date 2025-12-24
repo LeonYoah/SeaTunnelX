@@ -9,7 +9,7 @@ import { useTranslations } from 'next-intl';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Database, ExternalLink, Download, CheckCircle } from 'lucide-react';
+import { Database, ExternalLink, Download, CheckCircle, Settings } from 'lucide-react';
 import type { Plugin, PluginCategory } from '@/lib/services/plugin';
 
 interface PluginCardProps {
@@ -22,6 +22,7 @@ interface PluginCardProps {
   downloadProgress?: number;
   onInstall?: () => void;
   onDownload?: () => void;
+  onConfigDependency?: () => void;
 }
 
 /**
@@ -64,6 +65,7 @@ export function PluginCard({
   downloadProgress = 0,
   onInstall,
   onDownload,
+  onConfigDependency,
 }: PluginCardProps) {
   const t = useTranslations();
 
@@ -83,6 +85,15 @@ export function PluginCard({
   const handleDownloadClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onDownload?.();
+  };
+
+  /**
+   * Handle dependency config button click
+   * 处理依赖配置按钮点击
+   */
+  const handleConfigDependencyClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onConfigDependency?.();
   };
 
   return (
@@ -140,7 +151,18 @@ export function PluginCard({
         
         {/* Install/Download/Status button / 安装/下载/状态按钮 */}
         {showInstallButton && (
-          <div className="mt-3 pt-3 border-t">
+          <div className="mt-3 pt-3 border-t space-y-2">
+            {/* Dependency config button / 依赖配置按钮 */}
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full text-muted-foreground hover:text-foreground"
+              onClick={handleConfigDependencyClick}
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              {t('plugin.configDependency')}
+            </Button>
+            
             {isInstalled ? (
               <Button variant="outline" size="sm" className="w-full" disabled>
                 <CheckCircle className="h-4 w-4 mr-2 text-green-600" />

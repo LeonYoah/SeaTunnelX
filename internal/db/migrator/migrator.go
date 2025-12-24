@@ -69,7 +69,8 @@ func Migrate() {
 		&project.ProjectReport{},
 		&audit.CommandLog{},    // 命令日志表 / Command log table
 		&audit.AuditLog{},      // 审计日志表 / Audit log table
-		&plugin.InstalledPlugin{}, // 已安装插件表 / Installed plugin table
+		&plugin.InstalledPlugin{},       // 已安装插件表 / Installed plugin table
+		&plugin.PluginDependencyConfig{}, // 插件依赖配置表 / Plugin dependency config table
 	); err != nil {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}

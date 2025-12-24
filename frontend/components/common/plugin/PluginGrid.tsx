@@ -19,6 +19,7 @@ interface PluginGridProps {
   showInstallButton?: boolean;
   onInstall?: (plugin: Plugin) => void;
   onDownload?: (plugin: Plugin) => void;
+  onConfigDependency?: (plugin: Plugin) => void;
   /** Map of plugin name to download status / 插件名称到下载状态的映射 */
   downloadingPlugins?: Set<string>;
   /** Map of plugin name to downloaded status / 插件名称到已下载状态的映射 */
@@ -39,6 +40,7 @@ export function PluginGrid({
   showInstallButton = false,
   onInstall,
   onDownload,
+  onConfigDependency,
   downloadingPlugins = new Set(),
   downloadedPlugins = new Set(),
 }: PluginGridProps) {
@@ -120,6 +122,7 @@ export function PluginGrid({
             isDownloaded={downloadedPlugins.has(plugin.name)}
             onInstall={onInstall ? () => onInstall(plugin) : undefined}
             onDownload={onDownload ? () => onDownload(plugin) : undefined}
+            onConfigDependency={onConfigDependency ? () => onConfigDependency(plugin) : undefined}
           />
         ))}
       </div>

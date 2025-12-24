@@ -13,7 +13,19 @@ import type {
   PluginDownloadProgress,
   LocalPlugin,
   PluginInstallStatus,
+  PluginDependencyConfig,
+  AddDependencyRequest,
 } from './types';
+
+// Import DownloadAllPluginsProgress type / 导入下载所有插件进度类型
+type DownloadAllPluginsProgress = {
+  total: number;
+  downloaded: number;
+  failed: number;
+  skipped: number;
+  status: string;
+  message: string;
+};
 
 /**
  * Plugin service for managing SeaTunnel plugins
@@ -230,6 +242,49 @@ export class PluginService extends BaseService {
   ): Promise<PluginInstallStatus | null> {
     return this.get<PluginInstallStatus | null>(
       `/clusters/${clusterId}/plugins/${encodeURIComponent(pluginName)}/progress`
+    );
+  }
+
+  // ==================== Plugin Dependency Config 插件依赖配置 ====================
+
+  /**
+   * List dependencies for a plugin
+   * 获取插件的依赖列表
+   * @param pluginName - Plugin name / 插件名称
+   * @returns List of dependencies / 依赖列表
+   */
+  static async listDependencies(pluginName: string): Promise<PluginDependencyConfig[]> {
+    return this.get<PluginDependencyConfig[]>(
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies`
+    );
+  }
+
+  /**
+   * Add a dependency to a plugin
+   * 为插件添加依赖
+   * @param pluginName - Plugin name / 插件名称
+   * @param dependency - Dependency info / 依赖信息
+   * @returns Created dependency / 创建的依赖
+   */
+  static async addDependency(
+    pluginName: string,
+    dependency: AddDependencyRequest
+  ): Promise<PluginDependencyConfig> {
+    return this.post<PluginDependencyConfig>(
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies`,
+      dependency
+    );
+  }
+
+  /**
+   * Delete a dependency from a plugin
+   * 删除插件的依赖
+   * @param pluginName - Plugin name / 插件名称
+   * @param depId - Dependency ID / 依赖 ID
+   */
+  static async deleteDependency(pluginName: string, depId: number): Promise<void> {
+    await this.delete<unknown>(
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies/${depId}`
     );
   }
 }

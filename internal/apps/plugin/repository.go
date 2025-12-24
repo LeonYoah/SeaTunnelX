@@ -190,3 +190,50 @@ func (r *Repository) ExistsByClusterAndName(ctx context.Context, clusterID uint,
 	}
 	return count > 0, nil
 }
+
+// ==================== Plugin Dependency Config Methods 插件依赖配置方法 ====================
+
+// ListDependencies retrieves all dependencies for a plugin.
+// ListDependencies 获取插件的所有依赖。
+func (r *Repository) ListDependencies(ctx context.Context, pluginName string) ([]PluginDependencyConfig, error) {
+	var deps []PluginDependencyConfig
+	if err := r.db.WithContext(ctx).
+		Where("plugin_name = ?", pluginName).
+		Order("created_at ASC").
+		Find(&deps).Error; err != nil {
+		return nil, err
+	}
+	return deps, nil
+}
+
+// CreateDependency creates a new dependency configuration.
+// CreateDependency 创建新的依赖配置。
+func (r *Repository) CreateDependency(ctx context.Context, dep *PluginDependencyConfig) error {
+	return r.db.WithContext(ctx).Create(dep).Error
+}
+
+// DeleteDependency deletes a dependency configuration by ID.
+// DeleteDependency 通过 ID 删除依赖配置。
+func (r *Repository) DeleteDependency(ctx context.Context, id uint) error {
+	result := r.db.WithContext(ctx).Delete(&PluginDependencyConfig{}, id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("dependency not found / 依赖未找到")
+	}
+	return nil
+}
+
+// GetDependencyByID retrieves a dependency by ID.
+// GetDependencyByID 通过 ID 获取依赖。
+func (r *Repository) GetDependencyByID(ctx context.Context, id uint) (*PluginDependencyConfig, error) {
+	var dep PluginDependencyConfig
+	if err := r.db.WithContext(ctx).First(&dep, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("dependency not found / 依赖未找到")
+		}
+		return nil, err
+	}
+	return &dep, nil
+}

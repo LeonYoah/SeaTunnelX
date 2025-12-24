@@ -73,6 +73,25 @@ type PluginDependency struct {
 	TargetDir  string `json:"target_dir"`  // 目标目录 (connectors/ 或 lib/) / Target directory
 }
 
+// PluginDependencyConfig represents a user-configured dependency for a plugin (GORM model).
+// PluginDependencyConfig 表示用户为插件配置的依赖项（GORM 模型）。
+type PluginDependencyConfig struct {
+	ID         uint   `gorm:"primaryKey" json:"id"`
+	PluginName string `gorm:"size:100;not null;index:idx_plugin_dep,unique" json:"plugin_name"` // 插件名称 / Plugin name
+	GroupID    string `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"group_id"`    // Maven groupId
+	ArtifactID string `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"artifact_id"` // Maven artifactId
+	Version    string `gorm:"size:50" json:"version"`                                           // 版本号（可选，留空则使用插件版本）/ Version (optional, use plugin version if empty)
+	TargetDir  string `gorm:"size:20;not null;default:lib" json:"target_dir"`                   // 目标目录 (lib) / Target directory
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// TableName returns the table name for PluginDependencyConfig.
+// TableName 返回 PluginDependencyConfig 的表名。
+func (PluginDependencyConfig) TableName() string {
+	return "plugin_dependency_configs"
+}
+
 // Plugin represents a SeaTunnel plugin.
 // Plugin 表示一个 SeaTunnel 插件。
 type Plugin struct {
@@ -199,4 +218,31 @@ type AvailableVersionsResponse struct {
 	Versions           []string `json:"versions"`            // 版本列表 / Version list
 	RecommendedVersion string   `json:"recommended_version"` // 推荐版本 / Recommended version
 	Warning            string   `json:"warning,omitempty"`   // 警告信息 / Warning message
+}
+
+
+// ==================== Plugin Dependency Config Types 插件依赖配置类型 ====================
+
+// AddDependencyRequest represents a request to add a dependency to a plugin.
+// AddDependencyRequest 表示为插件添加依赖的请求。
+type AddDependencyRequest struct {
+	PluginName string `json:"plugin_name"`                    // 插件名称（从 URL 获取）/ Plugin name (from URL)
+	GroupID    string `json:"group_id" binding:"required"`    // Maven groupId
+	ArtifactID string `json:"artifact_id" binding:"required"` // Maven artifactId
+	Version    string `json:"version" binding:"required"`     // 版本号（必填）/ Version (required)
+}
+
+// UpdateDependencyRequest represents a request to update a dependency.
+// UpdateDependencyRequest 表示更新依赖的请求。
+type UpdateDependencyRequest struct {
+	GroupID    string `json:"group_id"`    // Maven groupId
+	ArtifactID string `json:"artifact_id"` // Maven artifactId
+	Version    string `json:"version"`     // 版本号 / Version
+}
+
+// PluginDependencyResponse represents the response for plugin dependencies.
+// PluginDependencyResponse 表示插件依赖的响应。
+type PluginDependencyResponse struct {
+	PluginName   string                   `json:"plugin_name"`  // 插件名称 / Plugin name
+	Dependencies []PluginDependencyConfig `json:"dependencies"` // 依赖列表 / Dependencies
 }

@@ -260,3 +260,48 @@ export interface GetInstallProgressResponse {
   error_msg: string;
   data: PluginInstallStatus | null;
 }
+
+// ==================== Plugin Dependency Config Types 插件依赖配置类型 ====================
+
+/**
+ * Plugin dependency configuration (user-configured)
+ * 插件依赖配置（用户配置）
+ */
+export interface PluginDependencyConfig {
+  id: number;
+  plugin_name: string;
+  group_id: string;
+  artifact_id: string;
+  version: string;
+  target_dir: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Add dependency request
+ * 添加依赖请求
+ */
+export interface AddDependencyRequest {
+  group_id: string;
+  artifact_id: string;
+  version: string; // 必填 / Required
+}
+
+/**
+ * List dependencies response
+ * 获取依赖列表响应
+ */
+export interface ListDependenciesResponse {
+  error_msg: string;
+  data: PluginDependencyConfig[] | null;
+}
+
+/**
+ * Add dependency response
+ * 添加依赖响应
+ */
+export interface AddDependencyResponse {
+  error_msg: string;
+  data: PluginDependencyConfig | null;
+}

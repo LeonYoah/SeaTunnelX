@@ -33,6 +33,7 @@ import { PluginGrid } from './PluginGrid';
 import { PluginDetailDialog } from './PluginDetailDialog';
 import { InstallPluginDialog } from './InstallPluginDialog';
 import { BatchInstallDialog } from './BatchInstallDialog';
+import { DependencyConfigDialog } from './DependencyConfigDialog';
 import { Pagination } from '@/components/ui/pagination';
 import {
   Table,
@@ -112,6 +113,10 @@ export function PluginMain() {
   // Batch selection state / 批量选择状态
   const [selectedLocalPlugins, setSelectedLocalPlugins] = useState<Set<string>>(new Set());
   const [isBatchInstallOpen, setIsBatchInstallOpen] = useState(false);
+
+  // Dependency config state / 依赖配置状态
+  const [isDependencyDialogOpen, setIsDependencyDialogOpen] = useState(false);
+  const [pluginForDependency, setPluginForDependency] = useState<string>('');
 
   // Plugin installation status per cluster / 每个集群的插件安装状态
   // Map: pluginName -> { clusterId -> InstalledPlugin }
@@ -683,6 +688,10 @@ export function PluginMain() {
                 showInstallButton={true}
                 onInstall={handleInstallPlugin}
                 onDownload={handleDownloadPlugin}
+                onConfigDependency={(plugin) => {
+                  setPluginForDependency(plugin.name);
+                  setIsDependencyDialogOpen(true);
+                }}
                 downloadingPlugins={downloadingPlugins}
                 downloadedPlugins={downloadedPlugins}
               />
@@ -977,6 +986,13 @@ export function PluginMain() {
         }}
         plugins={getSelectedPluginsForBatchInstall()}
         version={selectedVersion}
+      />
+
+      {/* Dependency Config Dialog / 依赖配置对话框 */}
+      <DependencyConfigDialog
+        open={isDependencyDialogOpen}
+        onOpenChange={setIsDependencyDialogOpen}
+        pluginName={pluginForDependency}
       />
     </motion.div>
   );

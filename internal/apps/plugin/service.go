@@ -533,6 +533,13 @@ func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirr
 	}
 	fmt.Printf("[DownloadPlugin] Plugin: name=%s, artifactID=%s, version=%s\n", plugin.Name, plugin.ArtifactID, plugin.Version)
 
+	// Load configured dependencies from database / 从数据库加载配置的依赖
+	deps, err := s.GetPluginDependencies(ctx, name)
+	if err == nil && len(deps) > 0 {
+		plugin.Dependencies = deps
+		fmt.Printf("[DownloadPlugin] Loaded %d dependencies for %s\n", len(deps), name)
+	}
+
 	// Check if already downloaded / 检查是否已下载
 	if s.downloader.IsConnectorDownloaded(name, version) {
 		return &DownloadProgress{
@@ -636,15 +643,23 @@ func (s *Service) DownloadAllPlugins(ctx context.Context, version string, mirror
 	// Start downloading all plugins in background / 在后台开始下载所有插件
 	go func() {
 		downloadCtx := context.Background()
-		for _, plugin := range plugins {
+		for i := range plugins {
+			plugin := &plugins[i]
+			
 			// Check if already downloaded / 检查是否已下载
 			if s.downloader.IsConnectorDownloaded(plugin.Name, version) {
 				progress.Skipped++
 				continue
 			}
 
+			// Load configured dependencies from database / 从数据库加载配置的依赖
+			deps, err := s.GetPluginDependencies(downloadCtx, plugin.Name)
+			if err == nil && len(deps) > 0 {
+				plugin.Dependencies = deps
+			}
+
 			// Download plugin / 下载插件
-			err := s.downloader.DownloadPlugin(downloadCtx, &plugin, mirror, nil)
+			err = s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, nil)
 			if err != nil {
 				progress.Failed++
 				fmt.Printf("[DownloadAllPlugins] Failed to download %s: %v\n", plugin.Name, err)
@@ -1062,4 +1077,57 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 // encodeBase64 将数据编码为 base64 字符串。
 func encodeBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
+}
+
+// ==================== Plugin Dependency Config Methods 插件依赖配置方法 ====================
+
+// ListDependencies returns all configured dependencies for a plugin.
+// ListDependencies 返回插件的所有配置依赖。
+func (s *Service) ListDependencies(ctx context.Context, pluginName string) ([]PluginDependencyConfig, error) {
+	return s.repo.ListDependencies(ctx, pluginName)
+}
+
+// AddDependency adds a dependency configuration for a plugin.
+// AddDependency 为插件添加依赖配置。
+func (s *Service) AddDependency(ctx context.Context, req *AddDependencyRequest) (*PluginDependencyConfig, error) {
+	dep := &PluginDependencyConfig{
+		PluginName: req.PluginName,
+		GroupID:    req.GroupID,
+		ArtifactID: req.ArtifactID,
+		Version:    req.Version,
+		TargetDir:  "lib", // Dependencies go to lib directory / 依赖放到 lib 目录
+	}
+
+	if err := s.repo.CreateDependency(ctx, dep); err != nil {
+		return nil, err
+	}
+
+	return dep, nil
+}
+
+// DeleteDependency deletes a dependency configuration.
+// DeleteDependency 删除依赖配置。
+func (s *Service) DeleteDependency(ctx context.Context, depID uint) error {
+	return s.repo.DeleteDependency(ctx, depID)
+}
+
+// GetPluginDependencies returns the configured dependencies for a plugin.
+// GetPluginDependencies 返回插件的配置依赖（用于下载时）。
+func (s *Service) GetPluginDependencies(ctx context.Context, pluginName string) ([]PluginDependency, error) {
+	configs, err := s.repo.ListDependencies(ctx, pluginName)
+	if err != nil {
+		return nil, err
+	}
+
+	deps := make([]PluginDependency, len(configs))
+	for i, cfg := range configs {
+		deps[i] = PluginDependency{
+			GroupID:    cfg.GroupID,
+			ArtifactID: cfg.ArtifactID,
+			Version:    cfg.Version,
+			TargetDir:  cfg.TargetDir,
+		}
+	}
+
+	return deps, nil
 }

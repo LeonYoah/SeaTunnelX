@@ -510,3 +510,106 @@ func (h *Handler) GetInstallProgress(c *gin.Context) {
 	progress := h.service.GetInstallProgress(uint(clusterID), pluginName)
 	c.JSON(http.StatusOK, GetInstallProgressResponse{Data: progress})
 }
+
+// ==================== Plugin Dependency Config APIs 插件依赖配置 API ====================
+
+// ListDependenciesResponse represents the response for listing plugin dependencies.
+// ListDependenciesResponse 表示获取插件依赖列表的响应。
+type ListDependenciesResponse struct {
+	ErrorMsg string                   `json:"error_msg"`
+	Data     []PluginDependencyConfig `json:"data"`
+}
+
+// ListDependencies handles GET /api/v1/plugins/:name/dependencies - lists dependencies for a plugin.
+// ListDependencies 处理 GET /api/v1/plugins/:name/dependencies - 获取插件的依赖列表。
+// @Tags plugins
+// @Produce json
+// @Param name path string true "插件名称"
+// @Success 200 {object} ListDependenciesResponse
+// @Router /api/v1/plugins/{name}/dependencies [get]
+func (h *Handler) ListDependencies(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, ListDependenciesResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+
+	deps, err := h.service.ListDependencies(c.Request.Context(), name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ListDependenciesResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, ListDependenciesResponse{Data: deps})
+}
+
+// AddDependencyResponse represents the response for adding a dependency.
+// AddDependencyResponse 表示添加依赖的响应。
+type AddDependencyResponse struct {
+	ErrorMsg string                  `json:"error_msg"`
+	Data     *PluginDependencyConfig `json:"data"`
+}
+
+// AddDependency handles POST /api/v1/plugins/:name/dependencies - adds a dependency to a plugin.
+// AddDependency 处理 POST /api/v1/plugins/:name/dependencies - 为插件添加依赖。
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param name path string true "插件名称"
+// @Param request body AddDependencyRequest true "添加依赖请求"
+// @Success 200 {object} AddDependencyResponse
+// @Router /api/v1/plugins/{name}/dependencies [post]
+func (h *Handler) AddDependency(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, AddDependencyResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+
+	var req AddDependencyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, AddDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	req.PluginName = name
+
+	dep, err := h.service.AddDependency(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, AddDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Plugin] 添加依赖成功: plugin=%s, dep=%s:%s", name, req.GroupID, req.ArtifactID)
+	c.JSON(http.StatusOK, AddDependencyResponse{Data: dep})
+}
+
+// DeleteDependencyResponse represents the response for deleting a dependency.
+// DeleteDependencyResponse 表示删除依赖的响应。
+type DeleteDependencyResponse struct {
+	ErrorMsg string `json:"error_msg"`
+	Data     any    `json:"data"`
+}
+
+// DeleteDependency handles DELETE /api/v1/plugins/:name/dependencies/:depId - deletes a dependency.
+// DeleteDependency 处理 DELETE /api/v1/plugins/:name/dependencies/:depId - 删除依赖。
+// @Tags plugins
+// @Produce json
+// @Param name path string true "插件名称"
+// @Param depId path int true "依赖ID"
+// @Success 200 {object} DeleteDependencyResponse
+// @Router /api/v1/plugins/{name}/dependencies/{depId} [delete]
+func (h *Handler) DeleteDependency(c *gin.Context) {
+	depID, err := strconv.ParseUint(c.Param("depId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, DeleteDependencyResponse{ErrorMsg: "无效的依赖 ID / Invalid dependency ID"})
+		return
+	}
+
+	if err := h.service.DeleteDependency(c.Request.Context(), uint(depID)); err != nil {
+		c.JSON(http.StatusInternalServerError, DeleteDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Plugin] 删除依赖成功: depId=%d", depID)
+	c.JSON(http.StatusOK, DeleteDependencyResponse{})
+}
