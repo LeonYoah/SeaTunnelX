@@ -17,7 +17,6 @@ interface PluginGridProps {
   loading: boolean;
   onViewDetail: (plugin: Plugin) => void;
   showInstallButton?: boolean;
-  isTransformBuiltIn?: boolean;
   onInstall?: (plugin: Plugin) => void;
   onDownload?: (plugin: Plugin) => void;
   /** Map of plugin name to download status / 插件名称到下载状态的映射 */
@@ -38,7 +37,6 @@ export function PluginGrid({
   loading, 
   onViewDetail,
   showInstallButton = false,
-  isTransformBuiltIn = false,
   onInstall,
   onDownload,
   downloadingPlugins = new Set(),
@@ -118,7 +116,6 @@ export function PluginGrid({
             plugin={plugin}
             onClick={() => onViewDetail(plugin)}
             showInstallButton={showInstallButton}
-            isBuiltIn={isTransformBuiltIn && plugin.category === 'transform'}
             isDownloading={downloadingPlugins.has(plugin.name)}
             isDownloaded={downloadedPlugins.has(plugin.name)}
             onInstall={onInstall ? () => onInstall(plugin) : undefined}

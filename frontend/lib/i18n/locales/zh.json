@@ -585,10 +585,13 @@
     "selectClusterToViewInstalled": "请选择集群以查看已安装的插件",
     "goToClusterDetail": "请前往集群详情页面管理已安装插件",
     "totalPlugins": "插件总数",
+    "totalConnectors": "连接器总数",
     "searchPlaceholder": "按名称或描述搜索插件",
     "noPluginsFound": "未找到插件",
     "noDescription": "暂无描述",
     "loadError": "加载插件失败",
+    "loadingFromMaven": "正在从 Maven 仓库获取插件列表...",
+    "loadingFromMavenDesc": "首次加载可能需要 30-60 秒，后续将使用缓存",
     "install": "安装",
     "uninstall": "卸载",
     "enable": "启用",
@@ -626,6 +629,7 @@
     "category": {
       "label": "分类",
       "all": "全部分类",
+      "connector": "连接器",
       "source": "Source",
       "sink": "Sink",
       "transform": "Transform"

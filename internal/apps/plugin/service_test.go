@@ -23,73 +23,47 @@ import (
 	"time"
 )
 
-// TestFetchPluginsFromDocs tests fetching plugins from SeaTunnel documentation.
-// TestFetchPluginsFromDocs 测试从 SeaTunnel 文档获取插件。
+// TestFetchPluginsFromDocs tests fetching plugins from Maven repository.
+// TestFetchPluginsFromDocs 测试从 Maven 仓库获取插件。
 func TestFetchPluginsFromDocs(t *testing.T) {
 	service := NewService(nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	version := "2.3.12"
 
-	// Test fetching all plugins / 测试获取所有插件
+	// Test fetching all plugins from Maven / 测试从 Maven 获取所有插件
 	plugins, err := service.fetchPluginsFromDocs(ctx, version)
 	if err != nil {
-		t.Logf("Warning: Failed to fetch plugins from docs (may be network issue): %v", err)
-		t.Logf("Using fallback plugins instead / 使用备用插件列表")
-		plugins = getAvailablePluginsForVersion(version)
+		t.Logf("Warning: Failed to fetch plugins from Maven (may be network issue): %v", err)
+		t.Logf("Skipping test due to network issue / 由于网络问题跳过测试")
+		t.Skip("Network issue, skipping test")
+		return
 	}
 
 	t.Logf("Total plugins fetched: %d / 获取到的插件总数: %d", len(plugins), len(plugins))
 
 	// Count by category / 按分类统计
-	sourceCount := 0
-	sinkCount := 0
-	transformCount := 0
+	connectorCount := 0
 	for _, p := range plugins {
-		switch p.Category {
-		case PluginCategorySource:
-			sourceCount++
-		case PluginCategorySink:
-			sinkCount++
-		case PluginCategoryTransform:
-			transformCount++
+		if p.Category == PluginCategoryConnector {
+			connectorCount++
 		}
 	}
 
-	t.Logf("Source plugins: %d / Source插件: %d", sourceCount, sourceCount)
-	t.Logf("Sink plugins: %d / Sink插件: %d", sinkCount, sinkCount)
-	t.Logf("Transform plugins: %d / 数据转换插件: %d", transformCount, transformCount)
+	t.Logf("Connector plugins: %d / 连接器插件: %d", connectorCount, connectorCount)
 
 	// Verify we have plugins / 验证有插件
 	if len(plugins) == 0 {
 		t.Error("Expected at least some plugins, got 0 / 期望至少有一些插件，但得到 0")
 	}
 
-	// Print first 5 plugins of each category / 打印每个分类的前5个插件
-	t.Log("\n=== Sample Source Plugins / 示例Source插件 ===")
+	// Print first 10 connector plugins / 打印前10个连接器插件
+	t.Log("\n=== Sample Connector Plugins / 示例连接器插件 ===")
 	count := 0
 	for _, p := range plugins {
-		if p.Category == PluginCategorySource && count < 5 {
-			t.Logf("  - %s (%s): %s", p.DisplayName, p.Name, p.DocURL)
-			count++
-		}
-	}
-
-	t.Log("\n=== Sample Sink Plugins / 示例Sink插件 ===")
-	count = 0
-	for _, p := range plugins {
-		if p.Category == PluginCategorySink && count < 5 {
-			t.Logf("  - %s (%s): %s", p.DisplayName, p.Name, p.DocURL)
-			count++
-		}
-	}
-
-	t.Log("\n=== Sample Transform Plugins / 示例数据转换插件 ===")
-	count = 0
-	for _, p := range plugins {
-		if p.Category == PluginCategoryTransform && count < 5 {
-			t.Logf("  - %s (%s): %s", p.DisplayName, p.Name, p.DocURL)
+		if p.Category == PluginCategoryConnector && count < 10 {
+			t.Logf("  - %s (%s): artifact=%s", p.DisplayName, p.Name, p.ArtifactID)
 			count++
 		}
 	}

@@ -22,7 +22,7 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { RefreshCw, Search, Puzzle, Package, Download, CheckCircle, Info, Upload, HardDrive, Trash2, CheckSquare, Server } from 'lucide-react';
+import { RefreshCw, Search, Puzzle, Package, HardDrive, Trash2, CheckSquare, Server, Upload } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PluginService } from '@/lib/services/plugin';
 import { ClusterService } from '@/lib/services/cluster';
@@ -119,11 +119,20 @@ export function PluginMain() {
   const loadPlugins = useCallback(async () => {
     setLoading(true);
     setError(null);
+    
+    // Show loading toast for first load (cache miss may take up to 60s)
+    // 首次加载时显示提示（缓存未命中可能需要最多60秒）
+    const loadingToast = toast.loading(t('plugin.loadingFromMaven'), {
+      description: t('plugin.loadingFromMavenDesc'),
+    });
+    
     try {
       const result: AvailablePluginsResponse = await PluginService.listAvailablePlugins(
         selectedVersion || undefined,
         selectedMirror
       );
+      
+      toast.dismiss(loadingToast);
       
       let filteredPlugins = result.plugins || [];
       
@@ -148,6 +157,7 @@ export function PluginMain() {
         setSelectedVersion(result.version);
       }
     } catch (err) {
+      toast.dismiss(loadingToast);
       const errorMsg = err instanceof Error ? err.message : t('plugin.loadError');
       setError(errorMsg);
       toast.error(errorMsg);
@@ -427,10 +437,8 @@ export function PluginMain() {
     }
   };
 
-  // Count plugins by category / 按分类统计插件数量
-  const sourceCount = plugins.filter(p => p.category === 'source').length;
-  const sinkCount = plugins.filter(p => p.category === 'sink').length;
-  const transformCount = plugins.filter(p => p.category === 'transform').length;
+  // Count plugins by category is no longer needed since all are connectors
+  // 不再需要按分类统计，因为所有插件都是连接器
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -486,53 +494,17 @@ export function PluginMain() {
 
       <Separator />
 
-      {/* Stats cards / 统计卡片 */}
-      <motion.div
-        className="grid grid-cols-1 md:grid-cols-4 gap-4"
-        variants={itemVariants}
-      >
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              {t('plugin.totalPlugins')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{total}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              {t('plugin.category.source')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{sourceCount}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CheckCircle className="h-4 w-4" />
-              {t('plugin.category.sink')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{sinkCount}</div>
-          </CardContent>
-        </Card>
+      {/* Stats card / 统计卡片 */}
+      <motion.div variants={itemVariants}>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Puzzle className="h-4 w-4" />
-              {t('plugin.category.transform')}
+              {t('plugin.totalPlugins')}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{transformCount}</div>
+            <div className="text-2xl font-bold text-blue-600">{total}</div>
           </CardContent>
         </Card>
       </motion.div>
@@ -580,9 +552,7 @@ export function PluginMain() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t('plugin.category.all')}</SelectItem>
-            <SelectItem value="source">{t('plugin.category.source')}</SelectItem>
-            <SelectItem value="sink">{t('plugin.category.sink')}</SelectItem>
-            <SelectItem value="transform">{t('plugin.category.transform')}</SelectItem>
+            <SelectItem value="connector">{t('plugin.category.connector')}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -606,27 +576,6 @@ export function PluginMain() {
           {t('common.clearFilters')}
         </Button>
       </motion.div>
-
-      {/* Transform info banner / Transform 信息横幅 */}
-      {filterCategory === 'transform' && (
-        <motion.div variants={itemVariants}>
-          <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-start gap-3">
-                <Info className="h-5 w-5 text-blue-600 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
-                    {t('plugin.transformBuiltIn')}
-                  </p>
-                  <p className="text-sm text-blue-600 dark:text-blue-300 mt-1">
-                    {t('plugin.transformBuiltInDesc')}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
 
       {/* Plugin tabs / 插件标签页 */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'available' | 'local' | 'custom')}>
@@ -670,7 +619,6 @@ export function PluginMain() {
                 loading={loading}
                 onViewDetail={handleViewDetail}
                 showInstallButton={true}
-                isTransformBuiltIn={true}
                 onInstall={handleInstallPlugin}
                 onDownload={handleDownloadPlugin}
                 downloadingPlugins={downloadingPlugins}
@@ -802,10 +750,7 @@ export function PluginMain() {
                           <TableCell className="font-medium">{plugin.name}</TableCell>
                           <TableCell>
                             <Badge variant="outline">
-                              {plugin.category === 'source' ? t('plugin.category.source') :
-                               plugin.category === 'sink' ? t('plugin.category.sink') :
-                               plugin.category === 'transform' ? t('plugin.category.transform') :
-                               plugin.category}
+                              {plugin.category === 'connector' ? t('plugin.category.connector') : plugin.category}
                             </Badge>
                           </TableCell>
                           <TableCell>v{plugin.version}</TableCell>

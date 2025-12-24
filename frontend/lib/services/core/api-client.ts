@@ -6,7 +6,7 @@ import {ApiError, ApiResponse} from './types';
  * 统一处理请求配置、响应解析和错误处理
  */
 const apiClient = axios.create({
-  timeout: 15000,
+  timeout: 60000, // 60 seconds for plugin fetching from Maven / 60秒超时，用于从 Maven 获取插件
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

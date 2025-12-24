@@ -41,12 +41,39 @@ var (
 	ErrClusterVersionEmpty = errors.New("cluster version is not set / 集群版本未设置")
 )
 
-// SeaTunnel documentation URLs for fetching plugin lists
-// SeaTunnel 文档 URL，用于获取插件列表
+// SeaTunnel Maven repository and documentation URLs
+// SeaTunnel Maven 仓库和文档 URL
 const (
-	SeaTunnelDocsBaseURL = "https://seatunnel.apache.org/docs"
-	PluginCacheDuration  = 1 * time.Hour
+	// Maven repository URL for fetching connector list / Maven 仓库 URL，用于获取连接器列表
+	MavenRepoBaseURL     = "https://repo.maven.apache.org/maven2/org/apache/seatunnel"
+	// SeaTunnel documentation URL for connector docs / SeaTunnel 文档 URL，用于连接器文档
+	SeaTunnelDocsBaseURL = "https://seatunnel.apache.org/zh-CN/docs"
+	// Cache duration / 缓存时间
+	PluginCacheDuration  = 24 * time.Hour
+	// HTTP request timeout for fetching plugin list / 获取插件列表的 HTTP 请求超时
+	PluginFetchTimeout   = 60 * time.Second
 )
+
+// skipModuleList contains modules to skip when fetching connectors from Maven.
+// skipModuleList 包含从 Maven 获取连接器时需要跳过的模块。
+var skipModuleList = []string{
+	"connector-common",    // Common utilities / 通用工具
+	"connector-cdc-base",  // CDC base module / CDC 基础模块
+	"connector-cdc",       // CDC parent module / CDC 父模块
+	"connector-file",
+	"connector-http",
+}
+
+// isSkippedModule checks if the artifact ID should be skipped.
+// isSkippedModule 检查 artifact ID 是否应该被跳过。
+func isSkippedModule(artifactID string) bool {
+	for _, skip := range skipModuleList {
+		if artifactID == skip {
+			return true
+		}
+	}
+	return false
+}
 
 // ClusterGetter is an interface for getting cluster information.
 // ClusterGetter 是获取集群信息的接口。
@@ -165,8 +192,8 @@ func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirr
 	}, nil
 }
 
-// getPlugins returns the plugin list, using cache if valid, otherwise fetching from SeaTunnel docs.
-// getPlugins 返回插件列表，如果缓存有效则使用缓存，否则从 SeaTunnel 文档获取。
+// getPlugins returns the plugin list, using cache if valid, otherwise fetching from Maven.
+// getPlugins 返回插件列表，如果缓存有效则使用缓存，否则从 Maven 获取。
 func (s *Service) getPlugins(ctx context.Context, version string) []Plugin {
 	s.pluginsMu.RLock()
 	// Check if cache is valid / 检查缓存是否有效
@@ -180,11 +207,12 @@ func (s *Service) getPlugins(ctx context.Context, version string) []Plugin {
 	}
 	s.pluginsMu.RUnlock()
 
-	// Try to fetch from SeaTunnel docs / 尝试从 SeaTunnel 文档获取
+	// Fetch from Maven repository / 从 Maven 仓库获取
 	plugins, err := s.fetchPluginsFromDocs(ctx, version)
 	if err != nil {
-		// Use fallback plugins on error / 出错时使用备用插件列表
-		return getAvailablePluginsForVersion(version)
+		// Return empty list on error / 出错时返回空列表
+		fmt.Printf("[Plugin] Failed to fetch plugins from Maven: %v\n", err)
+		return []Plugin{}
 	}
 
 	// Update cache / 更新缓存
@@ -196,62 +224,37 @@ func (s *Service) getPlugins(ctx context.Context, version string) []Plugin {
 	return plugins
 }
 
-// fetchPluginsFromDocs fetches plugin list from SeaTunnel documentation.
-// fetchPluginsFromDocs 从 SeaTunnel 文档获取插件列表。
+// fetchPluginsFromDocs fetches plugin list from Maven repository.
+// fetchPluginsFromDocs 从 Maven 仓库获取插件列表。
+// Strategy: Fetch connector list from Maven repo and filter by version
+// 策略：从 Maven 仓库获取连接器列表并按版本过滤
 func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string) ([]Plugin, error) {
-	var allPlugins []Plugin
-
-	// Fetch source connectors / 获取Source连接器
-	sourcePlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySource)
-	if err == nil {
-		allPlugins = append(allPlugins, sourcePlugins...)
+	// Fetch connectors from Maven repo / 从 Maven 仓库获取连接器
+	connectors, err := s.fetchConnectorsFromMaven(ctx, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch connectors from Maven: %w / 从 Maven 获取连接器失败: %w", err, err)
 	}
 
-	// Fetch sink connectors / 获取Sink连接器
-	sinkPlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategorySink)
-	if err == nil {
-		allPlugins = append(allPlugins, sinkPlugins...)
+	if len(connectors) == 0 {
+		return nil, fmt.Errorf("no connectors found for version %s / 未找到版本 %s 的连接器", version, version)
 	}
 
-	// Fetch transform connectors / 获取数据转换连接器
-	transformPlugins, err := s.fetchPluginsByCategory(ctx, version, PluginCategoryTransform)
-	if err == nil {
-		allPlugins = append(allPlugins, transformPlugins...)
-	}
-
-	if len(allPlugins) == 0 {
-		return nil, fmt.Errorf("no plugins found from docs")
-	}
-
-	return allPlugins, nil
+	return connectors, nil
 }
 
-// fetchPluginsByCategory fetches plugins of a specific category from SeaTunnel docs.
-// fetchPluginsByCategory 从 SeaTunnel 文档获取特定分类的插件。
-func (s *Service) fetchPluginsByCategory(ctx context.Context, version string, category PluginCategory) ([]Plugin, error) {
-	// Build URL based on category / 根据分类构建 URL
-	var url string
-	switch category {
-	case PluginCategorySource:
-		url = fmt.Sprintf("%s/%s/connector-v2/source", SeaTunnelDocsBaseURL, version)
-	case PluginCategorySink:
-		url = fmt.Sprintf("%s/%s/connector-v2/sink", SeaTunnelDocsBaseURL, version)
-	case PluginCategoryTransform:
-		url = fmt.Sprintf("%s/%s/transform-v2", SeaTunnelDocsBaseURL, version)
-	default:
-		return nil, fmt.Errorf("unknown category: %s", category)
-	}
-
-	// Create HTTP request with timeout / 创建带超时的 HTTP 请求
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// fetchConnectorsFromMaven fetches connector list from Maven repository.
+// fetchConnectorsFromMaven 从 Maven 仓库获取连接器列表。
+func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) ([]Plugin, error) {
+	// Fetch the main directory listing / 获取主目录列表
+	client := &http.Client{Timeout: PluginFetchTimeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, MavenRepoBaseURL+"/", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch plugins: %w", err)
+		return nil, fmt.Errorf("failed to fetch Maven repo: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -259,193 +262,129 @@ func (s *Service) fetchPluginsByCategory(ctx context.Context, version string, ca
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Read response body / 读取响应体
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Parse HTML to extract plugin names / 解析 HTML 提取插件名称
-	return parsePluginsFromHTML(string(body), version, category), nil
-}
-
-// parsePluginsFromHTML parses plugin names from SeaTunnel docs HTML.
-// parsePluginsFromHTML 从 SeaTunnel 文档 HTML 解析插件名称。
-func parsePluginsFromHTML(html string, version string, category PluginCategory) []Plugin {
-	var plugins []Plugin
-
-	// Pattern to match connector links in the sidebar
-	// 匹配侧边栏中连接器链接的模式
-	// Example: <a href="/docs/2.3.12/connector-v2/source/Jdbc">Jdbc</a>
-	var pattern string
-	switch category {
-	case PluginCategorySource:
-		pattern = `<a[^>]*href="[^"]*connector-v2/source/([^"]+)"[^>]*>([^<]+)</a>`
-	case PluginCategorySink:
-		pattern = `<a[^>]*href="[^"]*connector-v2/sink/([^"]+)"[^>]*>([^<]+)</a>`
-	case PluginCategoryTransform:
-		pattern = `<a[^>]*href="[^"]*transform-v2/([^"]+)"[^>]*>([^<]+)</a>`
-	}
-
+	// Parse HTML to extract connector names / 解析 HTML 提取连接器名称
+	// Pattern: <a href="connector-xxx/">connector-xxx/</a>
+	pattern := `<a[^>]*href="(connector-[^/"]+)/"[^>]*>`
 	re := regexp.MustCompile(pattern)
-	matches := re.FindAllStringSubmatch(html, -1)
+	matches := re.FindAllStringSubmatch(string(body), -1)
 
+	var plugins []Plugin
 	seen := make(map[string]bool)
-	for _, match := range matches {
-		if len(match) >= 3 {
-			// urlPath preserves original case for doc URL / urlPath 保留原始大小写用于文档 URL
-			urlPath := match[1]
-			// name is lowercase for internal identification / name 小写用于内部标识
-			name := strings.ToLower(urlPath)
-			displayName := match[2]
 
-			// Skip duplicates and common pages / 跳过重复项和通用页面
-			if seen[name] || name == "common-options" || name == "about" {
+	for _, match := range matches {
+		if len(match) >= 2 {
+			artifactID := match[1]
+
+			// Skip e2e test modules / 跳过 e2e 测试模块
+			if strings.HasSuffix(artifactID, "-e2e") {
 				continue
 			}
-			seen[name] = true
+			// Skip common/base modules / 跳过通用/基础模块
+			if isSkippedModule(artifactID) {
+				continue
+			}
+			// Skip if already seen / 跳过已处理的
+			if seen[artifactID] {
+				continue
+			}
+			seen[artifactID] = true
 
-			plugin := Plugin{
-				Name:        name,
-				DisplayName: displayName,
-				Category:    category,
-				Version:     version,
-				GroupID:     "org.apache.seatunnel",
-				ArtifactID:  getArtifactID(name),
-				// Use original urlPath for doc URL to preserve case / 使用原始 urlPath 构建文档 URL 以保留大小写
-				DocURL: buildDocURL(version, category, urlPath),
+			// Check if this connector has the specified version / 检查此连接器是否有指定版本
+			hasVersion, err := s.checkConnectorVersion(ctx, artifactID, version)
+			if err != nil || !hasVersion {
+				continue
 			}
 
-			// Add description based on category / 根据分类添加描述
-			plugin.Description = generatePluginDescription(displayName, category)
-
+			// Create plugin entry / 创建插件条目
+			plugin := s.createPluginFromArtifactID(artifactID, version)
 			plugins = append(plugins, plugin)
 		}
 	}
 
-	return plugins
+	return plugins, nil
 }
 
-// getArtifactID returns the correct Maven artifact ID for a plugin name.
-// pluginArtifactMappings contains all special plugin name to artifact ID mappings.
-// pluginArtifactMappings 包含所有特殊的插件名称到 artifact ID 的映射。
-// This mapping is based on SeaTunnel's Maven repository structure.
-// 此映射基于 SeaTunnel 的 Maven 仓库结构。
-var pluginArtifactMappings = map[string]string{
-	// CDC connectors / CDC 连接器
-	"mysql-cdc":     "connector-cdc-mysql",
-	"postgres-cdc":  "connector-cdc-postgres",
-	"sqlserver-cdc": "connector-cdc-sqlserver",
-	"oracle-cdc":    "connector-cdc-oracle",
-	"mongodb-cdc":   "connector-cdc-mongodb",
-	"tidb-cdc":      "connector-cdc-tidb",
-	"db2-cdc":       "connector-cdc-db2",
-	"opengauss-cdc": "connector-cdc-opengauss",
-
-	// File connectors / 文件连接器
-	"localfile": "connector-file-local",
-	"hdfsfile":  "connector-file-hadoop",
-	"s3file":    "connector-file-s3",
-	"ossfile":   "connector-file-oss",
-	"ftpfile":   "connector-file-ftp",
-	"sftpfile":  "connector-file-sftp",
-	"cosfile":   "connector-file-cos",
-	"obsfile":   "connector-file-obs",
-
-	// HTTP-based connectors / 基于 HTTP 的连接器
-	"http":      "connector-http-base",
-	"feishu":    "connector-http-feishu",
-	"github":    "connector-http-github",
-	"gitlab":    "connector-http-gitlab",
-	"jira":      "connector-http-jira",
-	"klaviyo":   "connector-http-klaviyo",
-	"lemlist":   "connector-http-lemlist",
-	"myhours":   "connector-http-myhours",
-	"notion":    "connector-http-notion",
-	"onesignal": "connector-http-onesignal",
-	"persistiq": "connector-http-persistiq",
-	"wechat":    "connector-http-wechat",
-
-	// JDBC connector and JDBC-based databases / JDBC 连接器和基于 JDBC 的数据库
-	// All these databases use connector-jdbc with their respective drivers
-	// 所有这些数据库都使用 connector-jdbc 配合各自的驱动
-	"jdbc":       "connector-jdbc",
-	"mysql":      "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver
-	"postgresql": "connector-jdbc", // Driver: org.postgresql.Driver
-	"dm":         "connector-jdbc", // Driver: dm.jdbc.driver.DmDriver (达梦数据库)
-	"phoenix":    "connector-jdbc", // Driver: org.apache.phoenix.queryserver.client.Driver
-	"sqlserver":  "connector-jdbc", // Driver: com.microsoft.sqlserver.jdbc.SQLServerDriver
-	"oracle":     "connector-jdbc", // Driver: oracle.jdbc.OracleDriver
-	"sqlite":     "connector-jdbc", // Driver: org.sqlite.JDBC
-	"gbase8a":    "connector-jdbc", // Driver: com.gbase.jdbc.Driver
-	"starrocks":  "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver (MySQL protocol)
-	"db2":        "connector-jdbc", // Driver: com.ibm.db2.jcc.DB2Driver
-	"tablestore": "connector-jdbc", // Driver: com.alicloud.openservices.tablestore.jdbc.OTSDriver
-	"saphana":    "connector-jdbc", // Driver: com.sap.db.jdbc.Driver
-	"doris":      "connector-jdbc", // Driver: com.mysql.cj.jdbc.Driver (MySQL protocol)
-	"teradata":   "connector-jdbc", // Driver: com.teradata.jdbc.TeraDriver
-	"snowflake":  "connector-jdbc", // Driver: net.snowflake.client.jdbc.SnowflakeDriver
-	"redshift":   "connector-jdbc", // Driver: com.amazon.redshift.jdbc42.Driver
-	"vertica":    "connector-jdbc", // Driver: com.vertica.jdbc.Driver
-	"kingbase":   "connector-jdbc", // Driver: com.kingbase8.Driver (人大金仓)
-	"oceanbase":  "connector-jdbc", // Driver: com.oceanbase.jdbc.Driver
-	"hive":       "connector-jdbc", // Driver: org.apache.hive.jdbc.HiveDriver
-	"xugu":       "connector-jdbc", // Driver: com.xugu.cloudjdbc.Driver (虚谷数据库)
-	"iris":       "connector-jdbc", // Driver: com.intersystems.jdbc.IRISDriver
-	"opengauss":  "connector-jdbc", // Driver: org.opengauss.Driver
-	"highgo":     "connector-jdbc", // Driver: com.highgo.jdbc.Driver (瀚高数据库)
-	"presto":     "connector-jdbc", // Driver: com.facebook.presto.jdbc.PrestoDriver
-	"trino":      "connector-jdbc", // Driver: io.trino.jdbc.TrinoDriver
-}
-
-// getArtifactID returns the correct Maven artifact ID for a plugin name.
-// getArtifactID 返回插件名称对应的正确 Maven artifact ID。
-// Some plugins have special naming conventions that differ from the standard connector-${name} pattern.
-// 某些插件有特殊的命名约定，与标准的 connector-${name} 模式不同。
-func getArtifactID(name string) string {
-	// Check special mappings first / 首先检查特殊映射
-	if artifactID, ok := pluginArtifactMappings[name]; ok {
-		return artifactID
+// checkConnectorVersion checks if a connector has the specified version in Maven.
+// checkConnectorVersion 检查连接器在 Maven 中是否有指定版本。
+func (s *Service) checkConnectorVersion(ctx context.Context, artifactID, version string) (bool, error) {
+	url := fmt.Sprintf("%s/%s/", MavenRepoBaseURL, artifactID)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
 	}
 
-	// Default: connector-${name} / 默认：connector-${name}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if version directory exists / 检查版本目录是否存在
+	// Pattern: <a href="2.3.12/">2.3.12/</a>
+	pattern := fmt.Sprintf(`<a[^>]*href="%s/"`, regexp.QuoteMeta(version))
+	matched, _ := regexp.MatchString(pattern, string(body))
+	return matched, nil
+}
+
+// createPluginFromArtifactID creates a Plugin from Maven artifact ID.
+// createPluginFromArtifactID 从 Maven artifact ID 创建 Plugin。
+// Plugin name = artifact ID without "connector-" prefix (e.g., connector-jdbc -> jdbc)
+// Display name = Title case with dashes replaced by spaces
+// 插件名称 = artifact ID 去掉 "connector-" 前缀
+// 显示名称 = 首字母大写，横杠替换为空格
+func (s *Service) createPluginFromArtifactID(artifactID, version string) Plugin {
+	// Extract plugin name from artifact ID / 从 artifact ID 提取插件名称
+	// connector-jdbc -> jdbc, connector-cdc-mysql -> cdc-mysql
+	name := strings.TrimPrefix(artifactID, "connector-")
+	
+	// Generate display name: title case with dashes replaced by spaces
+	// 生成显示名称：首字母大写，横杠替换为空格
+	displayName := strings.Title(strings.ReplaceAll(name, "-", " "))
+
+	return Plugin{
+		Name:        name,
+		DisplayName: displayName,
+		Category:    PluginCategoryConnector,
+		Version:     version,
+		Description: fmt.Sprintf("SeaTunnel %s connector / SeaTunnel %s 连接器", displayName, displayName),
+		GroupID:     "org.apache.seatunnel",
+		ArtifactID:  artifactID,
+		DocURL:      fmt.Sprintf("%s/%s/connector-v2", SeaTunnelDocsBaseURL, version),
+	}
+}
+
+
+
+// getArtifactID returns the Maven artifact ID for a plugin name.
+// getArtifactID 返回插件名称对应的 Maven artifact ID。
+// Since we fetch from Maven directly, artifact ID = "connector-" + name
+// 由于我们直接从 Maven 获取，artifact ID = "connector-" + name
+func getArtifactID(name string) string {
 	return fmt.Sprintf("connector-%s", name)
 }
 
-// buildDocURL builds the documentation URL for a plugin.
-// buildDocURL 构建插件的文档 URL。
-func buildDocURL(version string, category PluginCategory, name string) string {
-	switch category {
-	case PluginCategorySource:
-		return fmt.Sprintf("%s/%s/connector-v2/source/%s", SeaTunnelDocsBaseURL, version, name)
-	case PluginCategorySink:
-		return fmt.Sprintf("%s/%s/connector-v2/sink/%s", SeaTunnelDocsBaseURL, version, name)
-	case PluginCategoryTransform:
-		return fmt.Sprintf("%s/%s/transform-v2/%s", SeaTunnelDocsBaseURL, version, name)
-	}
-	return ""
-}
-
-// generatePluginDescription generates a description for a plugin.
-// generatePluginDescription 为插件生成描述。
-func generatePluginDescription(displayName string, category PluginCategory) string {
-	switch category {
-	case PluginCategorySource:
-		return fmt.Sprintf("Read data from %s / 从 %s 读取数据", displayName, displayName)
-	case PluginCategorySink:
-		return fmt.Sprintf("Write data to %s / 将数据写入 %s", displayName, displayName)
-	case PluginCategoryTransform:
-		return fmt.Sprintf("Transform data using %s / 使用 %s 转换数据", displayName, displayName)
-	}
-	return ""
-}
-
-// RefreshPlugins forces a refresh of the plugin list from SeaTunnel docs.
-// RefreshPlugins 强制从 SeaTunnel 文档刷新插件列表。
+// RefreshPlugins forces a refresh of the plugin list from Maven repository.
+// RefreshPlugins 强制从 Maven 仓库刷新插件列表。
 func (s *Service) RefreshPlugins(ctx context.Context, version string) ([]Plugin, error) {
 	plugins, err := s.fetchPluginsFromDocs(ctx, version)
 	if err != nil {
-		return getAvailablePluginsForVersion(version), err
+		return nil, err
 	}
 
 	// Update cache / 更新缓存
@@ -467,7 +406,7 @@ func (s *Service) GetPluginInfo(ctx context.Context, name string, version string
 	// Normalize name to lowercase for comparison / 将名称转换为小写进行比较
 	normalizedName := strings.ToLower(name)
 
-	// First, try to find in cached plugins from docs / 首先尝试从文档缓存中查找
+	// First, try to find in cached plugins / 首先尝试从缓存中查找
 	s.pluginsMu.RLock()
 	if cachedPlugins, ok := s.cachedPlugins[version]; ok {
 		for _, p := range cachedPlugins {
@@ -479,15 +418,7 @@ func (s *Service) GetPluginInfo(ctx context.Context, name string, version string
 	}
 	s.pluginsMu.RUnlock()
 
-	// Then, try to find in fallback plugins / 然后尝试从备用插件列表中查找
-	plugins := getAvailablePluginsForVersion(version)
-	for _, p := range plugins {
-		if strings.ToLower(p.Name) == normalizedName {
-			return &p, nil
-		}
-	}
-
-	// If not found in cache or fallback, try to fetch from docs / 如果缓存和备用列表都没有，尝试从文档获取
+	// If not found in cache, try to fetch from Maven / 如果缓存中没有，尝试从 Maven 获取
 	fetchedPlugins := s.getPlugins(ctx, version)
 	for _, p := range fetchedPlugins {
 		if strings.ToLower(p.Name) == normalizedName {
@@ -574,262 +505,6 @@ func (s *Service) DisablePlugin(ctx context.Context, clusterID uint, pluginName 
 	}
 
 	return plugin, nil
-}
-
-// ==================== Helper Functions 辅助函数 ====================
-
-// getAvailablePluginsForVersion returns predefined plugins for a SeaTunnel version.
-// getAvailablePluginsForVersion 返回指定 SeaTunnel 版本的预定义插件列表。
-// In production, this would fetch from Maven repository metadata.
-// 在生产环境中，这将从 Maven 仓库元数据获取。
-func getAvailablePluginsForVersion(version string) []Plugin {
-	// Common plugins available for all supported versions
-	// 所有支持版本的通用插件
-	return []Plugin{
-		// Source connectors / Source连接器
-		{
-			Name:        "jdbc",
-			DisplayName: "JDBC",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from JDBC databases (MySQL, PostgreSQL, Oracle, etc.) / 从 JDBC 数据库读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-jdbc",
-			Dependencies: []PluginDependency{
-				{GroupID: "mysql", ArtifactID: "mysql-connector-java", Version: "8.0.28", TargetDir: "lib"},
-				{GroupID: "org.postgresql", ArtifactID: "postgresql", Version: "42.3.3", TargetDir: "lib"},
-			},
-			DocURL: "https://seatunnel.apache.org/docs/connector-v2/source/Jdbc",
-		},
-		{
-			Name:        "kafka",
-			DisplayName: "Kafka",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from Apache Kafka / 从 Apache Kafka 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-kafka",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/Kafka",
-		},
-		{
-			Name:        "mysql-cdc",
-			DisplayName: "MySQL CDC",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Capture MySQL change data in real-time / 实时捕获 MySQL 变更数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-cdc-mysql",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/MySQL-CDC",
-		},
-		{
-			Name:        "postgres-cdc",
-			DisplayName: "PostgreSQL CDC",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Capture PostgreSQL change data in real-time / 实时捕获 PostgreSQL 变更数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-cdc-postgres",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/Postgres-CDC",
-		},
-		{
-			Name:        "http",
-			DisplayName: "HTTP",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from HTTP APIs / 从 HTTP API 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-http-base",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/Http",
-		},
-		{
-			Name:        "file-local",
-			DisplayName: "Local File",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from local files / 从本地文件读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-file-local",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/LocalFile",
-		},
-		{
-			Name:        "file-hdfs",
-			DisplayName: "HDFS",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from HDFS / 从 HDFS 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-file-hadoop",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/HdfsFile",
-		},
-		{
-			Name:        "file-s3",
-			DisplayName: "Amazon S3",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from Amazon S3 / 从 Amazon S3 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-file-s3",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/S3File",
-		},
-		{
-			Name:        "elasticsearch",
-			DisplayName: "Elasticsearch",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from Elasticsearch / 从 Elasticsearch 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-elasticsearch",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/Elasticsearch",
-		},
-		{
-			Name:        "mongodb",
-			DisplayName: "MongoDB",
-			Category:    PluginCategorySource,
-			Version:     version,
-			Description: "Read data from MongoDB / 从 MongoDB 读取数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-mongodb",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/source/MongoDB",
-		},
-
-		// Sink connectors / Sink连接器
-		{
-			Name:        "jdbc-sink",
-			DisplayName: "JDBC Sink",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to JDBC databases / 将数据写入 JDBC 数据库",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-jdbc",
-			Dependencies: []PluginDependency{
-				{GroupID: "mysql", ArtifactID: "mysql-connector-java", Version: "8.0.28", TargetDir: "lib"},
-				{GroupID: "org.postgresql", ArtifactID: "postgresql", Version: "42.3.3", TargetDir: "lib"},
-			},
-			DocURL: "https://seatunnel.apache.org/docs/connector-v2/sink/Jdbc",
-		},
-		{
-			Name:        "kafka-sink",
-			DisplayName: "Kafka Sink",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to Apache Kafka / 将数据写入 Apache Kafka",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-kafka",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Kafka",
-		},
-		{
-			Name:        "clickhouse",
-			DisplayName: "ClickHouse",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to ClickHouse / 将数据写入 ClickHouse",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-clickhouse",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Clickhouse",
-		},
-		{
-			Name:        "doris",
-			DisplayName: "Apache Doris",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to Apache Doris / 将数据写入 Apache Doris",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-doris",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Doris",
-		},
-		{
-			Name:        "starrocks",
-			DisplayName: "StarRocks",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to StarRocks / 将数据写入 StarRocks",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-starrocks",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/StarRocks",
-		},
-		{
-			Name:        "elasticsearch-sink",
-			DisplayName: "Elasticsearch Sink",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to Elasticsearch / 将数据写入 Elasticsearch",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-elasticsearch",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Elasticsearch",
-		},
-		{
-			Name:        "hive",
-			DisplayName: "Apache Hive",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Write data to Apache Hive / 将数据写入 Apache Hive",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-hive",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Hive",
-		},
-		{
-			Name:        "console",
-			DisplayName: "Console",
-			Category:    PluginCategorySink,
-			Version:     version,
-			Description: "Print data to console for debugging / 将数据打印到控制台用于调试",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "connector-console",
-			DocURL:      "https://seatunnel.apache.org/docs/connector-v2/sink/Console",
-		},
-
-		// Transform connectors / 数据转换连接器
-		{
-			Name:        "filter",
-			DisplayName: "Filter",
-			Category:    PluginCategoryTransform,
-			Version:     version,
-			Description: "Filter rows based on conditions / 根据条件过滤行",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "transform-filter",
-			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/filter",
-		},
-		{
-			Name:        "sql",
-			DisplayName: "SQL",
-			Category:    PluginCategoryTransform,
-			Version:     version,
-			Description: "Transform data using SQL / 使用 SQL 转换数据",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "transform-sql",
-			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/sql",
-		},
-		{
-			Name:        "field-mapper",
-			DisplayName: "Field Mapper",
-			Category:    PluginCategoryTransform,
-			Version:     version,
-			Description: "Map and rename fields / 映射和重命名字段",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "transform-field-mapper",
-			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/field-mapper",
-		},
-		{
-			Name:        "replace",
-			DisplayName: "Replace",
-			Category:    PluginCategoryTransform,
-			Version:     version,
-			Description: "Replace field values / 替换字段值",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "transform-replace",
-			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/replace",
-		},
-		{
-			Name:        "split",
-			DisplayName: "Split",
-			Category:    PluginCategoryTransform,
-			Version:     version,
-			Description: "Split field values / 拆分字段值",
-			GroupID:     "org.apache.seatunnel",
-			ArtifactID:  "transform-split",
-			DocURL:      "https://seatunnel.apache.org/docs/transform-v2/split",
-		},
-	}
 }
 
 // ==================== Plugin Download Methods 插件下载方法 ====================

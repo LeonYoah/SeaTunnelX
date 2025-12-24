@@ -28,9 +28,10 @@ import (
 type PluginCategory string
 
 const (
-	PluginCategorySource    PluginCategory = "source"    // Source / Data source
-	PluginCategorySink      PluginCategory = "sink"      // Sink / Data sink
-	PluginCategoryTransform PluginCategory = "transform" // 数据转换 / Data transform
+	PluginCategorySource    PluginCategory = "source"    // Source / Data source (legacy, for compatibility / 遗留，用于兼容)
+	PluginCategorySink      PluginCategory = "sink"      // Sink / Data sink (legacy, for compatibility / 遗留，用于兼容)
+	PluginCategoryConnector PluginCategory = "connector" // Connector / 连接器 (primary category, can be used as source or sink / 主要分类，可作为 source 或 sink)
+	PluginCategoryTransform PluginCategory = "transform" // Transform / 数据转换 (deprecated, not fetched from Maven / 已弃用，不从 Maven 获取)
 )
 
 // PluginStatus represents the status of a plugin.

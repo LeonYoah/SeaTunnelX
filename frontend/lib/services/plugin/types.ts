@@ -9,7 +9,7 @@
  * Plugin category
  * 插件分类
  */
-export type PluginCategory = 'source' | 'sink' | 'transform';
+export type PluginCategory = 'source' | 'sink' | 'connector' | 'transform';
 
 /**
  * Plugin status

@@ -585,10 +585,13 @@
     "selectClusterToViewInstalled": "Select a cluster to view installed plugins",
     "goToClusterDetail": "Go to cluster detail page to manage installed plugins",
     "totalPlugins": "Total Plugins",
+    "totalConnectors": "Total Connectors",
     "searchPlaceholder": "Search plugins by name or description",
     "noPluginsFound": "No plugins found",
     "noDescription": "No description available",
     "loadError": "Failed to load plugins",
+    "loadingFromMaven": "Loading plugins from Maven repository...",
+    "loadingFromMavenDesc": "First load may take 30-60 seconds, subsequent loads will use cache",
     "install": "Install",
     "uninstall": "Uninstall",
     "enable": "Enable",
@@ -626,6 +629,7 @@
     "category": {
       "label": "Category",
       "all": "All Categories",
+      "connector": "Connector",
       "source": "Source",
       "sink": "Sink",
       "transform": "Transform"

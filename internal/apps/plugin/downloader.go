@@ -748,37 +748,11 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 
 // parsePluginNameFromFilename extracts the plugin name from a jar filename.
 // parsePluginNameFromFilename 从 jar 文件名中提取插件名称。
+// Now simplified: just remove "connector-" prefix and version suffix.
+// 现在简化了：只移除 "connector-" 前缀和版本后缀。
 func parsePluginNameFromFilename(filename, version string) string {
 	// Remove .jar suffix and version / 移除 .jar 后缀和版本号
 	name := strings.TrimSuffix(filename, fmt.Sprintf("-%s.jar", version))
-
-	// Handle CDC connectors: connector-cdc-{database} -> {database}-cdc
-	// 处理 CDC 连接器：connector-cdc-{database} -> {database}-cdc
-	if strings.HasPrefix(name, "connector-cdc-") {
-		database := strings.TrimPrefix(name, "connector-cdc-")
-		return database + "-cdc"
-	}
-
-	// Handle file connectors: connector-file-{type} -> {type}file
-	// 处理文件连接器：connector-file-{type} -> {type}file
-	if strings.HasPrefix(name, "connector-file-") {
-		fileType := strings.TrimPrefix(name, "connector-file-")
-		// Map back to original names / 映射回原始名称
-		fileTypeMap := map[string]string{
-			"local":  "localfile",
-			"hadoop": "hdfsfile",
-			"s3":     "s3file",
-			"oss":    "ossfile",
-			"ftp":    "ftpfile",
-			"sftp":   "sftpfile",
-			"cos":    "cosfile",
-			"obs":    "obsfile",
-		}
-		if originalName, ok := fileTypeMap[fileType]; ok {
-			return originalName
-		}
-		return fileType + "file"
-	}
 
 	// Standard format: connector-{name} -> {name}
 	// 标准格式：connector-{name} -> {name}
@@ -791,24 +765,11 @@ func parsePluginNameFromFilename(filename, version string) string {
 
 // determinePluginCategory determines the category of a plugin from its name.
 // determinePluginCategory 从插件名称判断插件分类。
+// Now all plugins are connectors.
+// 现在所有插件都是连接器。
 func determinePluginCategory(name string) PluginCategory {
-	lowerName := strings.ToLower(name)
-
-	// Sink plugins typically have "-sink" suffix or are known sink connectors
-	// 目标插件通常有 "-sink" 后缀或是已知的目标连接器
-	if strings.HasSuffix(lowerName, "-sink") || strings.HasSuffix(lowerName, "sink") {
-		return PluginCategorySink
-	}
-
-	// Transform plugins / 转换插件
-	if strings.HasPrefix(lowerName, "transform-") ||
-		lowerName == "filter" || lowerName == "sql" ||
-		lowerName == "field-mapper" || lowerName == "replace" || lowerName == "split" {
-		return PluginCategoryTransform
-	}
-
-	// Default to source / 默认为Source
-	return PluginCategorySource
+	// All plugins fetched from Maven are connectors / 从 Maven 获取的所有插件都是连接器
+	return PluginCategoryConnector
 }
 
 // DeleteLocalPlugin deletes a locally downloaded plugin.
