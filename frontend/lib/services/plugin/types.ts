@@ -200,6 +200,19 @@ export interface PluginDownloadProgress {
 }
 
 /**
+ * Download all plugins progress
+ * 下载所有插件的进度
+ */
+export interface DownloadAllPluginsProgress {
+  total: number;       // 总插件数 / Total plugins
+  downloaded: number;  // 已下载数 / Downloaded count
+  failed: number;      // 失败数 / Failed count
+  skipped: number;     // 跳过数（已存在）/ Skipped count
+  status: string;      // 状态 / Status
+  message: string;     // 消息 / Message
+}
+
+/**
  * Local plugin (downloaded to Control Plane)
  * 本地插件（已下载到 Control Plane）
  */

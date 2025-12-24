@@ -446,6 +446,10 @@ func Serve() {
 				// GET /api/v1/plugins/downloads - List active download tasks
 				pluginRouter.GET("/downloads", pluginHandler.ListActiveDownloads)
 
+				// POST /api/v1/plugins/download-all - 一键下载所有插件
+				// POST /api/v1/plugins/download-all - Download all plugins
+				pluginRouter.POST("/download-all", pluginHandler.DownloadAllPlugins)
+
 				// GET /api/v1/plugins/:name - 获取插件详情
 				// GET /api/v1/plugins/:name - Get plugin info
 				pluginRouter.GET("/:name", pluginHandler.GetPluginInfo)

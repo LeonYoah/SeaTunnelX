@@ -198,6 +198,23 @@ export class PluginService extends BaseService {
     );
   }
 
+  /**
+   * Download all plugins for a version
+   * 一键下载指定版本的所有插件
+   * @param version - Plugin version / 插件版本
+   * @param mirror - Mirror source / 镜像源
+   * @returns Download progress / 下载进度
+   */
+  static async downloadAllPlugins(
+    version: string,
+    mirror?: MirrorSource
+  ): Promise<DownloadAllPluginsProgress> {
+    return this.post<DownloadAllPluginsProgress>(
+      '/plugins/download-all',
+      { version, mirror }
+    );
+  }
+
   // ==================== Plugin Installation Progress 插件安装进度 ====================
 
   /**

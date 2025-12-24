@@ -22,7 +22,7 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { RefreshCw, Search, Puzzle, Package, HardDrive, Trash2, CheckSquare, Server, Upload } from 'lucide-react';
+import { RefreshCw, Search, Puzzle, Package, HardDrive, Trash2, CheckSquare, Server, Upload, DownloadCloud } from 'lucide-react';
 import { motion } from 'motion/react';
 import { PluginService } from '@/lib/services/plugin';
 import { ClusterService } from '@/lib/services/cluster';
@@ -33,6 +33,7 @@ import { PluginGrid } from './PluginGrid';
 import { PluginDetailDialog } from './PluginDetailDialog';
 import { InstallPluginDialog } from './InstallPluginDialog';
 import { BatchInstallDialog } from './BatchInstallDialog';
+import { Pagination } from '@/components/ui/pagination';
 import {
   Table,
   TableBody,
@@ -90,6 +91,10 @@ export function PluginMain() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [pluginToDelete, setPluginToDelete] = useState<LocalPlugin | null>(null);
 
+  // Local plugins pagination state / 本地插件分页状态
+  const [localPluginsPage, setLocalPluginsPage] = useState(1);
+  const [localPluginsPageSize, setLocalPluginsPageSize] = useState(10);
+
   // Dialog state / 对话框状态
   const [selectedPlugin, setSelectedPlugin] = useState<Plugin | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -99,6 +104,7 @@ export function PluginMain() {
   // Download state / 下载状态
   const [downloadingPlugins, setDownloadingPlugins] = useState<Set<string>>(new Set());
   const [downloadedPlugins, setDownloadedPlugins] = useState<Set<string>>(new Set());
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
 
   // Active downloads state / 活动下载状态
   const [activeDownloads, setActiveDownloads] = useState<PluginDownloadProgress[]>([]);
@@ -326,6 +332,31 @@ export function PluginMain() {
   }, [localPlugins, searchKeyword, filterCategory, selectedVersion]);
 
   /**
+   * Get paginated local plugins
+   * 获取分页后的本地插件
+   */
+  const getPaginatedLocalPlugins = useCallback(() => {
+    const filtered = getFilteredLocalPlugins();
+    const startIndex = (localPluginsPage - 1) * localPluginsPageSize;
+    const endIndex = startIndex + localPluginsPageSize;
+    return filtered.slice(startIndex, endIndex);
+  }, [getFilteredLocalPlugins, localPluginsPage, localPluginsPageSize]);
+
+  /**
+   * Get total pages for local plugins
+   * 获取本地插件总页数
+   */
+  const getLocalPluginsTotalPages = useCallback(() => {
+    const filtered = getFilteredLocalPlugins();
+    return Math.ceil(filtered.length / localPluginsPageSize);
+  }, [getFilteredLocalPlugins, localPluginsPageSize]);
+
+  // Reset page when filters change / 过滤条件变化时重置页码
+  useEffect(() => {
+    setLocalPluginsPage(1);
+  }, [searchKeyword, filterCategory, selectedVersion]);
+
+  /**
    * Handle select all local plugins
    * 处理全选本地插件
    */
@@ -410,20 +441,19 @@ export function PluginMain() {
       // Add to downloading set / 添加到下载中集合
       setDownloadingPlugins(prev => new Set(prev).add(plugin.name));
       
-      toast.info(t('plugin.downloadStarted', { name: plugin.display_name || plugin.name }));
-      
       // Call download API / 调用下载 API
       await PluginService.downloadPlugin(plugin.name, selectedVersion, selectedMirror);
       
-      // Move to downloaded set / 移动到已下载集合
+      // Show queued message / 显示已提交队列提示
+      toast.success(t('plugin.downloadStarted'));
+      
+      // Remove from downloading set (download is async in backend)
+      // 从下载中集合移除（后端异步下载）
       setDownloadingPlugins(prev => {
         const next = new Set(prev);
         next.delete(plugin.name);
         return next;
       });
-      setDownloadedPlugins(prev => new Set(prev).add(plugin.name));
-      
-      toast.success(t('plugin.downloadComplete'));
     } catch (err) {
       // Remove from downloading set / 从下载中集合移除
       setDownloadingPlugins(prev => {
@@ -434,6 +464,30 @@ export function PluginMain() {
       
       const errorMsg = err instanceof Error ? err.message : t('plugin.downloadFailed');
       toast.error(errorMsg);
+    }
+  };
+
+  /**
+   * Handle download all plugins
+   * 处理一键下载所有插件
+   */
+  const handleDownloadAllPlugins = async () => {
+    try {
+      setIsDownloadingAll(true);
+      toast.info(t('plugin.downloadAllStarted', { count: total }));
+      
+      const result = await PluginService.downloadAllPlugins(selectedVersion, selectedMirror);
+      
+      toast.success(t('plugin.downloadAllSuccess', { 
+        total: result.total,
+        downloaded: result.downloaded,
+        skipped: result.skipped 
+      }));
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : t('plugin.downloadAllFailed');
+      toast.error(errorMsg);
+    } finally {
+      setIsDownloadingAll(false);
     }
   };
 
@@ -485,6 +539,14 @@ export function PluginMain() {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button 
+            variant="default" 
+            onClick={handleDownloadAllPlugins} 
+            disabled={loading || isDownloadingAll || total === 0}
+          >
+            <DownloadCloud className={`h-4 w-4 mr-2 ${isDownloadingAll ? 'animate-pulse' : ''}`} />
+            {isDownloadingAll ? t('plugin.downloadingAll') : t('plugin.downloadAll')}
+          </Button>
           <Button variant="outline" onClick={handleRefresh} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             {t('common.refresh')}
@@ -587,9 +649,9 @@ export function PluginMain() {
           <TabsTrigger value="local" className="flex items-center gap-2">
             <HardDrive className="h-4 w-4" />
             {t('plugin.localPlugins')}
-            {(localPlugins.length > 0 || activeDownloads.filter(d => d.status === 'downloading').length > 0) && (
+            {(getFilteredLocalPlugins().length > 0 || activeDownloads.filter(d => d.status === 'downloading').length > 0) && (
               <Badge variant="secondary" className="ml-1">
-                {localPlugins.length}
+                {getFilteredLocalPlugins().length}
                 {activeDownloads.filter(d => d.status === 'downloading').length > 0 && (
                   <span className="ml-1 text-blue-500">+{activeDownloads.filter(d => d.status === 'downloading').length}</span>
                 )}
@@ -634,7 +696,7 @@ export function PluginMain() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   {t('plugin.localPlugins')}
-                  <Badge variant="secondary">{localPlugins.length}</Badge>
+                  <Badge variant="secondary">{getFilteredLocalPlugins().length}</Badge>
                 </CardTitle>
                 <CardDescription>
                   {t('plugin.localPluginsDesc')}
@@ -669,6 +731,7 @@ export function PluginMain() {
                   <p className="text-sm mt-2">{t('plugin.downloadFromAvailable')}</p>
                 </div>
               ) : (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -732,7 +795,7 @@ export function PluginMain() {
                       </TableRow>
                     ))}
                     {/* Filtered local plugins / 过滤后的本地插件 */}
-                    {getFilteredLocalPlugins().map((plugin) => {
+                    {getPaginatedLocalPlugins().map((plugin) => {
                       // Get cluster installation status for this plugin / 获取此插件的集群安装状态
                       const clusterStatusMap = pluginClusterStatus.get(plugin.name);
                       const installedClusters = clusterStatusMap 
@@ -815,6 +878,24 @@ export function PluginMain() {
                     })}
                   </TableBody>
                 </Table>
+                {/* Local plugins pagination / 本地插件分页 */}
+                {getFilteredLocalPlugins().length > 0 && (
+                  <div className="mt-4">
+                    <Pagination
+                      currentPage={localPluginsPage}
+                      totalPages={getLocalPluginsTotalPages()}
+                      pageSize={localPluginsPageSize}
+                      totalItems={getFilteredLocalPlugins().length}
+                      onPageChange={setLocalPluginsPage}
+                      onPageSizeChange={(size) => {
+                        setLocalPluginsPageSize(size);
+                        setLocalPluginsPage(1);
+                      }}
+                      pageSizeOptions={[10, 20, 50, 100]}
+                    />
+                  </div>
+                )}
+                </>
               )}
             </CardContent>
           </Card>

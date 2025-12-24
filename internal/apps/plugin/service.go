@@ -57,11 +57,11 @@ const (
 // skipModuleList contains modules to skip when fetching connectors from Maven.
 // skipModuleList 包含从 Maven 获取连接器时需要跳过的模块。
 var skipModuleList = []string{
-	"connector-common",    // Common utilities / 通用工具
-	"connector-cdc-base",  // CDC base module / CDC 基础模块
-	"connector-cdc",       // CDC parent module / CDC 父模块
-	"connector-file",
-	"connector-http",
+	"connector-common",   // Common utilities / 通用工具
+	"connector-cdc-base", // CDC base module / CDC 基础模块
+	"connector-cdc",      // CDC parent module / CDC 父模块
+	"connector-file",     // File parent module / File 父模块
+	"connector-http",     // HTTP parent module / HTTP 父模块
 }
 
 // isSkippedModule checks if the artifact ID should be skipped.
@@ -281,7 +281,7 @@ func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) 
 			artifactID := match[1]
 
 			// Skip e2e test modules / 跳过 e2e 测试模块
-			if strings.HasSuffix(artifactID, "-e2e") {
+			if strings.Contains(artifactID, "-e2e") {
 				continue
 			}
 			// Skip common/base modules / 跳过通用/基础模块
@@ -598,6 +598,68 @@ func (s *Service) GetDownloadStatus(name, version string) *DownloadProgress {
 // ListLocalPlugins 返回本地已下载的插件列表。
 func (s *Service) ListLocalPlugins() ([]LocalPlugin, error) {
 	return s.downloader.ListLocalPlugins()
+}
+
+// DownloadAllPluginsProgress represents the progress of downloading all plugins.
+// DownloadAllPluginsProgress 表示下载所有插件的进度。
+type DownloadAllPluginsProgress struct {
+	Total      int    `json:"total"`       // 总插件数 / Total plugins
+	Downloaded int    `json:"downloaded"`  // 已下载数 / Downloaded count
+	Failed     int    `json:"failed"`      // 失败数 / Failed count
+	Skipped    int    `json:"skipped"`     // 跳过数（已存在）/ Skipped count (already exists)
+	Status     string `json:"status"`      // 状态 / Status
+	Message    string `json:"message"`     // 消息 / Message
+}
+
+// DownloadAllPlugins downloads all available plugins for a version.
+// DownloadAllPlugins 下载指定版本的所有可用插件。
+func (s *Service) DownloadAllPlugins(ctx context.Context, version string, mirror MirrorSource) (*DownloadAllPluginsProgress, error) {
+	if version == "" {
+		version = "2.3.12"
+	}
+	if mirror == "" {
+		mirror = MirrorSourceApache
+	}
+
+	// Get all available plugins / 获取所有可用插件
+	plugins := s.getPlugins(ctx, version)
+	if len(plugins) == 0 {
+		return nil, fmt.Errorf("no plugins found for version %s / 未找到版本 %s 的插件", version, version)
+	}
+
+	progress := &DownloadAllPluginsProgress{
+		Total:   len(plugins),
+		Status:  "downloading",
+		Message: fmt.Sprintf("Starting download of %d plugins / 开始下载 %d 个插件", len(plugins), len(plugins)),
+	}
+
+	// Start downloading all plugins in background / 在后台开始下载所有插件
+	go func() {
+		downloadCtx := context.Background()
+		for _, plugin := range plugins {
+			// Check if already downloaded / 检查是否已下载
+			if s.downloader.IsConnectorDownloaded(plugin.Name, version) {
+				progress.Skipped++
+				continue
+			}
+
+			// Download plugin / 下载插件
+			err := s.downloader.DownloadPlugin(downloadCtx, &plugin, mirror, nil)
+			if err != nil {
+				progress.Failed++
+				fmt.Printf("[DownloadAllPlugins] Failed to download %s: %v\n", plugin.Name, err)
+			} else {
+				progress.Downloaded++
+				fmt.Printf("[DownloadAllPlugins] Downloaded %s successfully\n", plugin.Name)
+			}
+		}
+		progress.Status = "completed"
+		progress.Message = fmt.Sprintf("Download completed: %d downloaded, %d skipped, %d failed / 下载完成: %d 已下载, %d 已跳过, %d 失败",
+			progress.Downloaded, progress.Skipped, progress.Failed,
+			progress.Downloaded, progress.Skipped, progress.Failed)
+	}()
+
+	return progress, nil
 }
 
 // DeleteLocalPlugin deletes a locally downloaded plugin.

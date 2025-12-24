@@ -328,6 +328,45 @@ func (h *Handler) DownloadPlugin(c *gin.Context) {
 	c.JSON(http.StatusOK, DownloadPluginResponse{Data: progress})
 }
 
+// DownloadAllPluginsRequest represents a request to download all plugins.
+// DownloadAllPluginsRequest 表示下载所有插件的请求。
+type DownloadAllPluginsRequest struct {
+	Version string       `json:"version" binding:"required"` // 版本号 / Version
+	Mirror  MirrorSource `json:"mirror,omitempty"`           // 镜像源 / Mirror source
+}
+
+// DownloadAllPluginsResponse represents the response for downloading all plugins.
+// DownloadAllPluginsResponse 表示下载所有插件的响应。
+type DownloadAllPluginsResponse struct {
+	ErrorMsg string                      `json:"error_msg"`
+	Data     *DownloadAllPluginsProgress `json:"data"`
+}
+
+// DownloadAllPlugins handles POST /api/v1/plugins/download-all - downloads all plugins.
+// DownloadAllPlugins 处理 POST /api/v1/plugins/download-all - 一键下载所有插件。
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body DownloadAllPluginsRequest true "下载请求"
+// @Success 200 {object} DownloadAllPluginsResponse
+// @Router /api/v1/plugins/download-all [post]
+func (h *Handler) DownloadAllPlugins(c *gin.Context) {
+	var req DownloadAllPluginsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, DownloadAllPluginsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	progress, err := h.service.DownloadAllPlugins(c.Request.Context(), req.Version, req.Mirror)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, DownloadAllPluginsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	logger.InfoF(c.Request.Context(), "[Plugin] 开始下载所有插件: version=%s, total=%d", req.Version, progress.Total)
+	c.JSON(http.StatusOK, DownloadAllPluginsResponse{Data: progress})
+}
+
 // GetDownloadStatusResponse represents the response for getting download status.
 // GetDownloadStatusResponse 表示获取下载状态的响应。
 type GetDownloadStatusResponse struct {
