@@ -400,6 +400,7 @@ const defaultConfig: InstallWizardConfig = {
   connector: {
     install_connectors: false,
     connectors: [],
+    selected_plugins: [],
   },
 };
 

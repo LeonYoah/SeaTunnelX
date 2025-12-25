@@ -14,3 +14,4 @@ export {CreateClusterDialog} from './CreateClusterDialog';
 export {EditClusterDialog} from './EditClusterDialog';
 export {AddNodeDialog} from './AddNodeDialog';
 export {ClusterActions} from './ClusterActions';
+export {ClusterDeployWizard} from './ClusterDeployWizard';

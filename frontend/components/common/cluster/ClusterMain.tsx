@@ -34,6 +34,7 @@ import {
 import {ClusterCard} from './ClusterCard';
 import {CreateClusterDialog} from './CreateClusterDialog';
 import {EditClusterDialog} from './EditClusterDialog';
+import {ClusterDeployWizard} from './ClusterDeployWizard';
 
 const PAGE_SIZE = 12;
 
@@ -57,6 +58,7 @@ export function ClusterMain() {
 
   // Dialog state / 对话框状态
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isDeployWizardOpen, setIsDeployWizardOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState<ClusterInfo | null>(null);
 
@@ -229,7 +231,11 @@ export function ClusterMain() {
             <RefreshCw className='h-4 w-4 mr-2' />
             {t('common.refresh')}
           </Button>
-          <Button onClick={() => setIsCreateDialogOpen(true)}>
+          <Button variant='outline' onClick={() => setIsCreateDialogOpen(true)}>
+            <Plus className='h-4 w-4 mr-2' />
+            {t('cluster.registerCluster')}
+          </Button>
+          <Button onClick={() => setIsDeployWizardOpen(true)}>
             <Plus className='h-4 w-4 mr-2' />
             {t('cluster.createCluster')}
           </Button>
@@ -364,6 +370,16 @@ export function ClusterMain() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onSuccess={handleClusterCreated}
+      />
+
+      {/* Deploy Cluster Wizard / 部署集群向导 */}
+      <ClusterDeployWizard
+        open={isDeployWizardOpen}
+        onOpenChange={setIsDeployWizardOpen}
+        onComplete={(clusterId) => {
+          loadClusters();
+          toast.success(t('cluster.wizard.deploySuccess'));
+        }}
       />
 
       {/* Edit Cluster Dialog / 编辑集群对话框 */}
