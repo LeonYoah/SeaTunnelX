@@ -1137,7 +1137,8 @@ func (m *InstallerManager) Install(ctx context.Context, params *InstallParams, r
 	// 步骤 1：获取安装包（下载或使用本地）
 	if params.Mode == InstallModeOnline {
 		reporter.Report(InstallStepDownload, 0, "Starting download... / 开始下载...")
-		packagePath, err = m.downloadPackage(ctx, params.DownloadURL, reporter)
+		downloadURL := params.GetDownloadURLWithMirror()
+		packagePath, err = m.downloadPackage(ctx, downloadURL, reporter)
 		if err != nil {
 			return &InstallResult{
 				Success:    false,

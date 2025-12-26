@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/seatunnel/seatunnelX/internal/config"
+	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // Common errors / 常见错误
@@ -44,7 +46,54 @@ var (
 	ErrInstallationNotFound   = errors.New("installation not found / 安装任务未找到")
 	ErrInstallationInProgress = errors.New("installation already in progress / 安装任务正在进行中")
 	ErrHostNotConnected       = errors.New("host agent not connected / 主机 Agent 未连接")
+	ErrAgentNotFound          = errors.New("agent not found / Agent 未找到")
 )
+
+// AgentManager is the interface for communicating with agents
+// AgentManager 是与 Agent 通信的接口
+type AgentManager interface {
+	// GetAgentByHostID returns the agent connection for a host
+	// GetAgentByHostID 返回主机的 Agent 连接
+	GetAgentByHostID(hostID uint) (agentID string, connected bool)
+
+	// SendInstallCommand sends an installation command to an agent
+	// SendInstallCommand 向 Agent 发送安装命令
+	SendInstallCommand(ctx context.Context, agentID string, params map[string]string) (commandID string, err error)
+
+	// GetCommandStatus returns the status of a command
+	// GetCommandStatus 返回命令的状态
+	GetCommandStatus(commandID string) (status string, progress int, message string, err error)
+
+	// SendCommand sends a command to an agent and returns the result
+	// SendCommand 向 Agent 发送命令并返回结果
+	SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (success bool, output string, err error)
+}
+
+// HostProvider is the interface for getting host information
+// HostProvider 是获取主机信息的接口
+type HostProvider interface {
+	// GetHostByID returns host information by ID
+	// GetHostByID 根据 ID 返回主机信息
+	GetHostByID(ctx context.Context, hostID uint) (*HostInfo, error)
+}
+
+// HostInfo contains host information for precheck
+// HostInfo 包含预检查所需的主机信息
+type HostInfo struct {
+	ID          uint   `json:"id"`
+	AgentID     string `json:"agent_id"`
+	AgentStatus string `json:"agent_status"`
+	LastSeen    *time.Time `json:"last_seen"`
+}
+
+// IsOnline checks if the host agent is online within the timeout
+// IsOnline 检查主机 Agent 是否在超时时间内在线
+func (h *HostInfo) IsOnline(timeout time.Duration) bool {
+	if h.LastSeen == nil {
+		return false
+	}
+	return time.Since(*h.LastSeen) < timeout
+}
 
 // MirrorURLs maps mirror sources to their base URLs
 // MirrorURLs 将镜像源映射到其基础 URL
@@ -122,14 +171,22 @@ type Service struct {
 
 	// agentManager is used to communicate with agents
 	// agentManager 用于与 Agent 通信
-	// agentManager *agent.Manager // TODO: inject agent manager
+	agentManager AgentManager
+
+	// hostProvider is used to get host information
+	// hostProvider 用于获取主机信息
+	hostProvider HostProvider
+
+	// heartbeatTimeout is the timeout for agent heartbeat
+	// heartbeatTimeout 是 Agent 心跳超时时间
+	heartbeatTimeout time.Duration
 }
 
 // NewService creates a new Service instance.
 // NewService 创建一个新的 Service 实例。
 // If packageDir is empty, it uses the configured packages directory.
 // 如果 packageDir 为空，则使用配置的安装包目录。
-func NewService(packageDir string) *Service {
+func NewService(packageDir string, agentManager AgentManager) *Service {
 	// Use configured directory if not specified / 如果未指定则使用配置的目录
 	if packageDir == "" {
 		packageDir = config.GetPackagesDir()
@@ -146,17 +203,31 @@ func NewService(packageDir string) *Service {
 	}
 
 	return &Service{
-		packageDir:    packageDir,
-		tempDir:       config.GetTempDir(),
-		installations: make(map[string]*InstallationStatus),
-		downloads:     make(map[string]*DownloadTask),
+		packageDir:       packageDir,
+		tempDir:          config.GetTempDir(),
+		installations:    make(map[string]*InstallationStatus),
+		downloads:        make(map[string]*DownloadTask),
+		agentManager:     agentManager,
+		heartbeatTimeout: 2 * time.Minute, // Default 2 minutes / 默认 2 分钟
 	}
 }
 
 // NewServiceWithDefaults creates a new Service instance with default configuration.
 // NewServiceWithDefaults 使用默认配置创建新的 Service 实例。
 func NewServiceWithDefaults() *Service {
-	return NewService("")
+	return NewService("", nil)
+}
+
+// SetHostProvider sets the host provider for precheck operations.
+// SetHostProvider 设置用于预检查操作的主机提供者。
+func (s *Service) SetHostProvider(provider HostProvider) {
+	s.hostProvider = provider
+}
+
+// SetAgentManager sets the agent manager for sending commands to agents.
+// SetAgentManager 设置用于向 Agent 发送命令的 Agent 管理器。
+func (s *Service) SetAgentManager(manager AgentManager) {
+	s.agentManager = manager
 }
 
 // ==================== Version Management 版本管理 ====================
@@ -580,6 +651,8 @@ func (s *Service) ListDownloads(ctx context.Context) []*DownloadTask {
 // runDownload executes the download process.
 // runDownload 执行下载过程。
 func (s *Service) runDownload(ctx context.Context, task *DownloadTask) {
+	logger.InfoF(ctx, "[Installer] 开始下载安装包 / Start downloading package: version=%s, mirror=%s", task.Version, task.Mirror)
+
 	s.downloadsMu.Lock()
 	task.Status = DownloadStatusDownloading
 	task.Message = "正在下载 / Downloading"
@@ -592,6 +665,7 @@ func (s *Service) runDownload(ctx context.Context, task *DownloadTask) {
 	// Create HTTP request / 创建 HTTP 请求
 	resp, err := http.Get(task.DownloadURL)
 	if err != nil {
+		logger.ErrorF(ctx, "[Installer] 下载请求失败 / Download request failed: version=%s, error=%v", task.Version, err)
 		s.downloadsMu.Lock()
 		now := time.Now()
 		task.Status = DownloadStatusFailed
@@ -603,6 +677,7 @@ func (s *Service) runDownload(ctx context.Context, task *DownloadTask) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.ErrorF(ctx, "[Installer] 下载 HTTP 错误 / Download HTTP error: version=%s, status=%d", task.Version, resp.StatusCode)
 		s.downloadsMu.Lock()
 		now := time.Now()
 		task.Status = DownloadStatusFailed
@@ -720,28 +795,341 @@ func (s *Service) runDownload(ctx context.Context, task *DownloadTask) {
 	task.Message = "下载完成 / Download completed"
 	task.EndTime = &now
 	s.downloadsMu.Unlock()
+
+	logger.InfoF(ctx, "[Installer] 下载完成 / Download completed: version=%s, size=%d bytes", task.Version, downloaded)
 }
 
 // ==================== Precheck 预检查 ====================
 
+// DefaultPrecheckPorts is the default list of ports to check for SeaTunnel installation
+// DefaultPrecheckPorts 是 SeaTunnel 安装时默认检查的端口列表
+var DefaultPrecheckPorts = []int{5801, 5802, 8080}
+
 // RunPrecheck runs precheck on a host via Agent.
 // RunPrecheck 通过 Agent 在主机上运行预检查。
+// This is for INSTALLATION precheck - ports should be AVAILABLE (not in use).
+// 这是安装预检查 - 端口应该可用（未被占用）。
+// This is opposite to PrecheckNode which checks if SeaTunnel is running.
+// 这与 PrecheckNode 相反，后者检查 SeaTunnel 是否正在运行。
 func (s *Service) RunPrecheck(ctx context.Context, hostID uint, req *PrecheckRequest) (*PrecheckResult, error) {
-	// TODO: Send precheck command to Agent via gRPC
-	// TODO: 通过 gRPC 向 Agent 发送预检查命令
+	logger.InfoF(ctx, "[Installer] 开始预检查 / Start precheck: host=%d", hostID)
 
-	// For now, return a mock result / 目前返回模拟结果
-	return &PrecheckResult{
-		Items: []PrecheckItem{
-			{Name: "memory", Status: CheckStatusPassed, Message: "Memory check passed / 内存检查通过"},
-			{Name: "cpu", Status: CheckStatusPassed, Message: "CPU check passed / CPU 检查通过"},
-			{Name: "disk", Status: CheckStatusPassed, Message: "Disk check passed / 磁盘检查通过"},
-			{Name: "ports", Status: CheckStatusPassed, Message: "Ports check passed / 端口检查通过"},
-			{Name: "java", Status: CheckStatusPassed, Message: "Java check passed / Java 检查通过"},
-		},
+	// Initialize result
+	// 初始化结果
+	result := &PrecheckResult{
+		Items:         make([]PrecheckItem, 0),
 		OverallStatus: CheckStatusPassed,
-		Summary:       "All checks passed / 所有检查通过",
-	}, nil
+	}
+
+	// Check 1: Agent is available
+	// 检查 1：Agent 可用
+	agentItem := PrecheckItem{
+		Name:    "agent",
+		Details: make(map[string]interface{}),
+	}
+
+	// Get host information
+	// 获取主机信息
+	if s.hostProvider == nil {
+		agentItem.Status = CheckStatusFailed
+		agentItem.Message = "Host provider not configured / 主机提供者未配置"
+		result.Items = append(result.Items, agentItem)
+		result.OverallStatus = CheckStatusFailed
+		result.Summary = "Precheck failed: host provider not configured / 预检查失败：主机提供者未配置"
+		return result, nil
+	}
+
+	hostInfo, err := s.hostProvider.GetHostByID(ctx, hostID)
+	if err != nil {
+		agentItem.Status = CheckStatusFailed
+		agentItem.Message = fmt.Sprintf("Failed to get host info: %v / 获取主机信息失败: %v", err, err)
+		result.Items = append(result.Items, agentItem)
+		result.OverallStatus = CheckStatusFailed
+		result.Summary = "Precheck failed: cannot get host info / 预检查失败：无法获取主机信息"
+		return result, nil
+	}
+
+	// Check agent status
+	// 检查 Agent 状态
+	if hostInfo.AgentStatus != "installed" {
+		agentItem.Status = CheckStatusFailed
+		agentItem.Message = "Agent is not installed / Agent 未安装"
+		result.Items = append(result.Items, agentItem)
+		result.OverallStatus = CheckStatusFailed
+		result.Summary = "Precheck failed: Agent not installed / 预检查失败：Agent 未安装"
+		return result, nil
+	}
+
+	if !hostInfo.IsOnline(s.heartbeatTimeout) {
+		agentItem.Status = CheckStatusFailed
+		agentItem.Message = "Agent is offline / Agent 离线"
+		result.Items = append(result.Items, agentItem)
+		result.OverallStatus = CheckStatusFailed
+		result.Summary = "Precheck failed: Agent offline / 预检查失败：Agent 离线"
+		return result, nil
+	}
+
+	agentItem.Status = CheckStatusPassed
+	agentItem.Message = "Agent is installed and online / Agent 已安装且在线"
+	result.Items = append(result.Items, agentItem)
+
+	// Check if agentManager is available for sending commands
+	// 检查 agentManager 是否可用于发送命令
+	if s.agentManager == nil || hostInfo.AgentID == "" {
+		// Cannot perform detailed checks, return with agent check only
+		// 无法执行详细检查，仅返回 Agent 检查结果
+		result.Summary = "Agent is available, but cannot perform detailed checks / Agent 可用，但无法执行详细检查"
+		return result, nil
+	}
+
+	// Check 2: Ports are available (NOT in use) - opposite to PrecheckNode
+	// 检查 2：端口可用（未被占用）- 与 PrecheckNode 相反
+	ports := req.Ports
+	if len(ports) == 0 {
+		ports = DefaultPrecheckPorts
+	}
+
+	portsItem := PrecheckItem{
+		Name:    "ports",
+		Details: make(map[string]interface{}),
+	}
+	portsItem.Details["ports_to_check"] = ports
+
+	unavailablePorts := make([]int, 0)
+	availablePorts := make([]int, 0)
+
+	for _, port := range ports {
+		params := map[string]string{
+			"port": fmt.Sprintf("%d", port),
+		}
+		success, _, err := s.agentManager.SendCommand(ctx, hostInfo.AgentID, "check_port", params)
+		if err != nil {
+			// Error checking port, treat as unavailable
+			// 检查端口出错，视为不可用
+			unavailablePorts = append(unavailablePorts, port)
+		} else if success {
+			// Port is listening = port is IN USE = FAILED for installation
+			// 端口正在监听 = 端口被占用 = 安装失败
+			unavailablePorts = append(unavailablePorts, port)
+		} else {
+			// Port is not listening = port is AVAILABLE = PASSED for installation
+			// 端口未监听 = 端口可用 = 安装通过
+			availablePorts = append(availablePorts, port)
+		}
+	}
+
+	portsItem.Details["available_ports"] = availablePorts
+	portsItem.Details["unavailable_ports"] = unavailablePorts
+
+	if len(unavailablePorts) == 0 {
+		portsItem.Status = CheckStatusPassed
+		portsItem.Message = fmt.Sprintf("All ports are available: %v / 所有端口可用: %v", ports, ports)
+	} else {
+		portsItem.Status = CheckStatusFailed
+		portsItem.Message = fmt.Sprintf("Ports in use: %v / 端口被占用: %v", unavailablePorts, unavailablePorts)
+		result.OverallStatus = CheckStatusFailed
+	}
+	result.Items = append(result.Items, portsItem)
+
+	// Check 3: Directory is writable
+	// 检查 3：目录可写
+	installDir := req.InstallDir
+	if installDir == "" {
+		installDir = "/opt/seatunnel"
+	}
+
+	dirItem := PrecheckItem{
+		Name:    "disk",
+		Details: make(map[string]interface{}),
+	}
+	dirItem.Details["install_dir"] = installDir
+
+	params := map[string]string{
+		"path": installDir,
+	}
+	success, _, err := s.agentManager.SendCommand(ctx, hostInfo.AgentID, "check_directory", params)
+	if err != nil {
+		dirItem.Status = CheckStatusFailed
+		dirItem.Message = fmt.Sprintf("Failed to check directory: %v / 检查目录失败: %v", err, err)
+		result.OverallStatus = CheckStatusFailed
+	} else if success {
+		dirItem.Status = CheckStatusPassed
+		dirItem.Message = fmt.Sprintf("Directory %s is writable / 目录 %s 可写", installDir, installDir)
+	} else {
+		// Directory doesn't exist or not writable - this is OK for installation, we can create it
+		// 目录不存在或不可写 - 对于安装来说这是可以的，我们可以创建它
+		dirItem.Status = CheckStatusPassed
+		dirItem.Message = fmt.Sprintf("Directory %s will be created / 目录 %s 将被创建", installDir, installDir)
+	}
+	result.Items = append(result.Items, dirItem)
+
+	// Check 4: Java environment
+	// 检查 4：Java 环境
+	// Supported: Java 8, 11 (passed)
+	// Other versions: warning (not blocking)
+	// Not installed: failed
+	// 支持：Java 8、11（通过）
+	// 其他版本：警告（不阻塞）
+	// 未安装：失败
+	javaItem := PrecheckItem{
+		Name:    "java",
+		Details: make(map[string]interface{}),
+	}
+	javaItem.Details["supported_versions"] = []int{8, 11}
+
+	// Check Java version via Agent command
+	// 通过 Agent 命令检查 Java 版本
+	javaParams := map[string]string{
+		"sub_command": "check_java",
+	}
+	success, output, err := s.agentManager.SendCommand(ctx, hostInfo.AgentID, "check_java", javaParams)
+	if err != nil {
+		// Cannot check Java, treat as warning
+		// 无法检查 Java，视为警告
+		javaItem.Status = CheckStatusWarning
+		javaItem.Message = fmt.Sprintf("Failed to check Java: %v / 检查 Java 失败: %v", err, err)
+	} else if !success {
+		// Java not installed
+		// Java 未安装
+		javaItem.Status = CheckStatusFailed
+		javaItem.Message = "Java is not installed. Please install Java 8 or 11. / Java 未安装。请安装 Java 8 或 11。"
+		if output != "" {
+			javaItem.Details["output"] = output
+		}
+		result.OverallStatus = CheckStatusFailed
+	} else {
+		// Java is installed, check version from output
+		// Java 已安装，从输出检查版本
+		// Output format expected: "java_version=8" or "java_version=11" etc.
+		// 预期输出格式："java_version=8" 或 "java_version=11" 等
+		javaItem.Details["output"] = output
+
+		// Parse Java version from output
+		// 从输出解析 Java 版本
+		javaVersion := parseJavaVersionFromOutput(output)
+		javaItem.Details["detected_version"] = javaVersion
+
+		if javaVersion == 8 || javaVersion == 11 {
+			// Supported version
+			// 支持的版本
+			javaItem.Status = CheckStatusPassed
+			javaItem.Message = fmt.Sprintf("Java %d is installed (supported) / Java %d 已安装（支持）", javaVersion, javaVersion)
+		} else if javaVersion > 0 {
+			// Other version - warning but not blocking
+			// 其他版本 - 警告但不阻塞
+			javaItem.Status = CheckStatusWarning
+			javaItem.Message = fmt.Sprintf("Java %d is installed. Recommended: Java 8 or 11. / Java %d 已安装。推荐：Java 8 或 11。", javaVersion, javaVersion)
+		} else {
+			// Cannot determine version
+			// 无法确定版本
+			javaItem.Status = CheckStatusWarning
+			javaItem.Message = "Java is installed but version cannot be determined / Java 已安装但无法确定版本"
+		}
+	}
+	result.Items = append(result.Items, javaItem)
+
+	// Set summary
+	// 设置摘要
+	passedCount := 0
+	failedCount := 0
+	warningCount := 0
+	for _, item := range result.Items {
+		switch item.Status {
+		case CheckStatusPassed:
+			passedCount++
+		case CheckStatusFailed:
+			failedCount++
+		case CheckStatusWarning:
+			warningCount++
+		}
+	}
+
+	if result.OverallStatus == CheckStatusPassed {
+		result.Summary = fmt.Sprintf("All checks passed (%d passed) / 所有检查通过（%d 通过）", passedCount, passedCount)
+	} else {
+		result.Summary = fmt.Sprintf("Precheck failed: %d passed, %d failed, %d warnings / 预检查失败：%d 通过，%d 失败，%d 警告",
+			passedCount, failedCount, warningCount, passedCount, failedCount, warningCount)
+	}
+
+	logger.InfoF(ctx, "[Installer] 预检查完成 / Precheck completed: host=%d, status=%s", hostID, result.OverallStatus)
+	return result, nil
+}
+
+// javaCheckResponse represents the JSON response from Agent's check_java command
+// javaCheckResponse 表示 Agent check_java 命令的 JSON 响应
+type javaCheckResponse struct {
+	Success bool              `json:"success"`
+	Message string            `json:"message"`
+	Details map[string]string `json:"details"`
+}
+
+// parseJavaVersionFromOutput parses Java major version from command output.
+// parseJavaVersionFromOutput 从命令输出解析 Java 主版本号。
+// Expected formats: JSON from Agent, "java_version=8", "8", "1.8.0_xxx", "11.0.x", etc.
+// 预期格式：Agent 返回的 JSON、"java_version=8"、"8"、"1.8.0_xxx"、"11.0.x" 等
+func parseJavaVersionFromOutput(output string) int {
+	output = strings.TrimSpace(output)
+
+	// Try to parse JSON response from Agent
+	// 尝试解析 Agent 返回的 JSON 响应
+	if strings.HasPrefix(output, "{") {
+		var resp javaCheckResponse
+		if err := json.Unmarshal([]byte(output), &resp); err == nil {
+			// Try to get version from details.installed_version
+			// 尝试从 details.installed_version 获取版本
+			if versionStr, ok := resp.Details["installed_version"]; ok {
+				var version int
+				fmt.Sscanf(versionStr, "%d", &version)
+				if version > 0 {
+					return version
+				}
+			}
+		}
+	}
+
+	// Try to parse "java_version=X" format
+	// 尝试解析 "java_version=X" 格式
+	if strings.Contains(output, "java_version=") {
+		parts := strings.Split(output, "java_version=")
+		if len(parts) >= 2 {
+			versionStr := strings.TrimSpace(parts[1])
+			// Take first number
+			// 取第一个数字
+			versionStr = strings.Split(versionStr, "\n")[0]
+			versionStr = strings.Split(versionStr, " ")[0]
+			var version int
+			fmt.Sscanf(versionStr, "%d", &version)
+			if version > 0 {
+				return version
+			}
+		}
+	}
+
+	// Try to parse "1.8.0_xxx" format (Java 8)
+	// 尝试解析 "1.8.0_xxx" 格式（Java 8）
+	if strings.HasPrefix(output, "1.") {
+		parts := strings.Split(output, ".")
+		if len(parts) >= 2 {
+			var version int
+			fmt.Sscanf(parts[1], "%d", &version)
+			if version > 0 {
+				return version
+			}
+		}
+	}
+
+	// Try to parse "11.0.x" or just "11" format (Java 9+)
+	// 尝试解析 "11.0.x" 或 "11" 格式（Java 9+）
+	parts := strings.Split(output, ".")
+	if len(parts) >= 1 {
+		var version int
+		fmt.Sscanf(parts[0], "%d", &version)
+		if version > 0 {
+			return version
+		}
+	}
+
+	return 0
 }
 
 // ==================== Installation 安装 ====================
@@ -847,65 +1235,330 @@ func (s *Service) CancelInstallation(ctx context.Context, hostID uint) (*Install
 	return status, nil
 }
 
-// runInstallation runs the installation process.
-// runInstallation 运行安装过程。
+// runInstallation runs the installation process via Agent gRPC.
+// runInstallation 通过 Agent gRPC 运行安装过程。
 func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest, status *InstallationStatus) {
-	// TODO: Implement actual installation via Agent gRPC
-	// TODO: 通过 Agent gRPC 实现实际安装
+	logger.InfoF(ctx, "[Installer] 开始安装 / Start installation: host=%s, version=%s, mode=%s", req.HostID, req.Version, req.InstallMode)
 
-	// Simulate installation steps / 模拟安装步骤
-	steps := []InstallStep{
-		InstallStepDownload,
-		InstallStepVerify,
-		InstallStepExtract,
-		InstallStepConfigureCluster,
-		InstallStepConfigureCheckpoint,
-		InstallStepConfigureJVM,
-		InstallStepInstallPlugins,
-		InstallStepRegisterCluster,
-		InstallStepComplete,
+	// Check if agent manager is available
+	// 检查 Agent 管理器是否可用
+	if s.agentManager == nil {
+		logger.ErrorF(ctx, "[Installer] Agent 管理器不可用 / Agent manager not available")
+		s.installMu.Lock()
+		now := time.Now()
+		status.Status = StepStatusFailed
+		status.Error = "Agent manager not available / Agent 管理器不可用"
+		status.EndTime = &now
+		s.installMu.Unlock()
+		return
 	}
 
-	for i, step := range steps {
+	// Get agent connection for the host
+	// 获取主机的 Agent 连接
+	hostID, err := parseHostID(req.HostID)
+	if err != nil {
+		logger.ErrorF(ctx, "[Installer] 无效的主机 ID / Invalid host ID: %s", req.HostID)
 		s.installMu.Lock()
-		status.CurrentStep = step
-		status.Progress = (i * 100) / len(steps)
-
-		// Update step status / 更新步骤状态
-		for j := range status.Steps {
-			if status.Steps[j].Step == step {
-				now := time.Now()
-				status.Steps[j].Status = StepStatusRunning
-				status.Steps[j].StartTime = &now
-				break
-			}
-		}
+		now := time.Now()
+		status.Status = StepStatusFailed
+		status.Error = fmt.Sprintf("Invalid host ID: %v / 无效的主机 ID: %v", err, err)
+		status.EndTime = &now
 		s.installMu.Unlock()
-
-		// Simulate step execution / 模拟步骤执行
-		time.Sleep(500 * time.Millisecond)
-
-		s.installMu.Lock()
-		for j := range status.Steps {
-			if status.Steps[j].Step == step {
-				now := time.Now()
-				status.Steps[j].Status = StepStatusSuccess
-				status.Steps[j].Progress = 100
-				status.Steps[j].EndTime = &now
-				break
-			}
-		}
-		s.installMu.Unlock()
+		return
 	}
 
-	// Mark installation as complete / 标记安装完成
-	s.installMu.Lock()
-	now := time.Now()
-	status.Status = StepStatusSuccess
-	status.Progress = 100
-	status.Message = "Installation completed successfully / 安装成功完成"
-	status.EndTime = &now
-	s.installMu.Unlock()
+	agentID, connected := s.agentManager.GetAgentByHostID(hostID)
+	if !connected || agentID == "" {
+		// Agent not connected, return error
+		// Agent 未连接，返回错误
+		logger.ErrorF(ctx, "[Installer] Agent 未连接 / Agent not connected: host=%d", hostID)
+		s.installMu.Lock()
+		now := time.Now()
+		status.Status = StepStatusFailed
+		status.Error = "Host agent not connected / 主机 Agent 未连接"
+		status.EndTime = &now
+		s.installMu.Unlock()
+		return
+	}
+
+	logger.DebugF(ctx, "[Installer] 连接到 Agent / Connected to Agent: host=%d, agent=%s", hostID, agentID)
+
+	// For online mode, ensure package is downloaded to Control Plane first
+	// 对于在线模式，先确保安装包已下载到 Control Plane
+	if req.InstallMode == InstallModeOnline {
+		fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", req.Version)
+		localPath := filepath.Join(s.packageDir, fileName)
+
+		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+			// Package not found locally, need to download first
+			// 本地未找到安装包，需要先下载
+			logger.InfoF(ctx, "[Installer] 本地未找到安装包，开始下载 / Package not found locally, starting download: version=%s", req.Version)
+
+			s.installMu.Lock()
+			status.Message = "Downloading package to Control Plane... / 正在下载安装包到控制平面..."
+			s.installMu.Unlock()
+
+			// Start download task
+			// 启动下载任务
+			mirror := req.Mirror
+			if mirror == "" {
+				mirror = MirrorAliyun
+			}
+			task, err := s.StartDownload(ctx, &DownloadRequest{
+				Version: req.Version,
+				Mirror:  mirror,
+			})
+			if err != nil && err != ErrDownloadInProgress {
+				logger.ErrorF(ctx, "[Installer] 启动下载失败 / Failed to start download: %v", err)
+				s.installMu.Lock()
+				now := time.Now()
+				status.Status = StepStatusFailed
+				status.Error = fmt.Sprintf("Failed to download package: %v / 下载安装包失败: %v", err, err)
+				status.EndTime = &now
+				s.installMu.Unlock()
+				return
+			}
+
+			// Wait for download to complete
+			// 等待下载完成
+			for {
+				task, err = s.GetDownloadStatus(ctx, task.ID)
+				if err != nil {
+					logger.ErrorF(ctx, "[Installer] 获取下载状态失败 / Failed to get download status: %v", err)
+					s.installMu.Lock()
+					now := time.Now()
+					status.Status = StepStatusFailed
+					status.Error = fmt.Sprintf("Failed to get download status: %v / 获取下载状态失败: %v", err, err)
+					status.EndTime = &now
+					s.installMu.Unlock()
+					return
+				}
+
+				if task.Status == DownloadStatusCompleted {
+					logger.InfoF(ctx, "[Installer] 安装包下载完成 / Package download completed: version=%s", req.Version)
+					break
+				}
+
+				if task.Status == DownloadStatusFailed {
+					logger.ErrorF(ctx, "[Installer] 安装包下载失败 / Package download failed: %s", task.Error)
+					s.installMu.Lock()
+					now := time.Now()
+					status.Status = StepStatusFailed
+					status.Error = fmt.Sprintf("Package download failed: %s / 安装包下载失败: %s", task.Error, task.Error)
+					status.EndTime = &now
+					s.installMu.Unlock()
+					return
+				}
+
+				s.installMu.Lock()
+				status.Message = fmt.Sprintf("Downloading package... %d%% / 正在下载安装包... %d%%", task.Progress, task.Progress)
+				s.installMu.Unlock()
+
+				time.Sleep(1 * time.Second)
+			}
+		} else {
+			logger.InfoF(ctx, "[Installer] 使用本地已有安装包 / Using existing local package: %s", localPath)
+		}
+
+		// Package is now available on Control Plane
+		// Agent will still download from mirror (TODO: implement file transfer via gRPC)
+		// 安装包现在在 Control Plane 上可用
+		// Agent 仍然从镜像源下载（TODO: 实现通过 gRPC 传输文件）
+	}
+
+	// Build installation parameters for Agent
+	// 构建 Agent 的安装参数
+	params := buildInstallParams(req)
+
+	// Send install command to Agent
+	// 向 Agent 发送安装命令
+	commandID, err := s.agentManager.SendInstallCommand(ctx, agentID, params)
+	if err != nil {
+		logger.ErrorF(ctx, "[Installer] 发送安装命令失败 / Failed to send install command: host=%d, error=%v", hostID, err)
+		s.installMu.Lock()
+		now := time.Now()
+		status.Status = StepStatusFailed
+		status.Error = fmt.Sprintf("Failed to send install command: %v / 发送安装命令失败: %v", err, err)
+		status.EndTime = &now
+		s.installMu.Unlock()
+		return
+	}
+
+	logger.InfoF(ctx, "[Installer] 安装命令已发送 / Install command sent: host=%d, command=%s", hostID, commandID)
+
+	// Poll for command status updates
+	// 轮询命令状态更新
+	s.pollInstallationStatus(ctx, commandID, status)
+}
+
+// runInstallationSimulated runs a simulated installation (for testing or when Agent is not available).
+// runInstallationSimulated 运行模拟安装（用于测试或 Agent 不可用时）。
+// pollInstallationStatus polls the Agent for installation status updates.
+// pollInstallationStatus 轮询 Agent 获取安装状态更新。
+func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, status *InstallationStatus) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.installMu.Lock()
+			now := time.Now()
+			status.Status = StepStatusFailed
+			status.Error = "Installation cancelled / 安装已取消"
+			status.EndTime = &now
+			s.installMu.Unlock()
+			return
+
+		case <-ticker.C:
+			cmdStatus, progress, message, err := s.agentManager.GetCommandStatus(commandID)
+			if err != nil {
+				// Command not found or error, continue polling
+				// 命令未找到或出错，继续轮询
+				continue
+			}
+
+			s.installMu.Lock()
+			status.Progress = progress
+			status.Message = message
+
+			// Map command status to installation status
+			// 将命令状态映射到安装状态
+			switch cmdStatus {
+			case "success":
+				now := time.Now()
+				status.Status = StepStatusSuccess
+				status.Progress = 100
+				status.Message = "Installation completed successfully / 安装成功完成"
+				status.EndTime = &now
+				// Mark all steps as complete
+				// 将所有步骤标记为完成
+				for j := range status.Steps {
+					status.Steps[j].Status = StepStatusSuccess
+					status.Steps[j].Progress = 100
+					status.Steps[j].EndTime = &now
+				}
+				s.installMu.Unlock()
+				logger.InfoF(ctx, "[Installer] 安装成功 / Installation succeeded: command=%s", commandID)
+				return
+
+			case "failed":
+				now := time.Now()
+				status.Status = StepStatusFailed
+				status.Error = message
+				status.EndTime = &now
+				s.installMu.Unlock()
+				logger.ErrorF(ctx, "[Installer] 安装失败 / Installation failed: command=%s, error=%s", commandID, message)
+				return
+
+			case "cancelled":
+				now := time.Now()
+				status.Status = StepStatusFailed
+				status.Error = "Installation cancelled / 安装已取消"
+				status.EndTime = &now
+				s.installMu.Unlock()
+				logger.InfoF(ctx, "[Installer] 安装已取消 / Installation cancelled: command=%s", commandID)
+				return
+
+			case "running":
+				// Update current step based on progress
+				// 根据进度更新当前步骤
+				stepIndex := (progress * len(status.Steps)) / 100
+				if stepIndex >= len(status.Steps) {
+					stepIndex = len(status.Steps) - 1
+				}
+				if stepIndex >= 0 && stepIndex < len(status.Steps) {
+					status.CurrentStep = status.Steps[stepIndex].Step
+					// Mark previous steps as complete
+					// 将之前的步骤标记为完成
+					for j := 0; j < stepIndex; j++ {
+						if status.Steps[j].Status != StepStatusSuccess {
+							now := time.Now()
+							status.Steps[j].Status = StepStatusSuccess
+							status.Steps[j].Progress = 100
+							status.Steps[j].EndTime = &now
+						}
+					}
+					// Mark current step as running
+					// 将当前步骤标记为运行中
+					if status.Steps[stepIndex].Status != StepStatusRunning {
+						now := time.Now()
+						status.Steps[stepIndex].Status = StepStatusRunning
+						status.Steps[stepIndex].StartTime = &now
+					}
+				}
+			}
+			s.installMu.Unlock()
+		}
+	}
+}
+
+// buildInstallParams builds installation parameters for Agent command.
+// buildInstallParams 构建 Agent 命令的安装参数。
+func buildInstallParams(req *InstallationRequest) map[string]string {
+	params := map[string]string{
+		"version":         req.Version,
+		"host_id":         req.HostID,
+		"cluster_id":      req.ClusterID,
+		"install_mode":    string(req.InstallMode),
+		"deployment_mode": string(req.DeploymentMode),
+		"node_role":       string(req.NodeRole),
+	}
+
+	if req.Mirror != "" {
+		params["mirror"] = string(req.Mirror)
+	}
+
+	if req.PackagePath != "" {
+		params["package_path"] = req.PackagePath
+	}
+
+	// Add JVM config / 添加 JVM 配置
+	if req.JVM != nil {
+		params["jvm_hybrid_heap"] = fmt.Sprintf("%d", req.JVM.HybridHeapSize)
+		params["jvm_master_heap"] = fmt.Sprintf("%d", req.JVM.MasterHeapSize)
+		params["jvm_worker_heap"] = fmt.Sprintf("%d", req.JVM.WorkerHeapSize)
+	}
+
+	// Add checkpoint config / 添加检查点配置
+	if req.Checkpoint != nil {
+		params["checkpoint_storage_type"] = string(req.Checkpoint.StorageType)
+		params["checkpoint_namespace"] = req.Checkpoint.Namespace
+		if req.Checkpoint.HDFSNameNodeHost != "" {
+			params["checkpoint_hdfs_host"] = req.Checkpoint.HDFSNameNodeHost
+			params["checkpoint_hdfs_port"] = fmt.Sprintf("%d", req.Checkpoint.HDFSNameNodePort)
+		}
+		if req.Checkpoint.StorageEndpoint != "" {
+			params["checkpoint_storage_endpoint"] = req.Checkpoint.StorageEndpoint
+			params["checkpoint_storage_bucket"] = req.Checkpoint.StorageBucket
+			params["checkpoint_storage_access_key"] = req.Checkpoint.StorageAccessKey
+			params["checkpoint_storage_secret_key"] = req.Checkpoint.StorageSecretKey
+		}
+	}
+
+	// Add connector config / 添加连接器配置
+	if req.Connector != nil && req.Connector.InstallConnectors {
+		params["install_connectors"] = "true"
+		if len(req.Connector.SelectedPlugins) > 0 {
+			params["selected_plugins"] = strings.Join(req.Connector.SelectedPlugins, ",")
+		}
+	}
+
+	return params
+}
+
+// parseHostID parses host ID from string to uint.
+// parseHostID 将主机 ID 从字符串解析为 uint。
+func parseHostID(hostIDStr string) (uint, error) {
+	if hostIDStr == "" {
+		return 0, fmt.Errorf("host ID is empty / 主机 ID 为空")
+	}
+	var hostID uint
+	_, err := fmt.Sscanf(hostIDStr, "%d", &hostID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid host ID format: %s / 无效的主机 ID 格式: %s", hostIDStr, hostIDStr)
+	}
+	return hostID, nil
 }
 
 // ==================== Helper Functions 辅助函数 ====================

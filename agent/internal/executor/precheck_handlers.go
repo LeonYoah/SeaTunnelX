@@ -28,33 +28,37 @@ import (
 )
 
 // PrecheckSubCommand defines the sub-command types for precheck
-// PrecheckSubCommand 瀹氫箟棰勬鏌ョ殑瀛愬懡浠ょ被鍨?
+// PrecheckSubCommand 定义预检查的子命令类型
 type PrecheckSubCommand string
 
 const (
 	// PrecheckSubCommandCheckPort checks if a port is available or listening
-	// PrecheckSubCommandCheckPort 妫€鏌ョ鍙ｆ槸鍚﹀彲鐢ㄦ垨姝ｅ湪鐩戝惉
+	// PrecheckSubCommandCheckPort 检查端口是否可用或正在监听
 	PrecheckSubCommandCheckPort PrecheckSubCommand = "check_port"
 
 	// PrecheckSubCommandCheckDirectory checks if a directory exists and is writable
-	// PrecheckSubCommandCheckDirectory 妫€鏌ョ洰褰曟槸鍚﹀瓨鍦ㄤ笖鍙啓
+	// PrecheckSubCommandCheckDirectory 检查目录是否存在且可写
 	PrecheckSubCommandCheckDirectory PrecheckSubCommand = "check_directory"
 
 	// PrecheckSubCommandCheckHTTP checks if an HTTP endpoint is accessible
-	// PrecheckSubCommandCheckHTTP 妫€鏌?HTTP 绔偣鏄惁鍙闂?
+	// PrecheckSubCommandCheckHTTP 检查 HTTP 端点是否可访问
 	PrecheckSubCommandCheckHTTP PrecheckSubCommand = "check_http"
 
 	// PrecheckSubCommandCheckProcess checks if a SeaTunnel process is running
-	// PrecheckSubCommandCheckProcess 妫€鏌?SeaTunnel 杩涚▼鏄惁姝ｅ湪杩愯
+	// PrecheckSubCommandCheckProcess 检查 SeaTunnel 进程是否正在运行
 	PrecheckSubCommandCheckProcess PrecheckSubCommand = "check_process"
 
+	// PrecheckSubCommandCheckJava checks if Java is installed and its version
+	// PrecheckSubCommandCheckJava 检查 Java 是否已安装及其版本
+	PrecheckSubCommandCheckJava PrecheckSubCommand = "check_java"
+
 	// PrecheckSubCommandFull runs all precheck items
-	// PrecheckSubCommandFull 杩愯鎵€鏈夐妫€鏌ラ」
+	// PrecheckSubCommandFull 运行所有预检查项
 	PrecheckSubCommandFull PrecheckSubCommand = "full"
 )
 
 // PrecheckResult represents the result of a precheck operation
-// PrecheckResult 琛ㄧず棰勬鏌ユ搷浣滅殑缁撴灉
+// PrecheckResult 表示预检查操作的结果
 type PrecheckResult struct {
 	Success bool              `json:"success"`
 	Message string            `json:"message"`
@@ -62,13 +66,13 @@ type PrecheckResult struct {
 }
 
 // RegisterPrecheckHandlers registers all precheck-related command handlers
-// RegisterPrecheckHandlers 娉ㄥ唽鎵€鏈夐妫€鏌ョ浉鍏崇殑鍛戒护澶勭悊鍣?
+// RegisterPrecheckHandlers 注册所有预检查相关的命令处理器
 func RegisterPrecheckHandlers(executor *CommandExecutor) {
 	executor.RegisterHandler(pb.CommandType_PRECHECK, HandlePrecheckCommand)
 }
 
 // HandlePrecheckCommand handles the PRECHECK command type
-// HandlePrecheckCommand 澶勭悊 PRECHECK 鍛戒护绫诲瀷
+// HandlePrecheckCommand 处理 PRECHECK 命令类型
 func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter ProgressReporter) (*pb.CommandResponse, error) {
 	subCommand := PrecheckSubCommand(cmd.Parameters["sub_command"])
 	if subCommand == "" {
@@ -87,6 +91,8 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 		result, err = handleCheckHTTP(ctx, cmd.Parameters)
 	case PrecheckSubCommandCheckProcess:
 		result, err = handleCheckProcess(ctx, cmd.Parameters)
+	case PrecheckSubCommandCheckJava:
+		result, err = handleCheckJava(ctx, cmd.Parameters)
 	case PrecheckSubCommandFull:
 		result, err = handleFullPrecheck(ctx, cmd.Parameters, reporter)
 	default:
@@ -109,7 +115,7 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 }
 
 // handleCheckPort handles the check_port sub-command
-// handleCheckPort 澶勭悊 check_port 瀛愬懡浠?
+// handleCheckPort 处理 check_port 子命令
 func handleCheckPort(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
 	portStr := params["port"]
 	if portStr == "" {
@@ -139,7 +145,7 @@ func handleCheckPort(ctx context.Context, params map[string]string) (*PrecheckRe
 }
 
 // handleCheckDirectory handles the check_directory sub-command
-// handleCheckDirectory 澶勭悊 check_directory 瀛愬懡浠?
+// handleCheckDirectory 处理 check_directory 子命令
 func handleCheckDirectory(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
 	path := params["path"]
 	if path == "" {
@@ -161,7 +167,7 @@ func handleCheckDirectory(ctx context.Context, params map[string]string) (*Prech
 }
 
 // handleCheckHTTP handles the check_http sub-command
-// handleCheckHTTP 澶勭悊 check_http 瀛愬懡浠?
+// handleCheckHTTP 处理 check_http 子命令
 func handleCheckHTTP(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
 	url := params["url"]
 	if url == "" {
@@ -183,7 +189,7 @@ func handleCheckHTTP(ctx context.Context, params map[string]string) (*PrecheckRe
 }
 
 // handleCheckProcess handles the check_process sub-command
-// handleCheckProcess 澶勭悊 check_process 瀛愬懡浠?
+// handleCheckProcess 处理 check_process 子命令
 func handleCheckProcess(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
 	role := params["role"]
 	if role == "" {
@@ -212,8 +218,26 @@ func handleCheckProcess(ctx context.Context, params map[string]string) (*Prechec
 	}, nil
 }
 
+// handleCheckJava handles the check_java sub-command
+// handleCheckJava 处理 check_java 子命令
+func handleCheckJava(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	prechecker := installer.NewPrechecker(nil)
+	item := prechecker.CheckJava(ctx)
+
+	details := make(map[string]string)
+	for k, v := range item.Details {
+		details[k] = fmt.Sprintf("%v", v)
+	}
+
+	return &PrecheckResult{
+		Success: item.Status == installer.CheckStatusPassed || item.Status == installer.CheckStatusWarning,
+		Message: item.Message,
+		Details: details,
+	}, nil
+}
+
 // handleFullPrecheck handles the full precheck sub-command
-// handleFullPrecheck 澶勭悊瀹屾暣棰勬鏌ュ瓙鍛戒护
+// handleFullPrecheck 处理完整预检查子命令
 func handleFullPrecheck(ctx context.Context, params map[string]string, reporter ProgressReporter) (*PrecheckResult, error) {
 	results := make(map[string]string)
 	allPassed := true

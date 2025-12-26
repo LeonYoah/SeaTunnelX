@@ -326,7 +326,18 @@ func Serve() {
 			// Installer SeaTunnel 安装管理
 			// Initialize installer service and handler
 			// 初始化安装服务和处理器
-			installerService := installer.NewService("./lib/packages")
+			installerService := installer.NewService("./lib/packages", nil)
+			// Set host provider for precheck operations
+			// 设置用于预检查操作的主机提供者
+			installerService.SetHostProvider(&hostProviderAdapter{hostService: hostService})
+			// Inject agent manager if available
+			// 如果 Agent Manager 可用，注入
+			if agentManager != nil {
+				installerService.SetAgentManager(&installerAgentManagerAdapter{
+					manager:     agentManager,
+					hostService: hostService,
+				})
+			}
 			installerHandler := installer.NewHandler(installerService)
 
 			// Package management routes 安装包管理路由
@@ -839,4 +850,141 @@ func (a *hostInfoGetterAdapter) GetHostAgentID(ctx context.Context, hostID uint)
 		return "", err
 	}
 	return h.AgentID, nil
+}
+
+// ==================== Installer Service Adapters 安装服务适配器 ====================
+
+// hostProviderAdapter adapts host.Service to installer.HostProvider interface.
+// hostProviderAdapter 将 host.Service 适配到 installer.HostProvider 接口。
+type hostProviderAdapter struct {
+	hostService *host.Service
+}
+
+// GetHostByID returns host information by ID for installer precheck.
+// GetHostByID 根据 ID 返回主机信息，用于安装预检查。
+func (a *hostProviderAdapter) GetHostByID(ctx context.Context, hostID uint) (*installer.HostInfo, error) {
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &installer.HostInfo{
+		ID:          h.ID,
+		AgentID:     h.AgentID,
+		AgentStatus: string(h.AgentStatus),
+		LastSeen:    h.LastHeartbeat,
+	}, nil
+}
+
+// installerAgentManagerAdapter adapts agent.Manager to installer.AgentManager interface.
+// installerAgentManagerAdapter 将 agent.Manager 适配到 installer.AgentManager 接口。
+type installerAgentManagerAdapter struct {
+	manager     *agent.Manager
+	hostService *host.Service
+}
+
+// GetAgentByHostID returns the agent connection for a host.
+// GetAgentByHostID 返回主机的 Agent 连接。
+func (a *installerAgentManagerAdapter) GetAgentByHostID(hostID uint) (agentID string, connected bool) {
+	// Get host info to find agent ID
+	// 获取主机信息以找到 agent ID
+	ctx := context.Background()
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil || h == nil {
+		return "", false
+	}
+
+	if h.AgentID == "" {
+		return "", false
+	}
+
+	// Check if agent is connected in agent manager
+	// 检查 agent 是否在 agent manager 中连接
+	conn, ok := a.manager.GetAgent(h.AgentID)
+	if !ok || conn == nil {
+		return "", false
+	}
+
+	// Check if agent status is connected
+	// 检查 agent 状态是否为已连接
+	if conn.GetStatus() != agent.AgentStatusConnected {
+		return "", false
+	}
+
+	return h.AgentID, true
+}
+
+// SendInstallCommand sends an installation command to an agent.
+// SendInstallCommand 向 Agent 发送安装命令。
+func (a *installerAgentManagerAdapter) SendInstallCommand(ctx context.Context, agentID string, params map[string]string) (commandID string, err error) {
+	resp, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_INSTALL, params, 30*time.Minute)
+	if err != nil {
+		return "", err
+	}
+	return resp.CommandId, nil
+}
+
+// GetCommandStatus returns the status of a command.
+// GetCommandStatus 返回命令的状态。
+func (a *installerAgentManagerAdapter) GetCommandStatus(commandID string) (status string, progress int, message string, err error) {
+	// Not implemented yet / 尚未实现
+	return "unknown", 0, "", nil
+}
+
+// SendCommand sends a command to an agent and returns the result.
+// SendCommand 向 Agent 发送命令并返回结果。
+func (a *installerAgentManagerAdapter) SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (success bool, output string, err error) {
+	// Convert command type string to pb.CommandType
+	// 将命令类型字符串转换为 pb.CommandType
+	cmdType := a.stringToCommandType(commandType)
+
+	// Add sub_command parameter for precheck commands
+	// 为预检查命令添加 sub_command 参数
+	if cmdType == pb.CommandType_PRECHECK && params["sub_command"] == "" {
+		params["sub_command"] = commandType
+	}
+
+	// Send command with 30 second timeout
+	// 使用 30 秒超时发送命令
+	resp, err := a.manager.SendCommand(ctx, agentID, cmdType, params, 30*time.Second)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Convert response to (bool, string, error)
+	// 将响应转换为 (bool, string, error)
+	success = resp.Status == pb.CommandStatus_SUCCESS
+	message := resp.Output
+	if resp.Error != "" {
+		message = resp.Error
+	}
+
+	return success, message, nil
+}
+
+// stringToCommandType converts a command type string to pb.CommandType.
+// stringToCommandType 将命令类型字符串转换为 pb.CommandType。
+func (a *installerAgentManagerAdapter) stringToCommandType(cmdType string) pb.CommandType {
+	switch cmdType {
+	case "check_port", "check_directory", "check_http", "check_process", "full":
+		return pb.CommandType_PRECHECK
+	case "install":
+		return pb.CommandType_INSTALL
+	case "uninstall":
+		return pb.CommandType_UNINSTALL
+	case "upgrade":
+		return pb.CommandType_UPGRADE
+	case "start":
+		return pb.CommandType_START
+	case "stop":
+		return pb.CommandType_STOP
+	case "restart":
+		return pb.CommandType_RESTART
+	case "status":
+		return pb.CommandType_STATUS
+	case "get_logs":
+		return pb.CommandType_COLLECT_LOGS
+	default:
+		return pb.CommandType_PRECHECK
+	}
 }

@@ -36,7 +36,6 @@ import {HostTable} from './HostTable';
 import {HostDetail} from './HostDetail';
 import {CreateHostDialog} from './CreateHostDialog';
 import {EditHostDialog} from './EditHostDialog';
-import {InstallWizard} from '@/components/common/installer';
 
 const PAGE_SIZE = 10;
 
@@ -64,7 +63,6 @@ export function HostMain() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [isInstallWizardOpen, setIsInstallWizardOpen] = useState(false);
   const [selectedHost, setSelectedHost] = useState<HostInfo | null>(null);
 
   /**
@@ -185,24 +183,6 @@ export function HostMain() {
     setIsEditDialogOpen(false);
     loadHosts();
     toast.success(t('host.updateSuccess'));
-  };
-
-  /**
-   * Handle install SeaTunnel
-   * 处理安装 SeaTunnel
-   */
-  const handleInstall = () => {
-    setIsDetailOpen(false);
-    setIsInstallWizardOpen(true);
-  };
-
-  /**
-   * Handle install complete
-   * 处理安装完成
-   */
-  const handleInstallComplete = () => {
-    setIsInstallWizardOpen(false);
-    loadHosts();
   };
 
   /**
@@ -400,18 +380,6 @@ export function HostMain() {
             setIsDetailOpen(false);
             setIsEditDialogOpen(true);
           }}
-          onInstall={handleInstall}
-        />
-      )}
-
-      {/* Install Wizard / 安装向导 */}
-      {selectedHost && (
-        <InstallWizard
-          open={isInstallWizardOpen}
-          onOpenChange={setIsInstallWizardOpen}
-          hostId={selectedHost.id}
-          hostName={selectedHost.name}
-          onComplete={handleInstallComplete}
         />
       )}
     </motion.div>

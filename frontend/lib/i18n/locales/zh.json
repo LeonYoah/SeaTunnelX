@@ -561,7 +561,23 @@
       "selectLocalPluginsDesc": "选择已下载到本地的插件进行安装（可选）",
       "localPluginsCount": "当前版本 {version} 共有 {count} 个本地插件",
       "noLocalPluginsForVersion": "没有此版本的本地插件",
-      "noLocalPluginsForVersionDesc": "版本 {version} 没有已下载的本地插件。请先到插件市场下载所需插件。"
+      "noLocalPluginsForVersionDesc": "版本 {version} 没有已下载的本地插件。请先到插件市场下载所需插件。",
+      "precheckTitle": "环境预检查",
+      "precheckDesc": "检查所有选定主机是否满足安装要求",
+      "readyToPrecheck": "准备预检查",
+      "readyToPrecheckDesc": "点击下方按钮检查 {count} 台主机是否满足安装要求",
+      "startPrecheck": "开始检查",
+      "precheckRunning": "检查中...",
+      "precheckPassed": "全部通过",
+      "precheckFailed": "检查失败",
+      "precheckFailedWarning": "部分主机预检查未通过，请解决问题后重新检查。",
+      "precheckPassedInfo": "所有主机预检查通过，可以开始部署。",
+      "rerunPrecheck": "重新检查",
+      "checking": "检查中",
+      "checkError": "检查出错",
+      "passed": "通过",
+      "warning": "警告",
+      "failed": "失败"
     }
   },
   "audit": {

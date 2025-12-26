@@ -27,7 +27,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -67,6 +66,8 @@ import type {
   JVMConfig,
   CheckpointConfig,
   CheckpointStorageType,
+  PrecheckResult,
+  CheckStatus,
 } from '@/lib/services/installer/types';
 
 // Wizard step types / 向导步骤类型
@@ -90,9 +91,9 @@ interface StepConfig {
 const WIZARD_STEPS: StepConfig[] = [
   { id: 'basic', titleKey: 'cluster.wizard.basic', descKey: 'cluster.wizard.basicDesc', icon: Settings },
   { id: 'hosts', titleKey: 'cluster.wizard.hosts', descKey: 'cluster.wizard.hostsDesc', icon: Server },
+  { id: 'precheck', titleKey: 'cluster.wizard.precheck', descKey: 'cluster.wizard.precheckDesc', icon: CheckCircle2 },
   { id: 'config', titleKey: 'cluster.wizard.config', descKey: 'cluster.wizard.configDesc', icon: Settings },
   { id: 'plugins', titleKey: 'cluster.wizard.plugins', descKey: 'cluster.wizard.pluginsDesc', icon: Package },
-  { id: 'precheck', titleKey: 'cluster.wizard.precheck', descKey: 'cluster.wizard.precheckDesc', icon: CheckCircle2 },
   { id: 'deploy', titleKey: 'cluster.wizard.deploy', descKey: 'cluster.wizard.deployDesc', icon: PlayCircle },
   { id: 'complete', titleKey: 'cluster.wizard.complete', descKey: 'cluster.wizard.completeDesc', icon: PartyPopper },
 ];
@@ -102,6 +103,15 @@ interface HostWithRole {
   host: HostInfo;
   selected: boolean;
   role: NodeRole;
+}
+
+// Host precheck result / 主机预检查结果
+interface HostPrecheckResult {
+  hostId: number;
+  hostName: string;
+  loading: boolean;
+  result: PrecheckResult | null;
+  error: string | null;
 }
 
 // Cluster deploy config / 集群部署配置
@@ -171,6 +181,10 @@ export function ClusterDeployWizard({
   const [pluginSearch, setPluginSearch] = useState('');
   const [localPlugins, setLocalPlugins] = useState<LocalPlugin[]>([]);
   const [localPluginsLoading, setLocalPluginsLoading] = useState(false);
+
+  // Precheck state / 预检查状态
+  const [precheckResults, setPrecheckResults] = useState<HostPrecheckResult[]>([]);
+  const [precheckRunning, setPrecheckRunning] = useState(false);
 
   // Load local plugins / 加载本地插件
   const loadLocalPlugins = useCallback(async () => {
@@ -263,9 +277,81 @@ export function ClusterDeployWizard({
     [localPlugins, config.version]
   );
 
+  // Run precheck when entering precheck step / 进入预检查步骤时运行预检查
+  const runPrecheck = useCallback(async () => {
+    if (selectedHosts.length === 0) {
+      return;
+    }
+
+    setPrecheckRunning(true);
+    
+    // Initialize results for all selected hosts / 初始化所有选中主机的结果
+    const initialResults: HostPrecheckResult[] = selectedHosts.map((h) => ({
+      hostId: h.host.id,
+      hostName: h.host.name,
+      loading: true,
+      result: null,
+      error: null,
+    }));
+    setPrecheckResults(initialResults);
+
+    // Run precheck for each host in parallel / 并行运行每个主机的预检查
+    const promises = selectedHosts.map(async (hostWithRole) => {
+      try {
+        const result = await services.installer.runPrecheck(hostWithRole.host.id);
+        return {
+          hostId: hostWithRole.host.id,
+          hostName: hostWithRole.host.name,
+          loading: false,
+          result,
+          error: null,
+        };
+      } catch (err) {
+        return {
+          hostId: hostWithRole.host.id,
+          hostName: hostWithRole.host.name,
+          loading: false,
+          result: null,
+          error: err instanceof Error ? err.message : 'Precheck failed',
+        };
+      }
+    });
+
+    const results = await Promise.all(promises);
+    setPrecheckResults(results);
+    setPrecheckRunning(false);
+  }, [selectedHosts]);
+
+  // Check if all prechecks passed / 检查是否所有预检查都通过
+  const allPrechecksPassed = useMemo(() => {
+    if (precheckResults.length === 0) {
+      return false;
+    }
+    if (precheckRunning) {
+      return false;
+    }
+    return precheckResults.every(
+      (r) =>
+        r.result &&
+        (r.result.overall_status === 'passed' || r.result.overall_status === 'warning')
+    );
+  }, [precheckResults, precheckRunning]);
+
+  // Check if precheck has been run / 检查是否已运行过预检查
+  const precheckHasRun = useMemo(() => {
+    return precheckResults.length > 0 && !precheckRunning;
+  }, [precheckResults, precheckRunning]);
+
   // Update config / 更新配置
   const updateConfig = useCallback((updates: Partial<ClusterDeployConfig>) => {
-    setConfig((prev) => ({ ...prev, ...updates }));
+    setConfig((prev) => {
+      // If deployment mode changes, reset precheck results / 如果部署模式变化，重置预检查结果
+      if (updates.deploymentMode !== undefined && updates.deploymentMode !== prev.deploymentMode) {
+        setPrecheckResults([]);
+        setPrecheckRunning(false);
+      }
+      return { ...prev, ...updates };
+    });
   }, []);
 
   // Toggle host selection / 切换主机选择
@@ -275,6 +361,9 @@ export function ClusterDeployWizard({
         h.host.id === hostId ? { ...h, selected: !h.selected } : h
       )
     );
+    // Reset precheck results when host selection changes / 主机选择变化时重置预检查结果
+    setPrecheckResults([]);
+    setPrecheckRunning(false);
   }, []);
 
   // Update host role / 更新主机角色
@@ -300,6 +389,8 @@ export function ClusterDeployWizard({
           return hasMaster && hasWorker;
         }
         return true;
+      case 'precheck':
+        return allPrechecksPassed; // Must pass precheck / 必须通过预检查
       case 'config':
         // For offline mode, must have local packages available / 离线模式必须有本地安装包
         if (config.installMode === 'offline') {
@@ -309,8 +400,6 @@ export function ClusterDeployWizard({
         return config.version.length > 0;
       case 'plugins':
         return true; // Optional / 可选
-      case 'precheck':
-        return true; // Can proceed after viewing / 查看后可继续
       case 'deploy':
         return deployStatus === 'success';
       case 'complete':
@@ -318,7 +407,7 @@ export function ClusterDeployWizard({
       default:
         return false;
     }
-  }, [currentStep.id, config, selectedHosts, deployStatus, localPackages]);
+  }, [currentStep.id, config, selectedHosts, deployStatus, localPackages, allPrechecksPassed]);
 
   // Handle deploy / 处理部署
   const handleDeploy = useCallback(async () => {
@@ -328,26 +417,32 @@ export function ClusterDeployWizard({
     setDeployError(null);
 
     try {
-      // Step 1: Create cluster / 步骤1：创建集群
-      setDeployProgress(10);
-      const clusterResult = await services.cluster.createClusterSafe({
-        name: config.name,
-        description: config.description || undefined,
-        deployment_mode: config.deploymentMode,
-        version: config.version,
-      });
+      let clusterId = createdClusterId;
 
-      if (!clusterResult.success || !clusterResult.data) {
-        throw new Error(clusterResult.error || 'Failed to create cluster');
+      // Step 1: Create cluster (skip if already created) / 步骤1：创建集群（如果已创建则跳过）
+      if (!clusterId) {
+        setDeployProgress(10);
+        const clusterResult = await services.cluster.createClusterSafe({
+          name: config.name,
+          description: config.description || undefined,
+          deployment_mode: config.deploymentMode,
+          version: config.version,
+        });
+
+        if (!clusterResult.success || !clusterResult.data) {
+          throw new Error(clusterResult.error || 'Failed to create cluster');
+        }
+
+        clusterId = clusterResult.data.id;
+        setCreatedClusterId(clusterId);
       }
-
-      const clusterId = clusterResult.data.id;
-      setCreatedClusterId(clusterId);
       setDeployProgress(20);
 
       // Step 2: Add nodes to cluster / 步骤2：添加节点到集群
       for (let i = 0; i < selectedHosts.length; i++) {
         const hostWithRole = selectedHosts[i];
+        // Use addNodeSafe which handles duplicates gracefully
+        // 使用 addNodeSafe，它会优雅地处理重复添加
         await services.cluster.addNodeSafe(clusterId, {
           host_id: hostWithRole.host.id,
           role: hostWithRole.role,
@@ -394,6 +489,9 @@ export function ClusterDeployWizard({
       setDeployProgress(100);
       setDeployStatus('success');
       toast.success(t('cluster.wizard.deploySuccess'));
+      
+      // Auto advance to complete step / 自动跳转到完成步骤
+      setCurrentStepIndex(6); // complete step index
     } catch (err) {
       setDeployStatus('failed');
       setDeployError(err instanceof Error ? err.message : 'Deployment failed');
@@ -401,12 +499,13 @@ export function ClusterDeployWizard({
     } finally {
       setDeploying(false);
     }
-  }, [config, selectedHosts, t]);
+  }, [config, selectedHosts, t, createdClusterId]);
 
   // Handle next step / 处理下一步
   const handleNext = useCallback(() => {
-    if (currentStep.id === 'precheck') {
-      // Start deployment when moving from precheck to deploy
+    if (currentStep.id === 'plugins') {
+      // Start deployment when moving from plugins to deploy
+      // 从插件步骤进入部署步骤时开始部署
       setCurrentStepIndex(currentStepIndex + 1);
       handleDeploy();
     } else if (currentStepIndex < WIZARD_STEPS.length - 1) {
@@ -436,6 +535,8 @@ export function ClusterDeployWizard({
     setDeployProgress(0);
     setDeployError(null);
     setCreatedClusterId(null);
+    setPrecheckResults([]);
+    setPrecheckRunning(false);
     onOpenChange(false);
   }, [deploying, t, onOpenChange]);
 
@@ -805,103 +906,106 @@ export function ClusterDeployWizard({
           </CardContent>
         </Card>
 
-        {/* JVM Config / JVM 配置 */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('installer.jvmConfig')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {config.deploymentMode === DeploymentMode.HYBRID ? (
+        {/* JVM Config & Checkpoint Config / JVM 配置和检查点配置 */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* JVM Config / JVM 配置 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t('installer.jvmConfig')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {config.deploymentMode === DeploymentMode.HYBRID ? (
+                <div className="space-y-2">
+                  <Label>{t('installer.hybridHeapSize')}</Label>
+                  <Input
+                    type="number"
+                    value={config.jvm.hybrid_heap_size}
+                    onChange={(e) =>
+                      updateConfig({
+                        jvm: { ...config.jvm, hybrid_heap_size: parseInt(e.target.value) || 0 },
+                      })
+                    }
+                    min={512}
+                    step={256}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>{t('installer.masterHeapSize')}</Label>
+                    <Input
+                      type="number"
+                      value={config.jvm.master_heap_size}
+                      onChange={(e) =>
+                        updateConfig({
+                          jvm: { ...config.jvm, master_heap_size: parseInt(e.target.value) || 0 },
+                        })
+                      }
+                      min={512}
+                      step={256}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('installer.workerHeapSize')}</Label>
+                    <Input
+                      type="number"
+                      value={config.jvm.worker_heap_size}
+                      onChange={(e) =>
+                        updateConfig({
+                          jvm: { ...config.jvm, worker_heap_size: parseInt(e.target.value) || 0 },
+                        })
+                      }
+                      min={512}
+                      step={256}
+                    />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Checkpoint Config / 检查点配置 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t('installer.checkpointConfig')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
               <div className="space-y-2">
-                <Label>{t('installer.hybridHeapSize')}</Label>
-                <Input
-                  type="number"
-                  value={config.jvm.hybrid_heap_size}
-                  onChange={(e) =>
+                <Label>{t('installer.storageType')}</Label>
+                <Select
+                  value={config.checkpoint.storage_type}
+                  onValueChange={(value: CheckpointStorageType) =>
                     updateConfig({
-                      jvm: { ...config.jvm, hybrid_heap_size: parseInt(e.target.value) || 0 },
+                      checkpoint: { ...config.checkpoint, storage_type: value },
                     })
                   }
-                  min={512}
-                  step={256}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LOCAL_FILE">Local File</SelectItem>
+                    <SelectItem value="HDFS">HDFS</SelectItem>
+                    <SelectItem value="OSS">Aliyun OSS</SelectItem>
+                    <SelectItem value="S3">AWS S3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('installer.namespace')}</Label>
+                <Input
+                  value={config.checkpoint.namespace}
+                  onChange={(e) =>
+                    updateConfig({
+                      checkpoint: { ...config.checkpoint, namespace: e.target.value },
+                    })
+                  }
+                  placeholder="/tmp/seatunnel/checkpoint"
                 />
               </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>{t('installer.masterHeapSize')}</Label>
-                  <Input
-                    type="number"
-                    value={config.jvm.master_heap_size}
-                    onChange={(e) =>
-                      updateConfig({
-                        jvm: { ...config.jvm, master_heap_size: parseInt(e.target.value) || 0 },
-                      })
-                    }
-                    min={512}
-                    step={256}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('installer.workerHeapSize')}</Label>
-                  <Input
-                    type="number"
-                    value={config.jvm.worker_heap_size}
-                    onChange={(e) =>
-                      updateConfig({
-                        jvm: { ...config.jvm, worker_heap_size: parseInt(e.target.value) || 0 },
-                      })
-                    }
-                    min={512}
-                    step={256}
-                  />
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Checkpoint Config / 检查点配置 */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('installer.checkpointConfig')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t('installer.storageType')}</Label>
-              <Select
-                value={config.checkpoint.storage_type}
-                onValueChange={(value: CheckpointStorageType) =>
-                  updateConfig({
-                    checkpoint: { ...config.checkpoint, storage_type: value },
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="LOCAL_FILE">Local File</SelectItem>
-                  <SelectItem value="HDFS">HDFS</SelectItem>
-                  <SelectItem value="OSS">Aliyun OSS</SelectItem>
-                  <SelectItem value="S3">AWS S3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t('installer.namespace')}</Label>
-              <Input
-                value={config.checkpoint.namespace}
-                onChange={(e) =>
-                  updateConfig({
-                    checkpoint: { ...config.checkpoint, namespace: e.target.value },
-                  })
-                }
-                placeholder="/tmp/seatunnel/checkpoint"
-              />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </ScrollArea>
     </div>
@@ -1092,88 +1196,187 @@ export function ClusterDeployWizard({
     );
   };
 
+  // Get status icon for precheck item / 获取预检查项的状态图标
+  const getPrecheckStatusIcon = (status: CheckStatus) => {
+    switch (status) {
+      case 'passed':
+        return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      case 'failed':
+        return <X className="h-4 w-4 text-red-500" />;
+      case 'warning':
+        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      default:
+        return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+    }
+  };
+
   // Render precheck step / 渲染预检查步骤
   const renderPrecheckStep = () => (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('cluster.wizard.deploySummary')}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground">{t('cluster.name')}:</span>
-              <span className="ml-2 font-medium">{config.name}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('cluster.deploymentMode')}:</span>
-              <span className="ml-2 font-medium">
-                {config.deploymentMode === DeploymentMode.HYBRID
-                  ? t('cluster.modes.hybrid')
-                  : t('cluster.modes.separated')}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('installer.version')}:</span>
-              <span className="ml-2 font-medium">{config.version}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('cluster.wizard.hostsCount')}:</span>
-              <span className="ml-2 font-medium">{selectedHosts.length}</span>
-            </div>
+    <div className="space-y-4 h-full flex flex-col overflow-hidden">
+      {/* Summary header / 摘要头部 */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium">{t('cluster.wizard.precheckTitle')}</h3>
+          <p className="text-xs text-muted-foreground">{t('cluster.wizard.precheckDesc')}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {precheckRunning ? (
+            <Badge variant="outline" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('cluster.wizard.precheckRunning')}
+            </Badge>
+          ) : precheckHasRun ? (
+            allPrechecksPassed ? (
+              <Badge variant="default" className="gap-1 bg-green-500">
+                <CheckCircle2 className="h-3 w-3" />
+                {t('cluster.wizard.precheckPassed')}
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                <X className="h-3 w-3" />
+                {t('cluster.wizard.precheckFailed')}
+              </Badge>
+            )
+          ) : null}
+        </div>
+      </div>
+
+      {/* Initial state - show start button / 初始状态 - 显示开始按钮 */}
+      {!precheckHasRun && !precheckRunning ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center p-8 max-w-md">
+            <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-muted-foreground/50" />
+            <h3 className="text-lg font-medium mb-2">{t('cluster.wizard.readyToPrecheck')}</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              {t('cluster.wizard.readyToPrecheckDesc', { count: selectedHosts.length })}
+            </p>
+            <Button onClick={runPrecheck} size="lg">
+              <PlayCircle className="h-5 w-5 mr-2" />
+              {t('cluster.wizard.startPrecheck')}
+            </Button>
           </div>
-
-          <Separator />
-
-          <div>
-            <h4 className="text-sm font-medium mb-2">{t('cluster.wizard.selectedHosts')}</h4>
-            <div className="space-y-2">
-              {selectedHosts.map((hostWithRole) => (
-                <div
-                  key={hostWithRole.host.id}
-                  className="flex items-center justify-between p-2 bg-muted rounded-md"
-                >
-                  <div className="flex items-center gap-2">
-                    <Server className="h-4 w-4" />
-                    <span className="text-sm">{hostWithRole.host.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      ({hostWithRole.host.ip_address})
-                    </span>
-                  </div>
-                  <Badge variant="outline">
-                    {hostWithRole.role === NodeRole.MASTER && <Crown className="h-3 w-3 mr-1" />}
-                    {hostWithRole.role === NodeRole.WORKER && <Wrench className="h-3 w-3 mr-1" />}
-                    {hostWithRole.role}
-                  </Badge>
-                </div>
+        </div>
+      ) : (
+        <>
+          {/* Precheck results / 预检查结果 */}
+          <ScrollArea className="flex-1 min-h-0 pr-4">
+            <div className="space-y-4">
+              {precheckResults.map((hostResult) => (
+                <Card key={hostResult.hostId}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Server className="h-4 w-4" />
+                        <CardTitle className="text-sm">{hostResult.hostName}</CardTitle>
+                      </div>
+                      {hostResult.loading ? (
+                        <Badge variant="outline" className="gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {t('cluster.wizard.checking')}
+                        </Badge>
+                      ) : hostResult.error ? (
+                        <Badge variant="destructive">{t('cluster.wizard.checkError')}</Badge>
+                      ) : hostResult.result?.overall_status === 'passed' ? (
+                        <Badge variant="default" className="bg-green-500">
+                          {t('cluster.wizard.passed')}
+                        </Badge>
+                      ) : hostResult.result?.overall_status === 'warning' ? (
+                        <Badge variant="secondary" className="bg-yellow-500 text-white">
+                          {t('cluster.wizard.warning')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="destructive">{t('cluster.wizard.failed')}</Badge>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {hostResult.loading ? (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : hostResult.error ? (
+                      <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                        <p className="text-sm text-red-600 dark:text-red-400">{hostResult.error}</p>
+                      </div>
+                    ) : hostResult.result ? (
+                      <div className="space-y-2">
+                        {hostResult.result.items.map((item, index) => (
+                          <div
+                            key={index}
+                            className={cn(
+                              'flex items-start gap-3 p-2 rounded-md',
+                              item.status === 'passed' && 'bg-green-50 dark:bg-green-900/20',
+                              item.status === 'failed' && 'bg-red-50 dark:bg-red-900/20',
+                              item.status === 'warning' && 'bg-yellow-50 dark:bg-yellow-900/20'
+                            )}
+                          >
+                            {getPrecheckStatusIcon(item.status)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium capitalize">{item.name}</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5">{item.message}</p>
+                              {/* Show details if available / 如果有详情则显示 */}
+                              {item.details && Object.keys(item.details).length > 0 && (
+                                <div className="mt-1 text-xs text-muted-foreground/80">
+                                  {Object.entries(item.details).map(([key, value]) => (
+                                    <div key={key} className="flex gap-1">
+                                      <span className="font-medium">{key}:</span>
+                                      <span>{JSON.stringify(value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {hostResult.result.summary && (
+                          <p className="text-xs text-muted-foreground pt-2 border-t">
+                            {hostResult.result.summary}
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
               ))}
             </div>
-          </div>
+          </ScrollArea>
 
-          {config.selectedPlugins.length > 0 && (
-            <>
-              <Separator />
-              <div>
-                <h4 className="text-sm font-medium mb-2">{t('cluster.wizard.selectedPlugins')}</h4>
-                <div className="flex flex-wrap gap-2">
-                  {config.selectedPlugins.map((plugin) => (
-                    <Badge key={plugin} variant="secondary">
-                      {plugin}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            </>
+          {/* Rerun button / 重新运行按钮 */}
+          {precheckHasRun && (
+            <div className="flex justify-center pt-2">
+              <Button variant="outline" onClick={runPrecheck} disabled={precheckRunning}>
+                {precheckRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <PlayCircle className="h-4 w-4 mr-2" />
+                )}
+                {t('cluster.wizard.rerunPrecheck')}
+              </Button>
+            </div>
           )}
-        </CardContent>
-      </Card>
 
-      <div className="flex items-center gap-2 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-        <AlertTriangle className="h-5 w-5 text-yellow-600" />
-        <p className="text-sm text-yellow-700 dark:text-yellow-300">
-          {t('cluster.wizard.deployWarning')}
-        </p>
-      </div>
+          {/* Warning/Success message / 警告/成功消息 */}
+          {precheckHasRun && !allPrechecksPassed && (
+            <div className="flex items-center gap-2 p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
+              <AlertTriangle className="h-5 w-5 text-red-600" />
+              <p className="text-sm text-red-700 dark:text-red-300">
+                {t('cluster.wizard.precheckFailedWarning')}
+              </p>
+            </div>
+          )}
+
+          {precheckHasRun && allPrechecksPassed && (
+            <div className="flex items-center gap-2 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <p className="text-sm text-green-700 dark:text-green-300">
+                {t('cluster.wizard.precheckPassedInfo')}
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 
@@ -1205,6 +1408,31 @@ export function ClusterDeployWizard({
                 {deployError && (
                   <p className="text-sm text-red-500 mt-2">{deployError}</p>
                 )}
+                <div className="flex gap-2 mt-4 justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      // Go back to plugins step to adjust config
+                      // 返回插件步骤调整配置
+                      setDeployStatus('idle');
+                      setDeployProgress(0);
+                      setDeployError(null);
+                      setCurrentStepIndex(4); // plugins step index
+                    }}
+                    disabled={deploying}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-2" />
+                    {t('common.previous')}
+                  </Button>
+                  <Button
+                    variant="default"
+                    onClick={handleDeploy}
+                    disabled={deploying}
+                  >
+                    <PlayCircle className="h-4 w-4 mr-2" />
+                    {t('common.retry')}
+                  </Button>
+                </div>
               </>
             )}
           </div>
@@ -1273,7 +1501,7 @@ export function ClusterDeployWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="!max-w-[80vw] w-[80vw] max-h-[80vh] h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="!max-w-[95vw] w-[95vw] max-h-[95vh] h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('cluster.wizard.title')}</DialogTitle>
           <DialogDescription>{t(currentStep.descKey)}</DialogDescription>
@@ -1322,7 +1550,7 @@ export function ClusterDeployWizard({
         </div>
 
         {/* Step content / 步骤内容 */}
-        <div className="flex-1 overflow-y-auto min-h-[400px] py-4">
+        <div className="flex-1 overflow-hidden min-h-0 py-4">
           {renderStepContent()}
         </div>
 
@@ -1349,7 +1577,7 @@ export function ClusterDeployWizard({
                   onClick={handleNext}
                   disabled={!canProceed() || deploying}
                 >
-                  {currentStep.id === 'precheck' ? (
+                  {currentStep.id === 'plugins' ? (
                     <>
                       {t('cluster.wizard.startDeploy')}
                       <PlayCircle className="h-4 w-4 ml-1" />

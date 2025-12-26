@@ -34,20 +34,15 @@ import {
   MemoryStick,
   Clock,
   Terminal,
-  Download,
 } from 'lucide-react';
 import services from '@/lib/services';
 import {HostInfo, HostType, HostStatus, AgentStatus} from '@/lib/services/host/types';
-import {InstallationProgress} from '@/components/common/installer';
-import {useInstallation} from '@/hooks/use-installer';
 
 interface HostDetailProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   host: HostInfo;
   onEdit: () => void;
-  /** Callback to open install wizard / 打开安装向导的回调 */
-  onInstall?: () => void;
 }
 
 /**
@@ -122,25 +117,10 @@ function getStatusBadgeVariant(
  * Host Detail Component
  * 主机详情组件
  */
-export function HostDetail({open, onOpenChange, host, onEdit, onInstall}: HostDetailProps) {
+export function HostDetail({open, onOpenChange, host, onEdit}: HostDetailProps) {
   const t = useTranslations();
   const [installCommand, setInstallCommand] = useState<string>('');
   const [loadingCommand, setLoadingCommand] = useState(false);
-
-  // Check for ongoing installation / 检查是否有正在进行的安装
-  const { status: installationStatus, refresh: refreshInstallation } = useInstallation(host.id);
-
-  // Determine if we can show install button / 判断是否可以显示安装按钮
-  // Agent must be online and no installation in progress
-  // Agent 必须在线且没有正在进行的安装
-  const canInstallSeaTunnel =
-    host.host_type === HostType.BARE_METAL &&
-    host.agent_status === AgentStatus.INSTALLED &&
-    !installationStatus &&
-    !host.seatunnel_installed;
-
-  // Check if installation is in progress / 检查安装是否正在进行
-  const isInstalling = installationStatus?.status === 'running';
 
   /**
    * Load install command for bare_metal hosts
@@ -368,66 +348,6 @@ export function HostDetail({open, onOpenChange, host, onEdit, onInstall}: HostDe
               )}
             </div>
           </div>
-
-          {/* SeaTunnel Installation Section / SeaTunnel 安装部分 */}
-          {host.host_type === HostType.BARE_METAL && (
-            <>
-              <Separator />
-              <div>
-                <h3 className='text-sm font-medium mb-3 flex items-center gap-2'>
-                  <Download className='h-4 w-4' />
-                  {t('installer.seaTunnelInstallation')}
-                </h3>
-
-                {/* Installation in progress / 安装进行中 */}
-                {installationStatus && (
-                  <InstallationProgress
-                    hostId={host.id}
-                    compact
-                    onComplete={() => {
-                      toast.success(t('installer.installationComplete'));
-                      refreshInstallation();
-                    }}
-                    onFailed={() => {
-                      toast.error(t('installer.installationFailed'));
-                    }}
-                  />
-                )}
-
-                {/* Install button / 安装按钮 */}
-                {canInstallSeaTunnel && onInstall && (
-                  <div className='space-y-2'>
-                    <p className='text-sm text-muted-foreground'>
-                      {t('installer.seaTunnelNotInstalled')}
-                    </p>
-                    <Button onClick={onInstall} size='sm'>
-                      <Download className='h-4 w-4 mr-2' />
-                      {t('installer.installSeaTunnel')}
-                    </Button>
-                  </div>
-                )}
-
-                {/* Already installed / 已安装 */}
-                {host.seatunnel_installed && !installationStatus && (
-                  <div className='flex items-center gap-2'>
-                    <Badge variant='default'>{t('installer.installed')}</Badge>
-                    {host.seatunnel_version && (
-                      <span className='text-sm text-muted-foreground'>
-                        v{host.seatunnel_version}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Agent not ready / Agent 未就绪 */}
-                {host.agent_status !== AgentStatus.INSTALLED && !installationStatus && (
-                  <p className='text-sm text-muted-foreground'>
-                    {t('installer.agentRequiredForInstall')}
-                  </p>
-                )}
-              </div>
-            </>
-          )}
 
           {/* Install & Uninstall Commands (for bare_metal) / 安装和卸载命令（物理机） */}
           {host.host_type === HostType.BARE_METAL && (
