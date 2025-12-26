@@ -207,6 +207,22 @@ type CommandContext struct {
 	// Done 表示命令是否已完成。
 	Done bool
 
+	// LastStatus is the last known status of the command.
+	// LastStatus 是命令的最后已知状态。
+	LastStatus pb.CommandStatus
+
+	// LastProgress is the last known progress (0-100).
+	// LastProgress 是最后已知的进度 (0-100)。
+	LastProgress int32
+
+	// LastOutput is the last known output message.
+	// LastOutput 是最后已知的输出消息。
+	LastOutput string
+
+	// LastError is the last known error message.
+	// LastError 是最后已知的错误消息。
+	LastError string
+
 	// mu protects concurrent access.
 	// mu 保护并发访问。
 	mu sync.RWMutex
@@ -618,12 +634,15 @@ func (m *Manager) SendCommandAsync(agentID string, cmdType pb.CommandType, param
 	// Create command context (without result channel for async)
 	// 创建命令上下文（异步不需要结果通道）
 	cmdCtx := &CommandContext{
-		CommandID:  commandID,
-		AgentID:    agentID,
-		Type:       cmdType,
-		Parameters: params,
-		Timeout:    timeout,
-		CreatedAt:  time.Now(),
+		CommandID:    commandID,
+		AgentID:      agentID,
+		Type:         cmdType,
+		Parameters:   params,
+		Timeout:      timeout,
+		CreatedAt:    time.Now(),
+		LastStatus:   pb.CommandStatus_RUNNING, // Initialize as running / 初始化为运行中
+		LastProgress: 0,
+		LastOutput:   "Command sent, waiting for response / 命令已发送，等待响应",
 	}
 
 	// Store command context
@@ -668,6 +687,14 @@ func (m *Manager) HandleCommandResponse(resp *pb.CommandResponse) {
 		return
 	}
 
+	// Update last known status / 更新最后已知状态
+	cmdCtx.mu.Lock()
+	cmdCtx.LastStatus = resp.Status
+	cmdCtx.LastProgress = resp.Progress
+	cmdCtx.LastOutput = resp.Output
+	cmdCtx.LastError = resp.Error
+	cmdCtx.mu.Unlock()
+
 	// Send result if channel exists
 	// 如果通道存在则发送结果
 	if cmdCtx.ResultChan != nil {
@@ -685,7 +712,14 @@ func (m *Manager) HandleCommandResponse(resp *pb.CommandResponse) {
 		resp.Status == pb.CommandStatus_FAILED ||
 		resp.Status == pb.CommandStatus_CANCELLED {
 		cmdCtx.MarkDone()
-		m.commands.Delete(resp.CommandId)
+		// Don't delete immediately, keep for status queries
+		// 不要立即删除，保留用于状态查询
+		// Schedule deletion after 5 minutes
+		// 5 分钟后计划删除
+		go func(commandID string) {
+			time.Sleep(5 * time.Minute)
+			m.commands.Delete(commandID)
+		}(resp.CommandId)
 	}
 }
 
@@ -696,6 +730,45 @@ func (m *Manager) GetCommand(commandID string) (*CommandContext, bool) {
 		return cmdCtx.(*CommandContext), true
 	}
 	return nil, false
+}
+
+// GetCommandStatus retrieves the current status of a command.
+// GetCommandStatus 获取命令的当前状态。
+func (m *Manager) GetCommandStatus(commandID string) (status string, progress int, message string, err error) {
+	cmdCtx, ok := m.GetCommand(commandID)
+	if !ok {
+		return "", 0, "", ErrAgentNotFound
+	}
+
+	cmdCtx.mu.RLock()
+	defer cmdCtx.mu.RUnlock()
+
+	// Convert pb.CommandStatus to string
+	// 将 pb.CommandStatus 转换为字符串
+	var statusStr string
+	switch cmdCtx.LastStatus {
+	case pb.CommandStatus_PENDING:
+		statusStr = "pending"
+	case pb.CommandStatus_RUNNING:
+		statusStr = "running"
+	case pb.CommandStatus_SUCCESS:
+		statusStr = "success"
+	case pb.CommandStatus_FAILED:
+		statusStr = "failed"
+	case pb.CommandStatus_CANCELLED:
+		statusStr = "cancelled"
+	default:
+		statusStr = "unknown"
+	}
+
+	// Use error message if available, otherwise use output
+	// 如果有错误消息则使用错误消息，否则使用输出
+	msg := cmdCtx.LastOutput
+	if cmdCtx.LastError != "" {
+		msg = cmdCtx.LastError
+	}
+
+	return statusStr, int(cmdCtx.LastProgress), msg, nil
 }
 
 // HandleDisconnect handles an Agent disconnection.

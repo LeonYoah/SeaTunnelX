@@ -577,7 +577,25 @@
       "checkError": "Check Error",
       "passed": "Passed",
       "warning": "Warning",
-      "failed": "Failed"
+      "failed": "Failed",
+      "deploySteps": "Deployment Steps",
+      "steps": {
+        "creatingCluster": "Creating cluster...",
+        "clusterCreated": "Cluster created successfully",
+        "addingNodes": "Adding nodes to cluster...",
+        "addingNode": "Adding node",
+        "nodeAdded": "Node added successfully",
+        "nodesAdded": "All nodes added",
+        "startingInstall": "Starting installation...",
+        "installing": "Installing SeaTunnel...",
+        "transferringPackage": "Transferring package...",
+        "downloadingPackage": "Downloading package...",
+        "extractingPackage": "Extracting package...",
+        "configuringCluster": "Configuring cluster...",
+        "installingPlugins": "Installing plugins...",
+        "installComplete": "Installation complete",
+        "installFailed": "Installation failed"
+      }
     }
   },
   "audit": {

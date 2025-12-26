@@ -21,6 +21,8 @@ package router
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -917,18 +919,15 @@ func (a *installerAgentManagerAdapter) GetAgentByHostID(hostID uint) (agentID st
 // SendInstallCommand sends an installation command to an agent.
 // SendInstallCommand 向 Agent 发送安装命令。
 func (a *installerAgentManagerAdapter) SendInstallCommand(ctx context.Context, agentID string, params map[string]string) (commandID string, err error) {
-	resp, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_INSTALL, params, 30*time.Minute)
-	if err != nil {
-		return "", err
-	}
-	return resp.CommandId, nil
+	// Use async command to allow polling for status updates
+	// 使用异步命令以允许轮询状态更新
+	return a.manager.SendCommandAsync(agentID, pb.CommandType_INSTALL, params, 30*time.Minute)
 }
 
 // GetCommandStatus returns the status of a command.
 // GetCommandStatus 返回命令的状态。
 func (a *installerAgentManagerAdapter) GetCommandStatus(commandID string) (status string, progress int, message string, err error) {
-	// Not implemented yet / 尚未实现
-	return "unknown", 0, "", nil
+	return a.manager.GetCommandStatus(commandID)
 }
 
 // SendCommand sends a command to an agent and returns the result.
@@ -984,7 +983,61 @@ func (a *installerAgentManagerAdapter) stringToCommandType(cmdType string) pb.Co
 		return pb.CommandType_STATUS
 	case "get_logs":
 		return pb.CommandType_COLLECT_LOGS
+	case "transfer_package":
+		return pb.CommandType_TRANSFER_PACKAGE
 	default:
 		return pb.CommandType_PRECHECK
 	}
+}
+
+// SendTransferPackageCommand sends a package transfer chunk to an agent.
+// SendTransferPackageCommand 向 Agent 发送安装包传输块。
+func (a *installerAgentManagerAdapter) SendTransferPackageCommand(ctx context.Context, agentID string, version string, fileName string, chunk []byte, offset int64, totalSize int64, isLast bool, checksum string) (success bool, receivedBytes int64, localPath string, err error) {
+	// Build parameters / 构建参数
+	params := map[string]string{
+		"version":    version,
+		"file_name":  fileName,
+		"chunk":      base64.StdEncoding.EncodeToString(chunk),
+		"offset":     fmt.Sprintf("%d", offset),
+		"total_size": fmt.Sprintf("%d", totalSize),
+		"is_last":    fmt.Sprintf("%t", isLast),
+	}
+	if checksum != "" {
+		params["checksum"] = checksum
+	}
+
+	// Use longer timeout for package transfer (5 minutes per chunk)
+	// 安装包传输使用更长的超时时间（每块 5 分钟）
+	resp, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_TRANSFER_PACKAGE, params, 5*time.Minute)
+	if err != nil {
+		return false, 0, "", err
+	}
+
+	// Accept both SUCCESS and RUNNING as success for chunk transfer
+	// 对于块传输，接受 SUCCESS 和 RUNNING 作为成功
+	success = resp.Status == pb.CommandStatus_SUCCESS || resp.Status == pb.CommandStatus_RUNNING
+
+	// Parse response to get received bytes and local path
+	// 解析响应获取已接收字节数和本地路径
+	if resp.Output != "" {
+		var transferResp struct {
+			Success       bool   `json:"success"`
+			Message       string `json:"message"`
+			ReceivedBytes int64  `json:"received_bytes"`
+			LocalPath     string `json:"local_path"`
+		}
+		if jsonErr := json.Unmarshal([]byte(resp.Output), &transferResp); jsonErr == nil {
+			receivedBytes = transferResp.ReceivedBytes
+			localPath = transferResp.LocalPath
+			if !transferResp.Success {
+				success = false
+			}
+		}
+	}
+
+	if resp.Error != "" {
+		return false, receivedBytes, localPath, fmt.Errorf(resp.Error)
+	}
+
+	return success, receivedBytes, localPath, nil
 }

@@ -173,6 +173,14 @@ export function ClusterDeployWizard({
   const [deployStatus, setDeployStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   const [deployError, setDeployError] = useState<string | null>(null);
   const [createdClusterId, setCreatedClusterId] = useState<number | null>(null);
+  // Detailed deploy steps state / 详细部署步骤状态
+  const [deploySteps, setDeploySteps] = useState<{
+    step: string;
+    status: 'pending' | 'running' | 'success' | 'failed';
+    message: string;
+    hostName?: string;
+    progress?: number;
+  }[]>([]);
 
   // Packages hook / 安装包 hook
   const { packages, loading: packagesLoading } = usePackages();
@@ -415,12 +423,25 @@ export function ClusterDeployWizard({
     setDeployStatus('running');
     setDeployProgress(0);
     setDeployError(null);
+    setDeploySteps([]);
+
+    // Helper to update step status / 更新步骤状态的辅助函数
+    const updateStep = (step: string, status: 'pending' | 'running' | 'success' | 'failed', message: string, hostName?: string, progress?: number) => {
+      setDeploySteps(prev => {
+        const existing = prev.find(s => s.step === step && s.hostName === hostName);
+        if (existing) {
+          return prev.map(s => s.step === step && s.hostName === hostName ? { ...s, status, message, progress } : s);
+        }
+        return [...prev, { step, status, message, hostName, progress }];
+      });
+    };
 
     try {
       let clusterId = createdClusterId;
 
       // Step 1: Create cluster (skip if already created) / 步骤1：创建集群（如果已创建则跳过）
       if (!clusterId) {
+        updateStep('create_cluster', 'running', t('cluster.wizard.steps.creatingCluster'));
         setDeployProgress(10);
         const clusterResult = await services.cluster.createClusterSafe({
           name: config.name,
@@ -430,31 +451,38 @@ export function ClusterDeployWizard({
         });
 
         if (!clusterResult.success || !clusterResult.data) {
+          updateStep('create_cluster', 'failed', clusterResult.error || 'Failed to create cluster');
           throw new Error(clusterResult.error || 'Failed to create cluster');
         }
 
         clusterId = clusterResult.data.id;
         setCreatedClusterId(clusterId);
+        updateStep('create_cluster', 'success', t('cluster.wizard.steps.clusterCreated'));
       }
       setDeployProgress(20);
 
       // Step 2: Add nodes to cluster / 步骤2：添加节点到集群
+      updateStep('add_nodes', 'running', t('cluster.wizard.steps.addingNodes'));
       for (let i = 0; i < selectedHosts.length; i++) {
         const hostWithRole = selectedHosts[i];
+        updateStep('add_node', 'running', t('cluster.wizard.steps.addingNode'), hostWithRole.host.name);
         // Use addNodeSafe which handles duplicates gracefully
         // 使用 addNodeSafe，它会优雅地处理重复添加
         await services.cluster.addNodeSafe(clusterId, {
           host_id: hostWithRole.host.id,
           role: hostWithRole.role,
         });
+        updateStep('add_node', 'success', t('cluster.wizard.steps.nodeAdded'), hostWithRole.host.name);
         setDeployProgress(20 + ((i + 1) / selectedHosts.length) * 30);
       }
+      updateStep('add_nodes', 'success', t('cluster.wizard.steps.nodesAdded'));
 
       // Step 3: Install SeaTunnel on each host / 步骤3：在每台主机上安装 SeaTunnel
       for (let i = 0; i < selectedHosts.length; i++) {
         const hostWithRole = selectedHosts[i];
         
         // Start installation / 开始安装
+        updateStep('install', 'running', t('cluster.wizard.steps.startingInstall'), hostWithRole.host.name, 0);
         const installResult = await services.installer.startInstallation(hostWithRole.host.id, {
           cluster_id: String(clusterId),
           version: config.version,
@@ -476,12 +504,33 @@ export function ClusterDeployWizard({
         while (status.status === 'running') {
           await new Promise((resolve) => setTimeout(resolve, 2000));
           status = await services.installer.getInstallationStatus(hostWithRole.host.id);
+          
+          // Update detailed steps from backend / 从后端更新详细步骤
+          if (status.steps && status.steps.length > 0) {
+            // Show each step from backend with host name prefix
+            // 显示后端返回的每个步骤，带主机名前缀
+            for (const step of status.steps) {
+              const stepKey = `${step.step}_${hostWithRole.host.id}`;
+              const stepStatus = step.status === 'success' ? 'success' 
+                : step.status === 'failed' ? 'failed'
+                : step.status === 'running' ? 'running' 
+                : 'pending';
+              const stepMessage = step.message || step.name || step.step;
+              updateStep(stepKey, stepStatus, stepMessage, hostWithRole.host.name, step.progress || 0);
+            }
+          } else {
+            // Fallback to simple message / 回退到简单消息
+            const stepMessage = status.message || status.current_step || t('cluster.wizard.steps.installing');
+            updateStep('install', 'running', stepMessage, hostWithRole.host.name, status.progress || 0);
+          }
         }
 
         if (status.status === 'failed') {
+          updateStep('install', 'failed', status.error || t('cluster.wizard.steps.installFailed'), hostWithRole.host.name);
           throw new Error(`Installation failed on host ${hostWithRole.host.name}: ${status.error}`);
         }
 
+        updateStep('install', 'success', t('cluster.wizard.steps.installComplete'), hostWithRole.host.name, 100);
         setDeployProgress(50 + ((i + 1) / selectedHosts.length) * 40);
       }
 
@@ -1417,6 +1466,7 @@ export function ClusterDeployWizard({
                       setDeployStatus('idle');
                       setDeployProgress(0);
                       setDeployError(null);
+                      setDeploySteps([]);
                       setCurrentStepIndex(4); // plugins step index
                     }}
                     disabled={deploying}
@@ -1444,6 +1494,55 @@ export function ClusterDeployWizard({
             </div>
             <Progress value={deployProgress} className="h-3" />
           </div>
+
+          {/* Detailed steps / 详细步骤 */}
+          {deploySteps.length > 0 && (
+            <div className="mt-6 space-y-2">
+              <h4 className="text-sm font-medium mb-3">{t('cluster.wizard.deploySteps')}</h4>
+              <ScrollArea className="h-[200px] pr-4">
+                <div className="space-y-2">
+                  {deploySteps.map((step, index) => (
+                    <div
+                      key={`${step.step}-${step.hostName || index}`}
+                      className={cn(
+                        'flex items-center gap-3 p-2 rounded-lg text-sm',
+                        step.status === 'running' && 'bg-blue-50 dark:bg-blue-950',
+                        step.status === 'success' && 'bg-green-50 dark:bg-green-950',
+                        step.status === 'failed' && 'bg-red-50 dark:bg-red-950',
+                        step.status === 'pending' && 'bg-muted'
+                      )}
+                    >
+                      {step.status === 'running' && (
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-500 flex-shrink-0" />
+                      )}
+                      {step.status === 'success' && (
+                        <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                      )}
+                      {step.status === 'failed' && (
+                        <X className="h-4 w-4 text-red-500 flex-shrink-0" />
+                      )}
+                      {step.status === 'pending' && (
+                        <div className="h-4 w-4 rounded-full border-2 border-muted-foreground flex-shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          {step.hostName && (
+                            <Badge variant="outline" className="text-xs">
+                              {step.hostName}
+                            </Badge>
+                          )}
+                          <span className="truncate">{step.message}</span>
+                        </div>
+                        {step.status === 'running' && step.progress !== undefined && (
+                          <Progress value={step.progress} className="h-1 mt-1" />
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

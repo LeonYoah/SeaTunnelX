@@ -570,6 +570,9 @@ func (a *Agent) registerCommandHandlers() {
 	executor.InitPluginManager(a.config.SeaTunnel.InstallDir)
 	executor.RegisterPluginHandlers(a.executor)
 
+	// Register package transfer handlers / 注册安装包传输处理器
+	executor.RegisterPackageHandlers(a.executor)
+
 	fmt.Printf("Registered %d command handlers / 已注册 %d 个命令处理器\n",
 		len(a.executor.GetRegisteredTypes()), len(a.executor.GetRegisteredTypes()))
 }
@@ -623,6 +626,27 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 		NodeRole:       installer.NodeRole(getParamString(cmd.Parameters, "node_role", "master")),
 		ClusterPort:    getParamInt(cmd.Parameters, "cluster_port", 5801),
 		HTTPPort:       getParamInt(cmd.Parameters, "http_port", 8080),
+	}
+
+	// Parse install mode / 解析安装模式
+	installMode := getParamString(cmd.Parameters, "install_mode", "online")
+	if installMode == "offline" {
+		params.Mode = installer.InstallModeOffline
+	} else {
+		params.Mode = installer.InstallModeOnline
+	}
+
+	// Parse package path (from gRPC transfer or local) / 解析安装包路径（来自 gRPC 传输或本地）
+	packagePath := getParamString(cmd.Parameters, "package_path", "")
+	if packagePath != "" {
+		params.PackagePath = packagePath
+		params.Mode = installer.InstallModeOffline // Use offline mode when package path is provided
+	}
+
+	// Parse mirror source / 解析镜像源
+	mirror := getParamString(cmd.Parameters, "mirror", "")
+	if mirror != "" {
+		params.Mirror = installer.MirrorSource(mirror)
 	}
 
 	// Create progress adapter / 创建进度适配器

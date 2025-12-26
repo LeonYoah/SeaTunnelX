@@ -577,7 +577,25 @@
       "checkError": "检查出错",
       "passed": "通过",
       "warning": "警告",
-      "failed": "失败"
+      "failed": "失败",
+      "deploySteps": "部署步骤",
+      "steps": {
+        "creatingCluster": "正在创建集群...",
+        "clusterCreated": "集群创建成功",
+        "addingNodes": "正在添加节点到集群...",
+        "addingNode": "正在添加节点",
+        "nodeAdded": "节点添加成功",
+        "nodesAdded": "所有节点添加完成",
+        "startingInstall": "正在启动安装...",
+        "installing": "正在安装 SeaTunnel...",
+        "transferringPackage": "正在传输安装包...",
+        "downloadingPackage": "正在下载安装包...",
+        "extractingPackage": "正在解压安装包...",
+        "configuringCluster": "正在配置集群...",
+        "installingPlugins": "正在安装插件...",
+        "installComplete": "安装完成",
+        "installFailed": "安装失败"
+      }
     }
   },
   "audit": {

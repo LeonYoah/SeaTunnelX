@@ -143,6 +143,9 @@ enum CommandType {
   INSTALL_PLUGIN = 51;      // 安装插件
   UNINSTALL_PLUGIN = 52;    // 卸载插件
   LIST_PLUGINS = 53;        // 列出已安装插件
+  
+  // 安装包传输
+  TRANSFER_PACKAGE = 60;    // 传输安装包文件
 }
 
 // CommandResponse - 指令执行结果 (Agent -> Control Plane)
@@ -269,4 +272,27 @@ message ListInstalledPluginsResponse {
   bool success = 1;           // 是否成功
   string message = 2;         // 消息
   repeated InstalledPluginInfo plugins = 3; // 插件列表
+}
+
+// ============================================================================
+// 安装包传输相关消息
+// ============================================================================
+
+// TransferPackageRequest - 传输安装包请求 (分块传输)
+message TransferPackageRequest {
+  string version = 1;         // SeaTunnel 版本号
+  string file_name = 2;       // 文件名 (apache-seatunnel-{version}-bin.tar.gz)
+  bytes chunk = 3;            // 文件块数据
+  int64 offset = 4;           // 偏移量
+  int64 total_size = 5;       // 总大小
+  bool is_last = 6;           // 是否最后一块
+  string checksum = 7;        // SHA256 校验和 (仅最后一块)
+}
+
+// TransferPackageResponse - 传输安装包响应
+message TransferPackageResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  int64 received_bytes = 3;   // 已接收字节数
+  string local_path = 4;      // 本地保存路径 (传输完成后)
 }

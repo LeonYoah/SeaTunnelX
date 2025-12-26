@@ -52,6 +52,8 @@ const (
 	CommandType_INSTALL_PLUGIN   CommandType = 51 // 安装插件
 	CommandType_UNINSTALL_PLUGIN CommandType = 52 // 卸载插件
 	CommandType_LIST_PLUGINS     CommandType = 53 // 列出已安装插件
+	// 安装包传输
+	CommandType_TRANSFER_PACKAGE CommandType = 60 // 传输安装包文件
 )
 
 // Enum value maps for CommandType.
@@ -75,6 +77,7 @@ var (
 		51: "INSTALL_PLUGIN",
 		52: "UNINSTALL_PLUGIN",
 		53: "LIST_PLUGINS",
+		60: "TRANSFER_PACKAGE",
 	}
 	CommandType_value = map[string]int32{
 		"COMMAND_TYPE_UNSPECIFIED": 0,
@@ -95,6 +98,7 @@ var (
 		"INSTALL_PLUGIN":           51,
 		"UNINSTALL_PLUGIN":         52,
 		"LIST_PLUGINS":             53,
+		"TRANSFER_PACKAGE":         60,
 	}
 )
 
@@ -1737,6 +1741,168 @@ func (x *ListInstalledPluginsResponse) GetPlugins() []*InstalledPluginInfo {
 	return nil
 }
 
+// TransferPackageRequest - 传输安装包请求 (分块传输)
+type TransferPackageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`                       // SeaTunnel 版本号
+	FileName      string                 `protobuf:"bytes,2,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`     // 文件名 (apache-seatunnel-{version}-bin.tar.gz)
+	Chunk         []byte                 `protobuf:"bytes,3,opt,name=chunk,proto3" json:"chunk,omitempty"`                           // 文件块数据
+	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                        // 偏移量
+	TotalSize     int64                  `protobuf:"varint,5,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"` // 总大小
+	IsLast        bool                   `protobuf:"varint,6,opt,name=is_last,json=isLast,proto3" json:"is_last,omitempty"`          // 是否最后一块
+	Checksum      string                 `protobuf:"bytes,7,opt,name=checksum,proto3" json:"checksum,omitempty"`                     // SHA256 校验和 (仅最后一块)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferPackageRequest) Reset() {
+	*x = TransferPackageRequest{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferPackageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferPackageRequest) ProtoMessage() {}
+
+func (x *TransferPackageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferPackageRequest.ProtoReflect.Descriptor instead.
+func (*TransferPackageRequest) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TransferPackageRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *TransferPackageRequest) GetFileName() string {
+	if x != nil {
+		return x.FileName
+	}
+	return ""
+}
+
+func (x *TransferPackageRequest) GetChunk() []byte {
+	if x != nil {
+		return x.Chunk
+	}
+	return nil
+}
+
+func (x *TransferPackageRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *TransferPackageRequest) GetTotalSize() int64 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
+}
+
+func (x *TransferPackageRequest) GetIsLast() bool {
+	if x != nil {
+		return x.IsLast
+	}
+	return false
+}
+
+func (x *TransferPackageRequest) GetChecksum() string {
+	if x != nil {
+		return x.Checksum
+	}
+	return ""
+}
+
+// TransferPackageResponse - 传输安装包响应
+type TransferPackageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                                  // 是否成功
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`                                   // 消息
+	ReceivedBytes int64                  `protobuf:"varint,3,opt,name=received_bytes,json=receivedBytes,proto3" json:"received_bytes,omitempty"` // 已接收字节数
+	LocalPath     string                 `protobuf:"bytes,4,opt,name=local_path,json=localPath,proto3" json:"local_path,omitempty"`              // 本地保存路径 (传输完成后)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferPackageResponse) Reset() {
+	*x = TransferPackageResponse{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferPackageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferPackageResponse) ProtoMessage() {}
+
+func (x *TransferPackageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferPackageResponse.ProtoReflect.Descriptor instead.
+func (*TransferPackageResponse) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *TransferPackageResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *TransferPackageResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *TransferPackageResponse) GetReceivedBytes() int64 {
+	if x != nil {
+		return x.ReceivedBytes
+	}
+	return 0
+}
+
+func (x *TransferPackageResponse) GetLocalPath() string {
+	if x != nil {
+		return x.LocalPath
+	}
+	return ""
+}
+
 var File_internal_proto_agent_agent_proto protoreflect.FileDescriptor
 
 const file_internal_proto_agent_agent_proto_rawDesc = "" +
@@ -1878,7 +2044,22 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\x1cListInstalledPluginsResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12A\n" +
-	"\aplugins\x18\x03 \x03(\v2'.seatunnel.agent.v1.InstalledPluginInfoR\aplugins*\xba\x02\n" +
+	"\aplugins\x18\x03 \x03(\v2'.seatunnel.agent.v1.InstalledPluginInfoR\aplugins\"\xd1\x01\n" +
+	"\x16TransferPackageRequest\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1b\n" +
+	"\tfile_name\x18\x02 \x01(\tR\bfileName\x12\x14\n" +
+	"\x05chunk\x18\x03 \x01(\fR\x05chunk\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x05 \x01(\x03R\ttotalSize\x12\x17\n" +
+	"\ais_last\x18\x06 \x01(\bR\x06isLast\x12\x1a\n" +
+	"\bchecksum\x18\a \x01(\tR\bchecksum\"\x93\x01\n" +
+	"\x17TransferPackageResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12%\n" +
+	"\x0ereceived_bytes\x18\x03 \x01(\x03R\rreceivedBytes\x12\x1d\n" +
+	"\n" +
+	"local_path\x18\x04 \x01(\tR\tlocalPath*\xd0\x02\n" +
 	"\vCommandType\x12\x1c\n" +
 	"\x18COMMAND_TYPE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bPRECHECK\x10\x01\x12\v\n" +
@@ -1899,7 +2080,8 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\x0fTRANSFER_PLUGIN\x102\x12\x12\n" +
 	"\x0eINSTALL_PLUGIN\x103\x12\x14\n" +
 	"\x10UNINSTALL_PLUGIN\x104\x12\x10\n" +
-	"\fLIST_PLUGINS\x105*q\n" +
+	"\fLIST_PLUGINS\x105\x12\x14\n" +
+	"\x10TRANSFER_PACKAGE\x10<*q\n" +
 	"\rCommandStatus\x12\x1e\n" +
 	"\x1aCOMMAND_STATUS_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPENDING\x10\x01\x12\v\n" +
@@ -1933,7 +2115,7 @@ func file_internal_proto_agent_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_proto_agent_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_internal_proto_agent_agent_proto_goTypes = []any{
 	(CommandType)(0),                     // 0: seatunnel.agent.v1.CommandType
 	(CommandStatus)(0),                   // 1: seatunnel.agent.v1.CommandStatus
@@ -1959,21 +2141,23 @@ var file_internal_proto_agent_agent_proto_goTypes = []any{
 	(*ListInstalledPluginsRequest)(nil),  // 21: seatunnel.agent.v1.ListInstalledPluginsRequest
 	(*InstalledPluginInfo)(nil),          // 22: seatunnel.agent.v1.InstalledPluginInfo
 	(*ListInstalledPluginsResponse)(nil), // 23: seatunnel.agent.v1.ListInstalledPluginsResponse
-	nil,                                  // 24: seatunnel.agent.v1.AgentConfig.ExtraEntry
-	nil,                                  // 25: seatunnel.agent.v1.CommandRequest.ParametersEntry
-	nil,                                  // 26: seatunnel.agent.v1.LogEntry.FieldsEntry
+	(*TransferPackageRequest)(nil),       // 24: seatunnel.agent.v1.TransferPackageRequest
+	(*TransferPackageResponse)(nil),      // 25: seatunnel.agent.v1.TransferPackageResponse
+	nil,                                  // 26: seatunnel.agent.v1.AgentConfig.ExtraEntry
+	nil,                                  // 27: seatunnel.agent.v1.CommandRequest.ParametersEntry
+	nil,                                  // 28: seatunnel.agent.v1.LogEntry.FieldsEntry
 }
 var file_internal_proto_agent_agent_proto_depIdxs = []int32{
 	4,  // 0: seatunnel.agent.v1.RegisterRequest.system_info:type_name -> seatunnel.agent.v1.SystemInfo
 	6,  // 1: seatunnel.agent.v1.RegisterResponse.config:type_name -> seatunnel.agent.v1.AgentConfig
-	24, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
+	26, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
 	8,  // 3: seatunnel.agent.v1.HeartbeatRequest.resource_usage:type_name -> seatunnel.agent.v1.ResourceUsage
 	9,  // 4: seatunnel.agent.v1.HeartbeatRequest.processes:type_name -> seatunnel.agent.v1.ProcessStatus
 	0,  // 5: seatunnel.agent.v1.CommandRequest.type:type_name -> seatunnel.agent.v1.CommandType
-	25, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
+	27, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
 	1,  // 7: seatunnel.agent.v1.CommandResponse.status:type_name -> seatunnel.agent.v1.CommandStatus
 	2,  // 8: seatunnel.agent.v1.LogEntry.level:type_name -> seatunnel.agent.v1.LogLevel
-	26, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
+	28, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
 	22, // 10: seatunnel.agent.v1.ListInstalledPluginsResponse.plugins:type_name -> seatunnel.agent.v1.InstalledPluginInfo
 	3,  // 11: seatunnel.agent.v1.AgentService.Register:input_type -> seatunnel.agent.v1.RegisterRequest
 	7,  // 12: seatunnel.agent.v1.AgentService.Heartbeat:input_type -> seatunnel.agent.v1.HeartbeatRequest
@@ -2001,7 +2185,7 @@ func file_internal_proto_agent_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_agent_agent_proto_rawDesc), len(file_internal_proto_agent_agent_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -303,6 +303,41 @@ cd agent; $env:GOOS="linux"; $env:GOARCH="amd64"; go build -o seatunnelx-agent .
 
 ```
 
+### gRPC Proto 代码生成
+
+本项目使用 gRPC 进行 Control Plane 与 Agent 之间的通信。修改 `.proto` 文件后需要重新生成 Go 代码。
+
+#### 一键生成（推荐）
+
+```powershell
+# Windows PowerShell
+protoc --proto_path=. --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/proto/agent/agent.proto; `
+Copy-Item -Path "internal\proto\agent\agent.pb.go" -Destination "agent\agent.pb.go" -Force
+```
+
+```bash
+# Linux/macOS
+protoc --proto_path=. --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/proto/agent/agent.proto && \
+cp internal/proto/agent/agent.pb.go agent/agent.pb.go
+```
+
+#### 命令说明
+
+| 参数 | 说明 |
+|------|------|
+| `--proto_path=.` | 指定 proto 文件搜索路径为当前目录 |
+| `--go_out=.` | 生成 Go 代码到当前目录 |
+| `--go_opt=paths=source_relative` | 生成到 proto 文件同级目录（关键！） |
+| `--go-grpc_out=.` | 生成 gRPC 代码 |
+| `Copy-Item` | 同步到 agent 模块（agent 独立编译需要） |
+
+#### 验证
+
+```bash
+go build ./...           # 编译主项目
+cd agent && go build ./... # 编译 Agent
+```
+
 ## 🚀 部署
 
 ### Docker 部署

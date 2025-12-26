@@ -67,6 +67,10 @@ type AgentManager interface {
 	// SendCommand sends a command to an agent and returns the result
 	// SendCommand 向 Agent 发送命令并返回结果
 	SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (success bool, output string, err error)
+
+	// SendTransferPackageCommand sends a package transfer chunk to an agent
+	// SendTransferPackageCommand 向 Agent 发送安装包传输块
+	SendTransferPackageCommand(ctx context.Context, agentID string, version string, fileName string, chunk []byte, offset int64, totalSize int64, isLast bool, checksum string) (success bool, receivedBytes int64, localPath string, err error)
 }
 
 // HostProvider is the interface for getting host information
@@ -1360,10 +1364,25 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 			logger.InfoF(ctx, "[Installer] 使用本地已有安装包 / Using existing local package: %s", localPath)
 		}
 
-		// Package is now available on Control Plane
-		// Agent will still download from mirror (TODO: implement file transfer via gRPC)
-		// 安装包现在在 Control Plane 上可用
-		// Agent 仍然从镜像源下载（TODO: 实现通过 gRPC 传输文件）
+		// Transfer package to Agent via gRPC
+		// 通过 gRPC 传输安装包到 Agent
+		s.installMu.Lock()
+		status.Message = "Transferring package to Agent... / 正在传输安装包到 Agent..."
+		s.installMu.Unlock()
+
+		remotePath, err := s.TransferPackageToAgent(ctx, agentID, req.Version, status)
+		if err != nil {
+			// Transfer failed, fallback to mirror download
+			// 传输失败，回退到镜像源下载
+			logger.WarnF(ctx, "[Installer] 安装包传输失败，回退到镜像源下载 / Package transfer failed, fallback to mirror download: %v", err)
+			// Continue with mirror download mode
+			// 继续使用镜像源下载模式
+		} else {
+			// Transfer succeeded, update params to use local package
+			// 传输成功，更新参数使用本地安装包
+			logger.InfoF(ctx, "[Installer] 安装包传输成功 / Package transfer succeeded: remote_path=%s", remotePath)
+			req.PackagePath = remotePath
+		}
 	}
 
 	// Build installation parameters for Agent
@@ -1422,6 +1441,16 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 			status.Progress = progress
 			status.Message = message
 
+			// Parse step from message format: [step] message
+			// 从消息格式解析步骤: [step] message
+			currentStep := parseStepFromMessage(message)
+			if currentStep != "" {
+				status.CurrentStep = InstallStep(currentStep)
+				// Update step status based on current step
+				// 根据当前步骤更新步骤状态
+				updateStepStatus(status, currentStep, progress, message)
+			}
+
 			// Map command status to installation status
 			// 将命令状态映射到安装状态
 			switch cmdStatus {
@@ -1461,36 +1490,70 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 				return
 
 			case "running":
-				// Update current step based on progress
-				// 根据进度更新当前步骤
-				stepIndex := (progress * len(status.Steps)) / 100
-				if stepIndex >= len(status.Steps) {
-					stepIndex = len(status.Steps) - 1
-				}
-				if stepIndex >= 0 && stepIndex < len(status.Steps) {
-					status.CurrentStep = status.Steps[stepIndex].Step
-					// Mark previous steps as complete
-					// 将之前的步骤标记为完成
-					for j := 0; j < stepIndex; j++ {
-						if status.Steps[j].Status != StepStatusSuccess {
-							now := time.Now()
-							status.Steps[j].Status = StepStatusSuccess
-							status.Steps[j].Progress = 100
-							status.Steps[j].EndTime = &now
-						}
-					}
-					// Mark current step as running
-					// 将当前步骤标记为运行中
-					if status.Steps[stepIndex].Status != StepStatusRunning {
-						now := time.Now()
-						status.Steps[stepIndex].Status = StepStatusRunning
-						status.Steps[stepIndex].StartTime = &now
-					}
-				}
+				// Status already updated above
+				// 状态已在上面更新
 			}
 			s.installMu.Unlock()
 		}
 	}
+}
+
+// parseStepFromMessage extracts the step name from message format: [step] message
+// parseStepFromMessage 从消息格式中提取步骤名称: [step] message
+func parseStepFromMessage(message string) string {
+	if len(message) < 3 || message[0] != '[' {
+		return ""
+	}
+	endIdx := strings.Index(message, "]")
+	if endIdx == -1 {
+		return ""
+	}
+	return message[1:endIdx]
+}
+
+// updateStepStatus updates the step status based on current step and progress
+// updateStepStatus 根据当前步骤和进度更新步骤状态
+func updateStepStatus(status *InstallationStatus, currentStep string, progress int, message string) {
+	// Find the index of current step
+	// 找到当前步骤的索引
+	currentIdx := -1
+	for i, step := range status.Steps {
+		if string(step.Step) == currentStep {
+			currentIdx = i
+			break
+		}
+	}
+
+	if currentIdx == -1 {
+		return
+	}
+
+	now := time.Now()
+
+	// Mark previous steps as complete
+	// 将之前的步骤标记为完成
+	for j := 0; j < currentIdx; j++ {
+		if status.Steps[j].Status != StepStatusSuccess {
+			status.Steps[j].Status = StepStatusSuccess
+			status.Steps[j].Progress = 100
+			status.Steps[j].EndTime = &now
+		}
+	}
+
+	// Mark current step as running
+	// 将当前步骤标记为运行中
+	if status.Steps[currentIdx].Status != StepStatusRunning {
+		status.Steps[currentIdx].Status = StepStatusRunning
+		status.Steps[currentIdx].StartTime = &now
+	}
+	// Extract message without step prefix
+	// 提取不带步骤前缀的消息
+	msgWithoutPrefix := message
+	if idx := strings.Index(message, "] "); idx != -1 {
+		msgWithoutPrefix = message[idx+2:]
+	}
+	status.Steps[currentIdx].Message = msgWithoutPrefix
+	status.Steps[currentIdx].Progress = progress
 }
 
 // buildInstallParams builds installation parameters for Agent command.
@@ -1620,4 +1683,103 @@ func calculateChecksum(filePath string) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// ==================== Package Transfer 安装包传输 ====================
+
+// PackageTransferChunkSize is the size of each chunk for package transfer (1MB)
+// PackageTransferChunkSize 是安装包传输每个块的大小（1MB）
+const PackageTransferChunkSize = 1024 * 1024
+
+// TransferPackageToAgent transfers a package to an Agent via gRPC
+// TransferPackageToAgent 通过 gRPC 将安装包传输到 Agent
+func (s *Service) TransferPackageToAgent(ctx context.Context, agentID string, version string, status *InstallationStatus) (remotePath string, err error) {
+	logger.InfoF(ctx, "[Installer] 开始传输安装包到 Agent / Start transferring package to Agent: agent=%s, version=%s", agentID, version)
+
+	// Get local package path / 获取本地安装包路径
+	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
+	localPath := filepath.Join(s.packageDir, fileName)
+
+	// Check if package exists / 检查安装包是否存在
+	fileInfo, err := os.Stat(localPath)
+	if err != nil {
+		return "", fmt.Errorf("package not found: %s / 安装包未找到: %s", localPath, localPath)
+	}
+	totalSize := fileInfo.Size()
+
+	// Calculate checksum / 计算校验和
+	checksum, err := calculateChecksum(localPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to calculate checksum: %w / 计算校验和失败: %w", err, err)
+	}
+
+	// Open file / 打开文件
+	file, err := os.Open(localPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open package: %w / 打开安装包失败: %w", err, err)
+	}
+	defer file.Close()
+
+	// Transfer in chunks / 分块传输
+	buf := make([]byte, PackageTransferChunkSize)
+	var offset int64
+	var lastReceivedBytes int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+
+		// Read chunk / 读取数据块
+		n, readErr := file.Read(buf)
+		if n == 0 && readErr == io.EOF {
+			break
+		}
+		if readErr != nil && readErr != io.EOF {
+			return "", fmt.Errorf("failed to read package: %w / 读取安装包失败: %w", readErr, readErr)
+		}
+
+		chunk := buf[:n]
+		isLast := readErr == io.EOF || offset+int64(n) >= totalSize
+
+		// Send chunk to Agent / 发送数据块到 Agent
+		chunkChecksum := ""
+		if isLast {
+			chunkChecksum = checksum
+		}
+
+		success, receivedBytes, path, err := s.agentManager.SendTransferPackageCommand(
+			ctx, agentID, version, fileName, chunk, offset, totalSize, isLast, chunkChecksum,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to send chunk: %w / 发送数据块失败: %w", err, err)
+		}
+		if !success {
+			return "", fmt.Errorf("chunk transfer failed at offset %d / 数据块传输失败，偏移量 %d", offset, offset)
+		}
+
+		offset += int64(n)
+		lastReceivedBytes = receivedBytes
+
+		// Update status / 更新状态
+		if status != nil {
+			s.installMu.Lock()
+			progress := int(float64(offset) / float64(totalSize) * 100)
+			status.Message = fmt.Sprintf("Transferring package... %d%% / 正在传输安装包... %d%%", progress, progress)
+			s.installMu.Unlock()
+		}
+
+		// If last chunk, get the remote path / 如果是最后一块，获取远程路径
+		if isLast {
+			remotePath = path
+			break
+		}
+	}
+
+	logger.InfoF(ctx, "[Installer] 安装包传输完成 / Package transfer completed: agent=%s, version=%s, received=%d, remote_path=%s",
+		agentID, version, lastReceivedBytes, remotePath)
+
+	return remotePath, nil
 }
