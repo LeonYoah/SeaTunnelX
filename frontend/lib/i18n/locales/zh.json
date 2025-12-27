@@ -464,6 +464,7 @@
     "roles": {
       "master": "Master",
       "worker": "Worker",
+      "masterWorker": "Master/Worker",
       "undefined": "未知"
     },
     "nodeStatuses": {
@@ -562,6 +563,19 @@
       "localPluginsCount": "当前版本 {version} 共有 {count} 个本地插件",
       "noLocalPluginsForVersion": "没有此版本的本地插件",
       "noLocalPluginsForVersionDesc": "版本 {version} 没有已下载的本地插件。请先到插件市场下载所需插件。",
+      "packageReady": "安装包已就绪",
+      "packageNotFound": "安装包未找到",
+      "packageNotFoundDesc": "版本 {version} 的安装包不在本地，部署时将自动从镜像源下载。",
+      "mirrorHint": "部署时如果本地没有安装包，将从选择的镜像源下载。",
+      "manualUpload": "手动上传安装包",
+      "manualUploadDesc": "如果无法访问网络，可以手动上传安装包。",
+      "portConfig": "端口配置",
+      "clusterPort": "集群端口",
+      "clusterPortDesc": "Hazelcast 集群通信端口，默认 5801",
+      "httpPort": "HTTP API 端口",
+      "httpPortDesc": "SeaTunnel REST API 端口，默认 8080",
+      "workerPort": "Worker 端口",
+      "workerPortDesc": "分离模式下 Worker 节点端口，默认 5802",
       "precheckTitle": "环境预检查",
       "precheckDesc": "检查所有选定主机是否满足安装要求",
       "readyToPrecheck": "准备预检查",
@@ -834,6 +848,10 @@
   "installer": {
     "packageManagement": "安装包管理",
     "packageManagementDesc": "管理 SeaTunnel 安装包，支持在线下载和离线上传",
+    "packageStatus": "安装包状态",
+    "installDir": "安装目录",
+    "installDirLabel": "安装路径",
+    "installDirDesc": "SeaTunnel 将安装到此目录，默认包含版本号以支持多版本共存",
     "mirrors": {
       "aliyun": "阿里云镜像",
       "huaweicloud": "华为云镜像",

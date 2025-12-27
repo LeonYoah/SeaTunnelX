@@ -59,6 +59,9 @@ const (
 	NodeRoleMaster NodeRole = "master"
 	// NodeRoleWorker indicates the node is a worker node.
 	NodeRoleWorker NodeRole = "worker"
+	// NodeRoleMasterWorker indicates the node is both master and worker (hybrid mode).
+	// NodeRoleMasterWorker 表示节点同时是 master 和 worker（混合模式）。
+	NodeRoleMasterWorker NodeRole = "master/worker"
 )
 
 // NodeStatus represents the current status of a cluster node.

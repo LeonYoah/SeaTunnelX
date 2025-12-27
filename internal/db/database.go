@@ -192,7 +192,8 @@ func getGormLogger(level string) logger.Interface {
 	case "info":
 		logLevel = logger.Info
 	default:
-		logLevel = logger.Info
+		// Default to warn to avoid excessive SQL logging / 默认使用 warn 级别避免过多 SQL 日志
+		logLevel = logger.Warn
 	}
 
 	return logger.Default.LogMode(logLevel)

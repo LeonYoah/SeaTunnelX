@@ -61,7 +61,6 @@ import { HostInfo, HostType, AgentStatus } from '@/lib/services/host/types';
 import { DeploymentMode, NodeRole } from '@/lib/services/cluster/types';
 import type { LocalPlugin } from '@/lib/services/plugin/types';
 import type {
-  InstallMode,
   MirrorSource,
   JVMConfig,
   CheckpointConfig,
@@ -91,8 +90,8 @@ interface StepConfig {
 const WIZARD_STEPS: StepConfig[] = [
   { id: 'basic', titleKey: 'cluster.wizard.basic', descKey: 'cluster.wizard.basicDesc', icon: Settings },
   { id: 'hosts', titleKey: 'cluster.wizard.hosts', descKey: 'cluster.wizard.hostsDesc', icon: Server },
-  { id: 'precheck', titleKey: 'cluster.wizard.precheck', descKey: 'cluster.wizard.precheckDesc', icon: CheckCircle2 },
   { id: 'config', titleKey: 'cluster.wizard.config', descKey: 'cluster.wizard.configDesc', icon: Settings },
+  { id: 'precheck', titleKey: 'cluster.wizard.precheck', descKey: 'cluster.wizard.precheckDesc', icon: CheckCircle2 },
   { id: 'plugins', titleKey: 'cluster.wizard.plugins', descKey: 'cluster.wizard.pluginsDesc', icon: Package },
   { id: 'deploy', titleKey: 'cluster.wizard.deploy', descKey: 'cluster.wizard.deployDesc', icon: PlayCircle },
   { id: 'complete', titleKey: 'cluster.wizard.complete', descKey: 'cluster.wizard.completeDesc', icon: PartyPopper },
@@ -122,8 +121,12 @@ interface ClusterDeployConfig {
   deploymentMode: DeploymentMode;
   // Install config / 安装配置
   version: string;
-  installMode: InstallMode;
+  installDir: string; // Installation directory / 安装目录
   mirror: MirrorSource;
+  // Port config / 端口配置
+  clusterPort: number; // Hazelcast cluster port (default 5801) / Hazelcast 集群端口（默认 5801）
+  httpPort: number; // HTTP API port (default 8080) / HTTP API 端口（默认 8080）
+  workerPort: number; // Worker port for separated mode (default 5802) / 分离模式 Worker 端口（默认 5802）
   jvm: JVMConfig;
   checkpoint: CheckpointConfig;
   // Plugins / 插件
@@ -135,12 +138,15 @@ const defaultConfig: ClusterDeployConfig = {
   description: '',
   deploymentMode: DeploymentMode.HYBRID,
   version: '2.3.12',
-  installMode: 'online',
+  installDir: '/opt/seatunnel-2.3.12', // Default install dir with version / 默认安装目录带版本号
   mirror: 'aliyun',
+  clusterPort: 5801, // Default Hazelcast cluster port / 默认 Hazelcast 集群端口
+  httpPort: 8080, // Default HTTP API port / 默认 HTTP API 端口
+  workerPort: 5802, // Default worker port for separated mode / 分离模式默认 Worker 端口
   jvm: {
-    hybrid_heap_size: 3096,
-    master_heap_size: 2048,
-    worker_heap_size: 2048,
+    hybrid_heap_size: 3, // GB
+    master_heap_size: 2, // GB
+    worker_heap_size: 2, // GB
   },
   checkpoint: {
     storage_type: 'LOCAL_FILE',
@@ -210,7 +216,7 @@ export function ClusterDeployWizard({
 
   // Load local plugins when entering plugins step / 进入插件步骤时加载本地插件
   useEffect(() => {
-    if (open && currentStepIndex === 3) {
+    if (open && currentStepIndex === 4) {
       loadLocalPlugins();
     }
   }, [open, currentStepIndex, loadLocalPlugins]);
@@ -229,8 +235,8 @@ export function ClusterDeployWizard({
           availableHosts.map((host) => ({
             host,
             selected: false,
-            // Hybrid mode uses WORKER role for all nodes / 混合模式所有节点使用 WORKER 角色
-            role: config.deploymentMode === DeploymentMode.HYBRID ? NodeRole.WORKER : NodeRole.WORKER,
+            // Hybrid mode uses MASTER_WORKER role for all nodes / 混合模式所有节点使用 MASTER_WORKER 角色
+            role: config.deploymentMode === DeploymentMode.HYBRID ? NodeRole.MASTER_WORKER : NodeRole.WORKER,
           }))
         );
       }
@@ -303,10 +309,21 @@ export function ClusterDeployWizard({
     }));
     setPrecheckResults(initialResults);
 
+    // Build ports list for precheck based on deployment mode
+    // 根据部署模式构建预检查的端口列表
+    const portsToCheck = config.deploymentMode === DeploymentMode.SEPARATED
+      ? [config.clusterPort, config.workerPort, config.httpPort]
+      : [config.clusterPort, config.httpPort];
+
     // Run precheck for each host in parallel / 并行运行每个主机的预检查
+    // Pass install_dir and ports so precheck can verify the installation path and port availability
+    // 传递 install_dir 和 ports 以便预检查可以验证安装路径和端口可用性
     const promises = selectedHosts.map(async (hostWithRole) => {
       try {
-        const result = await services.installer.runPrecheck(hostWithRole.host.id);
+        const result = await services.installer.runPrecheck(hostWithRole.host.id, {
+          install_dir: config.installDir,
+          ports: portsToCheck,
+        });
         return {
           hostId: hostWithRole.host.id,
           hostName: hostWithRole.host.name,
@@ -328,7 +345,7 @@ export function ClusterDeployWizard({
     const results = await Promise.all(promises);
     setPrecheckResults(results);
     setPrecheckRunning(false);
-  }, [selectedHosts]);
+  }, [selectedHosts, config.installDir, config.clusterPort, config.httpPort, config.workerPort, config.deploymentMode]);
 
   // Check if all prechecks passed / 检查是否所有预检查都通过
   const allPrechecksPassed = useMemo(() => {
@@ -358,7 +375,22 @@ export function ClusterDeployWizard({
         setPrecheckResults([]);
         setPrecheckRunning(false);
       }
-      return { ...prev, ...updates };
+      
+      // If version changes, update install dir with new version / 如果版本变化，更新安装目录中的版本号
+      const newUpdates = { ...updates };
+      if (updates.version !== undefined && updates.version !== prev.version) {
+        // Replace version in install dir / 替换安装目录中的版本号
+        const newInstallDir = prev.installDir.replace(prev.version, updates.version);
+        // Only update if the path contains the old version / 只有当路径包含旧版本时才更新
+        if (newInstallDir !== prev.installDir) {
+          newUpdates.installDir = newInstallDir;
+        } else {
+          // If path doesn't contain version, use default pattern / 如果路径不包含版本，使用默认模式
+          newUpdates.installDir = `/opt/seatunnel-${updates.version}`;
+        }
+      }
+      
+      return { ...prev, ...newUpdates };
     });
   }, []);
 
@@ -400,11 +432,9 @@ export function ClusterDeployWizard({
       case 'precheck':
         return allPrechecksPassed; // Must pass precheck / 必须通过预检查
       case 'config':
-        // For offline mode, must have local packages available / 离线模式必须有本地安装包
-        if (config.installMode === 'offline') {
-          const hasLocalPackage = localPackages.some((pkg) => pkg.version === config.version);
-          return hasLocalPackage;
-        }
+        // Just need a valid version selected / 只需要选择有效版本
+        // Package will be downloaded automatically if not available locally
+        // 如果本地没有安装包会自动下载
         return config.version.length > 0;
       case 'plugins':
         return true; // Optional / 可选
@@ -415,7 +445,7 @@ export function ClusterDeployWizard({
       default:
         return false;
     }
-  }, [currentStep.id, config, selectedHosts, deployStatus, localPackages, allPrechecksPassed]);
+  }, [currentStep.id, config, selectedHosts, deployStatus, allPrechecksPassed]);
 
   // Handle deploy / 处理部署
   const handleDeploy = useCallback(async () => {
@@ -468,14 +498,40 @@ export function ClusterDeployWizard({
         updateStep('add_node', 'running', t('cluster.wizard.steps.addingNode'), hostWithRole.host.name);
         // Use addNodeSafe which handles duplicates gracefully
         // 使用 addNodeSafe，它会优雅地处理重复添加
+        // Pass install_dir and port configuration / 传递安装目录和端口配置
         await services.cluster.addNodeSafe(clusterId, {
           host_id: hostWithRole.host.id,
           role: hostWithRole.role,
+          install_dir: config.installDir,
+          hazelcast_port: hostWithRole.role === 'worker' && config.deploymentMode === DeploymentMode.SEPARATED
+            ? config.workerPort
+            : config.clusterPort,
+          api_port: hostWithRole.role === 'master' ? config.httpPort : undefined,
         });
         updateStep('add_node', 'success', t('cluster.wizard.steps.nodeAdded'), hostWithRole.host.name);
         setDeployProgress(20 + ((i + 1) / selectedHosts.length) * 30);
       }
       updateStep('add_nodes', 'success', t('cluster.wizard.steps.nodesAdded'));
+
+      // Collect master addresses for cluster configuration
+      // 收集 master 节点地址用于集群配置
+      // For hybrid mode, all nodes act as both master and worker, so collect all addresses
+      // 对于混合模式，所有节点同时作为 master 和 worker，所以收集所有地址
+      const masterAddresses = config.deploymentMode === DeploymentMode.HYBRID
+        ? selectedHosts.map(h => h.host.ip_address || '').filter(ip => ip !== '')
+        : selectedHosts
+            .filter(h => h.role === 'master')
+            .map(h => h.host.ip_address || '')
+            .filter(ip => ip !== '');
+
+      // Collect worker addresses for separated mode
+      // 收集分离模式的 worker 地址
+      const workerAddresses = config.deploymentMode === DeploymentMode.SEPARATED
+        ? selectedHosts
+            .filter(h => h.role === 'worker')
+            .map(h => h.host.ip_address || '')
+            .filter(ip => ip !== '')
+        : [];
 
       // Step 3: Install SeaTunnel on each host / 步骤3：在每台主机上安装 SeaTunnel
       for (let i = 0; i < selectedHosts.length; i++) {
@@ -486,10 +542,15 @@ export function ClusterDeployWizard({
         const installResult = await services.installer.startInstallation(hostWithRole.host.id, {
           cluster_id: String(clusterId),
           version: config.version,
-          install_mode: config.installMode,
-          mirror: config.installMode === 'online' ? config.mirror : undefined,
+          install_dir: config.installDir,
+          install_mode: 'online', // Always use online mode, backend handles local package check / 始终使用在线模式，后端会检查本地安装包
+          mirror: config.mirror,
           deployment_mode: config.deploymentMode,
           node_role: hostWithRole.role,
+          master_addresses: masterAddresses, // Pass all master addresses for hazelcast.yaml configuration / 传递所有 master 地址用于 hazelcast.yaml 配置
+          worker_addresses: workerAddresses, // Pass worker addresses for separated mode / 传递分离模式的 worker 地址
+          cluster_port: config.clusterPort, // Use configured cluster port / 使用配置的集群端口
+          http_port: config.httpPort, // Use configured HTTP port / 使用配置的 HTTP 端口
           jvm: config.jvm,
           checkpoint: config.checkpoint,
           connector: config.selectedPlugins.length > 0 ? {
@@ -501,11 +562,9 @@ export function ClusterDeployWizard({
 
         // Poll for completion / 轮询等待完成
         let status = installResult;
-        while (status.status === 'running') {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          status = await services.installer.getInstallationStatus(hostWithRole.host.id);
-          
-          // Update detailed steps from backend / 从后端更新详细步骤
+        
+        // Helper to update steps from backend response / 从后端响应更新步骤的辅助函数
+        const updateStepsFromStatus = () => {
           if (status.steps && status.steps.length > 0) {
             // Show each step from backend with host name prefix
             // 显示后端返回的每个步骤，带主机名前缀
@@ -518,12 +577,26 @@ export function ClusterDeployWizard({
               const stepMessage = step.message || step.name || step.step;
               updateStep(stepKey, stepStatus, stepMessage, hostWithRole.host.name, step.progress || 0);
             }
-          } else {
+          }
+        };
+        
+        while (status.status === 'running') {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          status = await services.installer.getInstallationStatus(hostWithRole.host.id);
+          
+          // Update detailed steps from backend / 从后端更新详细步骤
+          updateStepsFromStatus();
+          
+          if (!status.steps || status.steps.length === 0) {
             // Fallback to simple message / 回退到简单消息
             const stepMessage = status.message || status.current_step || t('cluster.wizard.steps.installing');
             updateStep('install', 'running', stepMessage, hostWithRole.host.name, status.progress || 0);
           }
         }
+        
+        // Update steps one final time after loop exits (handles immediate success case)
+        // 循环退出后最后更新一次步骤（处理立即成功的情况）
+        updateStepsFromStatus();
 
         if (status.status === 'failed') {
           updateStep('install', 'failed', status.error || t('cluster.wizard.steps.installFailed'), hostWithRole.host.name);
@@ -538,6 +611,10 @@ export function ClusterDeployWizard({
       setDeployProgress(100);
       setDeployStatus('success');
       toast.success(t('cluster.wizard.deploySuccess'));
+      
+      // Wait 1 second before auto advancing to let user see the final status
+      // 等待 1 秒后再自动跳转，让用户看到最终状态
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       
       // Auto advance to complete step / 自动跳转到完成步骤
       setCurrentStepIndex(6); // complete step index
@@ -599,7 +676,9 @@ export function ClusterDeployWizard({
 
   // Render basic info step / 渲染基本信息步骤
   const renderBasicStep = () => (
-    <div className="space-y-4">
+    <div className="h-full flex flex-col overflow-hidden">
+      <ScrollArea className="flex-1 min-h-0 pr-4">
+        <div className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="name">
           {t('cluster.name')} <span className="text-destructive">*</span>
@@ -660,12 +739,62 @@ export function ClusterDeployWizard({
           </Card>
         </div>
       </div>
+
+      {/* Version and Install Directory / 版本和安装目录 */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>{t('installer.version')}</Label>
+          <Select
+            value={config.version}
+            onValueChange={(value) => updateConfig({ version: value })}
+            disabled={packagesLoading}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(packages?.versions || ['2.3.12']).map((version) => {
+                const isLocal = localPackages.some((pkg) => pkg.version === version);
+                return (
+                  <SelectItem key={version} value={version}>
+                    <div className="flex items-center gap-2">
+                      {version}
+                      {isLocal && (
+                        <Download className="h-3 w-3 text-green-500" />
+                      )}
+                      {version === packages?.recommended_version && (
+                        <Badge variant="secondary" className="text-xs">
+                          {t('installer.recommended')}
+                        </Badge>
+                      )}
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="installDir">{t('installer.installDirLabel')}</Label>
+          <Input
+            id="installDir"
+            value={config.installDir}
+            onChange={(e) => updateConfig({ installDir: e.target.value })}
+            placeholder="/opt/seatunnel-2.3.12"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t('installer.installDirDesc')}
+      </p>
+        </div>
+      </ScrollArea>
     </div>
   );
 
   // Render hosts selection step / 渲染主机选择步骤
   const renderHostsStep = () => (
-    <div className="space-y-4 h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           {t('cluster.wizard.selectHostsDesc')}
@@ -688,7 +817,7 @@ export function ClusterDeployWizard({
         </div>
       )}
 
-      <ScrollArea className="flex-1 pr-4">
+      <ScrollArea className="flex-1 min-h-0 pr-4 mt-4">
         {loadingHosts ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -762,54 +891,68 @@ export function ClusterDeployWizard({
   );
 
   // Render config step / 渲染配置步骤
-  const renderConfigStep = () => (
-    <div className="h-full flex flex-col">
-      <ScrollArea className="flex-1 pr-4">
+  const renderConfigStep = () => {
+    // Check if current version package is available locally
+    // 检查当前版本的安装包是否在本地可用
+    const currentPackage = localPackages.find((pkg) => pkg.version === config.version);
+    const isPackageLocal = !!currentPackage;
+
+    return (
+    <div className="h-full flex flex-col overflow-hidden">
+      <ScrollArea className="flex-1 min-h-0 pr-4">
         <div className="space-y-4">
-        {/* Install Mode / 安装模式 */}
+        {/* Package Status / 安装包状态 */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('installer.installMode')}</CardTitle>
+            <CardTitle className="text-base">{t('installer.packageStatus')}</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              <div
-                className={cn(
-                  'p-4 rounded-lg border-2 cursor-pointer transition-colors',
-                  config.installMode === 'online'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-muted hover:border-muted-foreground/50'
-                )}
-                onClick={() => updateConfig({ installMode: 'online' })}
-              >
-                <span className="font-medium">{t('installer.online')}</span>
-                <p className="text-xs text-muted-foreground mt-1">{t('installer.onlineDesc')}</p>
+          <CardContent className="space-y-4">
+            {/* Package status display / 安装包状态显示 */}
+            {packagesLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
-              <div
-                className={cn(
-                  'p-4 rounded-lg border-2 cursor-pointer transition-colors',
-                  config.installMode === 'offline'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-muted hover:border-muted-foreground/50'
-                )}
-                onClick={() => updateConfig({ installMode: 'offline' })}
-              >
-                <span className="font-medium">{t('installer.offline')}</span>
-                <p className="text-xs text-muted-foreground mt-1">{t('installer.offlineDesc')}</p>
+            ) : isPackageLocal ? (
+              /* Package is available locally / 安装包已在本地 */
+              <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                      {t('cluster.wizard.packageReady')}
+                    </p>
+                    <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                      {currentPackage.file_name} ({(currentPackage.file_size / 1024 / 1024).toFixed(1)} MB)
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Package not available locally / 安装包不在本地 */
+              <div className="space-y-4">
+                <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
+                        {t('cluster.wizard.packageNotFound')}
+                      </p>
+                      <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                        {t('cluster.wizard.packageNotFoundDesc', { version: config.version })}
+                      </p>
+                    </div>
+                  </div>
+                </div>
 
-            {/* Online mode: select mirror and version / 在线模式：选择镜像源和版本 */}
-            {config.installMode === 'online' && (
-              <div className="mt-4 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>{t('installer.mirrorSource')}</Label>
+                {/* Mirror source selection for download / 下载镜像源选择 */}
+                <div className="space-y-2">
+                  <Label>{t('installer.mirrorSource')}</Label>
+                  <div className="flex items-center gap-2">
                     <Select
                       value={config.mirror}
                       onValueChange={(value: MirrorSource) => updateConfig({ mirror: value })}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className="flex-1">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -819,137 +962,26 @@ export function ClusterDeployWizard({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>{t('installer.version')}</Label>
-                    <Select
-                      value={config.version}
-                      onValueChange={(value) => updateConfig({ version: value })}
-                      disabled={packagesLoading}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(packages?.versions || ['2.3.12']).map((version) => {
-                          const isLocal = localPackages.some((pkg) => pkg.version === version);
-                          return (
-                            <SelectItem key={version} value={version}>
-                              <div className="flex items-center gap-2">
-                                {version}
-                                {isLocal && (
-                                  <Download className="h-3 w-3 text-green-500" />
-                                )}
-                                {version === packages?.recommended_version && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    {t('installer.recommended')}
-                                  </Badge>
-                                )}
-                              </div>
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('cluster.wizard.mirrorHint')}
+                  </p>
                 </div>
-                
-                {/* Local package status hint / 本地安装包状态提示 */}
-                {(() => {
-                  const isVersionLocal = localPackages.some((pkg) => pkg.version === config.version);
-                  if (isVersionLocal) {
-                    return (
-                      <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                        <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span className="text-sm">{t('cluster.wizard.packageAlreadyDownloaded')}</span>
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                        <div className="flex items-start gap-2">
-                          <Download className="h-4 w-4 text-blue-600 mt-0.5" />
-                          <div className="flex-1">
-                            <p className="text-sm text-blue-700 dark:text-blue-300">
-                              {t('cluster.wizard.packageWillDownload')}
-                            </p>
-                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                              {t('cluster.wizard.packageWillDownloadDesc')}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }
-                })()}
-              </div>
-            )}
 
-            {/* Offline mode: select from local packages / 离线模式：从本地安装包选择 */}
-            {config.installMode === 'offline' && (
-              <div className="mt-4 space-y-4">
-                {packagesLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                {/* Manual upload option / 手动上传选项 */}
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div>
+                    <p className="text-sm">{t('cluster.wizard.manualUpload')}</p>
+                    <p className="text-xs text-muted-foreground">{t('cluster.wizard.manualUploadDesc')}</p>
                   </div>
-                ) : localPackages.length === 0 ? (
-                  /* No local packages available / 没有本地安装包 */
-                  <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">
-                          {t('cluster.wizard.noLocalPackages')}
-                        </p>
-                        <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-                          {t('cluster.wizard.noLocalPackagesDesc')}
-                        </p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-3"
-                          onClick={() => window.open('/packages', '_blank')}
-                        >
-                          <Package className="h-4 w-4 mr-2" />
-                          {t('cluster.wizard.goToPackageManagement')}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* Local packages list / 本地安装包列表 */
-                  <div className="space-y-2">
-                    <Label>{t('installer.selectPackage')}</Label>
-                    <div className="space-y-2">
-                      {localPackages.map((pkg) => (
-                        <div
-                          key={pkg.version}
-                          className={cn(
-                            'p-3 rounded-lg border-2 cursor-pointer transition-colors flex items-center justify-between',
-                            config.version === pkg.version
-                              ? 'border-primary bg-primary/5'
-                              : 'border-muted hover:border-muted-foreground/50'
-                          )}
-                          onClick={() => updateConfig({ version: pkg.version })}
-                        >
-                          <div className="flex items-center gap-3">
-                            <Package className="h-5 w-5 text-muted-foreground" />
-                            <div>
-                              <span className="font-medium">{pkg.version}</span>
-                              <p className="text-xs text-muted-foreground">
-                                {pkg.file_name} ({(pkg.file_size / 1024 / 1024).toFixed(1)} MB)
-                              </p>
-                            </div>
-                          </div>
-                          {config.version === pkg.version && (
-                            <CheckCircle2 className="h-5 w-5 text-primary" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open('/packages', '_blank')}
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    {t('cluster.wizard.goToPackageManagement')}
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>
@@ -957,6 +989,53 @@ export function ClusterDeployWizard({
 
         {/* JVM Config & Checkpoint Config / JVM 配置和检查点配置 */}
         <div className="grid grid-cols-2 gap-4">
+          {/* Port Config / 端口配置 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t('cluster.wizard.portConfig')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label>{t('cluster.wizard.clusterPort')}</Label>
+                <Input
+                  type="number"
+                  value={config.clusterPort}
+                  onChange={(e) => updateConfig({ clusterPort: parseInt(e.target.value) || 5801 })}
+                  min={1024}
+                  max={65535}
+                  placeholder="5801"
+                />
+                <p className="text-xs text-muted-foreground">{t('cluster.wizard.clusterPortDesc')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('cluster.wizard.httpPort')}</Label>
+                <Input
+                  type="number"
+                  value={config.httpPort}
+                  onChange={(e) => updateConfig({ httpPort: parseInt(e.target.value) || 8080 })}
+                  min={1024}
+                  max={65535}
+                  placeholder="8080"
+                />
+                <p className="text-xs text-muted-foreground">{t('cluster.wizard.httpPortDesc')}</p>
+              </div>
+              {config.deploymentMode === DeploymentMode.SEPARATED && (
+                <div className="space-y-2">
+                  <Label>{t('cluster.wizard.workerPort')}</Label>
+                  <Input
+                    type="number"
+                    value={config.workerPort}
+                    onChange={(e) => updateConfig({ workerPort: parseInt(e.target.value) || 5802 })}
+                    min={1024}
+                    max={65535}
+                    placeholder="5802"
+                  />
+                  <p className="text-xs text-muted-foreground">{t('cluster.wizard.workerPortDesc')}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* JVM Config / JVM 配置 */}
           <Card>
             <CardHeader className="pb-2">
@@ -965,7 +1044,7 @@ export function ClusterDeployWizard({
             <CardContent>
               {config.deploymentMode === DeploymentMode.HYBRID ? (
                 <div className="space-y-2">
-                  <Label>{t('installer.hybridHeapSize')}</Label>
+                  <Label>{t('installer.hybridHeapSize')} (GB)</Label>
                   <Input
                     type="number"
                     value={config.jvm.hybrid_heap_size}
@@ -974,14 +1053,15 @@ export function ClusterDeployWizard({
                         jvm: { ...config.jvm, hybrid_heap_size: parseInt(e.target.value) || 0 },
                       })
                     }
-                    min={512}
-                    step={256}
+                    min={1}
+                    max={64}
+                    step={1}
                   />
                 </div>
               ) : (
                 <div className="space-y-3">
                   <div className="space-y-2">
-                    <Label>{t('installer.masterHeapSize')}</Label>
+                    <Label>{t('installer.masterHeapSize')} (GB)</Label>
                     <Input
                       type="number"
                       value={config.jvm.master_heap_size}
@@ -990,12 +1070,13 @@ export function ClusterDeployWizard({
                           jvm: { ...config.jvm, master_heap_size: parseInt(e.target.value) || 0 },
                         })
                       }
-                      min={512}
-                      step={256}
+                      min={1}
+                      max={64}
+                      step={1}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>{t('installer.workerHeapSize')}</Label>
+                    <Label>{t('installer.workerHeapSize')} (GB)</Label>
                     <Input
                       type="number"
                       value={config.jvm.worker_heap_size}
@@ -1004,21 +1085,24 @@ export function ClusterDeployWizard({
                           jvm: { ...config.jvm, worker_heap_size: parseInt(e.target.value) || 0 },
                         })
                       }
-                      min={512}
-                      step={256}
+                      min={1}
+                      max={64}
+                      step={1}
                     />
                   </div>
                 </div>
               )}
             </CardContent>
           </Card>
+        </div>
 
-          {/* Checkpoint Config / 检查点配置 */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{t('installer.checkpointConfig')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
+        {/* Checkpoint Config / 检查点配置 */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t('installer.checkpointConfig')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>{t('installer.storageType')}</Label>
                 <Select
@@ -1052,13 +1136,14 @@ export function ClusterDeployWizard({
                   placeholder="/tmp/seatunnel/checkpoint"
                 />
               </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </ScrollArea>
     </div>
   );
+  };
 
   // Render plugins step / 渲染插件步骤
   const renderPluginsStep = () => {
@@ -1077,9 +1162,9 @@ export function ClusterDeployWizard({
     };
 
     return (
-      <div className="space-y-4 h-full flex flex-col">
+      <div className="h-full flex flex-col overflow-hidden">
         {/* Header with count / 标题和计数 */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-4">
           <div>
             <p className="text-sm text-muted-foreground">
               {t('cluster.wizard.selectLocalPluginsDesc')}
@@ -1153,7 +1238,7 @@ export function ClusterDeployWizard({
             </div>
 
             {/* Plugin list / 插件列表 */}
-            <ScrollArea className="flex-1 pr-4">
+            <ScrollArea className="flex-1 min-h-0 pr-4 mt-4">
               {localPluginsLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -1368,12 +1453,27 @@ export function ClusterDeployWizard({
                               {/* Show details if available / 如果有详情则显示 */}
                               {item.details && Object.keys(item.details).length > 0 && (
                                 <div className="mt-1 text-xs text-muted-foreground/80">
-                                  {Object.entries(item.details).map(([key, value]) => (
-                                    <div key={key} className="flex gap-1">
-                                      <span className="font-medium">{key}:</span>
-                                      <span>{JSON.stringify(value)}</span>
-                                    </div>
-                                  ))}
+                                  {Object.entries(item.details).map(([key, value]) => {
+                                    // Skip output field as it contains raw JSON / 跳过 output 字段因为它包含原始 JSON
+                                    if (key === 'output') {return null;}
+                                    // Format the value nicely / 格式化值
+                                    let displayValue: string;
+                                    if (typeof value === 'string') {
+                                      displayValue = value;
+                                    } else if (Array.isArray(value)) {
+                                      displayValue = value.join(', ');
+                                    } else if (typeof value === 'object' && value !== null) {
+                                      displayValue = JSON.stringify(value);
+                                    } else {
+                                      displayValue = String(value);
+                                    }
+                                    return (
+                                      <div key={key} className="flex gap-1">
+                                        <span className="font-medium">{key.replace(/_/g, ' ')}:</span>
+                                        <span>{displayValue}</span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -1431,7 +1531,9 @@ export function ClusterDeployWizard({
 
   // Render deploy step / 渲染部署步骤
   const renderDeployStep = () => (
-    <div className="space-y-6">
+    <div className="h-full flex flex-col overflow-hidden">
+      <ScrollArea className="flex-1 min-h-0 pr-4">
+        <div className="space-y-6">
       <Card>
         <CardContent className="pt-6">
           <div className="text-center mb-6">
@@ -1499,7 +1601,7 @@ export function ClusterDeployWizard({
           {deploySteps.length > 0 && (
             <div className="mt-6 space-y-2">
               <h4 className="text-sm font-medium mb-3">{t('cluster.wizard.deploySteps')}</h4>
-              <ScrollArea className="h-[200px] pr-4">
+              <div className="max-h-[300px] overflow-y-auto pr-2">
                 <div className="space-y-2">
                   {deploySteps.map((step, index) => (
                     <div
@@ -1540,17 +1642,21 @@ export function ClusterDeployWizard({
                     </div>
                   ))}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
           )}
         </CardContent>
       </Card>
+        </div>
+      </ScrollArea>
     </div>
   );
 
   // Render complete step / 渲染完成步骤
   const renderCompleteStep = () => (
-    <div className="space-y-6">
+    <div className="h-full flex flex-col overflow-hidden">
+      <ScrollArea className="flex-1 min-h-0 pr-4">
+        <div className="space-y-6">
       <Card className="border-green-500/50">
         <CardContent className="pt-8 pb-6">
           <div className="text-center">
@@ -1573,6 +1679,8 @@ export function ClusterDeployWizard({
           {t('cluster.wizard.viewCluster')}
         </Button>
       </div>
+        </div>
+      </ScrollArea>
     </div>
   );
 

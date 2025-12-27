@@ -54,8 +54,9 @@ const (
 type NodeRole string
 
 const (
-	NodeRoleMaster NodeRole = "master"
-	NodeRoleWorker NodeRole = "worker"
+	NodeRoleMaster       NodeRole = "master"
+	NodeRoleWorker       NodeRole = "worker"
+	NodeRoleMasterWorker NodeRole = "master/worker"
 )
 
 // StepStatus represents the status of an installation step
@@ -204,17 +205,22 @@ const (
 // InstallationRequest is the request for one-click installation
 // InstallationRequest 是一键安装的请求
 type InstallationRequest struct {
-	HostID         string            `json:"host_id"`
-	ClusterID      string            `json:"cluster_id"`
-	Version        string            `json:"version" binding:"required"`
-	InstallMode    InstallMode       `json:"install_mode"`
-	Mirror         MirrorSource      `json:"mirror,omitempty"`
-	PackagePath    string            `json:"package_path,omitempty"`
-	DeploymentMode DeploymentMode    `json:"deployment_mode"`
-	NodeRole       NodeRole          `json:"node_role"`
-	JVM            *JVMConfig        `json:"jvm,omitempty"`
-	Checkpoint     *CheckpointConfig `json:"checkpoint,omitempty"`
-	Connector      *ConnectorConfig  `json:"connector,omitempty"`
+	HostID          string            `json:"host_id"`
+	ClusterID       string            `json:"cluster_id"`
+	Version         string            `json:"version" binding:"required"`
+	InstallDir      string            `json:"install_dir"`
+	InstallMode     InstallMode       `json:"install_mode"`
+	Mirror          MirrorSource      `json:"mirror,omitempty"`
+	PackagePath     string            `json:"package_path,omitempty"`
+	DeploymentMode  DeploymentMode    `json:"deployment_mode"`
+	NodeRole        NodeRole          `json:"node_role"`
+	MasterAddresses []string          `json:"master_addresses,omitempty"`
+	WorkerAddresses []string          `json:"worker_addresses,omitempty"` // Worker addresses for separated mode / 分离模式的 worker 地址
+	ClusterPort     int               `json:"cluster_port,omitempty"`
+	HTTPPort        int               `json:"http_port,omitempty"`
+	JVM             *JVMConfig        `json:"jvm,omitempty"`
+	Checkpoint      *CheckpointConfig `json:"checkpoint,omitempty"`
+	Connector       *ConnectorConfig  `json:"connector,omitempty"`
 }
 
 // StepInfo contains information about an installation step

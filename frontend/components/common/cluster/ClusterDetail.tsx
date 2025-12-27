@@ -114,6 +114,21 @@ function getHealthBadgeVariant(
 }
 
 /**
+ * Get role translation key
+ * 获取角色翻译键
+ * Handles special case for "master/worker" role
+ * 处理 "master/worker" 角色的特殊情况
+ */
+function getRoleTranslationKey(role: string): string {
+  // Replace "/" with "_" for i18n key compatibility
+  // 将 "/" 替换为 "_" 以兼容 i18n 键
+  if (role === 'master/worker') {
+    return 'masterWorker';
+  }
+  return role;
+}
+
+/**
  * Cluster Detail Component
  * 集群详情组件
  */
@@ -781,7 +796,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                       <TableCell>{node.host_ip || '-'}</TableCell>
                       <TableCell>
                         <Badge variant='outline'>
-                          {t(`cluster.roles.${node.role}`)}
+                          {t(`cluster.roles.${getRoleTranslationKey(node.role)}`)}
                         </Badge>
                       </TableCell>
                       <TableCell className='font-mono text-sm'>{node.install_dir || '-'}</TableCell>
@@ -956,7 +971,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         <AlertDialogContent className='max-h-[90vh]' style={{maxWidth: '90vw', width: '1200px'}}>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t('cluster.viewLogs')} - {logNodeInfo?.host_name} ({t(`cluster.roles.${logNodeInfo?.role}`)})
+              {t('cluster.viewLogs')} - {logNodeInfo?.host_name} ({t(`cluster.roles.${getRoleTranslationKey(logNodeInfo?.role || '')}`)})
             </AlertDialogTitle>
           </AlertDialogHeader>
           {/* Log query parameters / 日志查询参数 */}

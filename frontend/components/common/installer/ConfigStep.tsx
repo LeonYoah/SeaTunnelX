@@ -320,35 +320,38 @@ export function ConfigStep({ config, onConfigChange }: ConfigStepProps) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {config.deploymentMode === 'hybrid' ? (
                 <div className="space-y-2">
-                  <Label>{t('installer.hybridHeapSize')}</Label>
+                  <Label>{t('installer.hybridHeapSize')} (GB)</Label>
                   <Input
                     type="number"
                     value={config.jvm.hybrid_heap_size}
                     onChange={(e) => handleJvmChange('hybrid_heap_size', parseInt(e.target.value) || 0)}
-                    min={512}
-                    step={256}
+                    min={1}
+                    max={64}
+                    step={1}
                   />
                 </div>
               ) : (
                 <>
                   <div className="space-y-2">
-                    <Label>{t('installer.masterHeapSize')}</Label>
+                    <Label>{t('installer.masterHeapSize')} (GB)</Label>
                     <Input
                       type="number"
                       value={config.jvm.master_heap_size}
                       onChange={(e) => handleJvmChange('master_heap_size', parseInt(e.target.value) || 0)}
-                      min={512}
-                      step={256}
+                      min={1}
+                      max={64}
+                      step={1}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>{t('installer.workerHeapSize')}</Label>
+                    <Label>{t('installer.workerHeapSize')} (GB)</Label>
                     <Input
                       type="number"
                       value={config.jvm.worker_heap_size}
                       onChange={(e) => handleJvmChange('worker_heap_size', parseInt(e.target.value) || 0)}
-                      min={512}
-                      step={256}
+                      min={1}
+                      max={64}
+                      step={1}
                     />
                   </div>
                 </>

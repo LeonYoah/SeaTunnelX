@@ -365,7 +365,7 @@ func isValidDeploymentMode(mode DeploymentMode) bool {
 // isValidNodeRole checks if the node role is valid.
 // isValidNodeRole 检查节点角色是否有效。
 func isValidNodeRole(role NodeRole) bool {
-	return role == NodeRoleMaster || role == NodeRoleWorker
+	return role == NodeRoleMaster || role == NodeRoleWorker || role == NodeRoleMasterWorker
 }
 
 // AddNode adds a node to a cluster with validation.
@@ -544,6 +544,33 @@ func (s *Service) GetNode(ctx context.Context, nodeID uint) (*ClusterNode, error
 // UpdateNodeStatus 更新集群节点的状态。
 func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID uint, status NodeStatus) error {
 	return s.repo.UpdateNodeStatus(ctx, nodeID, status)
+}
+
+// UpdateNodeStatusByClusterAndHost updates the node status by cluster ID and host ID.
+// UpdateNodeStatusByClusterAndHost 根据集群 ID 和主机 ID 更新节点状态。
+// This implements the installer.NodeStatusUpdater interface.
+// 这实现了 installer.NodeStatusUpdater 接口。
+func (s *Service) UpdateNodeStatusByClusterAndHost(ctx context.Context, clusterID uint, hostID uint, status string) error {
+	// Find node by cluster ID and host ID / 根据集群 ID 和主机 ID 查找节点
+	node, err := s.repo.GetNodeByClusterAndHost(ctx, clusterID, hostID)
+	if err != nil {
+		return fmt.Errorf("failed to find node by cluster %d and host %d: %w / 根据集群 %d 和主机 %d 查找节点失败: %w", clusterID, hostID, err, clusterID, hostID, err)
+	}
+	if node == nil {
+		return fmt.Errorf("node not found for cluster %d and host %d / 未找到集群 %d 主机 %d 对应的节点", clusterID, hostID, clusterID, hostID)
+	}
+
+	logger.InfoF(ctx, "[Cluster] UpdateNodeStatusByClusterAndHost: clusterID=%d, hostID=%d, nodeID=%d, oldStatus=%s, newStatus=%s",
+		clusterID, hostID, node.ID, node.Status, status)
+
+	err = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatus(status))
+	if err != nil {
+		logger.ErrorF(ctx, "[Cluster] UpdateNodeStatusByClusterAndHost failed: nodeID=%d, error=%v", node.ID, err)
+		return err
+	}
+
+	logger.InfoF(ctx, "[Cluster] UpdateNodeStatusByClusterAndHost success: nodeID=%d, newStatus=%s", node.ID, status)
+	return nil
 }
 
 // UpdateNodeProcess updates the process information for a cluster node.
@@ -1148,6 +1175,36 @@ func (s *Service) StartNode(ctx context.Context, clusterID uint, nodeID uint) (*
 	return s.executeNodeOperation(ctx, clusterID, nodeID, OperationStart)
 }
 
+// StartNodeByClusterAndHost starts a node by cluster ID and host ID.
+// StartNodeByClusterAndHost 根据集群 ID 和主机 ID 启动节点。
+// This implements the installer.NodeStarter interface.
+// 这实现了 installer.NodeStarter 接口。
+func (s *Service) StartNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (bool, string, error) {
+	// Find node by cluster ID and host ID
+	// 根据集群 ID 和主机 ID 查找节点
+	node, err := s.repo.GetNodeByClusterAndHost(ctx, clusterID, hostID)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to find node: %w / 查找节点失败: %w", err, err)
+	}
+	if node == nil {
+		return false, "", fmt.Errorf("node not found for cluster %d and host %d / 未找到集群 %d 主机 %d 对应的节点", clusterID, hostID, clusterID, hostID)
+	}
+
+	// Use existing StartNode logic
+	// 使用现有的 StartNode 逻辑
+	result, err := s.executeNodeOperation(ctx, clusterID, node.ID, OperationStart)
+	if err != nil {
+		return false, "", err
+	}
+
+	// Return success status and message
+	// 返回成功状态和消息
+	if len(result.NodeResults) > 0 {
+		return result.NodeResults[0].Success, result.NodeResults[0].Message, nil
+	}
+	return result.Success, result.Message, nil
+}
+
 // StopNode stops a single node in a cluster.
 // StopNode 停止集群中的单个节点。
 func (s *Service) StopNode(ctx context.Context, clusterID uint, nodeID uint) (*OperationResult, error) {
@@ -1358,6 +1415,13 @@ func (s *Service) GetNodeLogs(ctx context.Context, clusterID uint, nodeID uint, 
 		return "", ErrNodeNotFound
 	}
 
+	// Get cluster to check deployment mode
+	// 获取集群以检查部署模式
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return "", err
+	}
+
 	// Get host information
 	// 获取主机信息
 	if s.hostProvider == nil {
@@ -1377,21 +1441,29 @@ func (s *Service) GetNodeLogs(ctx context.Context, clusterID uint, nodeID uint, 
 		return "", fmt.Errorf("agent sender not configured / Agent 发送器未配置")
 	}
 
-	// Determine log file based on role
-	// 根据角色确定日志文件
+	// Determine log file based on deployment mode and role
+	// 根据部署模式和角色确定日志文件
 	installDir := node.InstallDir
 	if installDir == "" {
 		installDir = "/opt/seatunnel"
 	}
 
 	var logFile string
-	switch node.Role {
-	case NodeRoleMaster:
-		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-master.log", installDir)
-	case NodeRoleWorker:
-		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-worker.log", installDir)
-	default:
+	// In hybrid mode, all nodes use seatunnel-engine-server.log
+	// 混合模式下，所有节点使用 seatunnel-engine-server.log
+	if cluster.DeploymentMode == DeploymentModeHybrid {
 		logFile = fmt.Sprintf("%s/logs/seatunnel-engine-server.log", installDir)
+	} else {
+		// In separated mode, use role-specific log files
+		// 分离模式下，使用角色特定的日志文件
+		switch node.Role {
+		case NodeRoleMaster:
+			logFile = fmt.Sprintf("%s/logs/seatunnel-engine-master.log", installDir)
+		case NodeRoleWorker:
+			logFile = fmt.Sprintf("%s/logs/seatunnel-engine-worker.log", installDir)
+		default:
+			logFile = fmt.Sprintf("%s/logs/seatunnel-engine-server.log", installDir)
+		}
 	}
 
 	// Set default values / 设置默认值

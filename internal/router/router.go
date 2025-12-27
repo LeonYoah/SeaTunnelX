@@ -58,6 +58,10 @@ import (
 
 func Serve() {
 	ctx := context.Background()
+
+	// Initialize OpenTelemetry tracing (based on config)
+	// 初始化 OpenTelemetry 追踪（根据配置）
+	otel_trace.Init()
 	defer otel_trace.Shutdown(ctx)
 
 	// 运行模式
@@ -439,6 +443,21 @@ func Serve() {
 				pluginService.SetClusterNodeGetter(&clusterNodeGetterAdapter{clusterService: clusterService})
 				pluginService.SetHostInfoGetter(&hostInfoGetterAdapter{hostService: hostService})
 				log.Println("[API] Agent command sender injected into plugin service / Agent 命令发送器已注入插件服务")
+
+				// Inject plugin transferer into installer service for plugin transfer during installation
+				// 将插件传输器注入安装服务，用于安装过程中的插件传输
+				installerService.SetPluginTransferer(pluginService)
+				log.Println("[API] Plugin transferer injected into installer service / 插件传输器已注入安装服务")
+
+				// Inject node status updater into installer service for updating node status after installation
+				// 将节点状态更新器注入安装服务，用于安装后更新节点状态
+				installerService.SetNodeStatusUpdater(clusterService)
+				log.Println("[API] Node status updater injected into installer service / 节点状态更新器已注入安装服务")
+
+				// Inject node starter into installer service for starting nodes after installation
+				// 将节点启动器注入安装服务，用于安装后启动节点
+				installerService.SetNodeStarter(clusterService)
+				log.Println("[API] Node starter injected into installer service / 节点启动器已注入安装服务")
 			}
 
 			pluginHandler := plugin.NewHandler(pluginService)

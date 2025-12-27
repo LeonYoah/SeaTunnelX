@@ -95,10 +95,14 @@ func HandleTransferPluginCommand(ctx context.Context, cmd *pb.CommandRequest, re
 	checksum := cmd.Parameters["checksum"]
 	installPath := cmd.Parameters["install_path"]
 
-	// Set install path if provided / 如果提供了安装路径则设置
-	if installPath != "" {
-		pluginManager.SetSeaTunnelPath(installPath)
+	// install_path is required for plugin installation
+	// install_path 是插件安装的必需参数
+	if installPath == "" {
+		return CreateErrorResponse(cmd.CommandId, "install_path is required for plugin transfer / 插件传输需要 install_path 参数"), nil
 	}
+
+	// Set install path / 设置安装路径
+	pluginManager.SetSeaTunnelPath(installPath)
 
 	if pluginName == "" || version == "" || fileName == "" {
 		return CreateErrorResponse(cmd.CommandId, "missing required parameters: plugin_name, version, file_name"), nil
@@ -170,6 +174,12 @@ func HandleInstallPluginCommand(ctx context.Context, cmd *pb.CommandRequest, rep
 
 	if pluginName == "" || version == "" {
 		return CreateErrorResponse(cmd.CommandId, "missing required parameters: plugin_name, version"), nil
+	}
+
+	// install_path is required for plugin installation
+	// install_path 是插件安装的必需参数
+	if installPath == "" {
+		return CreateErrorResponse(cmd.CommandId, "install_path is required for plugin installation / 插件安装需要 install_path 参数"), nil
 	}
 
 	// Parse dependencies / 解析依赖

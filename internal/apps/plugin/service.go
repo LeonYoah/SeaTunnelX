@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -987,12 +988,13 @@ func (s *Service) UninstallPluginFromCluster(ctx context.Context, clusterID uint
 
 // ==================== Plugin Transfer Methods 插件传输方法 ====================
 
-// transferPluginToAgent transfers a plugin file to an Agent and installs it.
-// transferPluginToAgent 将插件文件传输到 Agent 并安装。
+// transferPluginToAgent transfers a plugin file and its dependencies to an Agent and installs it.
+// transferPluginToAgent 将插件文件及其依赖传输到 Agent 并安装。
 // This method:
-// 1. Reads the plugin file from local storage
-// 2. Sends file chunks to Agent via TRANSFER_PLUGIN command
-// 3. Sends INSTALL_PLUGIN command to finalize installation
+// 1. Reads the plugin connector file from local storage
+// 2. Sends connector file chunks to Agent via TRANSFER_PLUGIN command (file_type: connector)
+// 3. Reads and transfers dependency files (file_type: dependency)
+// 4. Sends INSTALL_PLUGIN command to finalize installation
 // Parameters:
 // - artifactID: Maven artifact ID (e.g., connector-cdc-mysql, connector-file-cos)
 // - pluginName: Plugin display name (e.g., mysql-cdc, cosfile)
@@ -1001,8 +1003,9 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 		return fmt.Errorf("agent command sender not configured / Agent 命令发送器未配置")
 	}
 
+	// 1. Transfer connector file / 传输连接器文件
 	// Use artifact ID directly for file name / 直接使用 artifact ID 作为文件名
-	fileName := fmt.Sprintf("%s-%s.jar", artifactID, version)
+	connectorFileName := fmt.Sprintf("%s-%s.jar", artifactID, version)
 
 	// Read plugin file using artifact ID / 使用 artifact ID 读取插件文件
 	fileData, err := s.downloader.ReadPluginFileByArtifactID(artifactID, version)
@@ -1010,6 +1013,70 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 		return fmt.Errorf("failed to read plugin file: %w / 读取插件文件失败: %w", err, err)
 	}
 
+	// Transfer connector file in chunks / 分块传输连接器文件
+	if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "connector", connectorFileName, fileData, installDir); err != nil {
+		return fmt.Errorf("failed to transfer connector: %w / 传输连接器失败: %w", err, err)
+	}
+
+	// 2. Transfer dependencies / 传输依赖
+	// Get plugin dependencies from database / 从数据库获取插件依赖
+	deps, err := s.GetPluginDependencies(ctx, pluginName)
+	if err != nil {
+		// Log warning but continue - dependencies are optional / 记录警告但继续 - 依赖是可选的
+		fmt.Printf("[Plugin Transfer] Warning: failed to get dependencies for %s: %v\n", pluginName, err)
+	} else if len(deps) > 0 {
+		fmt.Printf("[Plugin Transfer] Transferring %d dependencies for plugin %s\n", len(deps), pluginName)
+
+		for _, dep := range deps {
+			// Check if dependency is downloaded / 检查依赖是否已下载
+			if !s.downloader.IsDependencyDownloaded(dep.ArtifactID, dep.Version, version) {
+				fmt.Printf("[Plugin Transfer] Warning: dependency %s-%s not downloaded, skipping\n", dep.ArtifactID, dep.Version)
+				continue
+			}
+
+			// Read dependency file / 读取依赖文件
+			depPath := s.downloader.GetLibPath(dep.ArtifactID, dep.Version, version)
+			depData, err := s.readFile(depPath)
+			if err != nil {
+				fmt.Printf("[Plugin Transfer] Warning: failed to read dependency %s: %v, skipping\n", dep.ArtifactID, err)
+				continue
+			}
+
+			// Transfer dependency file / 传输依赖文件
+			depFileName := fmt.Sprintf("%s-%s.jar", dep.ArtifactID, dep.Version)
+			if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "dependency", depFileName, depData, installDir); err != nil {
+				fmt.Printf("[Plugin Transfer] Warning: failed to transfer dependency %s: %v, skipping\n", dep.ArtifactID, err)
+				continue
+			}
+
+			fmt.Printf("[Plugin Transfer] Dependency transferred: %s\n", depFileName)
+		}
+	}
+
+	// 3. Send install command / 发送安装命令
+	// Pass artifact_id so Agent can find the file directly
+	// 传递 artifact_id 以便 Agent 可以直接找到文件
+	installParams := map[string]string{
+		"plugin_name":  pluginName,
+		"artifact_id":  artifactID,
+		"version":      version,
+		"install_path": installDir,
+	}
+
+	success, message, err := s.agentCommandSender.SendCommand(ctx, agentID, "install_plugin", installParams)
+	if err != nil {
+		return fmt.Errorf("failed to send install command: %w / 发送安装命令失败: %w", err, err)
+	}
+	if !success {
+		return fmt.Errorf("plugin installation failed: %s / 插件安装失败: %s", message, message)
+	}
+
+	return nil
+}
+
+// transferFileToAgent transfers a single file to an Agent in chunks.
+// transferFileToAgent 分块传输单个文件到 Agent。
+func (s *Service) transferFileToAgent(ctx context.Context, agentID, pluginName, version, fileType, fileName string, fileData []byte, installDir string) error {
 	// Transfer file in chunks / 分块传输文件
 	// Chunk size: 1MB / 块大小: 1MB
 	const chunkSize = 1024 * 1024
@@ -1032,7 +1099,7 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 		params := map[string]string{
 			"plugin_name":  pluginName,
 			"version":      version,
-			"file_type":    "connector",
+			"file_type":    fileType,
 			"file_name":    fileName,
 			"chunk":        chunkBase64,
 			"offset":       fmt.Sprintf("%d", offset),
@@ -1052,25 +1119,13 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 		offset = end
 	}
 
-	// Send install command / 发送安装命令
-	// Pass artifact_id so Agent can find the file directly
-	// 传递 artifact_id 以便 Agent 可以直接找到文件
-	installParams := map[string]string{
-		"plugin_name":  pluginName,
-		"artifact_id":  artifactID,
-		"version":      version,
-		"install_path": installDir,
-	}
-
-	success, message, err := s.agentCommandSender.SendCommand(ctx, agentID, "install_plugin", installParams)
-	if err != nil {
-		return fmt.Errorf("failed to send install command: %w / 发送安装命令失败: %w", err, err)
-	}
-	if !success {
-		return fmt.Errorf("plugin installation failed: %s / 插件安装失败: %s", message, message)
-	}
-
 	return nil
+}
+
+// readFile reads a file from the filesystem.
+// readFile 从文件系统读取文件。
+func (s *Service) readFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
 }
 
 // encodeBase64 encodes data to base64 string.
@@ -1130,4 +1185,83 @@ func (s *Service) GetPluginDependencies(ctx context.Context, pluginName string) 
 	}
 
 	return deps, nil
+}
+
+// ==================== PluginTransferer Interface Implementation 插件传输器接口实现 ====================
+
+// TransferPluginToAgent transfers a plugin to an agent during SeaTunnel installation.
+// TransferPluginToAgent 在 SeaTunnel 安装过程中将插件传输到 Agent。
+// This implements the installer.PluginTransferer interface.
+// 这实现了 installer.PluginTransferer 接口。
+func (s *Service) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error {
+	// Get artifact ID for the plugin / 获取插件的 artifact ID
+	artifactID := s.GetPluginArtifactID(pluginName)
+
+	// Use the existing transferPluginToAgent method / 使用现有的 transferPluginToAgent 方法
+	return s.transferPluginToAgent(ctx, agentID, artifactID, pluginName, version, installDir)
+}
+
+// GetPluginArtifactID returns the Maven artifact ID for a plugin name.
+// GetPluginArtifactID 返回插件名称对应的 Maven artifact ID。
+// This implements the installer.PluginTransferer interface.
+// 这实现了 installer.PluginTransferer 接口。
+func (s *Service) GetPluginArtifactID(pluginName string) string {
+	return getArtifactID(pluginName)
+}
+
+// DownloadPluginSync downloads a plugin synchronously (blocking).
+// DownloadPluginSync 同步下载插件（阻塞）。
+// This implements the installer.PluginTransferer interface.
+// 这实现了 installer.PluginTransferer 接口。
+func (s *Service) DownloadPluginSync(ctx context.Context, pluginName, version string) error {
+	// Get plugin info / 获取插件信息
+	plugin, err := s.GetPluginInfo(ctx, pluginName, version)
+	if err != nil {
+		// Create a minimal plugin struct if not found / 如果未找到则创建最小插件结构
+		plugin = &Plugin{
+			Name:       pluginName,
+			ArtifactID: getArtifactID(pluginName),
+			Version:    version,
+			GroupID:    "org.apache.seatunnel",
+		}
+	}
+
+	// Load configured dependencies from database / 从数据库加载配置的依赖
+	deps, err := s.GetPluginDependencies(ctx, pluginName)
+	if err == nil && len(deps) > 0 {
+		plugin.Dependencies = deps
+		fmt.Printf("[DownloadPluginSync] Loaded %d dependencies for %s\n", len(deps), pluginName)
+	}
+
+	// Use default mirror (Apache) / 使用默认镜像源（Apache）
+	// DownloadPlugin downloads both connector and dependencies / DownloadPlugin 同时下载连接器和依赖
+	return s.downloader.DownloadPlugin(ctx, plugin, MirrorSourceApache, nil)
+}
+
+// RecordInstalledPlugin records a plugin as installed for a cluster.
+// RecordInstalledPlugin 记录插件已安装到集群。
+// This implements the installer.PluginTransferer interface.
+// 这实现了 installer.PluginTransferer 接口。
+func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error {
+	// Check if already recorded / 检查是否已记录
+	existing, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
+	if err == nil && existing != nil {
+		// Already exists, update version if different / 已存在，如果版本不同则更新
+		if existing.Version != version {
+			existing.Version = version
+			return s.repo.Update(ctx, existing)
+		}
+		return nil
+	}
+
+	// Create new record / 创建新记录
+	installed := &InstalledPlugin{
+		ClusterID:   clusterID,
+		PluginName:  pluginName,
+		Version:     version,
+		Status:      PluginStatusInstalled,
+		InstalledAt: time.Now(),
+	}
+
+	return s.repo.Create(ctx, installed)
 }

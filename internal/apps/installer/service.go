@@ -73,12 +73,52 @@ type AgentManager interface {
 	SendTransferPackageCommand(ctx context.Context, agentID string, version string, fileName string, chunk []byte, offset int64, totalSize int64, isLast bool, checksum string) (success bool, receivedBytes int64, localPath string, err error)
 }
 
+// PluginTransferer is the interface for transferring plugins to agents
+// PluginTransferer 是向 Agent 传输插件的接口
+type PluginTransferer interface {
+	// TransferPluginToAgent transfers a plugin to an agent
+	// TransferPluginToAgent 将插件传输到 Agent
+	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error
+
+	// GetPluginArtifactID returns the Maven artifact ID for a plugin name
+	// GetPluginArtifactID 返回插件名称对应的 Maven artifact ID
+	GetPluginArtifactID(pluginName string) string
+
+	// IsPluginDownloaded checks if a plugin is downloaded locally
+	// IsPluginDownloaded 检查插件是否已下载到本地
+	IsPluginDownloaded(name, version string) bool
+
+	// DownloadPluginSync downloads a plugin synchronously (blocking)
+	// DownloadPluginSync 同步下载插件（阻塞）
+	DownloadPluginSync(ctx context.Context, pluginName, version string) error
+
+	// RecordInstalledPlugin records a plugin as installed for a cluster
+	// RecordInstalledPlugin 记录插件已安装到集群
+	RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error
+}
+
 // HostProvider is the interface for getting host information
 // HostProvider 是获取主机信息的接口
 type HostProvider interface {
 	// GetHostByID returns host information by ID
 	// GetHostByID 根据 ID 返回主机信息
 	GetHostByID(ctx context.Context, hostID uint) (*HostInfo, error)
+}
+
+// NodeStatusUpdater is the interface for updating cluster node status
+// NodeStatusUpdater 是更新集群节点状态的接口
+type NodeStatusUpdater interface {
+	// UpdateNodeStatusByClusterAndHost updates the node status by cluster ID and host ID
+	// UpdateNodeStatusByClusterAndHost 根据集群 ID 和主机 ID 更新节点状态
+	UpdateNodeStatusByClusterAndHost(ctx context.Context, clusterID uint, hostID uint, status string) error
+}
+
+// NodeStarter is the interface for starting cluster nodes
+// NodeStarter 是启动集群节点的接口
+type NodeStarter interface {
+	// StartNodeByClusterAndHost starts a node by cluster ID and host ID
+	// StartNodeByClusterAndHost 根据集群 ID 和主机 ID 启动节点
+	StartNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (bool, string, error)
 }
 
 // HostInfo contains host information for precheck
@@ -181,6 +221,18 @@ type Service struct {
 	// hostProvider 用于获取主机信息
 	hostProvider HostProvider
 
+	// pluginTransferer is used to transfer plugins to agents
+	// pluginTransferer 用于向 Agent 传输插件
+	pluginTransferer PluginTransferer
+
+	// nodeStatusUpdater is used to update cluster node status
+	// nodeStatusUpdater 用于更新集群节点状态
+	nodeStatusUpdater NodeStatusUpdater
+
+	// nodeStarter is used to start cluster nodes
+	// nodeStarter 用于启动集群节点
+	nodeStarter NodeStarter
+
 	// heartbeatTimeout is the timeout for agent heartbeat
 	// heartbeatTimeout 是 Agent 心跳超时时间
 	heartbeatTimeout time.Duration
@@ -232,6 +284,24 @@ func (s *Service) SetHostProvider(provider HostProvider) {
 // SetAgentManager 设置用于向 Agent 发送命令的 Agent 管理器。
 func (s *Service) SetAgentManager(manager AgentManager) {
 	s.agentManager = manager
+}
+
+// SetPluginTransferer sets the plugin transferer for transferring plugins to agents.
+// SetPluginTransferer 设置用于向 Agent 传输插件的插件传输器。
+func (s *Service) SetPluginTransferer(transferer PluginTransferer) {
+	s.pluginTransferer = transferer
+}
+
+// SetNodeStatusUpdater sets the node status updater for updating cluster node status.
+// SetNodeStatusUpdater 设置用于更新集群节点状态的节点状态更新器。
+func (s *Service) SetNodeStatusUpdater(updater NodeStatusUpdater) {
+	s.nodeStatusUpdater = updater
+}
+
+// SetNodeStarter sets the node starter for starting cluster nodes.
+// SetNodeStarter 设置用于启动集群节点的节点启动器。
+func (s *Service) SetNodeStarter(starter NodeStarter) {
+	s.nodeStarter = starter
 }
 
 // ==================== Version Management 版本管理 ====================
@@ -1385,6 +1455,49 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 		}
 	}
 
+	// Transfer selected plugins to Agent before installation
+	// 在安装之前将选中的插件传输到 Agent
+	if req.Connector != nil && len(req.Connector.SelectedPlugins) > 0 && s.pluginTransferer != nil {
+		s.installMu.Lock()
+		status.Message = "Transferring plugins to Agent... / 正在传输插件到 Agent..."
+		s.installMu.Unlock()
+
+		// Use install dir from request, default to /opt/seatunnel-{version}
+		// 使用请求中的安装目录，默认为 /opt/seatunnel-{version}
+		installDir := req.InstallDir
+		if installDir == "" {
+			installDir = fmt.Sprintf("/opt/seatunnel-%s", req.Version)
+		}
+		for i, pluginName := range req.Connector.SelectedPlugins {
+			logger.InfoF(ctx, "[Installer] 传输插件 / Transferring plugin: %s (%d/%d)", pluginName, i+1, len(req.Connector.SelectedPlugins))
+
+			s.installMu.Lock()
+			status.Message = fmt.Sprintf("Transferring plugin %s (%d/%d)... / 正在传输插件 %s (%d/%d)...",
+				pluginName, i+1, len(req.Connector.SelectedPlugins),
+				pluginName, i+1, len(req.Connector.SelectedPlugins))
+			s.installMu.Unlock()
+
+			// Check if plugin is downloaded, if not download it first
+			// 检查插件是否已下载，如果没有则先下载
+			if !s.pluginTransferer.IsPluginDownloaded(pluginName, req.Version) {
+				logger.InfoF(ctx, "[Installer] 插件未下载，开始下载 / Plugin not downloaded, starting download: %s", pluginName)
+				if err := s.pluginTransferer.DownloadPluginSync(ctx, pluginName, req.Version); err != nil {
+					logger.WarnF(ctx, "[Installer] 下载插件失败，跳过 / Failed to download plugin, skipping: %s, error=%v", pluginName, err)
+					continue
+				}
+			}
+
+			// Transfer plugin to Agent
+			// 传输插件到 Agent
+			if err := s.pluginTransferer.TransferPluginToAgent(ctx, agentID, pluginName, req.Version, installDir); err != nil {
+				logger.WarnF(ctx, "[Installer] 传输插件失败，跳过 / Failed to transfer plugin, skipping: %s, error=%v", pluginName, err)
+				continue
+			}
+
+			logger.InfoF(ctx, "[Installer] 插件传输成功 / Plugin transferred successfully: %s", pluginName)
+		}
+	}
+
 	// Build installation parameters for Agent
 	// 构建 Agent 的安装参数
 	params := buildInstallParams(req)
@@ -1407,14 +1520,14 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 
 	// Poll for command status updates
 	// 轮询命令状态更新
-	s.pollInstallationStatus(ctx, commandID, status)
+	s.pollInstallationStatus(ctx, commandID, status, agentID, req)
 }
 
 // runInstallationSimulated runs a simulated installation (for testing or when Agent is not available).
 // runInstallationSimulated 运行模拟安装（用于测试或 Agent 不可用时）。
 // pollInstallationStatus polls the Agent for installation status updates.
 // pollInstallationStatus 轮询 Agent 获取安装状态更新。
-func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, status *InstallationStatus) {
+func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, status *InstallationStatus, agentID string, req *InstallationRequest) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -1458,7 +1571,7 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 				now := time.Now()
 				status.Status = StepStatusSuccess
 				status.Progress = 100
-				status.Message = "Installation completed successfully / 安装成功完成"
+				status.Message = "Installation completed, starting cluster... / 安装完成，正在启动集群..."
 				status.EndTime = &now
 				// Mark all steps as complete
 				// 将所有步骤标记为完成
@@ -1469,6 +1582,10 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 				}
 				s.installMu.Unlock()
 				logger.InfoF(ctx, "[Installer] 安装成功 / Installation succeeded: command=%s", commandID)
+
+				// Start SeaTunnel cluster after installation
+				// 安装完成后启动 SeaTunnel 集群
+				s.startClusterAfterInstall(ctx, agentID, req, status)
 				return
 
 			case "failed":
@@ -1496,6 +1613,96 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 			s.installMu.Unlock()
 		}
 	}
+}
+
+// startClusterAfterInstall starts the SeaTunnel cluster after installation completes.
+// startClusterAfterInstall 在安装完成后启动 SeaTunnel 集群。
+func (s *Service) startClusterAfterInstall(ctx context.Context, agentID string, req *InstallationRequest, status *InstallationStatus) {
+	// Build node info for logging / 构建节点信息用于日志
+	nodeRole := string(req.NodeRole)
+	if nodeRole == "" {
+		nodeRole = "unknown"
+	}
+
+	logger.InfoF(ctx, "[Installer] 开始启动节点 / Starting node: cluster=%s, host=%s, role=%s, agent=%s",
+		req.ClusterID, req.HostID, nodeRole, agentID)
+
+	// Update status
+	// 更新状态
+	s.installMu.Lock()
+	status.Message = fmt.Sprintf("Starting SeaTunnel node (%s)... / 正在启动 SeaTunnel 节点 (%s)...", nodeRole, nodeRole)
+	s.installMu.Unlock()
+
+	// Parse cluster ID and host ID
+	// 解析集群 ID 和主机 ID
+	clusterID, clusterErr := parseClusterID(req.ClusterID)
+	hostID, hostErr := parseHostID(req.HostID)
+	if clusterErr != nil || hostErr != nil {
+		logger.ErrorF(ctx, "[Installer] 解析 ID 失败 / Failed to parse IDs: cluster=%s, host=%s, role=%s, clusterErr=%v, hostErr=%v",
+			req.ClusterID, req.HostID, nodeRole, clusterErr, hostErr)
+		s.installMu.Lock()
+		status.Message = fmt.Sprintf("Installation completed but failed to start node (%s): invalid cluster or host ID / 安装完成但启动节点 (%s) 失败: 无效的集群或主机 ID", nodeRole, nodeRole)
+		s.installMu.Unlock()
+		return
+	}
+
+	// Use nodeStarter to start the node (reuses cluster service logic)
+	// 使用 nodeStarter 启动节点（复用集群服务逻辑）
+	if s.nodeStarter == nil {
+		logger.ErrorF(ctx, "[Installer] nodeStarter 未配置 / nodeStarter not configured: cluster=%d, host=%d, role=%s",
+			clusterID, hostID, nodeRole)
+		s.installMu.Lock()
+		status.Message = fmt.Sprintf("Installation completed but failed to start node (%s): nodeStarter not configured / 安装完成但启动节点 (%s) 失败: nodeStarter 未配置", nodeRole, nodeRole)
+		s.installMu.Unlock()
+		return
+	}
+
+	success, message, err := s.nodeStarter.StartNodeByClusterAndHost(ctx, clusterID, hostID)
+	if err != nil {
+		logger.ErrorF(ctx, "[Installer] 启动节点失败 / Failed to start node: cluster=%d, host=%d, role=%s, error=%v",
+			clusterID, hostID, nodeRole, err)
+		s.installMu.Lock()
+		status.Message = fmt.Sprintf("Installation completed but failed to start node (%s): %v / 安装完成但启动节点 (%s) 失败: %v", nodeRole, err, nodeRole, err)
+		s.installMu.Unlock()
+		return
+	}
+
+	if !success {
+		logger.WarnF(ctx, "[Installer] 启动节点返回失败 / Start node returned failure: cluster=%d, host=%d, role=%s, message=%s",
+			clusterID, hostID, nodeRole, message)
+		s.installMu.Lock()
+		status.Message = fmt.Sprintf("Installation completed but node (%s) start failed: %s / 安装完成但节点 (%s) 启动失败: %s", nodeRole, message, nodeRole, message)
+		s.installMu.Unlock()
+		return
+	}
+
+	logger.InfoF(ctx, "[Installer] 节点启动成功 / Node started successfully: cluster=%d, host=%d, role=%s",
+		clusterID, hostID, nodeRole)
+
+	// Note: Plugin recording is handled at cluster level, not per-node
+	// 注意：插件记录在集群级别处理，不是每个节点
+	// The first node installation will record plugins for the cluster
+	// 第一个节点安装时会为集群记录插件
+	// Check if plugins already recorded for this cluster to avoid duplicates
+	// 检查是否已为此集群记录插件，避免重复
+	if s.pluginTransferer != nil && req.Connector != nil && len(req.Connector.SelectedPlugins) > 0 {
+		for _, pluginName := range req.Connector.SelectedPlugins {
+			// RecordInstalledPlugin should handle duplicates internally (upsert or skip)
+			// RecordInstalledPlugin 应该在内部处理重复（更新或跳过）
+			if err := s.pluginTransferer.RecordInstalledPlugin(ctx, clusterID, pluginName, req.Version); err != nil {
+				// Only log warning, don't fail the installation
+				// 只记录警告，不要让安装失败
+				logger.DebugF(ctx, "[Installer] 记录插件时出现问题（可能已存在）/ Issue recording plugin (may already exist): cluster=%d, plugin=%s, error=%v",
+					clusterID, pluginName, err)
+			}
+		}
+	}
+
+	// Final status update
+	// 最终状态更新
+	s.installMu.Lock()
+	status.Message = fmt.Sprintf("Installation and node (%s) startup completed / 安装和节点 (%s) 启动完成", nodeRole, nodeRole)
+	s.installMu.Unlock()
 }
 
 // parseStepFromMessage extracts the step name from message format: [step] message
@@ -1559,8 +1766,16 @@ func updateStepStatus(status *InstallationStatus, currentStep string, progress i
 // buildInstallParams builds installation parameters for Agent command.
 // buildInstallParams 构建 Agent 命令的安装参数。
 func buildInstallParams(req *InstallationRequest) map[string]string {
+	// Use install_dir from request, default to /opt/seatunnel-{version}
+	// 使用请求中的 install_dir，默认为 /opt/seatunnel-{version}
+	installDir := req.InstallDir
+	if installDir == "" {
+		installDir = fmt.Sprintf("/opt/seatunnel-%s", req.Version)
+	}
+
 	params := map[string]string{
 		"version":         req.Version,
+		"install_dir":     installDir,
 		"host_id":         req.HostID,
 		"cluster_id":      req.ClusterID,
 		"install_mode":    string(req.InstallMode),
@@ -1576,11 +1791,29 @@ func buildInstallParams(req *InstallationRequest) map[string]string {
 		params["package_path"] = req.PackagePath
 	}
 
+	// Add cluster configuration / 添加集群配置
+	if len(req.MasterAddresses) > 0 {
+		params["master_addresses"] = strings.Join(req.MasterAddresses, ",")
+	}
+	if len(req.WorkerAddresses) > 0 {
+		params["worker_addresses"] = strings.Join(req.WorkerAddresses, ",")
+	}
+	if req.ClusterPort > 0 {
+		params["cluster_port"] = fmt.Sprintf("%d", req.ClusterPort)
+	}
+	if req.HTTPPort > 0 {
+		params["http_port"] = fmt.Sprintf("%d", req.HTTPPort)
+	}
+
 	// Add JVM config / 添加 JVM 配置
 	if req.JVM != nil {
+		logger.InfoF(context.Background(), "[Installer] JVM config received: hybrid=%d, master=%d, worker=%d",
+			req.JVM.HybridHeapSize, req.JVM.MasterHeapSize, req.JVM.WorkerHeapSize)
 		params["jvm_hybrid_heap"] = fmt.Sprintf("%d", req.JVM.HybridHeapSize)
 		params["jvm_master_heap"] = fmt.Sprintf("%d", req.JVM.MasterHeapSize)
 		params["jvm_worker_heap"] = fmt.Sprintf("%d", req.JVM.WorkerHeapSize)
+	} else {
+		logger.InfoF(context.Background(), "[Installer] JVM config is nil, using defaults")
 	}
 
 	// Add checkpoint config / 添加检查点配置
@@ -1622,6 +1855,20 @@ func parseHostID(hostIDStr string) (uint, error) {
 		return 0, fmt.Errorf("invalid host ID format: %s / 无效的主机 ID 格式: %s", hostIDStr, hostIDStr)
 	}
 	return hostID, nil
+}
+
+// parseClusterID parses cluster ID from string to uint.
+// parseClusterID 将集群 ID 从字符串解析为 uint。
+func parseClusterID(clusterIDStr string) (uint, error) {
+	if clusterIDStr == "" {
+		return 0, fmt.Errorf("cluster ID is empty / 集群 ID 为空")
+	}
+	var clusterID uint
+	_, err := fmt.Sscanf(clusterIDStr, "%d", &clusterID)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cluster ID format: %s / 无效的集群 ID 格式: %s", clusterIDStr, clusterIDStr)
+	}
+	return clusterID, nil
 }
 
 // ==================== Helper Functions 辅助函数 ====================

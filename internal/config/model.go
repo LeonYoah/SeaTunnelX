@@ -28,6 +28,7 @@ type configModel struct {
 	Storage        StorageConfig        `mapstructure:"storage"`
 	GRPC           GRPCConfig           `mapstructure:"grpc"`
 	Log            logConfig            `mapstructure:"log"`
+	Telemetry      TelemetryConfig      `mapstructure:"telemetry"`
 	Schedule       scheduleConfig       `mapstructure:"schedule"`
 	Worker         workerConfig         `mapstructure:"worker"`
 	ClickHouse     clickHouseConfig     `mapstructure:"clickhouse"`
@@ -228,6 +229,18 @@ type logConfig struct {
 	MaxAge     int    `mapstructure:"max_age"`
 	MaxBackups int    `mapstructure:"max_backups"`
 	Compress   bool   `mapstructure:"compress"`
+}
+
+// TelemetryConfig 遥测配置
+// TelemetryConfig holds telemetry/tracing configuration
+type TelemetryConfig struct {
+	// Enabled indicates whether OpenTelemetry tracing is enabled
+	// Enabled 表示是否启用 OpenTelemetry 追踪
+	Enabled bool `mapstructure:"enabled"`
+
+	// Endpoint is the OTLP collector endpoint (default: localhost:4317)
+	// Endpoint 是 OTLP 收集器端点（默认：localhost:4317）
+	Endpoint string `mapstructure:"endpoint"`
 }
 
 // scheduleConfig 定时任务配置

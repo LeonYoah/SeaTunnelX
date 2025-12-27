@@ -45,6 +45,8 @@ export enum NodeRole {
   MASTER = 'master',
   /** Worker node / 工作节点 */
   WORKER = 'worker',
+  /** Master and Worker node (hybrid mode) / 主节点和工作节点（混合模式） */
+  MASTER_WORKER = 'master/worker',
 }
 
 /**

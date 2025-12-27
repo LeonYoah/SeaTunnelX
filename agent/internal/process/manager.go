@@ -603,6 +603,14 @@ func (m *ProcessManager) StartProcess(ctx context.Context, name string, params *
 // findSeaTunnelProcess finds the SeaTunnel Java process by install dir and role
 // findSeaTunnelProcess 通过安装目录和角色查找 SeaTunnel Java 进程
 func findSeaTunnelProcess(installDir string, role string) (int, error) {
+	// SeaTunnel main class name / SeaTunnel 主类名
+	const appMain = "org.apache.seatunnel.core.starter.seatunnel.SeaTunnelServer"
+
+	// Determine if this is hybrid mode / 判断是否为混合模式
+	// Hybrid mode: empty, "hybrid", or "master/worker"
+	// 混合模式：空、"hybrid" 或 "master/worker"
+	isHybridMode := role == "" || role == "hybrid" || role == "master/worker"
+
 	// Use pgrep or ps to find the process
 	// 使用 pgrep 或 ps 查找进程
 	var cmd *exec.Cmd
@@ -610,19 +618,37 @@ func findSeaTunnelProcess(installDir string, role string) (int, error) {
 		// On Windows, use wmic / 在 Windows 上使用 wmic
 		cmd = exec.Command("wmic", "process", "where", fmt.Sprintf("CommandLine like '%%%s%%' and CommandLine like '%%SeaTunnel%%'", installDir), "get", "ProcessId")
 	} else {
-		// On Linux, use pgrep / 在 Linux 上使用 pgrep
-		// Look for java process with SeaTunnel in command line
-		// 查找命令行中包含 SeaTunnel 的 java 进程
-		pattern := installDir
-		if role != "" && role != "hybrid" {
-			pattern = fmt.Sprintf("seatunnel.*%s", role)
+		// On Linux, use ps + grep to find the process more reliably
+		// 在 Linux 上使用 ps + grep 更可靠地查找进程
+		var grepCmd string
+		if isHybridMode {
+			// For hybrid mode, find processes without -r flag or with SEATUNNEL_HOME matching installDir
+			// 混合模式，查找没有 -r 参数的进程或 SEATUNNEL_HOME 匹配 installDir 的进程
+			grepCmd = fmt.Sprintf("ps -ef | grep '%s' | grep -v '\\-r master' | grep -v '\\-r worker' | grep -v grep | awk '{print $2}'", appMain)
+		} else {
+			// For separated mode, find processes with specific role
+			// 分离模式，查找特定角色的进程
+			grepCmd = fmt.Sprintf("ps -ef | grep '%s' | grep '\\-r %s' | grep -v grep | awk '{print $2}'", appMain, role)
 		}
-		cmd = exec.Command("pgrep", "-f", pattern)
+		cmd = exec.Command("/bin/bash", "-c", grepCmd)
 	}
 
 	output, err := cmd.Output()
 	if err != nil {
-		return 0, err
+		// If ps+grep fails, try pgrep as fallback / 如果 ps+grep 失败，尝试 pgrep 作为备用
+		if runtime.GOOS != "windows" {
+			pattern := installDir
+			if !isHybridMode {
+				pattern = fmt.Sprintf("seatunnel.*%s", role)
+			}
+			fallbackCmd := exec.Command("pgrep", "-f", pattern)
+			output, err = fallbackCmd.Output()
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			return 0, err
+		}
 	}
 
 	// Parse the first PID / 解析第一个 PID
@@ -688,8 +714,13 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 		role = params.Role
 	}
 
+	// Determine if this is hybrid mode / 判断是否为混合模式
+	// Hybrid mode: empty, "hybrid", or "master/worker"
+	// 混合模式：空、"hybrid" 或 "master/worker"
+	isHybridMode := role == "" || role == "hybrid" || role == "master/worker"
+
 	var grepCmd string
-	if role == "" || role == "hybrid" {
+	if isHybridMode {
 		// For hybrid mode, find processes without -r flag / 混合模式，查找没有 -r 参数的进程
 		grepCmd = fmt.Sprintf("ps -ef | grep '%s' | grep -v '\\-r master' | grep -v '\\-r worker' | grep -v grep | awk '{print $2}'", appMain)
 	} else {
@@ -941,9 +972,11 @@ func buildStartCommand(ctx context.Context, params *StartParams) *exec.Cmd {
 
 	// Build arguments based on role / 根据角色构建参数
 	// -d: daemon mode / 守护进程模式
-	// -r: role (master/worker) / 角色
+	// -r: role (master/worker for separated mode) / 角色（分离模式下的 master/worker）
+	// For hybrid mode (empty, "hybrid", or "master/worker"), don't pass -r flag
+	// 对于混合模式（空、"hybrid" 或 "master/worker"），不传 -r 参数
 	args := []string{startScript, "-d"}
-	if params.Role != "" && params.Role != "hybrid" {
+	if params.Role != "" && params.Role != "hybrid" && params.Role != "master/worker" {
 		args = append(args, "-r", params.Role)
 	}
 

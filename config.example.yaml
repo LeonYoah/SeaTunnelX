@@ -93,7 +93,7 @@ database:
   max_idle_conn: 10
   max_open_conn: 100
   conn_max_lifetime: 3600
-  log_level: "info"  # error, warn, info, debug, silent
+  log_level: "warn"  # error, warn, info, debug, silent
 
 # ClickHouse 配置
 clickhouse:
@@ -181,6 +181,16 @@ log:
   max_age: 30
   max_backups: 10
   compress: true
+
+# 遥测配置（OpenTelemetry 追踪）
+# Telemetry configuration (OpenTelemetry tracing)
+telemetry:
+  # 是否启用 OpenTelemetry 追踪（默认禁用）
+  # Whether to enable OpenTelemetry tracing (disabled by default)
+  enabled: false
+  # OTLP 收集器端点（默认 localhost:4317）
+  # OTLP collector endpoint (default: localhost:4317)
+  endpoint: "localhost:4317"
 
 # 定时任务配置
 schedule:

@@ -24,10 +24,10 @@ export type InstallMode = 'online' | 'offline';
 export type DeploymentMode = 'hybrid' | 'separated';
 
 /**
- * Node role in separated deployment mode
- * 分离部署模式下的节点角色
+ * Node role in deployment
+ * 部署中的节点角色
  */
-export type NodeRole = 'master' | 'worker';
+export type NodeRole = 'master' | 'worker' | 'master/worker';
 
 /**
  * Installation step status
@@ -92,12 +92,15 @@ export interface AvailableVersions {
 // ==================== Configuration Types 配置类型 ====================
 
 /**
- * JVM memory configuration
- * JVM 内存配置
+ * JVM memory configuration (all sizes in GB)
+ * JVM 内存配置（所有大小单位为 GB）
  */
 export interface JVMConfig {
+  /** Heap size for hybrid mode in GB / 混合模式堆大小（GB） */
   hybrid_heap_size: number;
+  /** Heap size for master nodes in GB / Master 节点堆大小（GB） */
   master_heap_size: number;
+  /** Heap size for worker nodes in GB / Worker 节点堆大小（GB） */
   worker_heap_size: number;
 }
 
@@ -152,11 +155,16 @@ export interface InstallationRequest {
   host_id?: string;
   cluster_id?: string;
   version: string;
+  install_dir?: string; // Installation directory / 安装目录
   install_mode: InstallMode;
   mirror?: MirrorSource;
   package_path?: string;
   deployment_mode: DeploymentMode;
   node_role: NodeRole;
+  master_addresses?: string[]; // Master node addresses for cluster configuration / 集群配置的 master 节点地址
+  worker_addresses?: string[]; // Worker node addresses for separated mode / 分离模式的 worker 节点地址
+  cluster_port?: number; // Cluster communication port / 集群通信端口
+  http_port?: number; // HTTP API port / HTTP API 端口
   jvm?: JVMConfig;
   checkpoint?: CheckpointConfig;
   connector?: ConnectorConfig;

@@ -626,6 +626,35 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 		NodeRole:       installer.NodeRole(getParamString(cmd.Parameters, "node_role", "master")),
 		ClusterPort:    getParamInt(cmd.Parameters, "cluster_port", 5801),
 		HTTPPort:       getParamInt(cmd.Parameters, "http_port", 8080),
+		ClusterID:      getParamString(cmd.Parameters, "cluster_id", ""),
+	}
+
+	// Parse JVM config / 解析 JVM 配置
+	jvmHybridHeap := getParamInt(cmd.Parameters, "jvm_hybrid_heap", 0)
+	jvmMasterHeap := getParamInt(cmd.Parameters, "jvm_master_heap", 0)
+	jvmWorkerHeap := getParamInt(cmd.Parameters, "jvm_worker_heap", 0)
+	fmt.Printf("[Install] JVM params received: hybrid=%d, master=%d, worker=%d\n", jvmHybridHeap, jvmMasterHeap, jvmWorkerHeap)
+	if jvmHybridHeap > 0 || jvmMasterHeap > 0 || jvmWorkerHeap > 0 {
+		params.JVM = &installer.JVMConfig{
+			HybridHeapSize: jvmHybridHeap,
+			MasterHeapSize: jvmMasterHeap,
+			WorkerHeapSize: jvmWorkerHeap,
+		}
+		fmt.Printf("[Install] JVM config created: %+v\n", params.JVM)
+	} else {
+		fmt.Println("[Install] JVM config not created (all values are 0)")
+	}
+
+	// Parse master addresses / 解析 master 地址列表
+	masterAddressesStr := getParamString(cmd.Parameters, "master_addresses", "")
+	if masterAddressesStr != "" {
+		params.MasterAddresses = strings.Split(masterAddressesStr, ",")
+	}
+
+	// Parse worker addresses (for separated mode) / 解析 worker 地址列表（分离模式）
+	workerAddressesStr := getParamString(cmd.Parameters, "worker_addresses", "")
+	if workerAddressesStr != "" {
+		params.WorkerAddresses = strings.Split(workerAddressesStr, ",")
 	}
 
 	// Parse install mode / 解析安装模式
@@ -655,7 +684,9 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 		commandID: cmd.CommandId,
 	}
 
-	result, err := a.installerManager.Install(ctx, params, installReporter)
+	// Use InstallStepByStep for complete installation including JVM configuration
+	// 使用 InstallStepByStep 进行完整安装，包括 JVM 配置
+	result, err := a.installerManager.InstallStepByStep(ctx, params, installReporter)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}
@@ -721,7 +752,9 @@ func (a *Agent) handleUpgradeCommand(ctx context.Context, cmd *pb.CommandRequest
 		commandID: cmd.CommandId,
 	}
 
-	_, err := a.installerManager.Install(ctx, params, installReporter)
+	// Use InstallStepByStep for complete installation including JVM configuration
+	// 使用 InstallStepByStep 进行完整安装，包括 JVM 配置
+	_, err := a.installerManager.InstallStepByStep(ctx, params, installReporter)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Install failed: %v / 安装失败：%v", err, err)), err
 	}
@@ -736,8 +769,10 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
 
 	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	// For hybrid mode (empty, "hybrid", or "master/worker"), use "seatunnel"
+	// 对于混合模式（空、"hybrid" 或 "master/worker"），使用 "seatunnel"
 	processName := "seatunnel"
-	if role != "" && role != "hybrid" {
+	if role != "" && role != "hybrid" && role != "master/worker" {
 		processName = "seatunnel-" + role
 	}
 
@@ -765,8 +800,10 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 	graceful := getParamBool(cmd.Parameters, "graceful", true)
 
 	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	// For hybrid mode (empty, "hybrid", or "master/worker"), use "seatunnel"
+	// 对于混合模式（空、"hybrid" 或 "master/worker"），使用 "seatunnel"
 	processName := "seatunnel"
-	if role != "" && role != "hybrid" {
+	if role != "" && role != "hybrid" && role != "master/worker" {
 		processName = "seatunnel-" + role
 	}
 
@@ -793,8 +830,10 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
 
 	// Use role as process name for tracking / 使用角色作为进程名进行跟踪
+	// For hybrid mode (empty, "hybrid", or "master/worker"), use "seatunnel"
+	// 对于混合模式（空、"hybrid" 或 "master/worker"），使用 "seatunnel"
 	processName := "seatunnel"
-	if role != "" && role != "hybrid" {
+	if role != "" && role != "hybrid" && role != "master/worker" {
 		processName = "seatunnel-" + role
 	}
 

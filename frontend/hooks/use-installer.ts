@@ -389,9 +389,9 @@ const defaultConfig: InstallWizardConfig = {
   nodeRole: 'master',
   clusterId: '',
   jvm: {
-    hybrid_heap_size: 2048,
-    master_heap_size: 1024,
-    worker_heap_size: 2048,
+    hybrid_heap_size: 3, // GB
+    master_heap_size: 2, // GB
+    worker_heap_size: 2, // GB
   },
   checkpoint: {
     storage_type: 'LOCAL_FILE',

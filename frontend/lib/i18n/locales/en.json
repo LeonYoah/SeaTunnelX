@@ -464,6 +464,7 @@
     "roles": {
       "master": "Master",
       "worker": "Worker",
+      "masterWorker": "Master/Worker",
       "undefined": "Unknown"
     },
     "nodeStatuses": {
@@ -562,6 +563,19 @@
       "localPluginsCount": "{count} local plugins available for version {version}",
       "noLocalPluginsForVersion": "No local plugins for this version",
       "noLocalPluginsForVersionDesc": "No local plugins downloaded for version {version}. Please go to Plugin Marketplace to download the required plugins first.",
+      "packageReady": "Package is ready",
+      "packageNotFound": "Package not found",
+      "packageNotFoundDesc": "Package for version {version} is not available locally. It will be downloaded from the mirror source during deployment.",
+      "mirrorHint": "If the package is not available locally, it will be downloaded from the selected mirror source during deployment.",
+      "manualUpload": "Manual upload",
+      "manualUploadDesc": "If you cannot access the network, you can manually upload the package.",
+      "portConfig": "Port Configuration",
+      "clusterPort": "Cluster Port",
+      "clusterPortDesc": "Hazelcast cluster communication port, default 5801",
+      "httpPort": "HTTP API Port",
+      "httpPortDesc": "SeaTunnel REST API port, default 8080",
+      "workerPort": "Worker Port",
+      "workerPortDesc": "Worker node port for separated mode, default 5802",
       "precheckTitle": "Environment Precheck",
       "precheckDesc": "Check if all selected hosts meet the installation requirements",
       "readyToPrecheck": "Ready to Precheck",
@@ -833,6 +847,10 @@
   },
   "installer": {
     "packageManagement": "Package Management",
+    "packageStatus": "Package Status",
+    "installDir": "Installation Directory",
+    "installDirLabel": "Install Path",
+    "installDirDesc": "SeaTunnel will be installed to this directory, default includes version number for multi-version coexistence",
     "mirrors": {
       "aliyun": "Aliyun Mirror",
       "huaweicloud": "Huawei Cloud Mirror",

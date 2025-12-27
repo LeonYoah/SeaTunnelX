@@ -26,6 +26,17 @@ import {toast} from 'sonner';
 import services from '@/lib/services';
 import {NodeInfo, NodeRole, DeploymentMode, DefaultPorts, PrecheckResult, PrecheckCheckItem} from '@/lib/services/cluster/types';
 
+/**
+ * Get role translation key
+ * 获取角色翻译键
+ */
+function getRoleTranslationKey(role: string): string {
+  if (role === 'master/worker') {
+    return 'masterWorker';
+  }
+  return role;
+}
+
 interface EditNodeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -189,7 +200,7 @@ export function EditNodeDialog({
             </div>
             <div>
               <Label className='text-xs text-muted-foreground'>{t('cluster.nodeRole')}</Label>
-              <p className='text-sm font-medium'>{t(`cluster.roles.${node.role}`)}</p>
+              <p className='text-sm font-medium'>{t(`cluster.roles.${getRoleTranslationKey(node.role)}`)}</p>
             </div>
             <div>
               <Label className='text-xs text-muted-foreground'>{t('cluster.nodeStatus')}</Label>

@@ -245,6 +245,19 @@ func (r *Repository) GetNodeByID(ctx context.Context, id uint) (*ClusterNode, er
 	return &node, nil
 }
 
+// GetNodeByHostID retrieves the first cluster node for a specific host.
+// GetNodeByHostID 获取特定主机的第一个集群节点。
+func (r *Repository) GetNodeByHostID(ctx context.Context, hostID uint) (*ClusterNode, error) {
+	var node ClusterNode
+	if err := r.db.WithContext(ctx).Where("host_id = ?", hostID).First(&node).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &node, nil
+}
+
 // GetNodesByClusterID retrieves all nodes for a cluster.
 func (r *Repository) GetNodesByClusterID(ctx context.Context, clusterID uint) ([]*ClusterNode, error) {
 	var nodes []*ClusterNode
@@ -252,6 +265,19 @@ func (r *Repository) GetNodesByClusterID(ctx context.Context, clusterID uint) ([
 		return nil, err
 	}
 	return nodes, nil
+}
+
+// GetNodeByClusterAndHost retrieves a cluster node by cluster ID and host ID.
+// GetNodeByClusterAndHost 根据集群 ID 和主机 ID 获取集群节点。
+func (r *Repository) GetNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (*ClusterNode, error) {
+	var node ClusterNode
+	if err := r.db.WithContext(ctx).Where("cluster_id = ? AND host_id = ?", clusterID, hostID).First(&node).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &node, nil
 }
 
 // GetNodesByHostID retrieves all cluster nodes for a specific host.

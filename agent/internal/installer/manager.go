@@ -38,8 +38,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Common errors for installation management
@@ -178,6 +181,10 @@ const (
 	// NodeRoleWorker indicates a worker node
 	// NodeRoleWorker 表示 worker 节点
 	NodeRoleWorker NodeRole = "worker"
+
+	// NodeRoleMasterWorker indicates a hybrid node (both master and worker)
+	// NodeRoleMasterWorker 表示混合节点（同时是 master 和 worker）
+	NodeRoleMasterWorker NodeRole = "master/worker"
 )
 
 // InstallStep represents a step in the installation process
@@ -220,9 +227,6 @@ const (
 	// InstallStepComplete is the completion step
 	// InstallStepComplete 是完成步骤
 	InstallStepComplete InstallStep = "complete"
-
-	// Legacy step for backward compatibility / 向后兼容的旧步骤
-	InstallStepConfigure InstallStep = "configure"
 )
 
 // CheckpointStorageType represents the checkpoint storage type
@@ -968,7 +972,7 @@ func (p *InstallParams) Validate() error {
 		return ErrInvalidDeploymentMode
 	}
 
-	if p.NodeRole != NodeRoleMaster && p.NodeRole != NodeRoleWorker {
+	if p.NodeRole != NodeRoleMaster && p.NodeRole != NodeRoleWorker && p.NodeRole != NodeRoleMasterWorker {
 		return ErrInvalidNodeRole
 	}
 
@@ -1113,111 +1117,6 @@ func NewInstallerManagerWithClient(client *http.Client) *InstallerManager {
 	}
 }
 
-// Install performs the SeaTunnel installation
-// Install 执行 SeaTunnel 安装
-func (m *InstallerManager) Install(ctx context.Context, params *InstallParams, reporter ProgressReporter) (*InstallResult, error) {
-	if reporter == nil {
-		reporter = &NoOpProgressReporter{}
-	}
-
-	// Validate parameters / 验证参数
-	if err := params.Validate(); err != nil {
-		return &InstallResult{
-			Success:    false,
-			Message:    fmt.Sprintf("Invalid parameters: %v / 无效参数：%v", err, err),
-			FailedStep: InstallStepDownload,
-			Error:      err.Error(),
-		}, err
-	}
-
-	var packagePath string
-	var err error
-
-	// Step 1: Get package (download or use local)
-	// 步骤 1：获取安装包（下载或使用本地）
-	if params.Mode == InstallModeOnline {
-		reporter.Report(InstallStepDownload, 0, "Starting download... / 开始下载...")
-		downloadURL := params.GetDownloadURLWithMirror()
-		packagePath, err = m.downloadPackage(ctx, downloadURL, reporter)
-		if err != nil {
-			return &InstallResult{
-				Success:    false,
-				Message:    fmt.Sprintf("Download failed: %v / 下载失败：%v", err, err),
-				FailedStep: InstallStepDownload,
-				Error:      err.Error(),
-			}, err
-		}
-		reporter.Report(InstallStepDownload, 100, "Download completed / 下载完成")
-	} else {
-		// Offline mode - check if package exists
-		// 离线模式 - 检查安装包是否存在
-		packagePath = params.PackagePath
-		if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-			msg := fmt.Sprintf("Package not found at %s. Please download the SeaTunnel package and place it at the specified path. / 安装包未找到：%s。请下载 SeaTunnel 安装包并放置在指定路径。", packagePath, packagePath)
-			return &InstallResult{
-				Success:    false,
-				Message:    msg,
-				FailedStep: InstallStepDownload,
-				Error:      ErrPackageNotFound.Error(),
-			}, ErrPackageNotFound
-		}
-	}
-
-	// Step 2: Verify checksum (if provided)
-	// 步骤 2：验证校验和（如果提供）
-	if params.ExpectedChecksum != "" {
-		reporter.Report(InstallStepVerify, 0, "Verifying checksum... / 验证校验和...")
-		if err := m.VerifyChecksum(packagePath, params.ExpectedChecksum); err != nil {
-			return &InstallResult{
-				Success:    false,
-				Message:    fmt.Sprintf("Checksum verification failed: %v / 校验和验证失败：%v", err, err),
-				FailedStep: InstallStepVerify,
-				Error:      err.Error(),
-			}, err
-		}
-		reporter.Report(InstallStepVerify, 100, "Checksum verified / 校验和验证通过")
-	}
-
-	// Step 3: Extract package
-	// 步骤 3：解压安装包
-	reporter.Report(InstallStepExtract, 0, "Extracting package... / 解压安装包...")
-	if err := m.extractPackage(ctx, packagePath, params.InstallDir, reporter); err != nil {
-		return &InstallResult{
-			Success:    false,
-			Message:    fmt.Sprintf("Extraction failed: %v / 解压失败：%v", err, err),
-			FailedStep: InstallStepExtract,
-			Error:      err.Error(),
-		}, err
-	}
-	reporter.Report(InstallStepExtract, 100, "Extraction completed / 解压完成")
-
-	// Step 4: Generate configuration
-	// 步骤 4：生成配置
-	reporter.Report(InstallStepConfigure, 0, "Generating configuration... / 生成配置...")
-	configPath, err := m.GenerateConfig(params)
-	if err != nil {
-		return &InstallResult{
-			Success:    false,
-			Message:    fmt.Sprintf("Configuration generation failed: %v / 配置生成失败：%v", err, err),
-			FailedStep: InstallStepConfigure,
-			Error:      err.Error(),
-		}, err
-	}
-	reporter.Report(InstallStepConfigure, 100, "Configuration generated / 配置生成完成")
-
-	// Step 5: Complete
-	// 步骤 5：完成
-	reporter.Report(InstallStepComplete, 100, "Installation completed successfully / 安装成功完成")
-
-	return &InstallResult{
-		Success:    true,
-		Message:    "Installation completed successfully / 安装成功完成",
-		InstallDir: params.InstallDir,
-		Version:    params.Version,
-		ConfigPath: configPath,
-	}, nil
-}
-
 // InstallStepByStep performs installation step by step with frontend interaction support
 // InstallStepByStep 逐步执行安装，支持前端交互
 // This method allows the frontend to:
@@ -1226,6 +1125,7 @@ func (m *InstallerManager) Install(ctx context.Context, params *InstallParams, r
 // - Retry failed steps / 重试失败的步骤
 // - Skip optional steps / 跳过可选步骤
 func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *InstallParams, reporter ProgressReporter) (*InstallResult, error) {
+	fmt.Println("[InstallStepByStep] Starting installation...")
 	if reporter == nil {
 		reporter = &NoOpProgressReporter{}
 	}
@@ -1245,6 +1145,8 @@ func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *Instal
 			Error:      err.Error(),
 		}, err
 	}
+
+	fmt.Printf("[InstallStepByStep] JVM config: %+v\n", params.JVM)
 
 	// Execute each step / 执行每个步骤
 	// Note: Precheck should be done separately via Prechecker before calling this
@@ -1273,8 +1175,10 @@ func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *Instal
 		default:
 		}
 
+		fmt.Printf("[InstallStepByStep] Executing step: %s\n", s.step)
 		reporter.ReportStepStart(s.step)
 		if err := s.execute(); err != nil {
+			fmt.Printf("[InstallStepByStep] Step %s failed: %v\n", s.step, err)
 			reporter.ReportStepFailed(s.step, err)
 			result.Success = false
 			result.FailedStep = s.step
@@ -1282,6 +1186,7 @@ func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *Instal
 			result.Message = fmt.Sprintf("Step %s failed: %v / 步骤 %s 失败：%v", s.step, err, s.step, err)
 			return result, err
 		}
+		fmt.Printf("[InstallStepByStep] Step %s completed\n", s.step)
 		reporter.ReportStepComplete(s.step)
 	}
 
@@ -1531,52 +1436,136 @@ func (m *InstallerManager) executeStepConfigureCheckpoint(params *InstallParams,
 // executeStepConfigureJVM 配置 JVM 设置
 func (m *InstallerManager) executeStepConfigureJVM(params *InstallParams, reporter ProgressReporter) error {
 	if params.JVM == nil {
+		fmt.Println("[JVM] JVM config is nil, skipping configuration")
 		reporter.Report(InstallStepConfigureJVM, 100, "JVM configuration skipped (using defaults) / 跳过 JVM 配置（使用默认值）")
 		return nil
 	}
 
+	fmt.Printf("[JVM] Configuring JVM with: hybrid=%d, master=%d, worker=%d, mode=%s\n",
+		params.JVM.HybridHeapSize, params.JVM.MasterHeapSize, params.JVM.WorkerHeapSize, params.DeploymentMode)
 	reporter.Report(InstallStepConfigureJVM, 0, "Configuring JVM... / 配置 JVM...")
 	if err := m.configureJVM(params); err != nil {
+		fmt.Printf("[JVM] Configuration failed: %v\n", err)
 		return err
 	}
+	fmt.Println("[JVM] Configuration completed successfully")
 	reporter.Report(InstallStepConfigureJVM, 100, "JVM configured / JVM 配置完成")
 	return nil
 }
 
-// executeStepInstallPlugins installs connectors and plugins
-// executeStepInstallPlugins 安装连接器和插件
+// executeStepInstallPlugins verifies that selected plugins are installed
+// executeStepInstallPlugins 验证选中的插件是否已安装
 func (m *InstallerManager) executeStepInstallPlugins(ctx context.Context, params *InstallParams, reporter ProgressReporter) error {
 	if params.Connector == nil || !params.Connector.InstallConnectors {
 		reporter.Report(InstallStepInstallPlugins, 100, "Plugin installation skipped / 跳过插件安装")
 		return nil
 	}
 
-	reporter.Report(InstallStepInstallPlugins, 0, "Installing plugins... / 安装插件...")
-	// TODO: Implement plugin installation
-	// TODO: 实现插件安装
-	reporter.Report(InstallStepInstallPlugins, 100, "Plugins installed / 插件安装完成")
+	reporter.Report(InstallStepInstallPlugins, 0, "Verifying installed plugins... / 验证已安装的插件...")
+
+	// Get connectors directory / 获取连接器目录
+	connectorsDir := filepath.Join(params.InstallDir, "connectors")
+
+	// Check if connectors directory exists / 检查连接器目录是否存在
+	if _, err := os.Stat(connectorsDir); os.IsNotExist(err) {
+		// No connectors directory, but that's OK if no plugins were selected
+		// 没有连接器目录，但如果没有选择插件则没问题
+		if len(params.Connector.Connectors) == 0 {
+			reporter.Report(InstallStepInstallPlugins, 100, "No plugins to verify / 没有需要验证的插件")
+			return nil
+		}
+		reporter.Report(InstallStepInstallPlugins, 100, "Connectors directory not found, plugins may not be installed / 连接器目录不存在，插件可能未安装")
+		return nil
+	}
+
+	// List installed plugins / 列出已安装的插件
+	entries, err := os.ReadDir(connectorsDir)
+	if err != nil {
+		reporter.Report(InstallStepInstallPlugins, 100, fmt.Sprintf("Warning: failed to read connectors directory: %v / 警告：读取连接器目录失败: %v", err, err))
+		return nil
+	}
+
+	// Build a set of installed connector files / 构建已安装连接器文件的集合
+	installedFiles := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jar") {
+			installedFiles[entry.Name()] = true
+		}
+	}
+
+	// Verify selected plugins are installed / 验证选中的插件是否已安装
+	selectedPlugins := params.Connector.Connectors
+	if len(selectedPlugins) == 0 {
+		reporter.Report(InstallStepInstallPlugins, 100, fmt.Sprintf("Found %d connector files / 发现 %d 个连接器文件", len(installedFiles), len(installedFiles)))
+		return nil
+	}
+
+	// Check each selected plugin / 检查每个选中的插件
+	var installedCount int
+	var missingPlugins []string
+
+	for i, pluginName := range selectedPlugins {
+		progress := (i + 1) * 100 / len(selectedPlugins)
+		reporter.Report(InstallStepInstallPlugins, progress, fmt.Sprintf("Checking plugin %s... / 检查插件 %s...", pluginName, pluginName))
+
+		// Check if plugin file exists (try multiple naming patterns)
+		// 检查插件文件是否存在（尝试多种命名模式）
+		found := false
+		for fileName := range installedFiles {
+			// Match by plugin name in filename / 通过文件名中的插件名称匹配
+			if strings.Contains(fileName, pluginName) || strings.Contains(fileName, strings.ReplaceAll(pluginName, "-", "")) {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			installedCount++
+		} else {
+			missingPlugins = append(missingPlugins, pluginName)
+		}
+	}
+
+	// Report result / 报告结果
+	if len(missingPlugins) > 0 {
+		reporter.Report(InstallStepInstallPlugins, 100, fmt.Sprintf("Plugins verified: %d/%d installed, missing: %v / 插件验证: %d/%d 已安装, 缺失: %v",
+			installedCount, len(selectedPlugins), missingPlugins,
+			installedCount, len(selectedPlugins), missingPlugins))
+	} else {
+		reporter.Report(InstallStepInstallPlugins, 100, fmt.Sprintf("All %d plugins verified / 全部 %d 个插件验证通过", installedCount, installedCount))
+	}
+
 	return nil
 }
 
 // executeStepRegisterCluster registers the node to the cluster
 // executeStepRegisterCluster 将节点注册到集群
-// Note: Agent manages SeaTunnel process lifecycle, no systemd auto-start needed
-// 注意：Agent 管理 SeaTunnel 进程生命周期，不需要 systemd 开机自启动
+// Note: Agent manages SeaTunnel process lifecycle, Control Plane will send START command after installation
+// 注意：Agent 管理 SeaTunnel 进程生命周期，Control Plane 会在安装后发送 START 命令
 func (m *InstallerManager) executeStepRegisterCluster(params *InstallParams, reporter ProgressReporter) error {
 	if params.ClusterID == "" {
 		reporter.Report(InstallStepRegisterCluster, 100, "Cluster registration skipped (no cluster ID provided) / 跳过集群注册（未提供集群 ID）")
 		return nil
 	}
 
-	reporter.Report(InstallStepRegisterCluster, 0, "Registering to cluster... / 注册到集群...")
-	// TODO: Implement cluster registration via gRPC to Control Plane
-	// TODO: 通过 gRPC 向 Control Plane 实现集群注册
-	// This will be called after installation to notify Control Plane that:
-	// 安装完成后将调用此方法通知 Control Plane：
-	// 1. SeaTunnel is installed on this node / SeaTunnel 已安装在此节点
-	// 2. Node is ready to join the cluster / 节点已准备好加入集群
-	// 3. Agent will manage the SeaTunnel process / Agent 将管理 SeaTunnel 进程
-	reporter.Report(InstallStepRegisterCluster, 100, "Cluster registration completed / 集群注册完成")
+	reporter.Report(InstallStepRegisterCluster, 0, "Preparing for cluster registration... / 准备集群注册...")
+
+	// Verify installation directory exists / 验证安装目录存在
+	if _, err := os.Stat(params.InstallDir); os.IsNotExist(err) {
+		return fmt.Errorf("installation directory not found: %s / 安装目录不存在: %s", params.InstallDir, params.InstallDir)
+	}
+
+	// Verify start script exists / 验证启动脚本存在
+	startScript := filepath.Join(params.InstallDir, "bin", "seatunnel-cluster.sh")
+	if _, err := os.Stat(startScript); os.IsNotExist(err) {
+		reporter.Report(InstallStepRegisterCluster, 50, "Warning: start script not found, cluster may not start properly / 警告：启动脚本不存在，集群可能无法正常启动")
+	}
+
+	reporter.Report(InstallStepRegisterCluster, 80, "Installation verified, ready for cluster startup / 安装已验证，准备启动集群")
+
+	// Note: Actual cluster startup is handled by Control Plane sending START command
+	// 注意：实际的集群启动由 Control Plane 发送 START 命令处理
+	reporter.Report(InstallStepRegisterCluster, 100, "Cluster registration completed, waiting for startup command / 集群注册完成，等待启动命令")
 	return nil
 }
 
@@ -1701,28 +1690,37 @@ func replaceCheckpointPluginConfig(content, newConfig string) string {
 // configureJVM 配置 JVM 选项
 func (m *InstallerManager) configureJVM(params *InstallParams) error {
 	if params.JVM == nil {
+		fmt.Println("[configureJVM] JVM config is nil, skipping")
 		return nil
 	}
 
 	configDir := filepath.Join(params.InstallDir, "config")
+	fmt.Printf("[configureJVM] Config dir: %s, DeploymentMode: %s\n", configDir, params.DeploymentMode)
 
 	// Configure based on deployment mode / 根据部署模式配置
 	if params.DeploymentMode == DeploymentModeHybrid {
 		// Hybrid mode: configure jvm_options / 混合模式：配置 jvm_options
 		jvmOptionsPath := filepath.Join(configDir, "jvm_options")
+		fmt.Printf("[configureJVM] Hybrid mode: modifying %s with heap=%dGB\n", jvmOptionsPath, params.JVM.HybridHeapSize)
 		if err := m.modifyJVMOptions(jvmOptionsPath, params.JVM.HybridHeapSize); err != nil {
+			fmt.Printf("[configureJVM] Error modifying %s: %v\n", jvmOptionsPath, err)
 			return err
 		}
+		fmt.Printf("[configureJVM] Successfully modified %s\n", jvmOptionsPath)
 	} else {
 		// Separated mode: configure jvm_master_options and jvm_worker_options
 		// 分离模式：配置 jvm_master_options 和 jvm_worker_options
 		masterOptionsPath := filepath.Join(configDir, "jvm_master_options")
+		fmt.Printf("[configureJVM] Separated mode: modifying %s with heap=%dGB\n", masterOptionsPath, params.JVM.MasterHeapSize)
 		if err := m.modifyJVMOptions(masterOptionsPath, params.JVM.MasterHeapSize); err != nil {
+			fmt.Printf("[configureJVM] Error modifying %s: %v\n", masterOptionsPath, err)
 			return err
 		}
 
 		workerOptionsPath := filepath.Join(configDir, "jvm_worker_options")
+		fmt.Printf("[configureJVM] Separated mode: modifying %s with heap=%dGB\n", workerOptionsPath, params.JVM.WorkerHeapSize)
 		if err := m.modifyJVMOptions(workerOptionsPath, params.JVM.WorkerHeapSize); err != nil {
+			fmt.Printf("[configureJVM] Error modifying %s: %v\n", workerOptionsPath, err)
 			return err
 		}
 	}
@@ -1732,43 +1730,82 @@ func (m *InstallerManager) configureJVM(params *InstallParams) error {
 
 // modifyJVMOptions modifies JVM options file to set heap size
 // modifyJVMOptions 修改 JVM 选项文件以设置堆大小
+// JVM options files are NOT YAML - they are plain text with JVM flags
+// JVM 选项文件不是 YAML - 它们是带有 JVM 标志的纯文本
+//
+// SeaTunnel < 2.3.9 format (no comment):
+//
+//	# JVM Heap
+//	-Xms2g
+//	-Xmx2g
+//
+// SeaTunnel >= 2.3.9 format (commented):
+//
+//	## JVM Heap
+//	# -Xms2g
+//	# -Xmx2g
+//
+// This function handles both formats - uncomments if needed and sets the correct heap size
+// 此函数处理两种格式 - 如果需要则取消注释并设置正确的堆大小
 func (m *InstallerManager) modifyJVMOptions(filePath string, heapSizeGB int) error {
+	fmt.Printf("[modifyJVMOptions] Starting: file=%s, heapSize=%dGB\n", filePath, heapSizeGB)
+	
 	// Backup original file / 备份原始文件
 	if err := backupFile(filePath); err != nil {
+		fmt.Printf("[modifyJVMOptions] Backup failed: %v\n", err)
 		return fmt.Errorf("%w: %v", ErrConfigGenerationFailed, err)
 	}
 
 	// Read file content / 读取文件内容
 	content, err := os.ReadFile(filePath)
 	if err != nil {
+		fmt.Printf("[modifyJVMOptions] Read failed: %v\n", err)
 		return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
-	contentStr := string(content)
+	fmt.Printf("[modifyJVMOptions] File content length: %d bytes\n", len(content))
+	lines := strings.Split(string(content), "\n")
+	var result []string
+	xmsModified := false
+	xmxModified := false
 
-	// SeaTunnel 2.3.9+ has commented JVM options, uncomment them first
-	// SeaTunnel 2.3.9+ 的 JVM 选项是注释状态，先取消注释
-	contentStr = strings.ReplaceAll(contentStr, "# -Xms", "-Xms")
-	contentStr = strings.ReplaceAll(contentStr, "# -Xmx", "-Xmx")
+	// Regex patterns for matching JVM heap options (commented or not)
+	// 匹配 JVM 堆选项的正则表达式（注释或非注释）
+	// Matches: "# -Xms2g", "#  -Xms2g", "-Xms2g", "# -Xms4g", etc.
+	xmsPattern := regexp.MustCompile(`^#?\s*-Xms\d+g\s*$`)
+	xmxPattern := regexp.MustCompile(`^#?\s*-Xmx\d+g\s*$`)
 
-	// Replace heap size / 替换堆大小
-	lines := strings.Split(contentStr, "\n")
-	for i, line := range lines {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "-Xms") {
-			lines[i] = fmt.Sprintf("-Xms%dg", heapSizeGB)
-		} else if strings.HasPrefix(trimmed, "-Xmx") {
-			lines[i] = fmt.Sprintf("-Xmx%dg", heapSizeGB)
+
+		if xmsPattern.MatchString(trimmed) {
+			// Replace with uncommented and correct heap size
+			// 替换为取消注释并设置正确的堆大小
+			fmt.Printf("[modifyJVMOptions] Found Xms line: '%s' -> '-Xms%dg'\n", trimmed, heapSizeGB)
+			result = append(result, fmt.Sprintf("-Xms%dg", heapSizeGB))
+			xmsModified = true
+		} else if xmxPattern.MatchString(trimmed) {
+			// Replace with uncommented and correct heap size
+			// 替换为取消注释并设置正确的堆大小
+			fmt.Printf("[modifyJVMOptions] Found Xmx line: '%s' -> '-Xmx%dg'\n", trimmed, heapSizeGB)
+			result = append(result, fmt.Sprintf("-Xmx%dg", heapSizeGB))
+			xmxModified = true
+		} else {
+			// Keep other lines unchanged / 保持其他行不变
+			result = append(result, line)
 		}
 	}
 
-	contentStr = strings.Join(lines, "\n")
+	fmt.Printf("[modifyJVMOptions] Modifications: Xms=%v, Xmx=%v\n", xmsModified, xmxModified)
+	contentStr := strings.Join(result, "\n")
 
 	// Write modified content / 写入修改后的内容
 	if err := os.WriteFile(filePath, []byte(contentStr), 0644); err != nil {
+		fmt.Printf("[modifyJVMOptions] Write failed: %v\n", err)
 		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
+	fmt.Printf("[modifyJVMOptions] Successfully wrote %d bytes to %s\n", len(contentStr), filePath)
 	return nil
 }
 
@@ -2067,34 +2104,80 @@ func (m *InstallerManager) modifyHazelcastConfig(filePath string, params *Instal
 		return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
-	// Build member list / 构建成员列表
+	// Parse YAML / 解析 YAML
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return fmt.Errorf("%w: failed to parse %s: %v", ErrConfigGenerationFailed, filePath, err)
+	}
+
+	// Determine port and member list based on file type and deployment mode
+	// 根据文件类型和部署模式确定端口和成员列表
 	var memberList []string
-	port := params.ClusterPort
-	if port == 0 {
-		port = 5801
+	var port int
+	fileName := filepath.Base(filePath)
+
+	if params.DeploymentMode == DeploymentModeHybrid {
+		// Hybrid mode: all nodes use the same port (ClusterPort)
+		// 混合模式：所有节点使用相同端口（ClusterPort）
+		port = params.ClusterPort
+		if port == 0 {
+			port = 5801
+		}
+		for _, addr := range params.MasterAddresses {
+			memberList = append(memberList, fmt.Sprintf("%s:%d", addr, port))
+		}
+	} else {
+		// Separated mode: master and worker use different ports
+		// 分离模式：master 和 worker 使用不同端口
+		masterPort := params.ClusterPort
+		if masterPort == 0 {
+			masterPort = 5801
+		}
+		workerPort := params.WorkerPort
+		if workerPort == 0 {
+			workerPort = 5802
+		}
+
+		// Build member list with all nodes (master + worker)
+		// 构建包含所有节点的成员列表（master + worker）
+		for _, addr := range params.MasterAddresses {
+			memberList = append(memberList, fmt.Sprintf("%s:%d", addr, masterPort))
+		}
+		for _, addr := range params.WorkerAddresses {
+			memberList = append(memberList, fmt.Sprintf("%s:%d", addr, workerPort))
+		}
+
+		// Set port based on file type
+		// 根据文件类型设置端口
+		if strings.Contains(fileName, "master") {
+			port = masterPort
+		} else if strings.Contains(fileName, "worker") {
+			port = workerPort
+		} else {
+			port = masterPort // Default to master port / 默认使用 master 端口
+		}
 	}
 
-	for _, addr := range params.MasterAddresses {
-		memberList = append(memberList, fmt.Sprintf("%s:%d", addr, port))
-	}
-
-	// If no master addresses, use localhost / 如果没有 master 地址，使用 localhost
+	// If no addresses, use localhost / 如果没有地址，使用 localhost
 	if len(memberList) == 0 {
 		memberList = append(memberList, fmt.Sprintf("127.0.0.1:%d", port))
 	}
 
-	// Modify content using simple string replacement
-	// 使用简单的字符串替换修改内容
-	contentStr := string(content)
-
-	// Replace port configuration / 替换端口配置
-	contentStr = replaceYAMLValue(contentStr, "port:", fmt.Sprintf("%d", port))
-
-	// Replace member-list section / 替换 member-list 部分
-	contentStr = replaceMemberList(contentStr, memberList)
+	// Modify YAML using yaml.v3 / 使用 yaml.v3 修改 YAML
+	if err := setYAMLValue(&root, []string{"hazelcast", "network", "join", "tcp-ip", "member-list"}, memberList); err != nil {
+		return fmt.Errorf("%w: failed to set member-list: %v", ErrConfigGenerationFailed, err)
+	}
+	if err := setYAMLValue(&root, []string{"hazelcast", "network", "port", "port"}, port); err != nil {
+		return fmt.Errorf("%w: failed to set port: %v", ErrConfigGenerationFailed, err)
+	}
 
 	// Write modified content / 写入修改后的内容
-	if err := os.WriteFile(filePath, []byte(contentStr), 0644); err != nil {
+	output, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("%w: failed to marshal YAML: %v", ErrConfigGenerationFailed, err)
+	}
+
+	if err := os.WriteFile(filePath, output, 0644); err != nil {
 		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
@@ -2115,6 +2198,12 @@ func (m *InstallerManager) modifyHazelcastClientConfig(filePath string, params *
 		return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
+	// Parse YAML / 解析 YAML
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return fmt.Errorf("%w: failed to parse %s: %v", ErrConfigGenerationFailed, filePath, err)
+	}
+
 	// Build cluster members list / 构建集群成员列表
 	var memberList []string
 	port := params.ClusterPort
@@ -2130,12 +2219,18 @@ func (m *InstallerManager) modifyHazelcastClientConfig(filePath string, params *
 		memberList = append(memberList, fmt.Sprintf("127.0.0.1:%d", port))
 	}
 
-	// Modify content / 修改内容
-	contentStr := string(content)
-	contentStr = replaceClusterMembers(contentStr, memberList)
+	// Modify YAML using yaml.v3 / 使用 yaml.v3 修改 YAML
+	if err := setYAMLValue(&root, []string{"hazelcast-client", "network", "cluster-members"}, memberList); err != nil {
+		return fmt.Errorf("%w: failed to set cluster-members: %v", ErrConfigGenerationFailed, err)
+	}
 
 	// Write modified content / 写入修改后的内容
-	if err := os.WriteFile(filePath, []byte(contentStr), 0644); err != nil {
+	output, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("%w: failed to marshal YAML: %v", ErrConfigGenerationFailed, err)
+	}
+
+	if err := os.WriteFile(filePath, output, 0644); err != nil {
 		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
@@ -2156,130 +2251,120 @@ func (m *InstallerManager) modifySeaTunnelConfig(filePath string, params *Instal
 		return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
-	contentStr := string(content)
+	// Parse YAML / 解析 YAML
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return fmt.Errorf("%w: failed to parse %s: %v", ErrConfigGenerationFailed, filePath, err)
+	}
 
-	// Modify HTTP port if specified / 如果指定了 HTTP 端口则修改
+	// Configure HTTP settings (SeaTunnel 2.3.9+)
+	// 配置 HTTP 设置（SeaTunnel 2.3.9+）
 	if params.HTTPPort > 0 {
-		contentStr = replaceYAMLValue(contentStr, "port:", fmt.Sprintf("%d", params.HTTPPort))
+		// Set HTTP configuration / 设置 HTTP 配置
+		_ = setYAMLValue(&root, []string{"seatunnel", "engine", "http", "enable-http"}, true)
+		_ = setYAMLValue(&root, []string{"seatunnel", "engine", "http", "port"}, params.HTTPPort)
+		_ = setYAMLValue(&root, []string{"seatunnel", "engine", "http", "enable-dynamic-port"}, false)
 	}
 
 	// Set dynamic-slot value (default: true, can be overridden by user)
 	// 设置 dynamic-slot 值（默认：true，可由用户覆盖）
-	dynamicSlotValue := "true"
+	dynamicSlotValue := true
 	if params.DynamicSlot != nil && !*params.DynamicSlot {
-		dynamicSlotValue = "false"
+		dynamicSlotValue = false
 	}
-	contentStr = replaceYAMLValue(contentStr, "dynamic-slot:", dynamicSlotValue)
+	_ = setYAMLValue(&root, []string{"seatunnel", "engine", "slot-service", "dynamic-slot"}, dynamicSlotValue)
 
 	// Write modified content / 写入修改后的内容
-	if err := os.WriteFile(filePath, []byte(contentStr), 0644); err != nil {
+	output, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("%w: failed to marshal YAML: %v", ErrConfigGenerationFailed, err)
+	}
+
+	if err := os.WriteFile(filePath, output, 0644); err != nil {
 		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
 	return nil
 }
 
-// replaceYAMLValue replaces a YAML key's value
-// replaceYAMLValue 替换 YAML 键的值
-func replaceYAMLValue(content, key, newValue string) string {
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, key) {
-			// Find the indentation / 找到缩进
-			indent := strings.TrimRight(line, strings.TrimLeft(line, " \t"))
-			lines[i] = indent + key + " " + newValue
+// setYAMLValue sets a value at the specified path in a YAML node tree
+// setYAMLValue 在 YAML 节点树中的指定路径设置值
+func setYAMLValue(root *yaml.Node, path []string, value interface{}) error {
+	if root == nil || len(path) == 0 {
+		return fmt.Errorf("invalid arguments")
+	}
+
+	// Handle document node / 处理文档节点
+	node := root
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
+	}
+
+	// Navigate to the parent of the target key / 导航到目标键的父节点
+	for i := 0; i < len(path)-1; i++ {
+		key := path[i]
+		found := false
+
+		if node.Kind == yaml.MappingNode {
+			for j := 0; j < len(node.Content); j += 2 {
+				if node.Content[j].Value == key {
+					node = node.Content[j+1]
+					found = true
+					break
+				}
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("path not found: %s", strings.Join(path[:i+1], "."))
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	// Set the value at the final key / 在最终键处设置值
+	targetKey := path[len(path)-1]
+	if node.Kind == yaml.MappingNode {
+		for j := 0; j < len(node.Content); j += 2 {
+			if node.Content[j].Value == targetKey {
+				// Found the key, update its value / 找到键，更新其值
+				return setNodeValue(node.Content[j+1], value)
+			}
+		}
+	}
+
+	return fmt.Errorf("key not found: %s", targetKey)
 }
 
-// replaceMemberList replaces the member-list section in hazelcast config
-// replaceMemberList 替换 hazelcast 配置中的 member-list 部分
-func replaceMemberList(content string, members []string) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	inMemberList := false
-	memberListIndent := 0
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "member-list:") {
-			// Found member-list, record its indentation / 找到 member-list，记录其缩进
-			memberListIndent = len(line) - len(strings.TrimLeft(line, " \t"))
-			result = append(result, line)
-			inMemberList = true
-
-			// Add new members / 添加新成员
-			memberIndent := strings.Repeat(" ", memberListIndent+2)
-			for _, member := range members {
-				result = append(result, fmt.Sprintf("%s- \"%s\"", memberIndent, member))
+// setNodeValue sets the value of a YAML node
+// setNodeValue 设置 YAML 节点的值
+func setNodeValue(node *yaml.Node, value interface{}) error {
+	switch v := value.(type) {
+	case string:
+		node.Kind = yaml.ScalarNode
+		node.Tag = "!!str"
+		node.Value = v
+	case int:
+		node.Kind = yaml.ScalarNode
+		node.Tag = "!!int"
+		node.Value = fmt.Sprintf("%d", v)
+	case bool:
+		node.Kind = yaml.ScalarNode
+		node.Tag = "!!bool"
+		node.Value = fmt.Sprintf("%t", v)
+	case []string:
+		node.Kind = yaml.SequenceNode
+		node.Tag = "!!seq"
+		node.Content = make([]*yaml.Node, len(v))
+		for i, s := range v {
+			node.Content[i] = &yaml.Node{
+				Kind:  yaml.ScalarNode,
+				Tag:   "!!str",
+				Value: s,
 			}
-			continue
 		}
-
-		if inMemberList {
-			// Check if we're still in the member-list section / 检查是否仍在 member-list 部分
-			currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if trimmed != "" && currentIndent <= memberListIndent && !strings.HasPrefix(trimmed, "-") {
-				// We've exited the member-list section / 已退出 member-list 部分
-				inMemberList = false
-				result = append(result, line)
-			}
-			// Skip old member entries / 跳过旧的成员条目
-			continue
-		}
-
-		result = append(result, line)
+	default:
+		return fmt.Errorf("unsupported value type: %T", value)
 	}
-
-	return strings.Join(result, "\n")
-}
-
-// replaceClusterMembers replaces the cluster-members section in hazelcast-client config
-// replaceClusterMembers 替换 hazelcast-client 配置中的 cluster-members 部分
-func replaceClusterMembers(content string, members []string) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	inClusterMembers := false
-	clusterMembersIndent := 0
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "cluster-members:") {
-			// Found cluster-members, record its indentation / 找到 cluster-members，记录其缩进
-			clusterMembersIndent = len(line) - len(strings.TrimLeft(line, " \t"))
-			result = append(result, line)
-			inClusterMembers = true
-
-			// Add new members / 添加新成员
-			memberIndent := strings.Repeat(" ", clusterMembersIndent+2)
-			for _, member := range members {
-				result = append(result, fmt.Sprintf("%s- \"%s\"", memberIndent, member))
-			}
-			continue
-		}
-
-		if inClusterMembers {
-			// Check if we're still in the cluster-members section / 检查是否仍在 cluster-members 部分
-			currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if trimmed != "" && currentIndent <= clusterMembersIndent && !strings.HasPrefix(trimmed, "-") {
-				// We've exited the cluster-members section / 已退出 cluster-members 部分
-				inClusterMembers = false
-				result = append(result, line)
-			}
-			// Skip old member entries / 跳过旧的成员条目
-			continue
-		}
-
-		result = append(result, line)
-	}
-
-	return strings.Join(result, "\n")
+	return nil
 }
 
 // GenerateConfig is kept for backward compatibility, calls ConfigureCluster
@@ -2354,6 +2439,16 @@ func GenerateSeaTunnelConfig(deploymentMode DeploymentMode, nodeRole NodeRole, c
 		config.WriteString("    # Worker node configuration\n")
 		config.WriteString("    # Worker 节点配置\n")
 		config.WriteString("    backup-count: 0\n")
+	case NodeRoleMasterWorker:
+		config.WriteString("    # Hybrid node configuration (master + worker)\n")
+		config.WriteString("    # 混合节点配置（master + worker）\n")
+		config.WriteString("    backup-count: 1\n")
+		config.WriteString("    checkpoint:\n")
+		config.WriteString("      interval: 10000\n")
+		config.WriteString("      timeout: 60000\n")
+		config.WriteString("      storage:\n")
+		config.WriteString("        type: hdfs\n")
+		config.WriteString("        max-retained: 3\n")
 	}
 
 	// Write HTTP server configuration / 写入 HTTP 服务器配置
