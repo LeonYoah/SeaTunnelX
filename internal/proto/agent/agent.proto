@@ -137,6 +137,7 @@ enum CommandType {
   // 配置类
   UPDATE_CONFIG = 40;
   ROLLBACK_CONFIG = 41;
+  PULL_CONFIG = 42;         // 拉取配置文件
   
   // 插件管理
   TRANSFER_PLUGIN = 50;     // 传输插件文件
@@ -295,4 +296,39 @@ message TransferPackageResponse {
   string message = 2;         // 消息
   int64 received_bytes = 3;   // 已接收字节数
   string local_path = 4;      // 本地保存路径 (传输完成后)
+}
+
+
+// ============================================================================
+// 配置文件管理相关消息
+// ============================================================================
+
+// PullConfigRequest - 拉取配置文件请求
+message PullConfigRequest {
+  string install_dir = 1;     // SeaTunnel 安装目录
+  string config_type = 2;     // 配置类型: seatunnel.yaml, hazelcast.yaml, jvm_options 等
+}
+
+// PullConfigResponse - 拉取配置文件响应
+message PullConfigResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  string config_type = 3;     // 配置类型
+  string content = 4;         // 配置文件内容
+  string file_path = 5;       // 文件完整路径
+}
+
+// UpdateConfigRequest - 更新配置文件请求
+message UpdateConfigRequest {
+  string install_dir = 1;     // SeaTunnel 安装目录
+  string config_type = 2;     // 配置类型
+  string content = 3;         // 新的配置内容
+  bool backup = 4;            // 是否备份原文件
+}
+
+// UpdateConfigResponse - 更新配置文件响应
+message UpdateConfigResponse {
+  bool success = 1;           // 是否成功
+  string message = 2;         // 消息
+  string backup_path = 3;     // 备份文件路径 (如果启用备份)
 }

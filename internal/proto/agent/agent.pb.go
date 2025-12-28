@@ -47,6 +47,7 @@ const (
 	// 配置类
 	CommandType_UPDATE_CONFIG   CommandType = 40
 	CommandType_ROLLBACK_CONFIG CommandType = 41
+	CommandType_PULL_CONFIG     CommandType = 42 // 拉取配置文件
 	// 插件管理
 	CommandType_TRANSFER_PLUGIN  CommandType = 50 // 传输插件文件
 	CommandType_INSTALL_PLUGIN   CommandType = 51 // 安装插件
@@ -73,6 +74,7 @@ var (
 		32: "THREAD_DUMP",
 		40: "UPDATE_CONFIG",
 		41: "ROLLBACK_CONFIG",
+		42: "PULL_CONFIG",
 		50: "TRANSFER_PLUGIN",
 		51: "INSTALL_PLUGIN",
 		52: "UNINSTALL_PLUGIN",
@@ -94,6 +96,7 @@ var (
 		"THREAD_DUMP":              32,
 		"UPDATE_CONFIG":            40,
 		"ROLLBACK_CONFIG":          41,
+		"PULL_CONFIG":              42,
 		"TRANSFER_PLUGIN":          50,
 		"INSTALL_PLUGIN":           51,
 		"UNINSTALL_PLUGIN":         52,
@@ -1903,6 +1906,266 @@ func (x *TransferPackageResponse) GetLocalPath() string {
 	return ""
 }
 
+// PullConfigRequest - 拉取配置文件请求
+type PullConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstallDir    string                 `protobuf:"bytes,1,opt,name=install_dir,json=installDir,proto3" json:"install_dir,omitempty"` // SeaTunnel 安装目录
+	ConfigType    string                 `protobuf:"bytes,2,opt,name=config_type,json=configType,proto3" json:"config_type,omitempty"` // 配置类型: seatunnel.yaml, hazelcast.yaml, jvm_options 等
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullConfigRequest) Reset() {
+	*x = PullConfigRequest{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullConfigRequest) ProtoMessage() {}
+
+func (x *PullConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullConfigRequest.ProtoReflect.Descriptor instead.
+func (*PullConfigRequest) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *PullConfigRequest) GetInstallDir() string {
+	if x != nil {
+		return x.InstallDir
+	}
+	return ""
+}
+
+func (x *PullConfigRequest) GetConfigType() string {
+	if x != nil {
+		return x.ConfigType
+	}
+	return ""
+}
+
+// PullConfigResponse - 拉取配置文件响应
+type PullConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                        // 是否成功
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`                         // 消息
+	ConfigType    string                 `protobuf:"bytes,3,opt,name=config_type,json=configType,proto3" json:"config_type,omitempty"` // 配置类型
+	Content       string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`                         // 配置文件内容
+	FilePath      string                 `protobuf:"bytes,5,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`       // 文件完整路径
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullConfigResponse) Reset() {
+	*x = PullConfigResponse{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullConfigResponse) ProtoMessage() {}
+
+func (x *PullConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullConfigResponse.ProtoReflect.Descriptor instead.
+func (*PullConfigResponse) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *PullConfigResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *PullConfigResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *PullConfigResponse) GetConfigType() string {
+	if x != nil {
+		return x.ConfigType
+	}
+	return ""
+}
+
+func (x *PullConfigResponse) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *PullConfigResponse) GetFilePath() string {
+	if x != nil {
+		return x.FilePath
+	}
+	return ""
+}
+
+// UpdateConfigRequest - 更新配置文件请求
+type UpdateConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstallDir    string                 `protobuf:"bytes,1,opt,name=install_dir,json=installDir,proto3" json:"install_dir,omitempty"` // SeaTunnel 安装目录
+	ConfigType    string                 `protobuf:"bytes,2,opt,name=config_type,json=configType,proto3" json:"config_type,omitempty"` // 配置类型
+	Content       string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`                         // 新的配置内容
+	Backup        bool                   `protobuf:"varint,4,opt,name=backup,proto3" json:"backup,omitempty"`                          // 是否备份原文件
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateConfigRequest) Reset() {
+	*x = UpdateConfigRequest{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConfigRequest) ProtoMessage() {}
+
+func (x *UpdateConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConfigRequest.ProtoReflect.Descriptor instead.
+func (*UpdateConfigRequest) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *UpdateConfigRequest) GetInstallDir() string {
+	if x != nil {
+		return x.InstallDir
+	}
+	return ""
+}
+
+func (x *UpdateConfigRequest) GetConfigType() string {
+	if x != nil {
+		return x.ConfigType
+	}
+	return ""
+}
+
+func (x *UpdateConfigRequest) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *UpdateConfigRequest) GetBackup() bool {
+	if x != nil {
+		return x.Backup
+	}
+	return false
+}
+
+// UpdateConfigResponse - 更新配置文件响应
+type UpdateConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                        // 是否成功
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`                         // 消息
+	BackupPath    string                 `protobuf:"bytes,3,opt,name=backup_path,json=backupPath,proto3" json:"backup_path,omitempty"` // 备份文件路径 (如果启用备份)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateConfigResponse) Reset() {
+	*x = UpdateConfigResponse{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConfigResponse) ProtoMessage() {}
+
+func (x *UpdateConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConfigResponse.ProtoReflect.Descriptor instead.
+func (*UpdateConfigResponse) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *UpdateConfigResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UpdateConfigResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *UpdateConfigResponse) GetBackupPath() string {
+	if x != nil {
+		return x.BackupPath
+	}
+	return ""
+}
+
 var File_internal_proto_agent_agent_proto protoreflect.FileDescriptor
 
 const file_internal_proto_agent_agent_proto_rawDesc = "" +
@@ -2059,7 +2322,31 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12%\n" +
 	"\x0ereceived_bytes\x18\x03 \x01(\x03R\rreceivedBytes\x12\x1d\n" +
 	"\n" +
-	"local_path\x18\x04 \x01(\tR\tlocalPath*\xd0\x02\n" +
+	"local_path\x18\x04 \x01(\tR\tlocalPath\"U\n" +
+	"\x11PullConfigRequest\x12\x1f\n" +
+	"\vinstall_dir\x18\x01 \x01(\tR\n" +
+	"installDir\x12\x1f\n" +
+	"\vconfig_type\x18\x02 \x01(\tR\n" +
+	"configType\"\xa0\x01\n" +
+	"\x12PullConfigResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
+	"\vconfig_type\x18\x03 \x01(\tR\n" +
+	"configType\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\x12\x1b\n" +
+	"\tfile_path\x18\x05 \x01(\tR\bfilePath\"\x89\x01\n" +
+	"\x13UpdateConfigRequest\x12\x1f\n" +
+	"\vinstall_dir\x18\x01 \x01(\tR\n" +
+	"installDir\x12\x1f\n" +
+	"\vconfig_type\x18\x02 \x01(\tR\n" +
+	"configType\x12\x18\n" +
+	"\acontent\x18\x03 \x01(\tR\acontent\x12\x16\n" +
+	"\x06backup\x18\x04 \x01(\bR\x06backup\"k\n" +
+	"\x14UpdateConfigResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
+	"\vbackup_path\x18\x03 \x01(\tR\n" +
+	"backupPath*\xe1\x02\n" +
 	"\vCommandType\x12\x1c\n" +
 	"\x18COMMAND_TYPE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bPRECHECK\x10\x01\x12\v\n" +
@@ -2076,7 +2363,8 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\bJVM_DUMP\x10\x1f\x12\x0f\n" +
 	"\vTHREAD_DUMP\x10 \x12\x11\n" +
 	"\rUPDATE_CONFIG\x10(\x12\x13\n" +
-	"\x0fROLLBACK_CONFIG\x10)\x12\x13\n" +
+	"\x0fROLLBACK_CONFIG\x10)\x12\x0f\n" +
+	"\vPULL_CONFIG\x10*\x12\x13\n" +
 	"\x0fTRANSFER_PLUGIN\x102\x12\x12\n" +
 	"\x0eINSTALL_PLUGIN\x103\x12\x14\n" +
 	"\x10UNINSTALL_PLUGIN\x104\x12\x10\n" +
@@ -2115,7 +2403,7 @@ func file_internal_proto_agent_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_proto_agent_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_internal_proto_agent_agent_proto_goTypes = []any{
 	(CommandType)(0),                     // 0: seatunnel.agent.v1.CommandType
 	(CommandStatus)(0),                   // 1: seatunnel.agent.v1.CommandStatus
@@ -2143,21 +2431,25 @@ var file_internal_proto_agent_agent_proto_goTypes = []any{
 	(*ListInstalledPluginsResponse)(nil), // 23: seatunnel.agent.v1.ListInstalledPluginsResponse
 	(*TransferPackageRequest)(nil),       // 24: seatunnel.agent.v1.TransferPackageRequest
 	(*TransferPackageResponse)(nil),      // 25: seatunnel.agent.v1.TransferPackageResponse
-	nil,                                  // 26: seatunnel.agent.v1.AgentConfig.ExtraEntry
-	nil,                                  // 27: seatunnel.agent.v1.CommandRequest.ParametersEntry
-	nil,                                  // 28: seatunnel.agent.v1.LogEntry.FieldsEntry
+	(*PullConfigRequest)(nil),            // 26: seatunnel.agent.v1.PullConfigRequest
+	(*PullConfigResponse)(nil),           // 27: seatunnel.agent.v1.PullConfigResponse
+	(*UpdateConfigRequest)(nil),          // 28: seatunnel.agent.v1.UpdateConfigRequest
+	(*UpdateConfigResponse)(nil),         // 29: seatunnel.agent.v1.UpdateConfigResponse
+	nil,                                  // 30: seatunnel.agent.v1.AgentConfig.ExtraEntry
+	nil,                                  // 31: seatunnel.agent.v1.CommandRequest.ParametersEntry
+	nil,                                  // 32: seatunnel.agent.v1.LogEntry.FieldsEntry
 }
 var file_internal_proto_agent_agent_proto_depIdxs = []int32{
 	4,  // 0: seatunnel.agent.v1.RegisterRequest.system_info:type_name -> seatunnel.agent.v1.SystemInfo
 	6,  // 1: seatunnel.agent.v1.RegisterResponse.config:type_name -> seatunnel.agent.v1.AgentConfig
-	26, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
+	30, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
 	8,  // 3: seatunnel.agent.v1.HeartbeatRequest.resource_usage:type_name -> seatunnel.agent.v1.ResourceUsage
 	9,  // 4: seatunnel.agent.v1.HeartbeatRequest.processes:type_name -> seatunnel.agent.v1.ProcessStatus
 	0,  // 5: seatunnel.agent.v1.CommandRequest.type:type_name -> seatunnel.agent.v1.CommandType
-	27, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
+	31, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
 	1,  // 7: seatunnel.agent.v1.CommandResponse.status:type_name -> seatunnel.agent.v1.CommandStatus
 	2,  // 8: seatunnel.agent.v1.LogEntry.level:type_name -> seatunnel.agent.v1.LogLevel
-	28, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
+	32, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
 	22, // 10: seatunnel.agent.v1.ListInstalledPluginsResponse.plugins:type_name -> seatunnel.agent.v1.InstalledPluginInfo
 	3,  // 11: seatunnel.agent.v1.AgentService.Register:input_type -> seatunnel.agent.v1.RegisterRequest
 	7,  // 12: seatunnel.agent.v1.AgentService.Heartbeat:input_type -> seatunnel.agent.v1.HeartbeatRequest
@@ -2185,7 +2477,7 @@ func file_internal_proto_agent_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_agent_agent_proto_rawDesc), len(file_internal_proto_agent_agent_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   26,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

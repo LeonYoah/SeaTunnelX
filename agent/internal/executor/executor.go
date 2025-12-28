@@ -217,7 +217,7 @@ func RouteCommand(cmdType pb.CommandType) string {
 		return "process"
 	case pb.CommandType_COLLECT_LOGS, pb.CommandType_JVM_DUMP, pb.CommandType_THREAD_DUMP:
 		return "diagnostic"
-	case pb.CommandType_UPDATE_CONFIG, pb.CommandType_ROLLBACK_CONFIG:
+	case pb.CommandType_UPDATE_CONFIG, pb.CommandType_ROLLBACK_CONFIG, pb.CommandType_PULL_CONFIG:
 		return "config"
 	default:
 		return "unknown"

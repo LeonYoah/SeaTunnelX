@@ -47,6 +47,7 @@ const (
 	// 配置类
 	CommandType_UPDATE_CONFIG   CommandType = 40
 	CommandType_ROLLBACK_CONFIG CommandType = 41
+	CommandType_PULL_CONFIG     CommandType = 42 // 拉取配置文件
 	// 插件管理
 	CommandType_TRANSFER_PLUGIN  CommandType = 50 // 传输插件文件
 	CommandType_INSTALL_PLUGIN   CommandType = 51 // 安装插件
@@ -73,6 +74,7 @@ var (
 		32: "THREAD_DUMP",
 		40: "UPDATE_CONFIG",
 		41: "ROLLBACK_CONFIG",
+		42: "PULL_CONFIG",
 		50: "TRANSFER_PLUGIN",
 		51: "INSTALL_PLUGIN",
 		52: "UNINSTALL_PLUGIN",
@@ -94,6 +96,7 @@ var (
 		"THREAD_DUMP":              32,
 		"UPDATE_CONFIG":            40,
 		"ROLLBACK_CONFIG":          41,
+		"PULL_CONFIG":              42,
 		"TRANSFER_PLUGIN":          50,
 		"INSTALL_PLUGIN":           51,
 		"UNINSTALL_PLUGIN":         52,

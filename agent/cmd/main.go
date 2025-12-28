@@ -573,6 +573,10 @@ func (a *Agent) registerCommandHandlers() {
 	// Register package transfer handlers / 注册安装包传输处理器
 	executor.RegisterPackageHandlers(a.executor)
 
+	// Register config handlers / 注册配置处理器
+	configHandlers := executor.NewConfigHandlers()
+	configHandlers.RegisterHandlers(a.executor)
+
 	fmt.Printf("Registered %d command handlers / 已注册 %d 个命令处理器\n",
 		len(a.executor.GetRegisteredTypes()), len(a.executor.GetRegisteredTypes()))
 }

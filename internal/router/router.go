@@ -35,6 +35,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/audit"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
+	appconfig "github.com/seatunnel/seatunnelX/internal/apps/config"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/deepwiki"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
@@ -535,6 +536,17 @@ func Serve() {
 			// GET /api/v1/clusters/:id/plugins/:name/progress - 获取插件安装进度
 			// GET /api/v1/clusters/:id/plugins/:name/progress - Get plugin installation progress
 			clusterRouter.GET("/:id/plugins/:name/progress", pluginHandler.GetInstallProgress)
+
+			// Config 配置文件管理
+			// Initialize config repository, service and handler
+			// 初始化配置仓库、服务和处理器
+			configRepo := appconfig.NewRepository(db.DB(context.Background()))
+			configAgentClient := &configAgentClientAdapter{manager: agentManager, hostService: hostService}
+			configService := appconfig.NewService(configRepo, &configHostProviderAdapter{hostService: hostService}, configAgentClient)
+			configHandler := appconfig.NewHandler(configService)
+
+			// Config management routes 配置管理路由
+			appconfig.RegisterRoutes(apiV1Router, configHandler)
 
 			// Installation routes on hosts 主机安装路由
 			// POST /api/v1/hosts/:id/precheck - 运行预检查
@@ -1059,4 +1071,119 @@ func (a *installerAgentManagerAdapter) SendTransferPackageCommand(ctx context.Co
 	}
 
 	return success, receivedBytes, localPath, nil
+}
+
+
+// ==================== Config Service Adapters 配置服务适配器 ====================
+
+// configHostProviderAdapter adapts host.Service to appconfig.HostProvider interface.
+// configHostProviderAdapter 将 host.Service 适配到 appconfig.HostProvider 接口。
+type configHostProviderAdapter struct {
+	hostService *host.Service
+}
+
+// GetHostByID returns host information by ID for config service.
+// GetHostByID 根据 ID 返回主机信息，用于配置服务。
+func (a *configHostProviderAdapter) GetHostByID(ctx context.Context, hostID uint) (*appconfig.HostInfo, error) {
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &appconfig.HostInfo{
+		ID:        h.ID,
+		Name:      h.Name,
+		IPAddress: h.IPAddress,
+	}, nil
+}
+
+// configAgentClientAdapter adapts agent.Manager to appconfig.AgentClient interface.
+// configAgentClientAdapter 将 agent.Manager 适配到 appconfig.AgentClient 接口。
+type configAgentClientAdapter struct {
+	manager     *agent.Manager
+	hostService *host.Service
+}
+
+// PullConfig pulls config file content from a host via Agent.
+// PullConfig 通过 Agent 从主机拉取配置文件内容。
+func (a *configAgentClientAdapter) PullConfig(ctx context.Context, hostID uint, installDir string, configType appconfig.ConfigType) (string, error) {
+	// Get agent ID for the host
+	// 获取主机的 Agent ID
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get host: %w", err)
+	}
+
+	if h.AgentID == "" {
+		return "", fmt.Errorf("host %d has no agent", hostID)
+	}
+
+	// Send PULL_CONFIG command to agent
+	// 向 Agent 发送 PULL_CONFIG 命令
+	params := map[string]string{
+		"install_dir": installDir,
+		"config_type": string(configType),
+	}
+
+	resp, err := a.manager.SendCommand(ctx, h.AgentID, pb.CommandType_PULL_CONFIG, params, 30*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to send pull config command: %w", err)
+	}
+
+	if resp.Status != pb.CommandStatus_SUCCESS {
+		return "", fmt.Errorf("pull config failed: %s", resp.Error)
+	}
+
+	// Parse response to extract content
+	// 解析响应以提取内容
+	var result struct {
+		Success    bool   `json:"success"`
+		Message    string `json:"message"`
+		ConfigType string `json:"config_type"`
+		Content    string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(resp.Output), &result); err != nil {
+		return "", fmt.Errorf("failed to parse pull config response: %w", err)
+	}
+
+	if !result.Success {
+		return "", fmt.Errorf("pull config failed: %s", result.Message)
+	}
+
+	return result.Content, nil
+}
+
+// PushConfig pushes config file content to a host via Agent.
+// PushConfig 通过 Agent 将配置文件内容推送到主机。
+func (a *configAgentClientAdapter) PushConfig(ctx context.Context, hostID uint, installDir string, configType appconfig.ConfigType, content string) error {
+	// Get agent ID for the host
+	// 获取主机的 Agent ID
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return fmt.Errorf("failed to get host: %w", err)
+	}
+
+	if h.AgentID == "" {
+		return fmt.Errorf("host %d has no agent", hostID)
+	}
+
+	// Send UPDATE_CONFIG command to agent
+	// 向 Agent 发送 UPDATE_CONFIG 命令
+	params := map[string]string{
+		"install_dir": installDir,
+		"config_type": string(configType),
+		"content":     content,
+		"backup":      "true",
+	}
+
+	resp, err := a.manager.SendCommand(ctx, h.AgentID, pb.CommandType_UPDATE_CONFIG, params, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to send update config command: %w", err)
+	}
+
+	if resp.Status != pb.CommandStatus_SUCCESS {
+		return fmt.Errorf("update config failed: %s", resp.Error)
+	}
+
+	return nil
 }

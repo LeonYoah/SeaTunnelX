@@ -10,6 +10,7 @@ export {ClusterMain} from './ClusterMain';
 export {ClusterCard} from './ClusterCard';
 export {ClusterDetail} from './ClusterDetail';
 export {ClusterPlugins} from './ClusterPlugins';
+export {ClusterConfigs} from './ClusterConfigs';
 export {CreateClusterDialog} from './CreateClusterDialog';
 export {EditClusterDialog} from './EditClusterDialog';
 export {AddNodeDialog} from './AddNodeDialog';
