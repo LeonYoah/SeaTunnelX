@@ -150,7 +150,7 @@ const defaultConfig: ClusterDeployConfig = {
   },
   checkpoint: {
     storage_type: 'LOCAL_FILE',
-    namespace: '/tmp/seatunnel/checkpoint',
+    namespace: '/tmp/seatunnel/checkpoint/',
   },
   selectedPlugins: [],
 };
@@ -1125,7 +1125,7 @@ export function ClusterDeployWizard({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{t('installer.namespace')}</Label>
+                <Label>{t('installer.storagePath')}</Label>
                 <Input
                   value={config.checkpoint.namespace}
                   onChange={(e) =>
@@ -1133,10 +1133,242 @@ export function ClusterDeployWizard({
                       checkpoint: { ...config.checkpoint, namespace: e.target.value },
                     })
                   }
-                  placeholder="/tmp/seatunnel/checkpoint"
+                  placeholder={
+                    config.checkpoint.storage_type === 'LOCAL_FILE'
+                      ? '/tmp/seatunnel/checkpoint/'
+                      : '/seatunnel/checkpoint/'
+                  }
                 />
+                <p className="text-xs text-muted-foreground">{t('installer.storagePathHint')}</p>
               </div>
             </div>
+
+            {/* HDFS Config / HDFS 配置 */}
+            {config.checkpoint.storage_type === 'HDFS' && (
+              <div className="space-y-4">
+                {/* HA Mode Toggle / HA 模式开关 */}
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="hdfs-ha-enabled"
+                    checked={config.checkpoint.hdfs_ha_enabled || false}
+                    onCheckedChange={(checked) =>
+                      updateConfig({
+                        checkpoint: { ...config.checkpoint, hdfs_ha_enabled: checked === true },
+                      })
+                    }
+                  />
+                  <Label htmlFor="hdfs-ha-enabled">{t('installer.hdfsHAMode')}</Label>
+                </div>
+
+                {/* Standard HDFS Config / 标准 HDFS 配置 */}
+                {!config.checkpoint.hdfs_ha_enabled && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>{t('installer.hdfsNameNodeHost')}</Label>
+                      <Input
+                        value={config.checkpoint.hdfs_namenode_host || ''}
+                        onChange={(e) =>
+                          updateConfig({
+                            checkpoint: { ...config.checkpoint, hdfs_namenode_host: e.target.value },
+                          })
+                        }
+                        placeholder="namenode.example.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('installer.hdfsNameNodePort')}</Label>
+                      <Input
+                        type="number"
+                        value={config.checkpoint.hdfs_namenode_port || ''}
+                        onChange={(e) =>
+                          updateConfig({
+                            checkpoint: { ...config.checkpoint, hdfs_namenode_port: parseInt(e.target.value) || 0 },
+                          })
+                        }
+                        placeholder="8020"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* HDFS HA Config / HDFS HA 配置 */}
+                {config.checkpoint.hdfs_ha_enabled && (
+                  <div className="space-y-3 p-3 border rounded-md bg-muted/30">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('installer.hdfsNameServices')}</Label>
+                        <Input
+                          value={config.checkpoint.hdfs_name_services || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              checkpoint: { ...config.checkpoint, hdfs_name_services: e.target.value },
+                            })
+                          }
+                          placeholder="mycluster"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('installer.hdfsHANamenodes')}</Label>
+                        <Input
+                          value={config.checkpoint.hdfs_ha_namenodes || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              checkpoint: { ...config.checkpoint, hdfs_ha_namenodes: e.target.value },
+                            })
+                          }
+                          placeholder="nn1,nn2"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('installer.hdfsNamenodeRPCAddress1')}</Label>
+                        <Input
+                          value={config.checkpoint.hdfs_namenode_rpc_address_1 || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              checkpoint: { ...config.checkpoint, hdfs_namenode_rpc_address_1: e.target.value },
+                            })
+                          }
+                          placeholder="nn1-host:8020"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('installer.hdfsNamenodeRPCAddress2')}</Label>
+                        <Input
+                          value={config.checkpoint.hdfs_namenode_rpc_address_2 || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              checkpoint: { ...config.checkpoint, hdfs_namenode_rpc_address_2: e.target.value },
+                            })
+                          }
+                          placeholder="nn2-host:8020"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Kerberos Config / Kerberos 配置 */}
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="hdfs-kerberos"
+                    checked={config.checkpoint.kerberos_principal !== undefined}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        // Enable Kerberos - set empty strings to show the form
+                        updateConfig({
+                          checkpoint: {
+                            ...config.checkpoint,
+                            kerberos_principal: '',
+                            kerberos_keytab_file_path: '',
+                          },
+                        });
+                      } else {
+                        // Disable Kerberos - remove the fields
+                        updateConfig({
+                          checkpoint: {
+                            ...config.checkpoint,
+                            kerberos_principal: undefined,
+                            kerberos_keytab_file_path: undefined,
+                          },
+                        });
+                      }
+                    }}
+                  />
+                  <Label htmlFor="hdfs-kerberos">{t('installer.hdfsKerberos')}</Label>
+                </div>
+
+                {config.checkpoint.kerberos_principal !== undefined && (
+                  <div className="grid grid-cols-2 gap-4 p-3 border rounded-md bg-muted/30">
+                    <div className="space-y-2">
+                      <Label>{t('installer.kerberosPrincipal')}</Label>
+                      <Input
+                        value={config.checkpoint.kerberos_principal || ''}
+                        onChange={(e) =>
+                          updateConfig({
+                            checkpoint: { ...config.checkpoint, kerberos_principal: e.target.value },
+                          })
+                        }
+                        placeholder="hdfs/namenode@EXAMPLE.COM"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('installer.kerberosKeytabPath')}</Label>
+                      <Input
+                        value={config.checkpoint.kerberos_keytab_file_path || ''}
+                        onChange={(e) =>
+                          updateConfig({
+                            checkpoint: { ...config.checkpoint, kerberos_keytab_file_path: e.target.value },
+                          })
+                        }
+                        placeholder="/etc/security/keytabs/hdfs.keytab"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* OSS/S3 Config / OSS/S3 配置 */}
+            {(config.checkpoint.storage_type === 'OSS' || config.checkpoint.storage_type === 'S3') && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>{t('installer.endpoint')}</Label>
+                    <Input
+                      value={config.checkpoint.storage_endpoint || ''}
+                      onChange={(e) =>
+                        updateConfig({
+                          checkpoint: { ...config.checkpoint, storage_endpoint: e.target.value },
+                        })
+                      }
+                      placeholder={config.checkpoint.storage_type === 'OSS' ? 'oss-cn-hangzhou.aliyuncs.com' : 's3.amazonaws.com'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('installer.bucket')}</Label>
+                    <Input
+                      value={config.checkpoint.storage_bucket || ''}
+                      onChange={(e) =>
+                        updateConfig({
+                          checkpoint: { ...config.checkpoint, storage_bucket: e.target.value },
+                        })
+                      }
+                      placeholder="my-checkpoint-bucket"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>{t('installer.accessKey')}</Label>
+                    <Input
+                      type="password"
+                      value={config.checkpoint.storage_access_key || ''}
+                      onChange={(e) =>
+                        updateConfig({
+                          checkpoint: { ...config.checkpoint, storage_access_key: e.target.value },
+                        })
+                      }
+                      placeholder="Access Key ID"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('installer.secretKey')}</Label>
+                    <Input
+                      type="password"
+                      value={config.checkpoint.storage_secret_key || ''}
+                      onChange={(e) =>
+                        updateConfig({
+                          checkpoint: { ...config.checkpoint, storage_secret_key: e.target.value },
+                        })
+                      }
+                      placeholder="Secret Access Key"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

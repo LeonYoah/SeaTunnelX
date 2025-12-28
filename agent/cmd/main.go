@@ -645,6 +645,50 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 		fmt.Println("[Install] JVM config not created (all values are 0)")
 	}
 
+	// Parse checkpoint config / 解析检查点配置
+	checkpointStorageType := getParamString(cmd.Parameters, "checkpoint_storage_type", "")
+	checkpointNamespace := getParamString(cmd.Parameters, "checkpoint_namespace", "")
+	if checkpointStorageType != "" {
+		params.Checkpoint = &installer.CheckpointConfig{
+			StorageType: installer.CheckpointStorageType(checkpointStorageType),
+			Namespace:   checkpointNamespace,
+		}
+		// HDFS config
+		hdfsHost := getParamString(cmd.Parameters, "checkpoint_hdfs_host", "")
+		if hdfsHost != "" {
+			params.Checkpoint.HDFSNameNodeHost = hdfsHost
+			params.Checkpoint.HDFSNameNodePort = getParamInt(cmd.Parameters, "checkpoint_hdfs_port", 8020)
+		}
+		// HDFS Kerberos config / HDFS Kerberos 配置
+		kerberosPrincipal := getParamString(cmd.Parameters, "checkpoint_kerberos_principal", "")
+		if kerberosPrincipal != "" {
+			params.Checkpoint.KerberosPrincipal = kerberosPrincipal
+		}
+		kerberosKeytabPath := getParamString(cmd.Parameters, "checkpoint_kerberos_keytab_path", "")
+		if kerberosKeytabPath != "" {
+			params.Checkpoint.KerberosKeytabFilePath = kerberosKeytabPath
+		}
+		// HDFS HA config / HDFS HA 配置
+		hdfsHAEnabled := getParamString(cmd.Parameters, "checkpoint_hdfs_ha_enabled", "")
+		if hdfsHAEnabled == "true" {
+			params.Checkpoint.HDFSHAEnabled = true
+			params.Checkpoint.HDFSNameServices = getParamString(cmd.Parameters, "checkpoint_hdfs_name_services", "")
+			params.Checkpoint.HDFSHANamenodes = getParamString(cmd.Parameters, "checkpoint_hdfs_ha_namenodes", "")
+			params.Checkpoint.HDFSNamenodeRPCAddress1 = getParamString(cmd.Parameters, "checkpoint_hdfs_namenode_rpc_address_1", "")
+			params.Checkpoint.HDFSNamenodeRPCAddress2 = getParamString(cmd.Parameters, "checkpoint_hdfs_namenode_rpc_address_2", "")
+			params.Checkpoint.HDFSFailoverProxyProvider = getParamString(cmd.Parameters, "checkpoint_hdfs_failover_proxy_provider", "")
+		}
+		// OSS/S3 config
+		storageEndpoint := getParamString(cmd.Parameters, "checkpoint_storage_endpoint", "")
+		if storageEndpoint != "" {
+			params.Checkpoint.StorageEndpoint = storageEndpoint
+			params.Checkpoint.StorageBucket = getParamString(cmd.Parameters, "checkpoint_storage_bucket", "")
+			params.Checkpoint.StorageAccessKey = getParamString(cmd.Parameters, "checkpoint_storage_access_key", "")
+			params.Checkpoint.StorageSecretKey = getParamString(cmd.Parameters, "checkpoint_storage_secret_key", "")
+		}
+		fmt.Printf("[Install] Checkpoint config created: type=%s, namespace=%s\n", checkpointStorageType, checkpointNamespace)
+	}
+
 	// Parse master addresses / 解析 master 地址列表
 	masterAddressesStr := getParamString(cmd.Parameters, "master_addresses", "")
 	if masterAddressesStr != "" {

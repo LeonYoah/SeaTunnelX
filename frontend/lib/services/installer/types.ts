@@ -111,8 +111,20 @@ export interface JVMConfig {
 export interface CheckpointConfig {
   storage_type: CheckpointStorageType;
   namespace: string;
+  // HDFS configuration / HDFS 配置
   hdfs_namenode_host?: string;
   hdfs_namenode_port?: number;
+  // HDFS Kerberos authentication / HDFS Kerberos 认证
+  kerberos_principal?: string;
+  kerberos_keytab_file_path?: string;
+  // HDFS HA mode configuration / HDFS HA 模式配置
+  hdfs_ha_enabled?: boolean;
+  hdfs_name_services?: string;              // e.g., "usdp-bing"
+  hdfs_ha_namenodes?: string;               // e.g., "nn1,nn2"
+  hdfs_namenode_rpc_address_1?: string;     // e.g., "usdp-bing-nn1:8020"
+  hdfs_namenode_rpc_address_2?: string;     // e.g., "usdp-bing-nn2:8020"
+  hdfs_failover_proxy_provider?: string;    // default: org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider
+  // OSS/S3 configuration / OSS/S3 配置
   storage_endpoint?: string;
   storage_access_key?: string;
   storage_secret_key?: string;

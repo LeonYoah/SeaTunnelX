@@ -266,6 +266,18 @@ type CheckpointConfig struct {
 	HDFSNameNodeHost string `json:"hdfs_namenode_host,omitempty"`
 	HDFSNameNodePort int    `json:"hdfs_namenode_port,omitempty"`
 
+	// HDFS Kerberos authentication / HDFS Kerberos 认证
+	KerberosPrincipal      string `json:"kerberos_principal,omitempty"`
+	KerberosKeytabFilePath string `json:"kerberos_keytab_file_path,omitempty"`
+
+	// HDFS HA mode configuration / HDFS HA 模式配置
+	HDFSHAEnabled                bool   `json:"hdfs_ha_enabled,omitempty"`
+	HDFSNameServices             string `json:"hdfs_name_services,omitempty"`              // e.g., "usdp-bing"
+	HDFSHANamenodes              string `json:"hdfs_ha_namenodes,omitempty"`               // e.g., "nn1,nn2"
+	HDFSNamenodeRPCAddress1      string `json:"hdfs_namenode_rpc_address_1,omitempty"`     // e.g., "usdp-bing-nn1:8020"
+	HDFSNamenodeRPCAddress2      string `json:"hdfs_namenode_rpc_address_2,omitempty"`     // e.g., "usdp-bing-nn2:8020"
+	HDFSFailoverProxyProvider    string `json:"hdfs_failover_proxy_provider,omitempty"`    // default: org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider
+
 	// OSS/S3 configuration / OSS/S3 配置
 	StorageEndpoint  string `json:"storage_endpoint,omitempty"`
 	StorageAccessKey string `json:"storage_access_key,omitempty"`
@@ -865,7 +877,7 @@ func DefaultInstallParams() *InstallParams {
 		},
 		Checkpoint: &CheckpointConfig{
 			StorageType: CheckpointStorageLocalFile,
-			Namespace:   "/tmp/seatunnel/checkpoint",
+			Namespace:   "/tmp/seatunnel/checkpoint/",
 		},
 		Connector: &ConnectorConfig{
 			InstallConnectors: true,
@@ -890,7 +902,7 @@ func DefaultJVMConfig() *JVMConfig {
 func DefaultCheckpointConfig() *CheckpointConfig {
 	return &CheckpointConfig{
 		StorageType: CheckpointStorageLocalFile,
-		Namespace:   "/tmp/seatunnel/checkpoint",
+		Namespace:   "/tmp/seatunnel/checkpoint/",
 	}
 }
 
@@ -1569,8 +1581,21 @@ func (m *InstallerManager) executeStepRegisterCluster(params *InstallParams, rep
 	return nil
 }
 
-// configureCheckpointStorage configures checkpoint storage in seatunnel.yaml
-// configureCheckpointStorage 在 seatunnel.yaml 中配置检查点存储
+// configureCheckpointStorage configures checkpoint storage in seatunnel.yaml using yaml.Node
+// configureCheckpointStorage 使用 yaml.Node 在 seatunnel.yaml 中配置检查点存储
+// This preserves comments and original order in the YAML file
+// 这会保留 YAML 文件中的注释和原始顺序
+// SeaTunnel checkpoint storage format (from official docs):
+// seatunnel:
+//
+//	engine:
+//	  checkpoint:
+//	    storage:
+//	      type: hdfs  # Always "hdfs" for all storage types (hdfs/s3/oss/local)
+//	      plugin-config:
+//	        storage.type: s3  # Actual storage type
+//	        namespace: /path  # Storage path
+//	        ...other configs
 func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) error {
 	if params.Checkpoint == nil {
 		return nil
@@ -1589,101 +1614,127 @@ func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) err
 		return fmt.Errorf("%w: failed to read seatunnel.yaml: %v", ErrConfigGenerationFailed, err)
 	}
 
-	contentStr := string(content)
-
-	// Generate checkpoint config based on storage type
-	// 根据存储类型生成检查点配置
-	var checkpointConfig string
-	switch params.Checkpoint.StorageType {
-	case CheckpointStorageLocalFile:
-		checkpointConfig = fmt.Sprintf(`      plugin-config:
-        namespace: %s
-        storage.type: local`, params.Checkpoint.Namespace)
-	case CheckpointStorageHDFS:
-		checkpointConfig = fmt.Sprintf(`      plugin-config:
-        namespace: %s
-        storage.type: hdfs
-        fs.defaultFS: hdfs://%s:%d`,
-			params.Checkpoint.Namespace,
-			params.Checkpoint.HDFSNameNodeHost,
-			params.Checkpoint.HDFSNameNodePort)
-	case CheckpointStorageOSS:
-		checkpointConfig = fmt.Sprintf(`      plugin-config:
-        namespace: %s
-        storage.type: oss
-        oss.bucket: %s
-        fs.oss.endpoint: %s
-        fs.oss.accessKeyId: %s
-        fs.oss.accessKeySecret: %s`,
-			params.Checkpoint.Namespace,
-			params.Checkpoint.StorageBucket,
-			params.Checkpoint.StorageEndpoint,
-			params.Checkpoint.StorageAccessKey,
-			params.Checkpoint.StorageSecretKey)
-	case CheckpointStorageS3:
-		checkpointConfig = fmt.Sprintf(`      plugin-config:
-        namespace: %s
-        storage.type: s3
-        s3.bucket: %s
-        fs.s3a.endpoint: %s
-        fs.s3a.access.key: %s
-        fs.s3a.secret.key: %s
-        fs.s3a.aws.credentials.provider: org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
-        disable.cache: true`,
-			params.Checkpoint.Namespace,
-			params.Checkpoint.StorageBucket,
-			params.Checkpoint.StorageEndpoint,
-			params.Checkpoint.StorageAccessKey,
-			params.Checkpoint.StorageSecretKey)
+	// Parse YAML using yaml.Node to preserve comments and order
+	// 使用 yaml.Node 解析 YAML 以保留注释和顺序
+	var root yaml.Node
+	if err := yaml.Unmarshal(content, &root); err != nil {
+		return fmt.Errorf("%w: failed to parse seatunnel.yaml: %v", ErrConfigGenerationFailed, err)
 	}
 
-	// Replace plugin-config section / 替换 plugin-config 部分
-	contentStr = replaceCheckpointPluginConfig(contentStr, checkpointConfig)
+	// Ensure namespace ends with "/" / 确保 namespace 以 "/" 结尾
+	namespace := params.Checkpoint.Namespace
+	if namespace != "" && !strings.HasSuffix(namespace, "/") {
+		namespace = namespace + "/"
+	}
+
+	// Build plugin-config map based on storage type
+	// 根据存储类型构建 plugin-config map
+	pluginConfig := make(map[string]string)
+
+	switch params.Checkpoint.StorageType {
+	case CheckpointStorageLocalFile:
+		pluginConfig["storage.type"] = "hdfs"
+		pluginConfig["namespace"] = namespace
+		pluginConfig["fs.defaultFS"] = "file:///"
+
+	case CheckpointStorageHDFS:
+		pluginConfig["storage.type"] = "hdfs"
+		pluginConfig["namespace"] = namespace
+
+		// Check if HA mode is enabled / 检查是否启用 HA 模式
+		if params.Checkpoint.HDFSHAEnabled && params.Checkpoint.HDFSNameServices != "" {
+			// HA mode configuration / HA 模式配置
+			pluginConfig["fs.defaultFS"] = fmt.Sprintf("hdfs://%s", params.Checkpoint.HDFSNameServices)
+			pluginConfig["seatunnel.hadoop.dfs.nameservices"] = params.Checkpoint.HDFSNameServices
+
+			if params.Checkpoint.HDFSHANamenodes != "" {
+				pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.ha.namenodes.%s", params.Checkpoint.HDFSNameServices)] = params.Checkpoint.HDFSHANamenodes
+
+				// Parse namenodes (e.g., "nn1,nn2") / 解析 namenodes
+				namenodes := strings.Split(params.Checkpoint.HDFSHANamenodes, ",")
+				if len(namenodes) >= 1 && params.Checkpoint.HDFSNamenodeRPCAddress1 != "" {
+					pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, strings.TrimSpace(namenodes[0]))] = params.Checkpoint.HDFSNamenodeRPCAddress1
+				}
+				if len(namenodes) >= 2 && params.Checkpoint.HDFSNamenodeRPCAddress2 != "" {
+					pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, strings.TrimSpace(namenodes[1]))] = params.Checkpoint.HDFSNamenodeRPCAddress2
+				}
+			}
+
+			// Failover proxy provider / 故障转移代理提供者
+			failoverProvider := params.Checkpoint.HDFSFailoverProxyProvider
+			if failoverProvider == "" {
+				failoverProvider = "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider"
+			}
+			pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.client.failover.proxy.provider.%s", params.Checkpoint.HDFSNameServices)] = failoverProvider
+		} else {
+			// Standard HDFS mode / 标准 HDFS 模式
+			pluginConfig["fs.defaultFS"] = fmt.Sprintf("hdfs://%s:%d", params.Checkpoint.HDFSNameNodeHost, params.Checkpoint.HDFSNameNodePort)
+		}
+
+		// Kerberos authentication / Kerberos 认证
+		if params.Checkpoint.KerberosPrincipal != "" {
+			pluginConfig["kerberosPrincipal"] = params.Checkpoint.KerberosPrincipal
+		}
+		if params.Checkpoint.KerberosKeytabFilePath != "" {
+			pluginConfig["kerberosKeytabFilePath"] = params.Checkpoint.KerberosKeytabFilePath
+		}
+
+	case CheckpointStorageOSS:
+		pluginConfig["storage.type"] = "oss"
+		pluginConfig["namespace"] = namespace
+		if params.Checkpoint.StorageBucket != "" {
+			pluginConfig["oss.bucket"] = params.Checkpoint.StorageBucket
+		}
+		if params.Checkpoint.StorageEndpoint != "" {
+			pluginConfig["fs.oss.endpoint"] = params.Checkpoint.StorageEndpoint
+		}
+		if params.Checkpoint.StorageAccessKey != "" {
+			pluginConfig["fs.oss.accessKeyId"] = params.Checkpoint.StorageAccessKey
+		}
+		if params.Checkpoint.StorageSecretKey != "" {
+			pluginConfig["fs.oss.accessKeySecret"] = params.Checkpoint.StorageSecretKey
+		}
+
+	case CheckpointStorageS3:
+		pluginConfig["storage.type"] = "s3"
+		pluginConfig["namespace"] = namespace
+		if params.Checkpoint.StorageBucket != "" {
+			pluginConfig["s3.bucket"] = params.Checkpoint.StorageBucket
+		}
+		if params.Checkpoint.StorageEndpoint != "" {
+			pluginConfig["fs.s3a.endpoint"] = params.Checkpoint.StorageEndpoint
+		}
+		if params.Checkpoint.StorageAccessKey != "" {
+			pluginConfig["fs.s3a.access.key"] = params.Checkpoint.StorageAccessKey
+		}
+		if params.Checkpoint.StorageSecretKey != "" {
+			pluginConfig["fs.s3a.secret.key"] = params.Checkpoint.StorageSecretKey
+		}
+		pluginConfig["fs.s3a.aws.credentials.provider"] = "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+
+	default:
+		// Default to local file / 默认使用本地文件
+		pluginConfig["storage.type"] = "hdfs"
+		pluginConfig["namespace"] = namespace
+		pluginConfig["fs.defaultFS"] = "file:///"
+	}
+
+	// Update plugin-config in YAML tree using yaml.Node / 使用 yaml.Node 更新 YAML 树中的 plugin-config
+	if err := setYAMLMapValue(&root, []string{"seatunnel", "engine", "checkpoint", "storage", "plugin-config"}, pluginConfig); err != nil {
+		return fmt.Errorf("%w: failed to set plugin-config: %v", ErrConfigGenerationFailed, err)
+	}
 
 	// Write modified content / 写入修改后的内容
-	if err := os.WriteFile(seatunnelYaml, []byte(contentStr), 0644); err != nil {
+	output, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("%w: failed to marshal seatunnel.yaml: %v", ErrConfigGenerationFailed, err)
+	}
+
+	if err := os.WriteFile(seatunnelYaml, output, 0644); err != nil {
 		return fmt.Errorf("%w: failed to write seatunnel.yaml: %v", ErrConfigGenerationFailed, err)
 	}
 
 	return nil
-}
-
-// replaceCheckpointPluginConfig replaces the checkpoint plugin-config section
-// replaceCheckpointPluginConfig 替换检查点 plugin-config 部分
-func replaceCheckpointPluginConfig(content, newConfig string) string {
-	lines := strings.Split(content, "\n")
-	var result []string
-	inPluginConfig := false
-	pluginConfigIndent := 0
-
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "plugin-config:") {
-			// Found plugin-config, record its indentation / 找到 plugin-config，记录其缩进
-			pluginConfigIndent = len(line) - len(strings.TrimLeft(line, " \t"))
-			result = append(result, newConfig)
-			inPluginConfig = true
-			continue
-		}
-
-		if inPluginConfig {
-			// Check if we're still in the plugin-config section / 检查是否仍在 plugin-config 部分
-			currentIndent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if trimmed != "" && currentIndent <= pluginConfigIndent {
-				// We've exited the plugin-config section / 已退出 plugin-config 部分
-				inPluginConfig = false
-				result = append(result, line)
-			}
-			// Skip old plugin-config entries / 跳过旧的 plugin-config 条目
-			continue
-		}
-
-		result = append(result, line)
-	}
-
-	return strings.Join(result, "\n")
 }
 
 // configureJVM configures JVM options
@@ -2367,150 +2418,70 @@ func setNodeValue(node *yaml.Node, value interface{}) error {
 	return nil
 }
 
-// GenerateConfig is kept for backward compatibility, calls ConfigureCluster
-// GenerateConfig 保留用于向后兼容，调用 ConfigureCluster
-func (m *InstallerManager) GenerateConfig(params *InstallParams) (string, error) {
-	return m.ConfigureCluster(params)
-}
-
-// GenerateSeaTunnelConfig generates the SeaTunnel configuration content
-// GenerateSeaTunnelConfig 生成 SeaTunnel 配置内容
-// Deprecated: Use ConfigureCluster with backup+modify pattern instead
-// 已废弃：请使用 ConfigureCluster 的备份+修改模式
-// This function is kept for backward compatibility and property tests
-// 此函数保留用于向后兼容和属性测试
-func GenerateSeaTunnelConfig(deploymentMode DeploymentMode, nodeRole NodeRole, clusterName string, masterAddresses []string, clusterPort, httpPort int) string {
-	// Set default values / 设置默认值
-	if clusterName == "" {
-		clusterName = "seatunnel-cluster"
-	}
-	if clusterPort == 0 {
-		clusterPort = 5801
-	}
-	if httpPort == 0 {
-		httpPort = 8080
+// setYAMLMapValue sets a map value at the specified path in a YAML node tree
+// setYAMLMapValue 在 YAML 节点树中的指定路径设置 map 值
+// This replaces all children of the target node with the new map entries
+// 这会用新的 map 条目替换目标节点的所有子节点
+func setYAMLMapValue(root *yaml.Node, path []string, values map[string]string) error {
+	if root == nil || len(path) == 0 {
+		return fmt.Errorf("invalid arguments")
 	}
 
-	var config strings.Builder
-
-	// Write header / 写入头部
-	config.WriteString("# SeaTunnel Configuration\n")
-	config.WriteString("# SeaTunnel 配置\n")
-	config.WriteString("# Generated by SeaTunnelX Agent\n")
-	config.WriteString("# 由 SeaTunnelX Agent 生成\n\n")
-
-	// Write seatunnel engine configuration / 写入 seatunnel 引擎配置
-	config.WriteString("seatunnel:\n")
-	config.WriteString("  engine:\n")
-	config.WriteString(fmt.Sprintf("    cluster-name: \"%s\"\n", clusterName))
-
-	// Write deployment mode specific configuration
-	// 写入部署模式特定配置
-	// Default dynamic-slot: true, can be changed by user
-	// 默认 dynamic-slot: true，可由用户修改
-	switch deploymentMode {
-	case DeploymentModeHybrid:
-		config.WriteString("    # Hybrid mode: master and worker on same node\n")
-		config.WriteString("    # 混合模式：master 和 worker 在同一节点\n")
-		config.WriteString("    slot-service:\n")
-		config.WriteString("      dynamic-slot: true\n")
-	case DeploymentModeSeparated:
-		config.WriteString("    # Separated mode: master and worker on different nodes\n")
-		config.WriteString("    # 分离模式：master 和 worker 在不同节点\n")
-		config.WriteString("    slot-service:\n")
-		config.WriteString("      dynamic-slot: true\n")
+	// Handle document node / 处理文档节点
+	node := root
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
 	}
 
-	// Write node role specific configuration
-	// 写入节点角色特定配置
-	config.WriteString("\n")
-	switch nodeRole {
-	case NodeRoleMaster:
-		config.WriteString("    # Master node configuration\n")
-		config.WriteString("    # Master 节点配置\n")
-		config.WriteString("    backup-count: 1\n")
-		config.WriteString("    checkpoint:\n")
-		config.WriteString("      interval: 10000\n")
-		config.WriteString("      timeout: 60000\n")
-		config.WriteString("      storage:\n")
-		config.WriteString("        type: hdfs\n")
-		config.WriteString("        max-retained: 3\n")
-	case NodeRoleWorker:
-		config.WriteString("    # Worker node configuration\n")
-		config.WriteString("    # Worker 节点配置\n")
-		config.WriteString("    backup-count: 0\n")
-	case NodeRoleMasterWorker:
-		config.WriteString("    # Hybrid node configuration (master + worker)\n")
-		config.WriteString("    # 混合节点配置（master + worker）\n")
-		config.WriteString("    backup-count: 1\n")
-		config.WriteString("    checkpoint:\n")
-		config.WriteString("      interval: 10000\n")
-		config.WriteString("      timeout: 60000\n")
-		config.WriteString("      storage:\n")
-		config.WriteString("        type: hdfs\n")
-		config.WriteString("        max-retained: 3\n")
-	}
+	// Navigate to the target key / 导航到目标键
+	for i := 0; i < len(path); i++ {
+		key := path[i]
+		found := false
 
-	// Write HTTP server configuration / 写入 HTTP 服务器配置
-	config.WriteString("\n")
-	config.WriteString("    http:\n")
-	config.WriteString(fmt.Sprintf("      port: %d\n", httpPort))
-	config.WriteString("      enable-http: true\n")
-
-	return config.String()
-}
-
-// GenerateHazelcastConfig generates the Hazelcast configuration content
-// GenerateHazelcastConfig 生成 Hazelcast 配置内容
-// Deprecated: Use ConfigureCluster with backup+modify pattern instead
-// 已废弃：请使用 ConfigureCluster 的备份+修改模式
-// This function is kept for backward compatibility and property tests
-// 此函数保留用于向后兼容和属性测试
-func GenerateHazelcastConfig(clusterName string, masterAddresses []string, clusterPort int) string {
-	// Set default values / 设置默认值
-	if clusterName == "" {
-		clusterName = "seatunnel-cluster"
-	}
-	if clusterPort == 0 {
-		clusterPort = 5801
-	}
-
-	var config strings.Builder
-
-	// Write header / 写入头部
-	config.WriteString("# Hazelcast Configuration for SeaTunnel\n")
-	config.WriteString("# SeaTunnel 的 Hazelcast 配置\n")
-	config.WriteString("# Generated by SeaTunnelX Agent\n")
-	config.WriteString("# 由 SeaTunnelX Agent 生成\n\n")
-
-	config.WriteString("hazelcast:\n")
-	config.WriteString(fmt.Sprintf("  cluster-name: \"%s\"\n", clusterName))
-	config.WriteString("  network:\n")
-	config.WriteString(fmt.Sprintf("    port: %d\n", clusterPort))
-	config.WriteString("    join:\n")
-	config.WriteString("      multicast:\n")
-	config.WriteString("        enabled: false\n")
-	config.WriteString("      tcp-ip:\n")
-	config.WriteString("        enabled: true\n")
-
-	// Write member list / 写入成员列表
-	if len(masterAddresses) > 0 {
-		config.WriteString("        member-list:\n")
-		for _, addr := range masterAddresses {
-			config.WriteString(fmt.Sprintf("          - \"%s\"\n", addr))
+		if node.Kind == yaml.MappingNode {
+			for j := 0; j < len(node.Content); j += 2 {
+				if node.Content[j].Value == key {
+					node = node.Content[j+1]
+					found = true
+					break
+				}
+			}
 		}
-	} else {
-		config.WriteString("        member-list:\n")
-		config.WriteString("          - \"127.0.0.1\"\n")
+
+		if !found {
+			return fmt.Errorf("path not found: %s", strings.Join(path[:i+1], "."))
+		}
 	}
 
-	// Write properties / 写入属性
-	config.WriteString("  properties:\n")
-	config.WriteString("    hazelcast.logging.type: log4j2\n")
-	config.WriteString("    hazelcast.operation.call.timeout.millis: 30000\n")
+	// Now node points to the target (e.g., plugin-config)
+	// Replace its content with new map entries
+	// 现在 node 指向目标（例如 plugin-config）
+	// 用新的 map 条目替换其内容
+	if node.Kind != yaml.MappingNode {
+		node.Kind = yaml.MappingNode
+		node.Tag = "!!map"
+	}
 
-	return config.String()
+	// Build new content / 构建新内容
+	newContent := make([]*yaml.Node, 0, len(values)*2)
+	for k, v := range values {
+		keyNode := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: k,
+		}
+		valueNode := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: v,
+		}
+		newContent = append(newContent, keyNode, valueNode)
+	}
+
+	node.Content = newContent
+	return nil
 }
+
 
 // Uninstall removes the SeaTunnel installation
 // Uninstall 移除 SeaTunnel 安装
@@ -2528,59 +2499,3 @@ func (m *InstallerManager) Uninstall(ctx context.Context, installDir string) err
 	return nil
 }
 
-// GetOfflineInstallInstructions returns instructions for offline installation
-// GetOfflineInstallInstructions 返回离线安装说明
-func GetOfflineInstallInstructions(version, packageDir string) string {
-	aliyunURL := GetDownloadURL(MirrorAliyun, version)
-	huaweiURL := GetDownloadURL(MirrorHuaweiCloud, version)
-	apacheURL := GetDownloadURL(MirrorApache, version)
-
-	return fmt.Sprintf(`Offline Installation Instructions / 离线安装说明
-================================================
-
-1. Download the SeaTunnel package from one of these sources (recommended order):
-   从以下来源之一下载 SeaTunnel 安装包（推荐顺序）：
-   
-   - Aliyun Mirror (Recommended for China / 国内推荐):
-     %s
-   
-   - Huawei Cloud Mirror (华为云镜像):
-     %s
-   
-   - Apache Mirror (Apache 官方镜像):
-     %s
-
-2. Place the downloaded package at:
-   将下载的安装包放置在：
-   
-   %s/apache-seatunnel-%s-bin.tar.gz
-
-3. (Optional) Download the SHA256 checksum file:
-   （可选）下载 SHA256 校验和文件：
-   
-   https://archive.apache.org/dist/seatunnel/%s/apache-seatunnel-%s-bin.tar.gz.sha512
-
-4. Run the installation again with offline mode.
-   使用离线模式再次运行安装。
-`, aliyunURL, huaweiURL, apacheURL, packageDir, version, version, version)
-}
-
-// GetMirrorList returns a list of available mirrors with descriptions
-// GetMirrorList 返回可用镜像列表及描述
-func GetMirrorList() []struct {
-	Source      MirrorSource
-	Name        string
-	Description string
-	Recommended bool
-} {
-	return []struct {
-		Source      MirrorSource
-		Name        string
-		Description string
-		Recommended bool
-	}{
-		{MirrorAliyun, "Aliyun / 阿里云", "Fastest in China / 国内最快", true},
-		{MirrorHuaweiCloud, "Huawei Cloud / 华为云", "Good speed in China / 国内速度良好", false},
-		{MirrorApache, "Apache Official / Apache 官方", "Official source / 官方源", false},
-	}
-}

@@ -395,7 +395,7 @@ const defaultConfig: InstallWizardConfig = {
   },
   checkpoint: {
     storage_type: 'LOCAL_FILE',
-    namespace: '/tmp/seatunnel/checkpoint',
+    namespace: '/tmp/seatunnel/checkpoint/',
   },
   connector: {
     install_connectors: false,

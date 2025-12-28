@@ -396,7 +396,7 @@ export function ConfigStep({ config, onConfigChange }: ConfigStepProps) {
               <Input
                 value={config.checkpoint.namespace}
                 onChange={(e) => handleCheckpointChange('namespace', e.target.value)}
-                placeholder="/tmp/seatunnel/checkpoint"
+                placeholder="/tmp/seatunnel/checkpoint/"
               />
             </div>
 

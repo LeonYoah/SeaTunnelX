@@ -188,8 +188,6 @@ sudo yum install protobuf-compiler
 2. **生成代码**
 
 ```bash
-# 使用脚本（推荐）
-./scripts/proto.sh
 
 # 或手动执行
 protoc --proto_path=. \

@@ -144,10 +144,21 @@ type CheckpointConfig struct {
 	Namespace        string                `json:"namespace"`
 	HDFSNameNodeHost string                `json:"hdfs_namenode_host,omitempty"`
 	HDFSNameNodePort int                   `json:"hdfs_namenode_port,omitempty"`
-	StorageEndpoint  string                `json:"storage_endpoint,omitempty"`
-	StorageAccessKey string                `json:"storage_access_key,omitempty"`
-	StorageSecretKey string                `json:"storage_secret_key,omitempty"`
-	StorageBucket    string                `json:"storage_bucket,omitempty"`
+	// HDFS Kerberos authentication / HDFS Kerberos 认证
+	KerberosPrincipal      string `json:"kerberos_principal,omitempty"`
+	KerberosKeytabFilePath string `json:"kerberos_keytab_file_path,omitempty"`
+	// HDFS HA mode configuration / HDFS HA 模式配置
+	HDFSHAEnabled             bool   `json:"hdfs_ha_enabled,omitempty"`
+	HDFSNameServices          string `json:"hdfs_name_services,omitempty"`
+	HDFSHANamenodes           string `json:"hdfs_ha_namenodes,omitempty"`
+	HDFSNamenodeRPCAddress1   string `json:"hdfs_namenode_rpc_address_1,omitempty"`
+	HDFSNamenodeRPCAddress2   string `json:"hdfs_namenode_rpc_address_2,omitempty"`
+	HDFSFailoverProxyProvider string `json:"hdfs_failover_proxy_provider,omitempty"`
+	// OSS/S3 configuration / OSS/S3 配置
+	StorageEndpoint  string `json:"storage_endpoint,omitempty"`
+	StorageAccessKey string `json:"storage_access_key,omitempty"`
+	StorageSecretKey string `json:"storage_secret_key,omitempty"`
+	StorageBucket    string `json:"storage_bucket,omitempty"`
 }
 
 // ConnectorConfig contains connector installation configuration

@@ -29,6 +29,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // Common service errors / 常见服务错误
@@ -245,7 +247,11 @@ func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string) ([]P
 
 // fetchConnectorsFromMaven fetches connector list from Maven repository.
 // fetchConnectorsFromMaven 从 Maven 仓库获取连接器列表。
+// Uses concurrent version checking for better performance.
+// 使用并发版本检查以提高性能。
 func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) ([]Plugin, error) {
+	logger.InfoF(ctx, "[Plugin] Fetching connectors from Maven for version %s", version)
+
 	// Fetch the main directory listing / 获取主目录列表
 	client := &http.Client{Timeout: PluginFetchTimeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, MavenRepoBaseURL+"/", nil)
@@ -255,11 +261,13 @@ func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) 
 
 	resp, err := client.Do(req)
 	if err != nil {
+		logger.ErrorF(ctx, "[Plugin] Failed to fetch Maven repo: %v", err)
 		return nil, fmt.Errorf("failed to fetch Maven repo: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.ErrorF(ctx, "[Plugin] Maven repo returned status %d", resp.StatusCode)
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
@@ -269,44 +277,55 @@ func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) 
 	}
 
 	// Parse HTML to extract connector names / 解析 HTML 提取连接器名称
-	// Pattern: <a href="connector-xxx/">connector-xxx/</a>
 	pattern := `<a[^>]*href="(connector-[^/"]+)/"[^>]*>`
 	re := regexp.MustCompile(pattern)
 	matches := re.FindAllStringSubmatch(string(body), -1)
 
-	var plugins []Plugin
+	// Filter candidates / 过滤候选连接器
+	var candidates []string
 	seen := make(map[string]bool)
-
 	for _, match := range matches {
-		if len(match) >= 2 {
-			artifactID := match[1]
-
-			// Skip e2e test modules / 跳过 e2e 测试模块
-			if strings.Contains(artifactID, "-e2e") {
-				continue
-			}
-			// Skip common/base modules / 跳过通用/基础模块
-			if isSkippedModule(artifactID) {
-				continue
-			}
-			// Skip if already seen / 跳过已处理的
-			if seen[artifactID] {
-				continue
-			}
-			seen[artifactID] = true
-
-			// Check if this connector has the specified version / 检查此连接器是否有指定版本
-			hasVersion, err := s.checkConnectorVersion(ctx, artifactID, version)
-			if err != nil || !hasVersion {
-				continue
-			}
-
-			// Create plugin entry / 创建插件条目
-			plugin := s.createPluginFromArtifactID(artifactID, version)
-			plugins = append(plugins, plugin)
+		if len(match) < 2 {
+			continue
 		}
+		artifactID := match[1]
+		if strings.Contains(artifactID, "-e2e") || isSkippedModule(artifactID) || seen[artifactID] {
+			continue
+		}
+		seen[artifactID] = true
+		candidates = append(candidates, artifactID)
 	}
 
+	logger.InfoF(ctx, "[Plugin] Checking %d connector candidates concurrently", len(candidates))
+
+	// Concurrent version checking / 并发版本检查
+	const maxConcurrency = 10
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var plugins []Plugin
+
+	for _, artifactID := range candidates {
+		wg.Add(1)
+		go func(aid string) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire
+			defer func() { <-sem }() // release
+
+			hasVersion, err := s.checkConnectorVersion(ctx, aid, version)
+			if err != nil || !hasVersion {
+				return
+			}
+
+			plugin := s.createPluginFromArtifactID(aid, version)
+			mu.Lock()
+			plugins = append(plugins, plugin)
+			mu.Unlock()
+		}(artifactID)
+	}
+
+	wg.Wait()
+	logger.InfoF(ctx, "[Plugin] Found %d connectors with version %s", len(plugins), version)
 	return plugins, nil
 }
 

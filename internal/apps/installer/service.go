@@ -1830,6 +1830,32 @@ func buildInstallParams(req *InstallationRequest) map[string]string {
 			params["checkpoint_storage_access_key"] = req.Checkpoint.StorageAccessKey
 			params["checkpoint_storage_secret_key"] = req.Checkpoint.StorageSecretKey
 		}
+		// HDFS Kerberos config / HDFS Kerberos 配置
+		if req.Checkpoint.KerberosPrincipal != "" {
+			params["checkpoint_kerberos_principal"] = req.Checkpoint.KerberosPrincipal
+		}
+		if req.Checkpoint.KerberosKeytabFilePath != "" {
+			params["checkpoint_kerberos_keytab_path"] = req.Checkpoint.KerberosKeytabFilePath
+		}
+		// HDFS HA config / HDFS HA 配置
+		if req.Checkpoint.HDFSHAEnabled {
+			params["checkpoint_hdfs_ha_enabled"] = "true"
+			if req.Checkpoint.HDFSNameServices != "" {
+				params["checkpoint_hdfs_name_services"] = req.Checkpoint.HDFSNameServices
+			}
+			if req.Checkpoint.HDFSHANamenodes != "" {
+				params["checkpoint_hdfs_ha_namenodes"] = req.Checkpoint.HDFSHANamenodes
+			}
+			if req.Checkpoint.HDFSNamenodeRPCAddress1 != "" {
+				params["checkpoint_hdfs_namenode_rpc_address_1"] = req.Checkpoint.HDFSNamenodeRPCAddress1
+			}
+			if req.Checkpoint.HDFSNamenodeRPCAddress2 != "" {
+				params["checkpoint_hdfs_namenode_rpc_address_2"] = req.Checkpoint.HDFSNamenodeRPCAddress2
+			}
+			if req.Checkpoint.HDFSFailoverProxyProvider != "" {
+				params["checkpoint_hdfs_failover_proxy_provider"] = req.Checkpoint.HDFSFailoverProxyProvider
+			}
+		}
 	}
 
 	// Add connector config / 添加连接器配置
