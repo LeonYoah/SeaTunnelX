@@ -435,12 +435,24 @@ func (s *Server) loggingStreamInterceptor(srv interface{}, ss grpc.ServerStream,
 	// 记录调用
 	duration := time.Since(start)
 	if err != nil {
-		s.logger.Warn("gRPC stream ended with error",
-			zap.String("method", info.FullMethod),
-			zap.String("peer", peerAddr),
-			zap.Duration("duration", duration),
-			zap.Error(err),
-		)
+		// Use debug level for expected errors (InvalidArgument, NotFound)
+		// 对于预期的错误（InvalidArgument, NotFound）使用 debug 级别
+		code := status.Code(err)
+		if code == codes.InvalidArgument || code == codes.NotFound {
+			s.logger.Debug("gRPC stream ended with expected error",
+				zap.String("method", info.FullMethod),
+				zap.String("peer", peerAddr),
+				zap.Duration("duration", duration),
+				zap.Error(err),
+			)
+		} else {
+			s.logger.Warn("gRPC stream ended with error",
+				zap.String("method", info.FullMethod),
+				zap.String("peer", peerAddr),
+				zap.Duration("duration", duration),
+				zap.Error(err),
+			)
+		}
 	} else {
 		s.logger.Debug("gRPC stream ended",
 			zap.String("method", info.FullMethod),

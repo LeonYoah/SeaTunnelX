@@ -24,14 +24,19 @@ import (
 )
 
 var (
-	ErrTemplateNotFound    = errors.New("cluster template config not found")
+	ErrTemplateNotFound      = errors.New("cluster template config not found")
 	ErrCannotPromoteTemplate = errors.New("cannot promote template config")
-	ErrCannotSyncTemplate  = errors.New("cannot sync template config from itself")
+	ErrCannotSyncTemplate    = errors.New("cannot sync template config from itself")
 )
 
 // HostProvider 主机信息提供者接口
 type HostProvider interface {
 	GetHostByID(ctx context.Context, id uint) (*HostInfo, error)
+}
+
+// NodeInfoProvider 节点信息提供者接口
+type NodeInfoProvider interface {
+	GetNodeInstallDir(ctx context.Context, clusterID uint, hostID uint) (string, error)
 }
 
 // HostInfo 主机信息
@@ -49,17 +54,19 @@ type AgentClient interface {
 
 // Service 配置管理服务
 type Service struct {
-	repo         *Repository
-	hostProvider HostProvider
-	agentClient  AgentClient
+	repo             *Repository
+	hostProvider     HostProvider
+	nodeInfoProvider NodeInfoProvider
+	agentClient      AgentClient
 }
 
 // NewService 创建配置服务实例
-func NewService(repo *Repository, hostProvider HostProvider, agentClient AgentClient) *Service {
+func NewService(repo *Repository, hostProvider HostProvider, nodeInfoProvider NodeInfoProvider, agentClient AgentClient) *Service {
 	return &Service{
-		repo:         repo,
-		hostProvider: hostProvider,
-		agentClient:  agentClient,
+		repo:             repo,
+		hostProvider:     hostProvider,
+		nodeInfoProvider: nodeInfoProvider,
+		agentClient:      agentClient,
 	}
 }
 
@@ -173,7 +180,25 @@ func (s *Service) Update(ctx context.Context, id uint, req *UpdateConfigRequest,
 		return nil, err
 	}
 
-	return s.toConfigInfo(ctx, config)
+	info, err := s.toConfigInfo(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果是节点配置（非模板），推送到节点
+	if config.HostID != nil && s.nodeInfoProvider != nil && s.agentClient != nil {
+		installDir, dirErr := s.nodeInfoProvider.GetNodeInstallDir(ctx, config.ClusterID, *config.HostID)
+		if dirErr != nil {
+			info.PushError = "获取节点安装目录失败: " + dirErr.Error()
+		} else if installDir != "" {
+			pushErr := s.agentClient.PushConfig(ctx, *config.HostID, installDir, config.ConfigType, config.Content)
+			if pushErr != nil {
+				info.PushError = "推送配置到节点失败: " + pushErr.Error()
+			}
+		}
+	}
+
+	return info, nil
 }
 
 // GetVersions 获取版本历史
@@ -239,7 +264,25 @@ func (s *Service) Rollback(ctx context.Context, id uint, req *RollbackConfigRequ
 		return nil, err
 	}
 
-	return s.toConfigInfo(ctx, config)
+	info, err := s.toConfigInfo(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果是节点配置（非模板），推送到节点
+	if config.HostID != nil && s.nodeInfoProvider != nil && s.agentClient != nil {
+		installDir, dirErr := s.nodeInfoProvider.GetNodeInstallDir(ctx, config.ClusterID, *config.HostID)
+		if dirErr != nil {
+			info.PushError = "获取节点安装目录失败: " + dirErr.Error()
+		} else if installDir != "" {
+			pushErr := s.agentClient.PushConfig(ctx, *config.HostID, installDir, config.ConfigType, config.Content)
+			if pushErr != nil {
+				info.PushError = "推送配置到节点失败: " + pushErr.Error()
+			}
+		}
+	}
+
+	return info, nil
 }
 
 // Promote 推广配置到集群（节点配置 → 集群模板 → 所有节点）
@@ -380,7 +423,25 @@ func (s *Service) SyncFromTemplate(ctx context.Context, id uint, req *SyncConfig
 		return nil, err
 	}
 
-	return s.toConfigInfo(ctx, config)
+	info, err := s.toConfigInfo(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// 推送配置到节点
+	if config.HostID != nil && s.nodeInfoProvider != nil && s.agentClient != nil {
+		installDir, dirErr := s.nodeInfoProvider.GetNodeInstallDir(ctx, config.ClusterID, *config.HostID)
+		if dirErr != nil {
+			info.PushError = "获取节点安装目录失败: " + dirErr.Error()
+		} else if installDir != "" {
+			pushErr := s.agentClient.PushConfig(ctx, *config.HostID, installDir, config.ConfigType, config.Content)
+			if pushErr != nil {
+				info.PushError = "推送配置到节点失败: " + pushErr.Error()
+			}
+		}
+	}
+
+	return info, nil
 }
 
 // InitClusterConfigs 初始化集群配置（安装完成后调用）
@@ -392,59 +453,204 @@ func (s *Service) InitClusterConfigs(ctx context.Context, clusterID uint, hostID
 			continue // 某些配置文件可能不存在，跳过
 		}
 
-		// 创建集群模板
-		template := &Config{
-			ClusterID:  clusterID,
-			HostID:     nil,
-			ConfigType: configType,
-			FilePath:   GetConfigFilePath(configType),
-			Content:    content,
-			Version:    1,
-			UpdatedBy:  userID,
-		}
-		if err := s.repo.Create(ctx, template); err != nil {
-			return err
+		if content == "" {
+			continue // 空内容跳过
 		}
 
-		// 创建模板版本
-		templateVersion := &ConfigVersion{
-			ConfigID:  template.ID,
-			Version:   1,
-			Content:   content,
-			Comment:   "Initial config from installation",
-			CreatedBy: userID,
-		}
-		if err := s.repo.CreateVersion(ctx, templateVersion); err != nil {
-			return err
+		// 检查模板是否已存在
+		existingTemplate, err := s.repo.GetTemplate(ctx, clusterID, configType)
+		if err == nil && existingTemplate != nil {
+			// 模板已存在，更新内容
+			if existingTemplate.Content != content {
+				existingTemplate.Content = content
+				existingTemplate.Version = existingTemplate.Version + 1
+				existingTemplate.UpdatedBy = userID
+				existingTemplate.UpdatedAt = time.Now()
+				if err := s.repo.Update(ctx, existingTemplate); err != nil {
+					return err
+				}
+				// 创建新版本
+				templateVersion := &ConfigVersion{
+					ConfigID:  existingTemplate.ID,
+					Version:   existingTemplate.Version,
+					Content:   content,
+					Comment:   "Updated from node sync",
+					CreatedBy: userID,
+				}
+				if err := s.repo.CreateVersion(ctx, templateVersion); err != nil {
+					return err
+				}
+			}
+		} else {
+			// 创建集群模板
+			template := &Config{
+				ClusterID:  clusterID,
+				HostID:     nil,
+				ConfigType: configType,
+				FilePath:   GetConfigFilePath(configType),
+				Content:    content,
+				Version:    1,
+				UpdatedBy:  userID,
+			}
+			if err := s.repo.Create(ctx, template); err != nil {
+				return err
+			}
+
+			// 创建模板版本
+			templateVersion := &ConfigVersion{
+				ConfigID:  template.ID,
+				Version:   1,
+				Content:   content,
+				Comment:   "Initial config from installation",
+				CreatedBy: userID,
+			}
+			if err := s.repo.CreateVersion(ctx, templateVersion); err != nil {
+				return err
+			}
 		}
 
-		// 创建节点配置
-		nodeConfig := &Config{
-			ClusterID:  clusterID,
-			HostID:     &hostID,
-			ConfigType: configType,
-			FilePath:   GetConfigFilePath(configType),
-			Content:    content,
-			Version:    1,
-			UpdatedBy:  userID,
-		}
-		if err := s.repo.Create(ctx, nodeConfig); err != nil {
-			return err
-		}
+		// 检查节点配置是否已存在
+		existingNodeConfig, err := s.repo.GetNodeConfig(ctx, clusterID, hostID, configType)
+		if err == nil && existingNodeConfig != nil {
+			// 节点配置已存在，更新内容
+			if existingNodeConfig.Content != content {
+				existingNodeConfig.Content = content
+				existingNodeConfig.Version = existingNodeConfig.Version + 1
+				existingNodeConfig.UpdatedBy = userID
+				existingNodeConfig.UpdatedAt = time.Now()
+				if err := s.repo.Update(ctx, existingNodeConfig); err != nil {
+					return err
+				}
+				// 创建新版本
+				nodeVersion := &ConfigVersion{
+					ConfigID:  existingNodeConfig.ID,
+					Version:   existingNodeConfig.Version,
+					Content:   content,
+					Comment:   "Updated from node sync",
+					CreatedBy: userID,
+				}
+				if err := s.repo.CreateVersion(ctx, nodeVersion); err != nil {
+					return err
+				}
+			}
+		} else {
+			// 创建节点配置
+			nodeConfig := &Config{
+				ClusterID:  clusterID,
+				HostID:     &hostID,
+				ConfigType: configType,
+				FilePath:   GetConfigFilePath(configType),
+				Content:    content,
+				Version:    1,
+				UpdatedBy:  userID,
+			}
+			if err := s.repo.Create(ctx, nodeConfig); err != nil {
+				return err
+			}
 
-		// 创建节点版本
-		nodeVersion := &ConfigVersion{
-			ConfigID:  nodeConfig.ID,
-			Version:   1,
-			Content:   content,
-			Comment:   "Initial config from installation",
-			CreatedBy: userID,
-		}
-		if err := s.repo.CreateVersion(ctx, nodeVersion); err != nil {
-			return err
+			// 创建节点版本
+			nodeVersion := &ConfigVersion{
+				ConfigID:  nodeConfig.ID,
+				Version:   1,
+				Content:   content,
+				Comment:   "Initial config from installation",
+				CreatedBy: userID,
+			}
+			if err := s.repo.CreateVersion(ctx, nodeVersion); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// SyncTemplateToAllNodes 将集群模板同步到所有节点配置
+func (s *Service) SyncTemplateToAllNodes(ctx context.Context, clusterID uint, configType ConfigType, userID uint) (*SyncAllResult, error) {
+	// 获取模板
+	template, err := s.repo.GetTemplate(ctx, clusterID, configType)
+	if err != nil {
+		return nil, ErrTemplateNotFound
+	}
+
+	// 获取所有节点配置
+	nodeConfigs, err := s.repo.ListNodeConfigs(ctx, clusterID, configType)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &SyncAllResult{
+		SyncedCount: 0,
+		PushErrors:  make([]*PushError, 0),
+	}
+
+	err = s.repo.Transaction(ctx, func(tx *Repository) error {
+		for _, nc := range nodeConfigs {
+			if nc.Content == template.Content {
+				continue // 内容相同跳过
+			}
+			nc.Content = template.Content
+			nc.Version = nc.Version + 1
+			nc.UpdatedBy = userID
+			nc.UpdatedAt = time.Now()
+			if err := tx.Update(ctx, nc); err != nil {
+				return err
+			}
+			// 创建节点版本
+			nodeVersion := &ConfigVersion{
+				ConfigID:  nc.ID,
+				Version:   nc.Version,
+				Content:   template.Content,
+				Comment:   "Synced from cluster template (batch)",
+				CreatedBy: userID,
+			}
+			if err := tx.CreateVersion(ctx, nodeVersion); err != nil {
+				return err
+			}
+			result.SyncedCount++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 推送配置到所有节点
+	if s.nodeInfoProvider != nil && s.agentClient != nil {
+		for _, nc := range nodeConfigs {
+			if nc.HostID != nil {
+				installDir, dirErr := s.nodeInfoProvider.GetNodeInstallDir(ctx, clusterID, *nc.HostID)
+				if dirErr != nil {
+					pushErr := &PushError{
+						HostID:  *nc.HostID,
+						Message: "获取节点安装目录失败: " + dirErr.Error(),
+					}
+					// 尝试获取主机 IP
+					if s.hostProvider != nil {
+						if host, err := s.hostProvider.GetHostByID(ctx, *nc.HostID); err == nil {
+							pushErr.HostIP = host.IPAddress
+						}
+					}
+					result.PushErrors = append(result.PushErrors, pushErr)
+				} else if installDir != "" {
+					if pushErr := s.agentClient.PushConfig(ctx, *nc.HostID, installDir, configType, template.Content); pushErr != nil {
+						errInfo := &PushError{
+							HostID:  *nc.HostID,
+							Message: "推送配置失败: " + pushErr.Error(),
+						}
+						// 尝试获取主机 IP
+						if s.hostProvider != nil {
+							if host, err := s.hostProvider.GetHostByID(ctx, *nc.HostID); err == nil {
+								errInfo.HostIP = host.IPAddress
+							}
+						}
+						result.PushErrors = append(result.PushErrors, errInfo)
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // PushConfigToNode 推送配置到节点

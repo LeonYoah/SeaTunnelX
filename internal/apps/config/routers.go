@@ -28,6 +28,7 @@ func RegisterRoutes(router *gin.RouterGroup, handler *Handler) {
 	{
 		clusters.GET("/:id/configs", handler.GetClusterConfigs)
 		clusters.POST("/:id/configs/init", handler.InitClusterConfigs)
+		clusters.POST("/:id/configs/sync-all", handler.SyncTemplateToAllNodes)
 	}
 
 	// 配置操作路由

@@ -34,27 +34,33 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
+// Response 标准响应格式
+type Response struct {
+	ErrorMsg string      `json:"error_msg"`
+	Data     interface{} `json:"data"`
+}
+
 // GetClusterConfigs 获取集群所有配置
 // @Summary 获取集群配置列表
 // @Tags Config
 // @Produce json
 // @Param id path int true "集群ID"
-// @Success 200 {array} ConfigInfo
+// @Success 200 {object} Response
 // @Router /api/v1/clusters/{id}/configs [get]
 func (h *Handler) GetClusterConfigs(c *gin.Context) {
 	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid cluster id", Data: nil})
 		return
 	}
 
 	configs, err := h.service.GetByCluster(c.Request.Context(), uint(clusterID))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, configs)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: configs})
 }
 
 // GetConfig 获取配置详情
@@ -62,26 +68,26 @@ func (h *Handler) GetClusterConfigs(c *gin.Context) {
 // @Tags Config
 // @Produce json
 // @Param id path int true "配置ID"
-// @Success 200 {object} ConfigInfo
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id} [get]
 func (h *Handler) GetConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
 	config, err := h.service.Get(c.Request.Context(), uint(id))
 	if err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, config)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: config})
 }
 
 // UpdateConfig 更新配置
@@ -91,18 +97,18 @@ func (h *Handler) GetConfig(c *gin.Context) {
 // @Produce json
 // @Param id path int true "配置ID"
 // @Param body body UpdateConfigRequest true "更新内容"
-// @Success 200 {object} ConfigInfo
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id} [put]
 func (h *Handler) UpdateConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
 	var req UpdateConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
@@ -110,14 +116,14 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 	config, err := h.service.Update(c.Request.Context(), uint(id), &req, userID)
 	if err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, config)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: config})
 }
 
 // GetConfigVersions 获取配置版本历史
@@ -125,22 +131,22 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 // @Tags Config
 // @Produce json
 // @Param id path int true "配置ID"
-// @Success 200 {array} ConfigVersionInfo
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id}/versions [get]
 func (h *Handler) GetConfigVersions(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
 	versions, err := h.service.GetVersions(c.Request.Context(), uint(id))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, versions)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: versions})
 }
 
 // RollbackConfig 回滚配置到指定版本
@@ -150,18 +156,18 @@ func (h *Handler) GetConfigVersions(c *gin.Context) {
 // @Produce json
 // @Param id path int true "配置ID"
 // @Param body body RollbackConfigRequest true "回滚请求"
-// @Success 200 {object} ConfigInfo
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id}/rollback [post]
 func (h *Handler) RollbackConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
 	var req RollbackConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
@@ -169,18 +175,18 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 	config, err := h.service.Rollback(c.Request.Context(), uint(id), &req, userID)
 	if err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
 		if err == ErrVersionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "version not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "version not found", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, config)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: config})
 }
 
 // PromoteConfig 推广配置到集群
@@ -190,12 +196,12 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 // @Produce json
 // @Param id path int true "配置ID"
 // @Param body body PromoteConfigRequest true "推广请求"
-// @Success 200 {object} gin.H
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id}/promote [post]
 func (h *Handler) PromoteConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
@@ -208,18 +214,18 @@ func (h *Handler) PromoteConfig(c *gin.Context) {
 	userID := getUserID(c)
 	if err := h.service.Promote(c.Request.Context(), uint(id), &req, userID); err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
 		if err == ErrCannotPromoteTemplate {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot promote template config"})
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "cannot promote template config", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "config promoted to cluster successfully"})
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: map[string]string{"message": "config promoted to cluster successfully"}})
 }
 
 // SyncFromTemplate 从集群模板同步
@@ -229,12 +235,12 @@ func (h *Handler) PromoteConfig(c *gin.Context) {
 // @Produce json
 // @Param id path int true "配置ID"
 // @Param body body SyncConfigRequest true "同步请求"
-// @Success 200 {object} ConfigInfo
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id}/sync [post]
 func (h *Handler) SyncFromTemplate(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
@@ -248,22 +254,22 @@ func (h *Handler) SyncFromTemplate(c *gin.Context) {
 	config, err := h.service.SyncFromTemplate(c.Request.Context(), uint(id), &req, userID)
 	if err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
 		if err == ErrTemplateNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "cluster template not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "cluster template not found", Data: nil})
 			return
 		}
 		if err == ErrCannotSyncTemplate {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot sync template config"})
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "cannot sync template config", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, config)
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: config})
 }
 
 // InitClusterConfigsRequest 初始化集群配置请求
@@ -279,28 +285,28 @@ type InitClusterConfigsRequest struct {
 // @Produce json
 // @Param id path int true "集群ID"
 // @Param body body InitClusterConfigsRequest true "初始化请求"
-// @Success 200 {object} gin.H
+// @Success 200 {object} Response
 // @Router /api/v1/clusters/{id}/configs/init [post]
 func (h *Handler) InitClusterConfigs(c *gin.Context) {
 	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid cluster id", Data: nil})
 		return
 	}
 
 	var req InitClusterConfigsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
 	userID := getUserID(c)
 	if err := h.service.InitClusterConfigs(c.Request.Context(), uint(clusterID), req.HostID, req.InstallDir, userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "cluster configs initialized successfully"})
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: map[string]string{"message": "cluster configs initialized successfully"}})
 }
 
 // PushConfigRequest 推送配置请求
@@ -315,31 +321,76 @@ type PushConfigRequest struct {
 // @Produce json
 // @Param id path int true "配置ID"
 // @Param body body PushConfigRequest true "推送请求"
-// @Success 200 {object} gin.H
+// @Success 200 {object} Response
 // @Router /api/v1/configs/{id}/push [post]
 func (h *Handler) PushConfigToNode(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid config id"})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid config id", Data: nil})
 		return
 	}
 
 	var req PushConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
 	if err := h.service.PushConfigToNode(c.Request.Context(), uint(id), req.InstallDir); err != nil {
 		if err == ErrConfigNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "config not found"})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "config pushed to node successfully"})
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: map[string]string{"message": "config pushed to node successfully"}})
+}
+
+// SyncTemplateToAllNodesRequest 同步模板到所有节点请求
+type SyncTemplateToAllNodesRequest struct {
+	ConfigType string `json:"config_type" binding:"required"`
+}
+
+// SyncTemplateToAllNodes 将集群模板同步到所有节点
+// @Summary 同步模板到所有节点
+// @Tags Config
+// @Accept json
+// @Produce json
+// @Param id path int true "集群ID"
+// @Param body body SyncTemplateToAllNodesRequest true "同步请求"
+// @Success 200 {object} Response
+// @Router /api/v1/clusters/{id}/configs/sync-all [post]
+func (h *Handler) SyncTemplateToAllNodes(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid cluster id", Data: nil})
+		return
+	}
+
+	var req SyncTemplateToAllNodesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
+		return
+	}
+
+	userID := getUserID(c)
+	result, err := h.service.SyncTemplateToAllNodes(c.Request.Context(), uint(clusterID), ConfigType(req.ConfigType), userID)
+	if err != nil {
+		if err == ErrTemplateNotFound {
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "cluster template not found", Data: nil})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: map[string]interface{}{
+		"message":      "template synced to all nodes",
+		"synced_count": result.SyncedCount,
+		"push_errors":  result.PushErrors,
+	}})
 }
 
 // getUserID 从上下文获取用户ID

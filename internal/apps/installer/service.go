@@ -121,6 +121,14 @@ type NodeStarter interface {
 	StartNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (bool, string, error)
 }
 
+// ConfigInitializer is the interface for initializing cluster configs after installation
+// ConfigInitializer 是安装完成后初始化集群配置的接口
+type ConfigInitializer interface {
+	// InitClusterConfigs initializes cluster configs by pulling from a host
+	// InitClusterConfigs 通过从主机拉取来初始化集群配置
+	InitClusterConfigs(ctx context.Context, clusterID uint, hostID uint, installDir string, userID uint) error
+}
+
 // HostInfo contains host information for precheck
 // HostInfo 包含预检查所需的主机信息
 type HostInfo struct {
@@ -233,6 +241,10 @@ type Service struct {
 	// nodeStarter 用于启动集群节点
 	nodeStarter NodeStarter
 
+	// configInitializer is used to initialize cluster configs after installation
+	// configInitializer 用于安装完成后初始化集群配置
+	configInitializer ConfigInitializer
+
 	// heartbeatTimeout is the timeout for agent heartbeat
 	// heartbeatTimeout 是 Agent 心跳超时时间
 	heartbeatTimeout time.Duration
@@ -302,6 +314,12 @@ func (s *Service) SetNodeStatusUpdater(updater NodeStatusUpdater) {
 // SetNodeStarter 设置用于启动集群节点的节点启动器。
 func (s *Service) SetNodeStarter(starter NodeStarter) {
 	s.nodeStarter = starter
+}
+
+// SetConfigInitializer sets the config initializer for initializing cluster configs.
+// SetConfigInitializer 设置用于初始化集群配置的配置初始化器。
+func (s *Service) SetConfigInitializer(initializer ConfigInitializer) {
+	s.configInitializer = initializer
 }
 
 // ==================== Version Management 版本管理 ====================
@@ -1695,6 +1713,22 @@ func (s *Service) startClusterAfterInstall(ctx context.Context, agentID string, 
 				logger.DebugF(ctx, "[Installer] 记录插件时出现问题（可能已存在）/ Issue recording plugin (may already exist): cluster=%d, plugin=%s, error=%v",
 					clusterID, pluginName, err)
 			}
+		}
+	}
+
+	// Initialize cluster configs after successful installation
+	// 安装成功后初始化集群配置
+	if s.configInitializer != nil {
+		logger.InfoF(ctx, "[Installer] 初始化集群配置 / Initializing cluster configs: cluster=%d, host=%d",
+			clusterID, hostID)
+		if err := s.configInitializer.InitClusterConfigs(ctx, clusterID, hostID, req.InstallDir, 0); err != nil {
+			// Only log warning, don't fail the installation
+			// 只记录警告，不要让安装失败
+			logger.WarnF(ctx, "[Installer] 初始化集群配置失败（不影响安装）/ Failed to initialize cluster configs (non-fatal): cluster=%d, host=%d, error=%v",
+				clusterID, hostID, err)
+		} else {
+			logger.InfoF(ctx, "[Installer] 集群配置初始化成功 / Cluster configs initialized successfully: cluster=%d, host=%d",
+				clusterID, hostID)
 		}
 	}
 

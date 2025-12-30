@@ -272,6 +272,9 @@ func (a *Agent) registerWithControlPlane() error {
 		return fmt.Errorf("registration rejected: %s / 注册被拒绝：%s", resp.Message, resp.Message)
 	}
 
+	// Save the assigned agent ID / 保存分配的 Agent ID
+	a.grpcClient.SetAgentID(resp.AssignedId)
+
 	fmt.Printf("Registered successfully with ID: %s / 注册成功，ID：%s\n", resp.AssignedId, resp.AssignedId)
 
 	// Apply configuration from Control Plane if provided

@@ -39,6 +39,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -2462,9 +2463,18 @@ func setYAMLMapValue(root *yaml.Node, path []string, values map[string]string) e
 		node.Tag = "!!map"
 	}
 
-	// Build new content / 构建新内容
+	// Sort keys to ensure consistent order across all nodes
+	// 对 key 排序以确保所有节点的顺序一致
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build new content with sorted keys / 使用排序后的 key 构建新内容
 	newContent := make([]*yaml.Node, 0, len(values)*2)
-	for k, v := range values {
+	for _, k := range keys {
+		v := values[k]
 		keyNode := &yaml.Node{
 			Kind:  yaml.ScalarNode,
 			Tag:   "!!str",

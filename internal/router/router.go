@@ -542,8 +542,14 @@ func Serve() {
 			// 初始化配置仓库、服务和处理器
 			configRepo := appconfig.NewRepository(db.DB(context.Background()))
 			configAgentClient := &configAgentClientAdapter{manager: agentManager, hostService: hostService}
-			configService := appconfig.NewService(configRepo, &configHostProviderAdapter{hostService: hostService}, configAgentClient)
+			configNodeInfoProvider := &configNodeInfoProviderAdapter{clusterService: clusterService}
+			configService := appconfig.NewService(configRepo, &configHostProviderAdapter{hostService: hostService}, configNodeInfoProvider, configAgentClient)
 			configHandler := appconfig.NewHandler(configService)
+
+			// Inject config initializer into installer service for initializing configs after installation
+			// 将配置初始化器注入安装服务，用于安装后初始化配置
+			installerService.SetConfigInitializer(configService)
+			log.Println("[API] Config initializer injected into installer service / 配置初始化器已注入安装服务")
 
 			// Config management routes 配置管理路由
 			appconfig.RegisterRoutes(apiV1Router, configHandler)
@@ -1186,4 +1192,16 @@ func (a *configAgentClientAdapter) PushConfig(ctx context.Context, hostID uint, 
 	}
 
 	return nil
+}
+
+// configNodeInfoProviderAdapter adapts cluster.Service to appconfig.NodeInfoProvider interface.
+// configNodeInfoProviderAdapter 将 cluster.Service 适配到 appconfig.NodeInfoProvider 接口。
+type configNodeInfoProviderAdapter struct {
+	clusterService *cluster.Service
+}
+
+// GetNodeInstallDir returns the install directory for a node by cluster ID and host ID.
+// GetNodeInstallDir 根据集群 ID 和主机 ID 返回节点的安装目录。
+func (a *configNodeInfoProviderAdapter) GetNodeInstallDir(ctx context.Context, clusterID uint, hostID uint) (string, error) {
+	return a.clusterService.GetNodeInstallDir(ctx, clusterID, hostID)
 }

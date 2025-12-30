@@ -540,6 +540,21 @@ func (s *Service) GetNode(ctx context.Context, nodeID uint) (*ClusterNode, error
 	return s.repo.GetNodeByID(ctx, nodeID)
 }
 
+// GetNodeInstallDir retrieves the install directory for a node by cluster ID and host ID.
+// GetNodeInstallDir 根据集群 ID 和主机 ID 获取节点的安装目录。
+// This implements the config.NodeInfoProvider interface.
+// 这实现了 config.NodeInfoProvider 接口。
+func (s *Service) GetNodeInstallDir(ctx context.Context, clusterID uint, hostID uint) (string, error) {
+	node, err := s.repo.GetNodeByClusterAndHost(ctx, clusterID, hostID)
+	if err != nil {
+		return "", err
+	}
+	if node == nil {
+		return "", fmt.Errorf("node not found for cluster %d and host %d / 未找到集群 %d 主机 %d 对应的节点", clusterID, hostID, clusterID, hostID)
+	}
+	return node.InstallDir, nil
+}
+
 // UpdateNodeStatus updates the status of a cluster node.
 // UpdateNodeStatus 更新集群节点的状态。
 func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID uint, status NodeStatus) error {

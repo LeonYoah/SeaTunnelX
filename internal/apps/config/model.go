@@ -27,20 +27,51 @@ import (
 type ConfigType string
 
 const (
+	// 通用配置（Hybrid 模式）
 	ConfigTypeSeatunnel       ConfigType = "seatunnel.yaml"
 	ConfigTypeHazelcast       ConfigType = "hazelcast.yaml"
 	ConfigTypeHazelcastClient ConfigType = "hazelcast-client.yaml"
 	ConfigTypeJVMOptions      ConfigType = "jvm_options"
 	ConfigTypeLog4j2          ConfigType = "log4j2.properties"
+
+	// 分离模式配置（Separated 模式）
+	ConfigTypeHazelcastMaster ConfigType = "hazelcast-master.yaml"
+	ConfigTypeHazelcastWorker ConfigType = "hazelcast-worker.yaml"
+	ConfigTypeJVMMasterOptions ConfigType = "jvm_master_options"
+	ConfigTypeJVMWorkerOptions ConfigType = "jvm_worker_options"
 )
 
-// SupportedConfigTypes 支持的配置文件类型列表
+// HybridConfigTypes Hybrid 模式支持的配置文件类型
+var HybridConfigTypes = []ConfigType{
+	ConfigTypeSeatunnel,
+	ConfigTypeHazelcast,
+	ConfigTypeHazelcastClient,
+	ConfigTypeJVMOptions,
+	ConfigTypeLog4j2,
+}
+
+// SeparatedConfigTypes Separated 模式支持的配置文件类型
+var SeparatedConfigTypes = []ConfigType{
+	ConfigTypeSeatunnel,
+	ConfigTypeHazelcastMaster,
+	ConfigTypeHazelcastWorker,
+	ConfigTypeHazelcastClient,
+	ConfigTypeJVMMasterOptions,
+	ConfigTypeJVMWorkerOptions,
+	ConfigTypeLog4j2,
+}
+
+// SupportedConfigTypes 支持的配置文件类型列表（所有类型）
 var SupportedConfigTypes = []ConfigType{
 	ConfigTypeSeatunnel,
 	ConfigTypeHazelcast,
 	ConfigTypeHazelcastClient,
 	ConfigTypeJVMOptions,
 	ConfigTypeLog4j2,
+	ConfigTypeHazelcastMaster,
+	ConfigTypeHazelcastWorker,
+	ConfigTypeJVMMasterOptions,
+	ConfigTypeJVMWorkerOptions,
 }
 
 // GetConfigFilePath 获取配置文件相对于 SEATUNNEL_HOME 的路径
@@ -56,9 +87,25 @@ func GetConfigFilePath(configType ConfigType) string {
 		return "config/jvm_options"
 	case ConfigTypeLog4j2:
 		return "config/log4j2.properties"
+	case ConfigTypeHazelcastMaster:
+		return "config/hazelcast-master.yaml"
+	case ConfigTypeHazelcastWorker:
+		return "config/hazelcast-worker.yaml"
+	case ConfigTypeJVMMasterOptions:
+		return "config/jvm_master_options"
+	case ConfigTypeJVMWorkerOptions:
+		return "config/jvm_worker_options"
 	default:
 		return ""
 	}
+}
+
+// GetConfigTypesForMode 根据部署模式获取支持的配置类型
+func GetConfigTypesForMode(deploymentMode string) []ConfigType {
+	if deploymentMode == "separated" {
+		return SeparatedConfigTypes
+	}
+	return HybridConfigTypes
 }
 
 // Config 配置文件表
@@ -104,19 +151,20 @@ func (ConfigVersion) TableName() string {
 
 // ConfigInfo 配置信息（用于 API 响应）
 type ConfigInfo struct {
-	ID           uint       `json:"id"`
-	ClusterID    uint       `json:"cluster_id"`
-	HostID       *uint      `json:"host_id"`
-	HostName     string     `json:"host_name,omitempty"`
-	HostIP       string     `json:"host_ip,omitempty"`
-	ConfigType   ConfigType `json:"config_type"`
-	FilePath     string     `json:"file_path"`
-	Content      string     `json:"content"`
-	Version      int        `json:"version"`
-	IsTemplate   bool       `json:"is_template"`
-	MatchTemplate bool      `json:"match_template"` // 是否与模板一致
-	UpdatedAt    time.Time  `json:"updated_at"`
-	UpdatedBy    uint       `json:"updated_by"`
+	ID            uint       `json:"id"`
+	ClusterID     uint       `json:"cluster_id"`
+	HostID        *uint      `json:"host_id"`
+	HostName      string     `json:"host_name,omitempty"`
+	HostIP        string     `json:"host_ip,omitempty"`
+	ConfigType    ConfigType `json:"config_type"`
+	FilePath      string     `json:"file_path"`
+	Content       string     `json:"content"`
+	Version       int        `json:"version"`
+	IsTemplate    bool       `json:"is_template"`
+	MatchTemplate bool       `json:"match_template"` // 是否与模板一致
+	UpdatedAt     time.Time  `json:"updated_at"`
+	UpdatedBy     uint       `json:"updated_by"`
+	PushError     string     `json:"push_error,omitempty"` // 推送到节点的错误信息
 }
 
 // ConfigVersionInfo 版本信息（用于 API 响应）
@@ -167,4 +215,17 @@ type ConfigFilter struct {
 	HostID     *uint      `json:"host_id"`
 	ConfigType ConfigType `json:"config_type"`
 	OnlyTemplate bool     `json:"only_template"`
+}
+
+// SyncAllResult 批量同步结果
+type SyncAllResult struct {
+	SyncedCount int           `json:"synced_count"` // 同步成功的数量
+	PushErrors  []*PushError  `json:"push_errors"`  // 推送失败的节点列表
+}
+
+// PushError 推送错误信息
+type PushError struct {
+	HostID  uint   `json:"host_id"`
+	HostIP  string `json:"host_ip,omitempty"`
+	Message string `json:"message"`
 }

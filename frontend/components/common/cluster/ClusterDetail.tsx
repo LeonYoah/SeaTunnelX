@@ -882,7 +882,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
 
       {/* Cluster Configs / 集群配置 */}
       <motion.div variants={itemVariants}>
-        <ClusterConfigs clusterId={clusterId} />
+        <ClusterConfigs clusterId={clusterId} deploymentMode={cluster.deployment_mode} />
       </motion.div>
 
       {/* Cluster Info / 集群信息 */}

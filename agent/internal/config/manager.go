@@ -31,11 +31,18 @@ import (
 type ConfigType string
 
 const (
+	// 通用配置（Hybrid 模式）
 	ConfigTypeSeatunnel       ConfigType = "seatunnel.yaml"
 	ConfigTypeHazelcast       ConfigType = "hazelcast.yaml"
 	ConfigTypeHazelcastClient ConfigType = "hazelcast-client.yaml"
 	ConfigTypeJVMOptions      ConfigType = "jvm_options"
 	ConfigTypeLog4j2          ConfigType = "log4j2.properties"
+
+	// 分离模式配置（Separated 模式）
+	ConfigTypeHazelcastMaster  ConfigType = "hazelcast-master.yaml"
+	ConfigTypeHazelcastWorker  ConfigType = "hazelcast-worker.yaml"
+	ConfigTypeJVMMasterOptions ConfigType = "jvm_master_options"
+	ConfigTypeJVMWorkerOptions ConfigType = "jvm_worker_options"
 )
 
 // GetConfigFilePath 获取配置文件相对于 SEATUNNEL_HOME 的路径
@@ -51,6 +58,14 @@ func GetConfigFilePath(configType ConfigType) string {
 		return "config/jvm_options"
 	case ConfigTypeLog4j2:
 		return "config/log4j2.properties"
+	case ConfigTypeHazelcastMaster:
+		return "config/hazelcast-master.yaml"
+	case ConfigTypeHazelcastWorker:
+		return "config/hazelcast-worker.yaml"
+	case ConfigTypeJVMMasterOptions:
+		return "config/jvm_master_options"
+	case ConfigTypeJVMWorkerOptions:
+		return "config/jvm_worker_options"
 	default:
 		return ""
 	}
@@ -211,11 +226,17 @@ func (m *Manager) backupConfig(installDir, filePath, configType string) (string,
 // PullAllConfigs 拉取所有配置文件
 func (m *Manager) PullAllConfigs(installDir string) (map[string]*PullConfigResult, error) {
 	configTypes := []ConfigType{
+		// 通用配置
 		ConfigTypeSeatunnel,
 		ConfigTypeHazelcast,
 		ConfigTypeHazelcastClient,
 		ConfigTypeJVMOptions,
 		ConfigTypeLog4j2,
+		// 分离模式配置
+		ConfigTypeHazelcastMaster,
+		ConfigTypeHazelcastWorker,
+		ConfigTypeJVMMasterOptions,
+		ConfigTypeJVMWorkerOptions,
 	}
 
 	results := make(map[string]*PullConfigResult)

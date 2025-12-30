@@ -20,20 +20,24 @@ import {toast} from 'sonner';
 import {Settings, RefreshCw, FileText, Server, Check, AlertTriangle, Edit, History, Upload, Download, Loader2, FolderSync} from 'lucide-react';
 import {ConfigService} from '@/lib/services/config';
 import type {ConfigInfo, ConfigVersionInfo} from '@/lib/services/config';
-import {ConfigType, ConfigTypeNames} from '@/lib/services/config';
+import {ConfigType, ConfigTypeNames, getConfigTypesForMode} from '@/lib/services/config';
 import services from '@/lib/services';
 import type {NodeInfo} from '@/lib/services/cluster/types';
 
 interface ClusterConfigsProps {
   clusterId: number;
+  deploymentMode: string;
 }
 
-export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
+export function ClusterConfigs({clusterId, deploymentMode}: ClusterConfigsProps) {
   const t = useTranslations();
   const [configs, setConfigs] = useState<ConfigInfo[]>([]);
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedConfigType, setSelectedConfigType] = useState<ConfigType>(ConfigType.SEATUNNEL);
+  
+  // Get available config types based on deployment mode
+  const availableConfigTypes = getConfigTypesForMode(deploymentMode);
+  const [selectedConfigType, setSelectedConfigType] = useState<ConfigType>(availableConfigTypes[0]);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ConfigInfo | null>(null);
   const [editContent, setEditContent] = useState('');
@@ -48,6 +52,7 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
   const [initDialogOpen, setInitDialogOpen] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string>('');
   const [initLoading, setInitLoading] = useState(false);
+  const [syncAllLoading, setSyncAllLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -80,11 +85,15 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
   };
 
   const handleSave = async () => {
-    if (!editingConfig) return;
+    if (!editingConfig) {return;}
     setSaving(true);
     try {
-      await ConfigService.updateConfig(editingConfig.id, {content: editContent, comment: editComment || undefined});
-      toast.success(t('config.saveSuccess'));
+      const result = await ConfigService.updateConfig(editingConfig.id, {content: editContent, comment: editComment || undefined});
+      if (result.push_error) {
+        toast.warning(t('config.saveSuccessWithPushError', {error: result.push_error}));
+      } else {
+        toast.success(t('config.saveSuccess'));
+      }
       setEditDialogOpen(false);
       loadData();
     } catch (err) {
@@ -109,10 +118,14 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
   };
 
   const handleRollback = async (version: number) => {
-    if (!versionConfig) return;
+    if (!versionConfig) {return;}
     try {
-      await ConfigService.rollbackConfig(versionConfig.id, {version, comment: `Rollback to v${version}`});
-      toast.success(t('config.rollbackSuccess'));
+      const result = await ConfigService.rollbackConfig(versionConfig.id, {version, comment: `Rollback to v${version}`});
+      if (result.push_error) {
+        toast.warning(t('config.rollbackSuccessWithPushError', {error: result.push_error}));
+      } else {
+        toast.success(t('config.rollbackSuccess'));
+      }
       setVersionDialogOpen(false);
       loadData();
     } catch (err) {
@@ -132,8 +145,12 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
 
   const handleSyncFromTemplate = async (config: ConfigInfo) => {
     try {
-      await ConfigService.syncFromTemplate(config.id, {comment: t('config.syncComment')});
-      toast.success(t('config.syncSuccess'));
+      const result = await ConfigService.syncFromTemplate(config.id, {comment: t('config.syncComment')});
+      if (result.push_error) {
+        toast.warning(t('config.syncSuccessWithPushError', {error: result.push_error}));
+      } else {
+        toast.success(t('config.syncSuccess'));
+      }
       loadData();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('config.syncFailed'));
@@ -170,6 +187,29 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
     }
   };
 
+  const handleSyncToAllNodes = async () => {
+    if (!templateConfig) {return;}
+    setSyncAllLoading(true);
+    try {
+      const result = await ConfigService.syncTemplateToAllNodes(clusterId, selectedConfigType);
+      if (result.synced_count > 0) {
+        if (result.push_errors && result.push_errors.length > 0) {
+          const errorNodes = result.push_errors.map(e => e.host_ip || `Host ${e.host_id}`).join(', ');
+          toast.warning(t('config.syncAllSuccessWithPushErrors', {count: result.synced_count, nodes: errorNodes}));
+        } else {
+          toast.success(t('config.syncAllSuccess', {count: result.synced_count}));
+        }
+      } else {
+        toast.info(t('config.syncAllNoChanges'));
+      }
+      loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('config.syncAllFailed'));
+    } finally {
+      setSyncAllLoading(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -181,7 +221,7 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
           <Select value={selectedConfigType} onValueChange={(v) => setSelectedConfigType(v as ConfigType)}>
             <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {Object.values(ConfigType).map((type) => (
+              {availableConfigTypes.map((type) => (
                 <SelectItem key={type} value={type}>{ConfigTypeNames[type]}</SelectItem>
               ))}
             </SelectContent>
@@ -238,6 +278,10 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => handleViewVersions(templateConfig)}>
                         <History className="h-4 w-4 mr-1" />{t('config.versions')}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleSyncToAllNodes} disabled={syncAllLoading || nodeConfigs.length === 0}>
+                        {syncAllLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+                        {t('config.syncToAllNodes')}
                       </Button>
                     </div>
                   </div>
@@ -313,8 +357,8 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
               <div className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
                 <p>{t('config.initWillPull')}</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
-                  {Object.values(ConfigTypeNames).map((name) => (
-                    <li key={name}>{name}</li>
+                  {availableConfigTypes.map((type) => (
+                    <li key={type}>{ConfigTypeNames[type]}</li>
                   ))}
                 </ul>
               </div>
@@ -332,7 +376,7 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh]">
+        <DialogContent className="!max-w-5xl max-h-[90vh]">
           <DialogHeader>
             <DialogTitle>{t('config.editConfig')} - {editingConfig?.is_template ? t('config.clusterTemplate') : editingConfig?.host_name}</DialogTitle>
             <DialogDescription>{ConfigTypeNames[editingConfig?.config_type as ConfigType]}</DialogDescription>
@@ -340,7 +384,7 @@ export function ClusterConfigs({clusterId}: ClusterConfigsProps) {
           <div className="space-y-4">
             <div>
               <Label>{t('config.content')}</Label>
-              <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="font-mono text-sm h-[400px]" />
+              <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="font-mono text-sm h-[500px]" />
             </div>
             <div>
               <Label>{t('config.comment')}</Label>
