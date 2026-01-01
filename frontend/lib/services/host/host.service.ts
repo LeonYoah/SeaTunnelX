@@ -32,7 +32,7 @@ export class HostService extends BaseService {
    * API base path
    * API 基础路径
    */
-  protected static readonly basePath = '/api/v1/hosts';
+  protected static readonly basePath = '/hosts';
 
   /**
    * Get host list with filtering and pagination

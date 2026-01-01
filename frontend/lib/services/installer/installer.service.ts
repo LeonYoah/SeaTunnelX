@@ -24,7 +24,7 @@ import type {
   MirrorSource,
 } from './types';
 
-const API_PREFIX = '/api/v1';
+const API_PREFIX = '';
 
 // ==================== Package Management 安装包管理 ====================
 

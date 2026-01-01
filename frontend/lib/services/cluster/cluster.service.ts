@@ -43,7 +43,7 @@ export class ClusterService extends BaseService {
    * API base path
    * API 基础路径
    */
-  protected static readonly basePath = '/api/v1/clusters';
+  protected static readonly basePath = '/clusters';
 
   // ==================== Cluster CRUD Methods 集群 CRUD 方法 ====================
 

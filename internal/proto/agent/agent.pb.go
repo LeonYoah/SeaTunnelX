@@ -55,6 +55,11 @@ const (
 	CommandType_LIST_PLUGINS     CommandType = 53 // 列出已安装插件
 	// 安装包传输
 	CommandType_TRANSFER_PACKAGE CommandType = 60 // 传输安装包文件
+	// 集群发现与监控 (Requirements 7.1)
+	CommandType_DISCOVER_CLUSTERS     CommandType = 70 // 发现集群
+	CommandType_UPDATE_MONITOR_CONFIG CommandType = 71 // 更新监控配置
+	CommandType_MARK_MANUAL_STOP      CommandType = 72 // 标记手动停止
+	CommandType_CLEAR_MANUAL_STOP     CommandType = 73 // 清除手动停止标记
 )
 
 // Enum value maps for CommandType.
@@ -80,6 +85,10 @@ var (
 		52: "UNINSTALL_PLUGIN",
 		53: "LIST_PLUGINS",
 		60: "TRANSFER_PACKAGE",
+		70: "DISCOVER_CLUSTERS",
+		71: "UPDATE_MONITOR_CONFIG",
+		72: "MARK_MANUAL_STOP",
+		73: "CLEAR_MANUAL_STOP",
 	}
 	CommandType_value = map[string]int32{
 		"COMMAND_TYPE_UNSPECIFIED": 0,
@@ -102,6 +111,10 @@ var (
 		"UNINSTALL_PLUGIN":         52,
 		"LIST_PLUGINS":             53,
 		"TRANSFER_PACKAGE":         60,
+		"DISCOVER_CLUSTERS":        70,
+		"UPDATE_MONITOR_CONFIG":    71,
+		"MARK_MANUAL_STOP":         72,
+		"CLEAR_MANUAL_STOP":        73,
 	}
 )
 
@@ -245,6 +258,63 @@ func (x LogLevel) Number() protoreflect.EnumNumber {
 // Deprecated: Use LogLevel.Descriptor instead.
 func (LogLevel) EnumDescriptor() ([]byte, []int) {
 	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{2}
+}
+
+// ProcessEventType - 进程事件类型枚举
+// ProcessEventType - Process event type enumeration
+type ProcessEventType int32
+
+const (
+	ProcessEventType_PROCESS_EVENT_UNSPECIFIED ProcessEventType = 0
+	ProcessEventType_PROCESS_STARTED           ProcessEventType = 1 // 进程启动 / Process started
+	ProcessEventType_PROCESS_STOPPED           ProcessEventType = 2 // 进程停止 / Process stopped
+	ProcessEventType_PROCESS_CRASHED           ProcessEventType = 3 // 进程崩溃 / Process crashed
+	ProcessEventType_PROCESS_RESTARTED         ProcessEventType = 4 // 进程重启 / Process restarted
+)
+
+// Enum value maps for ProcessEventType.
+var (
+	ProcessEventType_name = map[int32]string{
+		0: "PROCESS_EVENT_UNSPECIFIED",
+		1: "PROCESS_STARTED",
+		2: "PROCESS_STOPPED",
+		3: "PROCESS_CRASHED",
+		4: "PROCESS_RESTARTED",
+	}
+	ProcessEventType_value = map[string]int32{
+		"PROCESS_EVENT_UNSPECIFIED": 0,
+		"PROCESS_STARTED":           1,
+		"PROCESS_STOPPED":           2,
+		"PROCESS_CRASHED":           3,
+		"PROCESS_RESTARTED":         4,
+	}
+)
+
+func (x ProcessEventType) Enum() *ProcessEventType {
+	p := new(ProcessEventType)
+	*p = x
+	return p
+}
+
+func (x ProcessEventType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProcessEventType) Descriptor() protoreflect.EnumDescriptor {
+	return file_internal_proto_agent_agent_proto_enumTypes[3].Descriptor()
+}
+
+func (ProcessEventType) Type() protoreflect.EnumType {
+	return &file_internal_proto_agent_agent_proto_enumTypes[3]
+}
+
+func (x ProcessEventType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProcessEventType.Descriptor instead.
+func (ProcessEventType) EnumDescriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{3}
 }
 
 // RegisterRequest - Agent 注册请求
@@ -2166,6 +2236,498 @@ func (x *UpdateConfigResponse) GetBackupPath() string {
 	return ""
 }
 
+// DiscoverClustersRequest - 发现集群请求
+// DiscoverClustersRequest - Discover clusters request
+type DiscoverClustersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"` // Agent 唯一标识 / Agent unique identifier
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiscoverClustersRequest) Reset() {
+	*x = DiscoverClustersRequest{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoverClustersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoverClustersRequest) ProtoMessage() {}
+
+func (x *DiscoverClustersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoverClustersRequest.ProtoReflect.Descriptor instead.
+func (*DiscoverClustersRequest) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *DiscoverClustersRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+// DiscoveredClusterInfo - 发现的集群信息
+// DiscoveredClusterInfo - Discovered cluster information
+type DiscoveredClusterInfo struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                                                               // 集群名称 / Cluster name
+	InstallDir     string                 `protobuf:"bytes,2,opt,name=install_dir,json=installDir,proto3" json:"install_dir,omitempty"`                                                 // 安装目录 / Installation directory
+	Version        string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`                                                                         // SeaTunnel 版本 / SeaTunnel version
+	DeploymentMode string                 `protobuf:"bytes,4,opt,name=deployment_mode,json=deploymentMode,proto3" json:"deployment_mode,omitempty"`                                     // 部署模式: hybrid, separated / Deployment mode
+	Nodes          []*DiscoveredNodeInfo  `protobuf:"bytes,5,rep,name=nodes,proto3" json:"nodes,omitempty"`                                                                             // 节点列表 / Node list
+	Config         map[string]string      `protobuf:"bytes,6,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 配置信息 / Configuration
+	DiscoveredAt   int64                  `protobuf:"varint,7,opt,name=discovered_at,json=discoveredAt,proto3" json:"discovered_at,omitempty"`                                          // 发现时间戳 (Unix 毫秒) / Discovery timestamp
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DiscoveredClusterInfo) Reset() {
+	*x = DiscoveredClusterInfo{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoveredClusterInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoveredClusterInfo) ProtoMessage() {}
+
+func (x *DiscoveredClusterInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoveredClusterInfo.ProtoReflect.Descriptor instead.
+func (*DiscoveredClusterInfo) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *DiscoveredClusterInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DiscoveredClusterInfo) GetInstallDir() string {
+	if x != nil {
+		return x.InstallDir
+	}
+	return ""
+}
+
+func (x *DiscoveredClusterInfo) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *DiscoveredClusterInfo) GetDeploymentMode() string {
+	if x != nil {
+		return x.DeploymentMode
+	}
+	return ""
+}
+
+func (x *DiscoveredClusterInfo) GetNodes() []*DiscoveredNodeInfo {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *DiscoveredClusterInfo) GetConfig() map[string]string {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *DiscoveredClusterInfo) GetDiscoveredAt() int64 {
+	if x != nil {
+		return x.DiscoveredAt
+	}
+	return 0
+}
+
+// DiscoveredNodeInfo - 发现的节点信息
+// DiscoveredNodeInfo - Discovered node information
+type DiscoveredNodeInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           int32                  `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`                                          // 进程 ID / Process ID
+	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`                                         // 节点角色: master, worker, hybrid / Node role
+	HazelcastPort int32                  `protobuf:"varint,3,opt,name=hazelcast_port,json=hazelcastPort,proto3" json:"hazelcast_port,omitempty"` // Hazelcast 端口 / Hazelcast port
+	ApiPort       int32                  `protobuf:"varint,4,opt,name=api_port,json=apiPort,proto3" json:"api_port,omitempty"`                   // API 端口 / API port
+	StartTime     int64                  `protobuf:"varint,5,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`             // 启动时间戳 (Unix 毫秒) / Start timestamp
+	Cmdline       string                 `protobuf:"bytes,6,opt,name=cmdline,proto3" json:"cmdline,omitempty"`                                   // 命令行参数 / Command line arguments
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiscoveredNodeInfo) Reset() {
+	*x = DiscoveredNodeInfo{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoveredNodeInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoveredNodeInfo) ProtoMessage() {}
+
+func (x *DiscoveredNodeInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoveredNodeInfo.ProtoReflect.Descriptor instead.
+func (*DiscoveredNodeInfo) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *DiscoveredNodeInfo) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *DiscoveredNodeInfo) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *DiscoveredNodeInfo) GetHazelcastPort() int32 {
+	if x != nil {
+		return x.HazelcastPort
+	}
+	return 0
+}
+
+func (x *DiscoveredNodeInfo) GetApiPort() int32 {
+	if x != nil {
+		return x.ApiPort
+	}
+	return 0
+}
+
+func (x *DiscoveredNodeInfo) GetStartTime() int64 {
+	if x != nil {
+		return x.StartTime
+	}
+	return 0
+}
+
+func (x *DiscoveredNodeInfo) GetCmdline() string {
+	if x != nil {
+		return x.Cmdline
+	}
+	return ""
+}
+
+// DiscoverClustersResponse - 发现集群响应
+// DiscoverClustersResponse - Discover clusters response
+type DiscoverClustersResponse struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	Success       bool                     `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`  // 是否成功 / Success flag
+	Message       string                   `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`   // 消息 / Message
+	Clusters      []*DiscoveredClusterInfo `protobuf:"bytes,3,rep,name=clusters,proto3" json:"clusters,omitempty"` // 发现的集群列表 / Discovered clusters
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiscoverClustersResponse) Reset() {
+	*x = DiscoverClustersResponse{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoverClustersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoverClustersResponse) ProtoMessage() {}
+
+func (x *DiscoverClustersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoverClustersResponse.ProtoReflect.Descriptor instead.
+func (*DiscoverClustersResponse) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *DiscoverClustersResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *DiscoverClustersResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *DiscoverClustersResponse) GetClusters() []*DiscoveredClusterInfo {
+	if x != nil {
+		return x.Clusters
+	}
+	return nil
+}
+
+// ProcessEventReport - 进程事件上报
+// ProcessEventReport - Process event report
+type ProcessEventReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`                                                            // Agent 唯一标识 / Agent unique identifier
+	EventType     ProcessEventType       `protobuf:"varint,2,opt,name=event_type,json=eventType,proto3,enum=seatunnel.agent.v1.ProcessEventType" json:"event_type,omitempty"`            // 事件类型 / Event type
+	Pid           int32                  `protobuf:"varint,3,opt,name=pid,proto3" json:"pid,omitempty"`                                                                                  // 进程 ID / Process ID
+	ProcessName   string                 `protobuf:"bytes,4,opt,name=process_name,json=processName,proto3" json:"process_name,omitempty"`                                                // 进程名称 / Process name
+	InstallDir    string                 `protobuf:"bytes,5,opt,name=install_dir,json=installDir,proto3" json:"install_dir,omitempty"`                                                   // 安装目录 / Installation directory
+	Role          string                 `protobuf:"bytes,6,opt,name=role,proto3" json:"role,omitempty"`                                                                                 // 节点角色 / Node role
+	Timestamp     int64                  `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                                                                      // 时间戳 (Unix 毫秒) / Timestamp
+	Details       map[string]string      `protobuf:"bytes,8,rep,name=details,proto3" json:"details,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 详细信息 / Details
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessEventReport) Reset() {
+	*x = ProcessEventReport{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessEventReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessEventReport) ProtoMessage() {}
+
+func (x *ProcessEventReport) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessEventReport.ProtoReflect.Descriptor instead.
+func (*ProcessEventReport) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ProcessEventReport) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ProcessEventReport) GetEventType() ProcessEventType {
+	if x != nil {
+		return x.EventType
+	}
+	return ProcessEventType_PROCESS_EVENT_UNSPECIFIED
+}
+
+func (x *ProcessEventReport) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ProcessEventReport) GetProcessName() string {
+	if x != nil {
+		return x.ProcessName
+	}
+	return ""
+}
+
+func (x *ProcessEventReport) GetInstallDir() string {
+	if x != nil {
+		return x.InstallDir
+	}
+	return ""
+}
+
+func (x *ProcessEventReport) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *ProcessEventReport) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ProcessEventReport) GetDetails() map[string]string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
+// MonitorConfigUpdate - 监控配置更新
+// MonitorConfigUpdate - Monitor configuration update
+type MonitorConfigUpdate struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ConfigVersion   int32                  `protobuf:"varint,1,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"`       // 配置版本号 / Configuration version
+	AutoMonitor     bool                   `protobuf:"varint,2,opt,name=auto_monitor,json=autoMonitor,proto3" json:"auto_monitor,omitempty"`             // 是否启用自动监控 / Enable auto monitoring
+	AutoRestart     bool                   `protobuf:"varint,3,opt,name=auto_restart,json=autoRestart,proto3" json:"auto_restart,omitempty"`             // 是否启用自动拉起 / Enable auto restart
+	MonitorInterval int32                  `protobuf:"varint,4,opt,name=monitor_interval,json=monitorInterval,proto3" json:"monitor_interval,omitempty"` // 监控间隔 (秒) / Monitor interval (seconds)
+	RestartDelay    int32                  `protobuf:"varint,5,opt,name=restart_delay,json=restartDelay,proto3" json:"restart_delay,omitempty"`          // 重启延迟 (秒) / Restart delay (seconds)
+	MaxRestarts     int32                  `protobuf:"varint,6,opt,name=max_restarts,json=maxRestarts,proto3" json:"max_restarts,omitempty"`             // 最大重启次数 / Max restart count
+	TimeWindow      int32                  `protobuf:"varint,7,opt,name=time_window,json=timeWindow,proto3" json:"time_window,omitempty"`                // 时间窗口 (秒) / Time window (seconds)
+	CooldownPeriod  int32                  `protobuf:"varint,8,opt,name=cooldown_period,json=cooldownPeriod,proto3" json:"cooldown_period,omitempty"`    // 冷却时间 (秒) / Cooldown period (seconds)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *MonitorConfigUpdate) Reset() {
+	*x = MonitorConfigUpdate{}
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MonitorConfigUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MonitorConfigUpdate) ProtoMessage() {}
+
+func (x *MonitorConfigUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_agent_agent_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MonitorConfigUpdate.ProtoReflect.Descriptor instead.
+func (*MonitorConfigUpdate) Descriptor() ([]byte, []int) {
+	return file_internal_proto_agent_agent_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *MonitorConfigUpdate) GetConfigVersion() int32 {
+	if x != nil {
+		return x.ConfigVersion
+	}
+	return 0
+}
+
+func (x *MonitorConfigUpdate) GetAutoMonitor() bool {
+	if x != nil {
+		return x.AutoMonitor
+	}
+	return false
+}
+
+func (x *MonitorConfigUpdate) GetAutoRestart() bool {
+	if x != nil {
+		return x.AutoRestart
+	}
+	return false
+}
+
+func (x *MonitorConfigUpdate) GetMonitorInterval() int32 {
+	if x != nil {
+		return x.MonitorInterval
+	}
+	return 0
+}
+
+func (x *MonitorConfigUpdate) GetRestartDelay() int32 {
+	if x != nil {
+		return x.RestartDelay
+	}
+	return 0
+}
+
+func (x *MonitorConfigUpdate) GetMaxRestarts() int32 {
+	if x != nil {
+		return x.MaxRestarts
+	}
+	return 0
+}
+
+func (x *MonitorConfigUpdate) GetTimeWindow() int32 {
+	if x != nil {
+		return x.TimeWindow
+	}
+	return 0
+}
+
+func (x *MonitorConfigUpdate) GetCooldownPeriod() int32 {
+	if x != nil {
+		return x.CooldownPeriod
+	}
+	return 0
+}
+
 var File_internal_proto_agent_agent_proto protoreflect.FileDescriptor
 
 const file_internal_proto_agent_agent_proto_rawDesc = "" +
@@ -2346,7 +2908,57 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
 	"\vbackup_path\x18\x03 \x01(\tR\n" +
-	"backupPath*\xe1\x02\n" +
+	"backupPath\"4\n" +
+	"\x17DiscoverClustersRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xfc\x02\n" +
+	"\x15DiscoveredClusterInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
+	"\vinstall_dir\x18\x02 \x01(\tR\n" +
+	"installDir\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12'\n" +
+	"\x0fdeployment_mode\x18\x04 \x01(\tR\x0edeploymentMode\x12<\n" +
+	"\x05nodes\x18\x05 \x03(\v2&.seatunnel.agent.v1.DiscoveredNodeInfoR\x05nodes\x12M\n" +
+	"\x06config\x18\x06 \x03(\v25.seatunnel.agent.v1.DiscoveredClusterInfo.ConfigEntryR\x06config\x12#\n" +
+	"\rdiscovered_at\x18\a \x01(\x03R\fdiscoveredAt\x1a9\n" +
+	"\vConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb5\x01\n" +
+	"\x12DiscoveredNodeInfo\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\x05R\x03pid\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\x12%\n" +
+	"\x0ehazelcast_port\x18\x03 \x01(\x05R\rhazelcastPort\x12\x19\n" +
+	"\bapi_port\x18\x04 \x01(\x05R\aapiPort\x12\x1d\n" +
+	"\n" +
+	"start_time\x18\x05 \x01(\x03R\tstartTime\x12\x18\n" +
+	"\acmdline\x18\x06 \x01(\tR\acmdline\"\x95\x01\n" +
+	"\x18DiscoverClustersResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12E\n" +
+	"\bclusters\x18\x03 \x03(\v2).seatunnel.agent.v1.DiscoveredClusterInfoR\bclusters\"\x87\x03\n" +
+	"\x12ProcessEventReport\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12C\n" +
+	"\n" +
+	"event_type\x18\x02 \x01(\x0e2$.seatunnel.agent.v1.ProcessEventTypeR\teventType\x12\x10\n" +
+	"\x03pid\x18\x03 \x01(\x05R\x03pid\x12!\n" +
+	"\fprocess_name\x18\x04 \x01(\tR\vprocessName\x12\x1f\n" +
+	"\vinstall_dir\x18\x05 \x01(\tR\n" +
+	"installDir\x12\x12\n" +
+	"\x04role\x18\x06 \x01(\tR\x04role\x12\x1c\n" +
+	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\x12M\n" +
+	"\adetails\x18\b \x03(\v23.seatunnel.agent.v1.ProcessEventReport.DetailsEntryR\adetails\x1a:\n" +
+	"\fDetailsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbf\x02\n" +
+	"\x13MonitorConfigUpdate\x12%\n" +
+	"\x0econfig_version\x18\x01 \x01(\x05R\rconfigVersion\x12!\n" +
+	"\fauto_monitor\x18\x02 \x01(\bR\vautoMonitor\x12!\n" +
+	"\fauto_restart\x18\x03 \x01(\bR\vautoRestart\x12)\n" +
+	"\x10monitor_interval\x18\x04 \x01(\x05R\x0fmonitorInterval\x12#\n" +
+	"\rrestart_delay\x18\x05 \x01(\x05R\frestartDelay\x12!\n" +
+	"\fmax_restarts\x18\x06 \x01(\x05R\vmaxRestarts\x12\x1f\n" +
+	"\vtime_window\x18\a \x01(\x05R\n" +
+	"timeWindow\x12'\n" +
+	"\x0fcooldown_period\x18\b \x01(\x05R\x0ecooldownPeriod*\xc0\x03\n" +
 	"\vCommandType\x12\x1c\n" +
 	"\x18COMMAND_TYPE_UNSPECIFIED\x10\x00\x12\f\n" +
 	"\bPRECHECK\x10\x01\x12\v\n" +
@@ -2369,7 +2981,11 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\x0eINSTALL_PLUGIN\x103\x12\x14\n" +
 	"\x10UNINSTALL_PLUGIN\x104\x12\x10\n" +
 	"\fLIST_PLUGINS\x105\x12\x14\n" +
-	"\x10TRANSFER_PACKAGE\x10<*q\n" +
+	"\x10TRANSFER_PACKAGE\x10<\x12\x15\n" +
+	"\x11DISCOVER_CLUSTERS\x10F\x12\x19\n" +
+	"\x15UPDATE_MONITOR_CONFIG\x10G\x12\x14\n" +
+	"\x10MARK_MANUAL_STOP\x10H\x12\x15\n" +
+	"\x11CLEAR_MANUAL_STOP\x10I*q\n" +
 	"\rCommandStatus\x12\x1e\n" +
 	"\x1aCOMMAND_STATUS_UNSPECIFIED\x10\x00\x12\v\n" +
 	"\aPENDING\x10\x01\x12\v\n" +
@@ -2383,7 +2999,13 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\x05DEBUG\x10\x01\x12\b\n" +
 	"\x04INFO\x10\x02\x12\b\n" +
 	"\x04WARN\x10\x03\x12\t\n" +
-	"\x05ERROR\x10\x042\xf1\x02\n" +
+	"\x05ERROR\x10\x04*\x87\x01\n" +
+	"\x10ProcessEventType\x12\x1d\n" +
+	"\x19PROCESS_EVENT_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fPROCESS_STARTED\x10\x01\x12\x13\n" +
+	"\x0fPROCESS_STOPPED\x10\x02\x12\x13\n" +
+	"\x0fPROCESS_CRASHED\x10\x03\x12\x15\n" +
+	"\x11PROCESS_RESTARTED\x10\x042\xf1\x02\n" +
 	"\fAgentService\x12U\n" +
 	"\bRegister\x12#.seatunnel.agent.v1.RegisterRequest\x1a$.seatunnel.agent.v1.RegisterResponse\x12X\n" +
 	"\tHeartbeat\x12$.seatunnel.agent.v1.HeartbeatRequest\x1a%.seatunnel.agent.v1.HeartbeatResponse\x12\\\n" +
@@ -2402,68 +3024,82 @@ func file_internal_proto_agent_agent_proto_rawDescGZIP() []byte {
 	return file_internal_proto_agent_agent_proto_rawDescData
 }
 
-var file_internal_proto_agent_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_internal_proto_agent_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_internal_proto_agent_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 38)
 var file_internal_proto_agent_agent_proto_goTypes = []any{
 	(CommandType)(0),                     // 0: seatunnel.agent.v1.CommandType
 	(CommandStatus)(0),                   // 1: seatunnel.agent.v1.CommandStatus
 	(LogLevel)(0),                        // 2: seatunnel.agent.v1.LogLevel
-	(*RegisterRequest)(nil),              // 3: seatunnel.agent.v1.RegisterRequest
-	(*SystemInfo)(nil),                   // 4: seatunnel.agent.v1.SystemInfo
-	(*RegisterResponse)(nil),             // 5: seatunnel.agent.v1.RegisterResponse
-	(*AgentConfig)(nil),                  // 6: seatunnel.agent.v1.AgentConfig
-	(*HeartbeatRequest)(nil),             // 7: seatunnel.agent.v1.HeartbeatRequest
-	(*ResourceUsage)(nil),                // 8: seatunnel.agent.v1.ResourceUsage
-	(*ProcessStatus)(nil),                // 9: seatunnel.agent.v1.ProcessStatus
-	(*HeartbeatResponse)(nil),            // 10: seatunnel.agent.v1.HeartbeatResponse
-	(*CommandRequest)(nil),               // 11: seatunnel.agent.v1.CommandRequest
-	(*CommandResponse)(nil),              // 12: seatunnel.agent.v1.CommandResponse
-	(*LogEntry)(nil),                     // 13: seatunnel.agent.v1.LogEntry
-	(*LogStreamResponse)(nil),            // 14: seatunnel.agent.v1.LogStreamResponse
-	(*TransferPluginRequest)(nil),        // 15: seatunnel.agent.v1.TransferPluginRequest
-	(*TransferPluginResponse)(nil),       // 16: seatunnel.agent.v1.TransferPluginResponse
-	(*InstallPluginRequest)(nil),         // 17: seatunnel.agent.v1.InstallPluginRequest
-	(*InstallPluginResponse)(nil),        // 18: seatunnel.agent.v1.InstallPluginResponse
-	(*UninstallPluginRequest)(nil),       // 19: seatunnel.agent.v1.UninstallPluginRequest
-	(*UninstallPluginResponse)(nil),      // 20: seatunnel.agent.v1.UninstallPluginResponse
-	(*ListInstalledPluginsRequest)(nil),  // 21: seatunnel.agent.v1.ListInstalledPluginsRequest
-	(*InstalledPluginInfo)(nil),          // 22: seatunnel.agent.v1.InstalledPluginInfo
-	(*ListInstalledPluginsResponse)(nil), // 23: seatunnel.agent.v1.ListInstalledPluginsResponse
-	(*TransferPackageRequest)(nil),       // 24: seatunnel.agent.v1.TransferPackageRequest
-	(*TransferPackageResponse)(nil),      // 25: seatunnel.agent.v1.TransferPackageResponse
-	(*PullConfigRequest)(nil),            // 26: seatunnel.agent.v1.PullConfigRequest
-	(*PullConfigResponse)(nil),           // 27: seatunnel.agent.v1.PullConfigResponse
-	(*UpdateConfigRequest)(nil),          // 28: seatunnel.agent.v1.UpdateConfigRequest
-	(*UpdateConfigResponse)(nil),         // 29: seatunnel.agent.v1.UpdateConfigResponse
-	nil,                                  // 30: seatunnel.agent.v1.AgentConfig.ExtraEntry
-	nil,                                  // 31: seatunnel.agent.v1.CommandRequest.ParametersEntry
-	nil,                                  // 32: seatunnel.agent.v1.LogEntry.FieldsEntry
+	(ProcessEventType)(0),                // 3: seatunnel.agent.v1.ProcessEventType
+	(*RegisterRequest)(nil),              // 4: seatunnel.agent.v1.RegisterRequest
+	(*SystemInfo)(nil),                   // 5: seatunnel.agent.v1.SystemInfo
+	(*RegisterResponse)(nil),             // 6: seatunnel.agent.v1.RegisterResponse
+	(*AgentConfig)(nil),                  // 7: seatunnel.agent.v1.AgentConfig
+	(*HeartbeatRequest)(nil),             // 8: seatunnel.agent.v1.HeartbeatRequest
+	(*ResourceUsage)(nil),                // 9: seatunnel.agent.v1.ResourceUsage
+	(*ProcessStatus)(nil),                // 10: seatunnel.agent.v1.ProcessStatus
+	(*HeartbeatResponse)(nil),            // 11: seatunnel.agent.v1.HeartbeatResponse
+	(*CommandRequest)(nil),               // 12: seatunnel.agent.v1.CommandRequest
+	(*CommandResponse)(nil),              // 13: seatunnel.agent.v1.CommandResponse
+	(*LogEntry)(nil),                     // 14: seatunnel.agent.v1.LogEntry
+	(*LogStreamResponse)(nil),            // 15: seatunnel.agent.v1.LogStreamResponse
+	(*TransferPluginRequest)(nil),        // 16: seatunnel.agent.v1.TransferPluginRequest
+	(*TransferPluginResponse)(nil),       // 17: seatunnel.agent.v1.TransferPluginResponse
+	(*InstallPluginRequest)(nil),         // 18: seatunnel.agent.v1.InstallPluginRequest
+	(*InstallPluginResponse)(nil),        // 19: seatunnel.agent.v1.InstallPluginResponse
+	(*UninstallPluginRequest)(nil),       // 20: seatunnel.agent.v1.UninstallPluginRequest
+	(*UninstallPluginResponse)(nil),      // 21: seatunnel.agent.v1.UninstallPluginResponse
+	(*ListInstalledPluginsRequest)(nil),  // 22: seatunnel.agent.v1.ListInstalledPluginsRequest
+	(*InstalledPluginInfo)(nil),          // 23: seatunnel.agent.v1.InstalledPluginInfo
+	(*ListInstalledPluginsResponse)(nil), // 24: seatunnel.agent.v1.ListInstalledPluginsResponse
+	(*TransferPackageRequest)(nil),       // 25: seatunnel.agent.v1.TransferPackageRequest
+	(*TransferPackageResponse)(nil),      // 26: seatunnel.agent.v1.TransferPackageResponse
+	(*PullConfigRequest)(nil),            // 27: seatunnel.agent.v1.PullConfigRequest
+	(*PullConfigResponse)(nil),           // 28: seatunnel.agent.v1.PullConfigResponse
+	(*UpdateConfigRequest)(nil),          // 29: seatunnel.agent.v1.UpdateConfigRequest
+	(*UpdateConfigResponse)(nil),         // 30: seatunnel.agent.v1.UpdateConfigResponse
+	(*DiscoverClustersRequest)(nil),      // 31: seatunnel.agent.v1.DiscoverClustersRequest
+	(*DiscoveredClusterInfo)(nil),        // 32: seatunnel.agent.v1.DiscoveredClusterInfo
+	(*DiscoveredNodeInfo)(nil),           // 33: seatunnel.agent.v1.DiscoveredNodeInfo
+	(*DiscoverClustersResponse)(nil),     // 34: seatunnel.agent.v1.DiscoverClustersResponse
+	(*ProcessEventReport)(nil),           // 35: seatunnel.agent.v1.ProcessEventReport
+	(*MonitorConfigUpdate)(nil),          // 36: seatunnel.agent.v1.MonitorConfigUpdate
+	nil,                                  // 37: seatunnel.agent.v1.AgentConfig.ExtraEntry
+	nil,                                  // 38: seatunnel.agent.v1.CommandRequest.ParametersEntry
+	nil,                                  // 39: seatunnel.agent.v1.LogEntry.FieldsEntry
+	nil,                                  // 40: seatunnel.agent.v1.DiscoveredClusterInfo.ConfigEntry
+	nil,                                  // 41: seatunnel.agent.v1.ProcessEventReport.DetailsEntry
 }
 var file_internal_proto_agent_agent_proto_depIdxs = []int32{
-	4,  // 0: seatunnel.agent.v1.RegisterRequest.system_info:type_name -> seatunnel.agent.v1.SystemInfo
-	6,  // 1: seatunnel.agent.v1.RegisterResponse.config:type_name -> seatunnel.agent.v1.AgentConfig
-	30, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
-	8,  // 3: seatunnel.agent.v1.HeartbeatRequest.resource_usage:type_name -> seatunnel.agent.v1.ResourceUsage
-	9,  // 4: seatunnel.agent.v1.HeartbeatRequest.processes:type_name -> seatunnel.agent.v1.ProcessStatus
+	5,  // 0: seatunnel.agent.v1.RegisterRequest.system_info:type_name -> seatunnel.agent.v1.SystemInfo
+	7,  // 1: seatunnel.agent.v1.RegisterResponse.config:type_name -> seatunnel.agent.v1.AgentConfig
+	37, // 2: seatunnel.agent.v1.AgentConfig.extra:type_name -> seatunnel.agent.v1.AgentConfig.ExtraEntry
+	9,  // 3: seatunnel.agent.v1.HeartbeatRequest.resource_usage:type_name -> seatunnel.agent.v1.ResourceUsage
+	10, // 4: seatunnel.agent.v1.HeartbeatRequest.processes:type_name -> seatunnel.agent.v1.ProcessStatus
 	0,  // 5: seatunnel.agent.v1.CommandRequest.type:type_name -> seatunnel.agent.v1.CommandType
-	31, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
+	38, // 6: seatunnel.agent.v1.CommandRequest.parameters:type_name -> seatunnel.agent.v1.CommandRequest.ParametersEntry
 	1,  // 7: seatunnel.agent.v1.CommandResponse.status:type_name -> seatunnel.agent.v1.CommandStatus
 	2,  // 8: seatunnel.agent.v1.LogEntry.level:type_name -> seatunnel.agent.v1.LogLevel
-	32, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
-	22, // 10: seatunnel.agent.v1.ListInstalledPluginsResponse.plugins:type_name -> seatunnel.agent.v1.InstalledPluginInfo
-	3,  // 11: seatunnel.agent.v1.AgentService.Register:input_type -> seatunnel.agent.v1.RegisterRequest
-	7,  // 12: seatunnel.agent.v1.AgentService.Heartbeat:input_type -> seatunnel.agent.v1.HeartbeatRequest
-	12, // 13: seatunnel.agent.v1.AgentService.CommandStream:input_type -> seatunnel.agent.v1.CommandResponse
-	13, // 14: seatunnel.agent.v1.AgentService.LogStream:input_type -> seatunnel.agent.v1.LogEntry
-	5,  // 15: seatunnel.agent.v1.AgentService.Register:output_type -> seatunnel.agent.v1.RegisterResponse
-	10, // 16: seatunnel.agent.v1.AgentService.Heartbeat:output_type -> seatunnel.agent.v1.HeartbeatResponse
-	11, // 17: seatunnel.agent.v1.AgentService.CommandStream:output_type -> seatunnel.agent.v1.CommandRequest
-	14, // 18: seatunnel.agent.v1.AgentService.LogStream:output_type -> seatunnel.agent.v1.LogStreamResponse
-	15, // [15:19] is the sub-list for method output_type
-	11, // [11:15] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	39, // 9: seatunnel.agent.v1.LogEntry.fields:type_name -> seatunnel.agent.v1.LogEntry.FieldsEntry
+	23, // 10: seatunnel.agent.v1.ListInstalledPluginsResponse.plugins:type_name -> seatunnel.agent.v1.InstalledPluginInfo
+	33, // 11: seatunnel.agent.v1.DiscoveredClusterInfo.nodes:type_name -> seatunnel.agent.v1.DiscoveredNodeInfo
+	40, // 12: seatunnel.agent.v1.DiscoveredClusterInfo.config:type_name -> seatunnel.agent.v1.DiscoveredClusterInfo.ConfigEntry
+	32, // 13: seatunnel.agent.v1.DiscoverClustersResponse.clusters:type_name -> seatunnel.agent.v1.DiscoveredClusterInfo
+	3,  // 14: seatunnel.agent.v1.ProcessEventReport.event_type:type_name -> seatunnel.agent.v1.ProcessEventType
+	41, // 15: seatunnel.agent.v1.ProcessEventReport.details:type_name -> seatunnel.agent.v1.ProcessEventReport.DetailsEntry
+	4,  // 16: seatunnel.agent.v1.AgentService.Register:input_type -> seatunnel.agent.v1.RegisterRequest
+	8,  // 17: seatunnel.agent.v1.AgentService.Heartbeat:input_type -> seatunnel.agent.v1.HeartbeatRequest
+	13, // 18: seatunnel.agent.v1.AgentService.CommandStream:input_type -> seatunnel.agent.v1.CommandResponse
+	14, // 19: seatunnel.agent.v1.AgentService.LogStream:input_type -> seatunnel.agent.v1.LogEntry
+	6,  // 20: seatunnel.agent.v1.AgentService.Register:output_type -> seatunnel.agent.v1.RegisterResponse
+	11, // 21: seatunnel.agent.v1.AgentService.Heartbeat:output_type -> seatunnel.agent.v1.HeartbeatResponse
+	12, // 22: seatunnel.agent.v1.AgentService.CommandStream:output_type -> seatunnel.agent.v1.CommandRequest
+	15, // 23: seatunnel.agent.v1.AgentService.LogStream:output_type -> seatunnel.agent.v1.LogStreamResponse
+	20, // [20:24] is the sub-list for method output_type
+	16, // [16:20] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_agent_agent_proto_init() }
@@ -2476,8 +3112,8 @@ func file_internal_proto_agent_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_agent_agent_proto_rawDesc), len(file_internal_proto_agent_agent_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   30,
+			NumEnums:      4,
+			NumMessages:   38,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

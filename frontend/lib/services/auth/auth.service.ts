@@ -15,13 +15,13 @@ export class AuthService extends BaseService {
   /**
    * API基础路径（用户名密码认证）
    */
-  protected static readonly basePath = '/api/v1/auth';
+  protected static readonly basePath = '/auth';
 
   /**
    * OAuth认证API基础路径（保留用于OAuth登录）
    * 注意：OAuth路径不使用basePath，需要完整路径
    */
-  protected static readonly oauthBasePath = '/api/v1/oauth';
+  protected static readonly oauthBasePath = '/oauth';
 
   // ==================== 用户名密码登录方法（默认方式） ====================
 

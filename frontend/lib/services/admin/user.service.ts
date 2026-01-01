@@ -74,7 +74,7 @@ export interface UpdateUserRequest {
  * 管理员用户管理服务
  */
 export class AdminUserService extends BaseService {
-  protected static readonly basePath = '/api/v1/admin/users';
+  protected static readonly basePath = '/admin/users';
 
   /**
    * 获取用户列表

@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -38,9 +39,11 @@ import (
 	appconfig "github.com/seatunnel/seatunnelX/internal/apps/config"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/deepwiki"
+	"github.com/seatunnel/seatunnelX/internal/apps/discovery"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/installer"
+	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
 	"github.com/seatunnel/seatunnelX/internal/apps/oauth"
 	"github.com/seatunnel/seatunnelX/internal/apps/plugin"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
@@ -273,6 +276,39 @@ func Serve() {
 				clusterRouter.POST("/:id/restart", clusterHandler.RestartCluster)
 				clusterRouter.GET("/:id/status", clusterHandler.GetClusterStatus)
 			}
+
+			// Monitor 监控配置管理
+			// Initialize monitor service and handler
+			// 初始化监控服务和处理器
+			// Requirements: 5.1, 5.2, 6.4 - Monitor config and process events API
+			monitorRepo := monitor.NewRepository(db.DB(context.Background()))
+			monitorService := monitor.NewService(monitorRepo)
+			monitorHandler := monitor.NewHandler(monitorService)
+
+			// Monitor config routes on clusters 集群监控配置路由
+			clusterRouter.GET("/:id/monitor-config", monitorHandler.GetMonitorConfig)
+			clusterRouter.PUT("/:id/monitor-config", monitorHandler.UpdateMonitorConfig)
+			clusterRouter.GET("/:id/events", monitorHandler.ListProcessEvents)
+			clusterRouter.GET("/:id/events/stats", monitorHandler.GetEventStats)
+
+			// Discovery 集群发现
+			// Initialize discovery service and handler
+			// 初始化发现服务和处理器
+			// Requirements: 1.2, 1.9, 9.3, 9.4 - Cluster discovery API
+			discoveryService := discovery.NewService()
+			discoveryService.SetHostProvider(&discoveryHostProviderAdapter{hostService: hostService})
+			// Inject agent discoverer if agent manager is available
+			// 如果 Agent Manager 可用，注入 Agent 发现器
+			if agentManager != nil {
+				discoveryService.SetAgentDiscoverer(&discoveryAgentDiscovererAdapter{manager: agentManager})
+				log.Println("[API] Agent discoverer injected into discovery service / Agent 发现器已注入发现服务")
+			}
+			discoveryHandler := discovery.NewHandler(discoveryService)
+
+			// Discovery routes on hosts 主机发现路由
+			hostRouter.POST("/:id/discover", discoveryHandler.TriggerDiscovery)
+			hostRouter.POST("/:id/discover/confirm", discoveryHandler.ConfirmDiscovery)
+			hostRouter.POST("/:id/discover-processes", discoveryHandler.DiscoverProcesses)
 
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
@@ -1204,4 +1240,191 @@ type configNodeInfoProviderAdapter struct {
 // GetNodeInstallDir 根据集群 ID 和主机 ID 返回节点的安装目录。
 func (a *configNodeInfoProviderAdapter) GetNodeInstallDir(ctx context.Context, clusterID uint, hostID uint) (string, error) {
 	return a.clusterService.GetNodeInstallDir(ctx, clusterID, hostID)
+}
+
+// ==================== Discovery Service Adapters 发现服务适配器 ====================
+
+// discoveryHostProviderAdapter adapts host.Service to discovery.HostProvider interface.
+// discoveryHostProviderAdapter 将 host.Service 适配到 discovery.HostProvider 接口。
+type discoveryHostProviderAdapter struct {
+	hostService *host.Service
+}
+
+// GetHostByID returns host information by ID for discovery service.
+// GetHostByID 根据 ID 返回主机信息，用于发现服务。
+func (a *discoveryHostProviderAdapter) GetHostByID(ctx context.Context, hostID uint) (*discovery.HostInfo, error) {
+	h, err := a.hostService.Get(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &discovery.HostInfo{
+		ID:          h.ID,
+		Name:        h.Name,
+		IPAddress:   h.IPAddress,
+		AgentID:     h.AgentID,
+		AgentStatus: string(h.AgentStatus),
+	}, nil
+}
+
+// GetHostByAgentID returns host information by agent ID.
+// GetHostByAgentID 根据 Agent ID 返回主机信息。
+func (a *discoveryHostProviderAdapter) GetHostByAgentID(ctx context.Context, agentID string) (*discovery.HostInfo, error) {
+	h, err := a.hostService.GetByAgentID(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &discovery.HostInfo{
+		ID:          h.ID,
+		Name:        h.Name,
+		IPAddress:   h.IPAddress,
+		AgentID:     h.AgentID,
+		AgentStatus: string(h.AgentStatus),
+	}, nil
+}
+
+// discoveryAgentDiscovererAdapter adapts agent.Manager to discovery.AgentDiscoverer interface.
+// discoveryAgentDiscovererAdapter 将 agent.Manager 适配到 discovery.AgentDiscoverer 接口。
+type discoveryAgentDiscovererAdapter struct {
+	manager *agent.Manager
+}
+
+// TriggerDiscovery triggers cluster discovery on an agent.
+// TriggerDiscovery 在 Agent 上触发集群发现。
+func (a *discoveryAgentDiscovererAdapter) TriggerDiscovery(ctx context.Context, agentID string) ([]*discovery.DiscoveredCluster, error) {
+	// Send DISCOVER_CLUSTERS command to agent
+	// 向 Agent 发送 DISCOVER_CLUSTERS 命令
+	resp, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_DISCOVER_CLUSTERS, nil, 60*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send discover clusters command: %w / 发送发现集群命令失败: %w", err, err)
+	}
+
+	if resp.Status != pb.CommandStatus_SUCCESS {
+		return nil, fmt.Errorf("discover clusters failed: %s / 发现集群失败: %s", resp.Error, resp.Error)
+	}
+
+	// For now, return empty list - the simplified discovery only returns processes
+	// 目前返回空列表 - 简化版发现只返回进程
+	return []*discovery.DiscoveredCluster{}, nil
+}
+
+// DiscoverProcesses discovers SeaTunnel processes on an agent (simplified).
+// DiscoverProcesses 在 Agent 上发现 SeaTunnel 进程（简化版）。
+// Only returns PID, role, and install_dir - no config parsing.
+// 只返回 PID、角色和安装目录 - 不解析配置。
+func (a *discoveryAgentDiscovererAdapter) DiscoverProcesses(ctx context.Context, agentID string) ([]*discovery.DiscoveredProcess, error) {
+	// Send DISCOVER_CLUSTERS command to agent (reuses the same command type)
+	// 向 Agent 发送 DISCOVER_CLUSTERS 命令（复用相同的命令类型）
+	resp, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_DISCOVER_CLUSTERS, nil, 60*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send discover processes command: %w / 发送发现进程命令失败: %w", err, err)
+	}
+
+	if resp.Status != pb.CommandStatus_SUCCESS {
+		return nil, fmt.Errorf("discover processes failed: %s / 发现进程失败: %s", resp.Error, resp.Error)
+	}
+
+	// Parse the JSON output to extract discovered processes
+	// 解析 JSON 输出以提取发现的进程
+	return parseDiscoveredProcessesJSON(resp.Output)
+}
+
+// parseDiscoveredProcessesJSON parses the agent JSON output to extract discovered processes.
+// parseDiscoveredProcessesJSON 解析 Agent JSON 输出以提取发现的进程。
+func parseDiscoveredProcessesJSON(output string) ([]*discovery.DiscoveredProcess, error) {
+	// Define the expected JSON structure / 定义预期的 JSON 结构
+	type ProcessInfo struct {
+		PID           int    `json:"pid"`
+		Role          string `json:"role"`
+		InstallDir    string `json:"install_dir"`
+		Version       string `json:"version"`        // SeaTunnel version / SeaTunnel 版本
+		HazelcastPort int    `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
+		APIPort       int    `json:"api_port"`       // REST API port / REST API 端口
+	}
+	type DiscoveryResult struct {
+		Success   bool          `json:"success"`
+		Message   string        `json:"message"`
+		Processes []ProcessInfo `json:"processes"`
+	}
+
+	var result DiscoveryResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		// Fallback to text parsing for backward compatibility
+		// 为了向后兼容，回退到文本解析
+		log.Printf("[Discovery] JSON parse failed, trying text parse: %v / JSON 解析失败，尝试文本解析: %v", err, err)
+		return parseDiscoveredProcessesText(output), nil
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("discovery failed: %s / 发现失败: %s", result.Message, result.Message)
+	}
+
+	// Convert to discovery.DiscoveredProcess / 转换为 discovery.DiscoveredProcess
+	processes := make([]*discovery.DiscoveredProcess, 0, len(result.Processes))
+	for _, p := range result.Processes {
+		processes = append(processes, &discovery.DiscoveredProcess{
+			PID:           p.PID,
+			Role:          p.Role,
+			InstallDir:    p.InstallDir,
+			Version:       p.Version,
+			HazelcastPort: p.HazelcastPort,
+			APIPort:       p.APIPort,
+		})
+	}
+
+	return processes, nil
+}
+
+// parseDiscoveredProcessesText parses the agent text output (legacy format).
+// parseDiscoveredProcessesText 解析 Agent 文本输出（旧格式）。
+func parseDiscoveredProcessesText(output string) []*discovery.DiscoveredProcess {
+	var processes []*discovery.DiscoveredProcess
+
+	// Parse output line by line
+	// 逐行解析输出
+	// Format: "- PID: 12345, Role: master, InstallDir: /opt/seatunnel"
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- PID:") {
+			continue
+		}
+
+		// Parse the line / 解析行
+		var pid int
+		var role, installDir string
+
+		// Extract PID / 提取 PID
+		if pidStart := strings.Index(line, "PID:"); pidStart != -1 {
+			pidStr := line[pidStart+4:]
+			if commaIdx := strings.Index(pidStr, ","); commaIdx != -1 {
+				pidStr = strings.TrimSpace(pidStr[:commaIdx])
+			}
+			fmt.Sscanf(pidStr, "%d", &pid)
+		}
+
+		// Extract Role / 提取角色
+		if roleStart := strings.Index(line, "Role:"); roleStart != -1 {
+			roleStr := line[roleStart+5:]
+			if commaIdx := strings.Index(roleStr, ","); commaIdx != -1 {
+				role = strings.TrimSpace(roleStr[:commaIdx])
+			}
+		}
+
+		// Extract InstallDir / 提取安装目录
+		if dirStart := strings.Index(line, "InstallDir:"); dirStart != -1 {
+			installDir = strings.TrimSpace(line[dirStart+11:])
+		}
+
+		if pid > 0 && role != "" && installDir != "" {
+			processes = append(processes, &discovery.DiscoveredProcess{
+				PID:        pid,
+				Role:       role,
+				InstallDir: installDir,
+			})
+		}
+	}
+
+	return processes
 }

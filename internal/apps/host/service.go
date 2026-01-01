@@ -587,6 +587,9 @@ ExecStart=${INSTALL_DIR}/seatunnelx-agent --config ${CONFIG_DIR}/config.yaml
 Restart=always
 RestartSec=5
 User=root
+# Kill mode: only kill the main process, not child processes (SeaTunnel)
+# 杀死模式：只杀死主进程，不杀死子进程（SeaTunnel）
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

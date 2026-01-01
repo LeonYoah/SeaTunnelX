@@ -986,6 +986,11 @@ func buildStartCommand(ctx context.Context, params *StartParams) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "cmd", cmdArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, "/bin/bash", args...)
+		// Set process group so SeaTunnel process is independent of Agent
+		// 设置进程组，使 SeaTunnel 进程独立于 Agent
+		// This ensures Agent restart won't kill SeaTunnel processes
+		// 这确保 Agent 重启不会杀死 SeaTunnel 进程
+		setProcGroupAttr(cmd)
 	}
 
 	// Set working directory / 设置工作目录

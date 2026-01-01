@@ -4,11 +4,13 @@
  * Create Cluster Dialog Component
  * 创建集群对话框组件
  *
- * Dialog for creating a new SeaTunnel cluster.
- * 用于创建新 SeaTunnel 集群的对话框。
+ * Dialog for registering an existing SeaTunnel cluster.
+ * Supports process discovery to auto-fill cluster info from running processes.
+ * 用于注册已有 SeaTunnel 集群的对话框。
+ * 支持进程发现以从运行中的进程自动填充集群信息。
  */
 
-import {useState} from 'react';
+import {useState, useEffect} from 'react';
 import {useTranslations} from 'next-intl';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
@@ -29,10 +31,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {Loader2} from 'lucide-react';
+import {Loader2, Search, Server, Cpu, CheckCircle2} from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import {DeploymentMode, CreateClusterRequest} from '@/lib/services/cluster/types';
+import {HostInfo, AgentStatus} from '@/lib/services/host/types';
+import {DiscoveredProcess} from '@/lib/services/discovery/discovery.service';
 
 interface CreateClusterDialogProps {
   open: boolean;
@@ -44,19 +48,59 @@ interface CreateClusterDialogProps {
  * Create Cluster Dialog Component
  * 创建集群对话框组件
  */
-export function CreateClusterDialog({
-  open,
-  onOpenChange,
-  onSuccess,
-}: CreateClusterDialogProps) {
+export function CreateClusterDialog({open, onOpenChange, onSuccess}: CreateClusterDialogProps) {
   const t = useTranslations();
   const [loading, setLoading] = useState(false);
+  const [loadingHosts, setLoadingHosts] = useState(false);
 
   // Form state / 表单状态
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [deploymentMode, setDeploymentMode] = useState<DeploymentMode>(DeploymentMode.HYBRID);
   const [version, setVersion] = useState('');
+
+  // Host and discovery state / 主机和发现状态
+  const [availableHosts, setAvailableHosts] = useState<HostInfo[]>([]);
+  const [selectedHostIds, setSelectedHostIds] = useState<Set<number>>(new Set());
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  // Map of hostId -> discovered processes / 主机ID -> 发现的进程映射
+  const [discoveredProcessesByHost, setDiscoveredProcessesByHost] = useState<
+    Map<number, DiscoveredProcess[]>
+  >(new Map());
+  const [selectedProcesses, setSelectedProcesses] = useState<Set<string>>(new Set());
+
+  /**
+   * Load available hosts when dialog opens
+   * 对话框打开时加载可用主机
+   */
+  useEffect(() => {
+    if (open) {
+      loadAvailableHosts();
+    }
+  }, [open]);
+
+  /**
+   * Load available hosts with Agent installed
+   * 加载已安装 Agent 的可用主机
+   */
+  const loadAvailableHosts = async () => {
+    setLoadingHosts(true);
+    try {
+      const result = await services.host.getHostsSafe({
+        current: 1,
+        size: 100,
+        agent_status: AgentStatus.INSTALLED,
+      });
+
+      if (result.success && result.data) {
+        setAvailableHosts(result.data.hosts || []);
+      } else {
+        setAvailableHosts([]);
+      }
+    } finally {
+      setLoadingHosts(false);
+    }
+  };
 
   /**
    * Reset form
@@ -67,6 +111,174 @@ export function CreateClusterDialog({
     setDescription('');
     setDeploymentMode(DeploymentMode.HYBRID);
     setVersion('');
+    setSelectedHostIds(new Set());
+    setDiscoveredProcessesByHost(new Map());
+    setSelectedProcesses(new Set());
+  };
+
+  /**
+   * Toggle host selection
+   * 切换主机选择
+   */
+  const toggleHostSelection = (hostId: number) => {
+    const newSelected = new Set(selectedHostIds);
+    if (newSelected.has(hostId)) {
+      newSelected.delete(hostId);
+      // Remove discovered processes for this host / 移除该主机的发现进程
+      const newProcesses = new Map(discoveredProcessesByHost);
+      newProcesses.delete(hostId);
+      setDiscoveredProcessesByHost(newProcesses);
+    } else {
+      newSelected.add(hostId);
+    }
+    setSelectedHostIds(newSelected);
+  };
+
+  /**
+   * Handle process discovery for all selected hosts
+   * 处理所有选中主机的进程发现
+   */
+  const handleDiscoverProcesses = async () => {
+    if (selectedHostIds.size === 0) {
+      toast.error(t('cluster.selectHostFirst'));
+      return;
+    }
+
+    setDiscoveryLoading(true);
+    setDiscoveredProcessesByHost(new Map());
+    setSelectedProcesses(new Set());
+
+    const newProcessesByHost = new Map<number, DiscoveredProcess[]>();
+    let totalProcesses = 0;
+    let failedHosts = 0;
+
+    try {
+      // Discover processes on all selected hosts in parallel
+      // 并行在所有选中的主机上发现进程
+      const hostIds = Array.from(selectedHostIds);
+      const results = await Promise.allSettled(
+        hostIds.map((hostId) => services.discovery.discoverProcesses(hostId))
+      );
+
+      results.forEach((result, index) => {
+        const hostId = hostIds[index];
+        if (result.status === 'fulfilled' && result.value.success && result.value.processes) {
+          newProcessesByHost.set(hostId, result.value.processes);
+          totalProcesses += result.value.processes.length;
+        } else {
+          failedHosts++;
+        }
+      });
+
+      setDiscoveredProcessesByHost(newProcessesByHost);
+
+      if (totalProcesses === 0) {
+        toast.info(t('discovery.noProcessesFound'));
+      } else {
+        toast.success(
+          t('discovery.processesFoundOnHosts', {
+            count: totalProcesses,
+            hosts: hostIds.length - failedHosts,
+          })
+        );
+        // Auto-detect deployment mode from all discovered processes
+        // 从所有发现的进程自动检测部署模式
+        const allProcesses = Array.from(newProcessesByHost.values()).flat();
+        autoDetectDeploymentMode(allProcesses);
+      }
+
+      if (failedHosts > 0) {
+        toast.warning(t('discovery.someHostsFailed', {count: failedHosts}));
+      }
+    } catch {
+      toast.error(t('discovery.discoverError'));
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  /**
+   * Auto-detect deployment mode and version from discovered processes
+   * 从发现的进程自动检测部署模式和版本
+   */
+  const autoDetectDeploymentMode = (processes: DiscoveredProcess[]) => {
+    const hasMaster = processes.some((p) => p.role === 'master');
+    const hasWorker = processes.some((p) => p.role === 'worker');
+    const hasHybrid = processes.some((p) => p.role === 'hybrid');
+
+    if (hasMaster || hasWorker) {
+      setDeploymentMode(DeploymentMode.SEPARATED);
+    } else if (hasHybrid) {
+      setDeploymentMode(DeploymentMode.HYBRID);
+    }
+
+    // Auto-fill version from first process with valid version (always update if found)
+    // 从第一个有效版本的进程自动填充版本（发现后始终更新）
+    const processWithVersion = processes.find((p) => p.version && p.version !== 'unknown');
+    if (processWithVersion) {
+      setVersion(processWithVersion.version);
+    }
+  };
+
+  /**
+   * Toggle process selection
+   * 切换进程选择
+   */
+  const toggleProcessSelection = (processKey: string) => {
+    const newSelected = new Set(selectedProcesses);
+    if (newSelected.has(processKey)) {
+      newSelected.delete(processKey);
+    } else {
+      newSelected.add(processKey);
+    }
+    setSelectedProcesses(newSelected);
+  };
+
+  /**
+   * Parse selected process key to get hostId, pid, installDir
+   * 解析选中的进程键获取主机ID、PID、安装目录
+   */
+  const parseProcessKey = (key: string) => {
+    const parts = key.split('-');
+    const hostId = parseInt(parts[0], 10);
+    const pid = parseInt(parts[1], 10);
+    const installDir = parts.slice(2).join('-'); // install_dir may contain '-'
+    return {hostId, pid, installDir};
+  };
+
+  /**
+   * Get selected processes with host info
+   * 获取选中的进程及其主机信息
+   */
+  const getSelectedProcessesWithHost = () => {
+    const result: Array<{
+      hostId: number;
+      pid: number;
+      role: string;
+      installDir: string;
+      hazelcastPort: number;
+      apiPort: number;
+    }> = [];
+
+    selectedProcesses.forEach((key) => {
+      const {hostId, pid, installDir} = parseProcessKey(key);
+      const processes = discoveredProcessesByHost.get(hostId);
+      if (processes) {
+        const proc = processes.find((p) => p.pid === pid && p.install_dir === installDir);
+        if (proc) {
+          result.push({
+            hostId,
+            pid: proc.pid,
+            role: proc.role,
+            installDir: proc.install_dir,
+            hazelcastPort: proc.hazelcast_port || 0,
+            apiPort: proc.api_port || 0,
+          });
+        }
+      }
+    });
+
+    return result;
   };
 
   /**
@@ -80,13 +292,74 @@ export function CreateClusterDialog({
       return;
     }
 
+    if (!version.trim()) {
+      toast.error(t('cluster.versionRequired'));
+      return;
+    }
+
     setLoading(true);
     try {
+      // Get selected processes info / 获取选中的进程信息
+      const selectedProcessInfo = getSelectedProcessesWithHost();
+
+      // Build nodes from selected processes / 从选中的进程构建节点
+      // In separated mode, each process (master/worker) is a separate node
+      // 在分离模式下，每个进程（master/worker）是一个独立的节点
+      // Only merge if same role on same host+installDir (shouldn't happen normally)
+      // 只有在同一主机+安装目录上有相同角色时才合并（正常情况下不会发生）
+      const nodeMap = new Map<
+        string,
+        {
+          hostId: number;
+          installDir: string;
+          role: string;
+          pids: number[];
+          hazelcastPort: number;
+          apiPort: number;
+        }
+      >();
+
+      selectedProcessInfo.forEach((proc) => {
+        // Key includes role to keep master and worker as separate nodes
+        // 键包含角色以保持 master 和 worker 作为独立节点
+        const nodeKey = `${proc.hostId}-${proc.installDir}-${proc.role}`;
+        const existing = nodeMap.get(nodeKey);
+        if (existing) {
+          existing.pids.push(proc.pid);
+          // Use the port if available / 如果有端口则使用
+          if (proc.hazelcastPort > 0) {
+            existing.hazelcastPort = proc.hazelcastPort;
+          }
+          if (proc.apiPort > 0) {
+            existing.apiPort = proc.apiPort;
+          }
+        } else {
+          nodeMap.set(nodeKey, {
+            hostId: proc.hostId,
+            installDir: proc.installDir,
+            role: proc.role,
+            pids: [proc.pid],
+            hazelcastPort: proc.hazelcastPort,
+            apiPort: proc.apiPort,
+          });
+        }
+      });
+
+      // Convert to nodes array / 转换为节点数组
+      const nodes = Array.from(nodeMap.values()).map((node) => ({
+        host_id: node.hostId,
+        install_dir: node.installDir,
+        role: node.role,
+        hazelcast_port: node.hazelcastPort > 0 ? node.hazelcastPort : undefined,
+        api_port: node.apiPort > 0 ? node.apiPort : undefined,
+      }));
+
       const data: CreateClusterRequest = {
         name: name.trim(),
         description: description.trim() || undefined,
         deployment_mode: deploymentMode,
         version: version.trim() || undefined,
+        nodes: nodes.length > 0 ? nodes : undefined,
       };
 
       const result = await services.cluster.createClusterSafe(data);
@@ -114,15 +387,32 @@ export function CreateClusterDialog({
     onOpenChange(open);
   };
 
+  /**
+   * Get process key for selection (includes hostId)
+   * 获取进程选择的键（包含主机ID）
+   */
+  const getProcessKey = (hostId: number, proc: DiscoveredProcess) =>
+    `${hostId}-${proc.pid}-${proc.install_dir}`;
+
+  /**
+   * Get host name by id
+   * 根据ID获取主机名
+   */
+  const getHostName = (hostId: number) => {
+    const host = availableHosts.find((h) => h.id === hostId);
+    return host ? `${host.name} (${host.ip_address})` : `Host ${hostId}`;
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className='sm:max-w-[500px]'>
+      <DialogContent className='sm:max-w-[600px] max-h-[90vh] flex flex-col'>
         <DialogHeader>
-          <DialogTitle>{t('cluster.createCluster')}</DialogTitle>
-          <DialogDescription>{t('cluster.createClusterDescription')}</DialogDescription>
+          <DialogTitle>{t('cluster.registerCluster')}</DialogTitle>
+          <DialogDescription>{t('cluster.registerClusterDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className='space-y-4 py-4'>
+        <div className='flex-1 overflow-y-auto space-y-4 py-4 pr-2'>
+          {/* Cluster Name / 集群名称 */}
           <div className='space-y-2'>
             <Label htmlFor='name'>
               {t('cluster.name')} <span className='text-destructive'>*</span>
@@ -135,6 +425,7 @@ export function CreateClusterDialog({
             />
           </div>
 
+          {/* Description / 描述 */}
           <div className='space-y-2'>
             <Label htmlFor='description'>{t('cluster.descriptionLabel')}</Label>
             <Textarea
@@ -146,6 +437,7 @@ export function CreateClusterDialog({
             />
           </div>
 
+          {/* Deployment Mode / 部署模式 */}
           <div className='space-y-2'>
             <Label htmlFor='deploymentMode'>
               {t('cluster.deploymentMode')} <span className='text-destructive'>*</span>
@@ -158,9 +450,7 @@ export function CreateClusterDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={DeploymentMode.HYBRID}>
-                  {t('cluster.modes.hybrid')}
-                </SelectItem>
+                <SelectItem value={DeploymentMode.HYBRID}>{t('cluster.modes.hybrid')}</SelectItem>
                 <SelectItem value={DeploymentMode.SEPARATED}>
                   {t('cluster.modes.separated')}
                 </SelectItem>
@@ -173,8 +463,11 @@ export function CreateClusterDialog({
             </p>
           </div>
 
+          {/* Version / 版本 */}
           <div className='space-y-2'>
-            <Label htmlFor='version'>{t('cluster.version')}</Label>
+            <Label htmlFor='version'>
+              {t('cluster.version')} <span className='text-destructive'>*</span>
+            </Label>
             <Input
               id='version'
               value={version}
@@ -182,6 +475,171 @@ export function CreateClusterDialog({
               placeholder={t('cluster.versionPlaceholder')}
             />
           </div>
+
+          {/* Divider / 分隔线 */}
+          <div className='relative py-2'>
+            <div className='absolute inset-0 flex items-center'>
+              <span className='w-full border-t' />
+            </div>
+            <div className='relative flex justify-center text-xs uppercase'>
+              <span className='bg-background px-2 text-muted-foreground'>
+                {t('discovery.discoverFromHost')}
+              </span>
+            </div>
+          </div>
+
+          {/* Host Selection for Discovery / 用于发现的主机选择 */}
+          <div className='space-y-2'>
+            <Label>{t('discovery.selectHostsToDiscover')}</Label>
+            {loadingHosts ? (
+              <div className='flex items-center gap-2 text-muted-foreground'>
+                <Loader2 className='h-4 w-4 animate-spin' />
+                {t('common.loading')}
+              </div>
+            ) : availableHosts.length === 0 ? (
+              <div className='text-sm text-muted-foreground p-3 border rounded-md bg-muted/30'>
+                {t('cluster.noAvailableHosts')}
+              </div>
+            ) : (
+              <div className='space-y-2'>
+                {/* Host list with checkboxes / 带复选框的主机列表 */}
+                <div className='border rounded-md divide-y max-h-[150px] overflow-y-auto'>
+                  {availableHosts.map((host) => {
+                    const isSelected = selectedHostIds.has(host.id);
+                    return (
+                      <div
+                        key={host.id}
+                        className={`flex items-center gap-3 p-2 cursor-pointer hover:bg-muted/50 transition-colors ${
+                          isSelected ? 'bg-primary/10' : ''
+                        }`}
+                        onClick={() => toggleHostSelection(host.id)}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded border flex items-center justify-center ${
+                            isSelected ? 'bg-primary border-primary' : 'border-muted-foreground'
+                          }`}
+                        >
+                          {isSelected && (
+                            <CheckCircle2 className='h-3 w-3 text-primary-foreground' />
+                          )}
+                        </div>
+                        <Server className='h-4 w-4 text-muted-foreground' />
+                        <span className='font-medium'>{host.name}</span>
+                        {host.ip_address && (
+                          <span className='text-muted-foreground text-sm'>({host.ip_address})</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Discover button / 发现按钮 */}
+                <Button
+                  variant='outline'
+                  onClick={handleDiscoverProcesses}
+                  disabled={selectedHostIds.size === 0 || discoveryLoading}
+                  className='w-full'
+                >
+                  {discoveryLoading ? (
+                    <Loader2 className='h-4 w-4 mr-2 animate-spin' />
+                  ) : (
+                    <Search className='h-4 w-4 mr-2' />
+                  )}
+                  {t('discovery.discoverProcessesOnHosts', {count: selectedHostIds.size})}
+                </Button>
+              </div>
+            )}
+            <p className='text-xs text-muted-foreground'>{t('discovery.discoverMultiHostHint')}</p>
+          </div>
+
+          {/* Discovered Processes by Host / 按主机分组的发现进程 */}
+          {discoveredProcessesByHost.size > 0 && (
+            <div className='space-y-2'>
+              <Label>{t('discovery.discoveredProcesses')}</Label>
+              <div className='border rounded-md max-h-[250px] overflow-y-auto'>
+                {Array.from(discoveredProcessesByHost.entries()).map(([hostId, processes]) => (
+                  <div key={hostId} className='border-b last:border-b-0'>
+                    {/* Host header / 主机标题 */}
+                    <div className='bg-muted/50 px-3 py-2 flex items-center gap-2 sticky top-0'>
+                      <Server className='h-4 w-4 text-muted-foreground' />
+                      <span className='font-medium text-sm'>{getHostName(hostId)}</span>
+                      <span className='text-xs text-muted-foreground'>
+                        ({processes.length} {t('discovery.processes')})
+                      </span>
+                    </div>
+                    {/* Processes / 进程列表 */}
+                    <div className='divide-y'>
+                      {processes.map((proc) => {
+                        const key = getProcessKey(hostId, proc);
+                        const isSelected = selectedProcesses.has(key);
+                        return (
+                          <div
+                            key={key}
+                            className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors ${
+                              isSelected ? 'bg-primary/10' : ''
+                            }`}
+                            onClick={() => toggleProcessSelection(key)}
+                          >
+                            <div
+                              className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${
+                                isSelected ? 'bg-primary border-primary' : 'border-muted-foreground'
+                              }`}
+                            >
+                              {isSelected && (
+                                <CheckCircle2 className='h-4 w-4 text-primary-foreground' />
+                              )}
+                            </div>
+                            <Cpu className='h-4 w-4 text-muted-foreground flex-shrink-0' />
+                            <div className='flex-1 min-w-0'>
+                              <div className='flex items-center gap-2 flex-wrap'>
+                                <span className='font-medium'>PID: {proc.pid}</span>
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded-full ${
+                                    proc.role === 'master'
+                                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                                      : proc.role === 'worker'
+                                        ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                                        : 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
+                                  }`}
+                                >
+                                  {proc.role}
+                                </span>
+                                {proc.version && proc.version !== 'unknown' && (
+                                  <span className='text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300'>
+                                    v{proc.version}
+                                  </span>
+                                )}
+                              </div>
+                              <p className='text-xs text-muted-foreground truncate mt-1'>
+                                📁 {proc.install_dir}
+                              </p>
+                              {/* Port info / 端口信息 */}
+                              <div className='flex items-center gap-3 mt-1 text-xs text-muted-foreground'>
+                                {proc.hazelcast_port > 0 && (
+                                  <span className='flex items-center gap-1'>
+                                    <span className='w-2 h-2 rounded-full bg-blue-500'></span>
+                                    Hazelcast: {proc.hazelcast_port}
+                                  </span>
+                                )}
+                                {proc.api_port > 0 && (
+                                  <span className='flex items-center gap-1'>
+                                    <span className='w-2 h-2 rounded-full bg-green-500'></span>
+                                    API: {proc.api_port}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className='text-xs text-muted-foreground'>
+                {t('discovery.selectedCount', {count: selectedProcesses.size})}
+              </p>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

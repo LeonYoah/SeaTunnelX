@@ -32,7 +32,7 @@ type DownloadAllPluginsProgress = {
  * 插件服务，用于管理 SeaTunnel 插件
  */
 export class PluginService extends BaseService {
-  protected static basePath = '/api/v1';
+  protected static basePath = '';
 
   // ==================== Available Plugins 可用插件 ====================
 

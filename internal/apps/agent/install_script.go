@@ -730,6 +730,12 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=${SERVICE_NAME}
 
+# Kill mode: only kill the main process, not child processes (SeaTunnel)
+# 杀死模式：只杀死主进程，不杀死子进程（SeaTunnel）
+# This ensures Agent restart won't affect running SeaTunnel processes
+# 这确保 Agent 重启不会影响正在运行的 SeaTunnel 进程
+KillMode=process
+
 # Security settings
 # 安全设置
 NoNewPrivileges=false

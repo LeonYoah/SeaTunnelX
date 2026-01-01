@@ -28,6 +28,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,10 +44,13 @@ import (
 	pb "github.com/seatunnel/seatunnelX/agent"
 	"github.com/seatunnel/seatunnelX/agent/internal/collector"
 	"github.com/seatunnel/seatunnelX/agent/internal/config"
+	"github.com/seatunnel/seatunnelX/agent/internal/discovery"
 	"github.com/seatunnel/seatunnelX/agent/internal/executor"
 	agentgrpc "github.com/seatunnel/seatunnelX/agent/internal/grpc"
 	"github.com/seatunnel/seatunnelX/agent/internal/installer"
+	"github.com/seatunnel/seatunnelX/agent/internal/monitor"
 	"github.com/seatunnel/seatunnelX/agent/internal/process"
+	"github.com/seatunnel/seatunnelX/agent/internal/restart"
 	"github.com/spf13/cobra"
 )
 
@@ -95,6 +99,18 @@ type Agent struct {
 	// installerManager 处理 SeaTunnel 安装
 	installerManager *installer.InstallerManager
 
+	// processMonitor monitors SeaTunnel process status
+	// processMonitor 监控 SeaTunnel 进程状态
+	processMonitor *monitor.ProcessMonitor
+
+	// autoRestarter handles automatic process restart
+	// autoRestarter 处理自动进程重启
+	autoRestarter *restart.AutoRestarter
+
+	// eventReporter handles process event reporting
+	// eventReporter 处理进程事件上报
+	eventReporter *monitor.EventReporter
+
 	// wg tracks running goroutines for graceful shutdown
 	// wg 跟踪运行中的 goroutine 以实现优雅关闭
 	wg sync.WaitGroup
@@ -128,6 +144,15 @@ func NewAgent(cfg *config.Config) *Agent {
 	// Create installer manager / 创建安装管理器
 	im := installer.NewInstallerManager()
 
+	// Create process monitor / 创建进程监控器
+	pmon := monitor.NewProcessMonitor()
+
+	// Create auto restarter / 创建自动重启器
+	ar := restart.NewAutoRestarter(pm)
+
+	// Create event reporter / 创建事件上报器
+	er := monitor.NewEventReporter(nil) // Will set report func later / 稍后设置上报函数
+
 	return &Agent{
 		config:           cfg,
 		ctx:              ctx,
@@ -137,6 +162,9 @@ func NewAgent(cfg *config.Config) *Agent {
 		processManager:   pm,
 		metricsCollector: mc,
 		installerManager: im,
+		processMonitor:   pmon,
+		autoRestarter:    ar,
+		eventReporter:    er,
 	}
 }
 
@@ -168,7 +196,7 @@ func (a *Agent) Run() error {
 
 	// Step 1: Start process manager for monitoring
 	// 步骤 1：启动进程管理器进行监控
-	fmt.Println("[1/5] Starting process manager... / 启动进程管理器...")
+	fmt.Println("[1/8] Starting process manager... / 启动进程管理器...")
 	if err := a.processManager.Start(a.ctx); err != nil {
 		return fmt.Errorf("failed to start process manager: %w / 启动进程管理器失败：%w", err, err)
 	}
@@ -176,28 +204,43 @@ func (a *Agent) Run() error {
 	// Set up process event handler / 设置进程事件处理器
 	a.processManager.SetEventHandler(a.handleProcessEvent)
 
-	// Step 2: Register command handlers
-	// 步骤 2：注册命令处理器
-	fmt.Println("[2/5] Registering command handlers... / 注册命令处理器...")
+	// Step 2: Start process monitor / 启动进程监控器
+	fmt.Println("[2/8] Starting process monitor... / 启动进程监控器...")
+	a.setupProcessMonitor()
+	if err := a.processMonitor.Start(a.ctx); err != nil {
+		fmt.Printf("Warning: failed to start process monitor: %v / 警告：启动进程监控器失败：%v\n", err, err)
+	}
+
+	// Step 3: Initialize process discovery (simplified, no auto-scan)
+	// 步骤 3：初始化进程发现（简化版，无自动扫描）
+	fmt.Println("[3/8] Initializing process discovery... / 初始化进程发现...")
+
+	// Step 4: Start event reporter / 启动事件上报器
+	fmt.Println("[4/8] Starting event reporter... / 启动事件上报器...")
+	a.eventReporter.Start()
+
+	// Step 5: Register command handlers
+	// 步骤 5：注册命令处理器
+	fmt.Println("[5/8] Registering command handlers... / 注册命令处理器...")
 	a.registerCommandHandlers()
 
-	// Step 3: Connect to Control Plane
-	// 步骤 3：连接到 Control Plane
-	fmt.Println("[3/5] Connecting to Control Plane... / 连接到 Control Plane...")
+	// Step 6: Connect to Control Plane
+	// 步骤 6：连接到 Control Plane
+	fmt.Println("[6/8] Connecting to Control Plane... / 连接到 Control Plane...")
 	if err := a.connectToControlPlane(); err != nil {
 		return fmt.Errorf("failed to connect to Control Plane: %w / 连接 Control Plane 失败：%w", err, err)
 	}
 
-	// Step 4: Register with Control Plane
-	// 步骤 4：向 Control Plane 注册
-	fmt.Println("[4/5] Registering with Control Plane... / 向 Control Plane 注册...")
+	// Step 7: Register with Control Plane
+	// 步骤 7：向 Control Plane 注册
+	fmt.Println("[7/8] Registering with Control Plane... / 向 Control Plane 注册...")
 	if err := a.registerWithControlPlane(); err != nil {
 		return fmt.Errorf("failed to register with Control Plane: %w / 向 Control Plane 注册失败：%w", err, err)
 	}
 
-	// Step 5: Start background services
-	// 步骤 5：启动后台服务
-	fmt.Println("[5/5] Starting background services... / 启动后台服务...")
+	// Step 8: Start background services
+	// 步骤 8：启动后台服务
+	fmt.Println("[8/8] Starting background services... / 启动后台服务...")
 	a.startBackgroundServices()
 
 	fmt.Println("========================================")
@@ -210,6 +253,26 @@ func (a *Agent) Run() error {
 	<-a.ctx.Done()
 
 	return nil
+}
+
+// setupProcessMonitor sets up the process monitor with callbacks
+// setupProcessMonitor 设置进程监控器的回调
+func (a *Agent) setupProcessMonitor() {
+	// Set event handler / 设置事件处理器
+	a.processMonitor.SetEventHandler(func(event *monitor.ProcessEvent) {
+		fmt.Printf("[Agent] Process event: type=%s, name=%s, pid=%d / 进程事件：类型=%s，名称=%s，PID=%d\n",
+			event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
+		a.eventReporter.ReportEvent(event)
+	})
+
+	// Set crash handler to trigger auto restart / 设置崩溃处理器以触发自动重启
+	a.processMonitor.SetCrashHandler(func(proc *monitor.TrackedProcess) {
+		fmt.Printf("[Agent] Process crashed: %s (PID: %d), triggering auto restart / 进程崩溃：%s（PID：%d），触发自动重启\n",
+			proc.Name, proc.PID, proc.Name, proc.PID)
+		if err := a.autoRestarter.OnProcessCrashed(proc); err != nil {
+			fmt.Printf("[Agent] Auto restart failed: %v / 自动重启失败：%v\n", err, err)
+		}
+	})
 }
 
 // connectToControlPlane establishes connection to Control Plane with retry
@@ -568,6 +631,12 @@ func (a *Agent) registerCommandHandlers() {
 
 	// Register diagnostic handlers / 注册诊断处理器
 	a.executor.RegisterHandler(pb.CommandType_COLLECT_LOGS, a.handleCollectLogsCommand)
+
+	// Register cluster discovery and monitoring handlers / 注册集群发现和监控处理器
+	a.executor.RegisterHandler(pb.CommandType_DISCOVER_CLUSTERS, a.handleDiscoverClustersCommand)
+	a.executor.RegisterHandler(pb.CommandType_UPDATE_MONITOR_CONFIG, a.handleUpdateMonitorConfigCommand)
+	a.executor.RegisterHandler(pb.CommandType_MARK_MANUAL_STOP, a.handleMarkManualStopCommand)
+	a.executor.RegisterHandler(pb.CommandType_CLEAR_MANUAL_STOP, a.handleClearManualStopCommand)
 
 	// Initialize plugin manager and register plugin handlers / 初始化插件管理器并注册插件处理器
 	executor.InitPluginManager(a.config.SeaTunnel.InstallDir)
@@ -1088,32 +1157,41 @@ func (a *Agent) Shutdown() {
 
 	// Step 1: Stop accepting new commands
 	// 步骤 1：停止接受新命令
-	fmt.Println("[1/4] Stopping command acceptance... / 停止接受命令...")
+	fmt.Println("[1/6] Stopping command acceptance... / 停止接受命令...")
 
-	// Step 2: Wait for running tasks to complete (with timeout)
-	// 步骤 2：等待运行中的任务完成（带超时）
-	fmt.Println("[2/4] Waiting for running tasks... / 等待运行中的任务...")
+	// Step 2: Stop process monitor / 停止进程监控器
+	fmt.Println("[2/6] Stopping process monitor... / 停止进程监控器...")
+	if err := a.processMonitor.Stop(); err != nil {
+		fmt.Printf("Warning: Error stopping process monitor: %v / 警告：停止进程监控器时出错：%v\n", err, err)
+	}
+
+	// Step 3: Stop event reporter / 停止事件上报器
+	fmt.Println("[3/6] Stopping event reporter... / 停止事件上报器...")
+	a.eventReporter.Stop()
+
+	// Step 4: Wait for running tasks to complete (with timeout)
+	// 步骤 4：等待运行中的任务完成（带超时）
+	fmt.Println("[4/6] Waiting for running tasks... / 等待运行中的任务...")
 	// Note: The executor handles task completion internally
 	// 注意：执行器内部处理任务完成
 
-	// Step 3: Stop all managed processes gracefully
-	// 步骤 3：优雅地停止所有托管进程
-	fmt.Println("[3/4] Stopping managed processes... / 停止托管进程...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
+	// Step 5: Keep SeaTunnel processes running (do NOT stop them)
+	// 步骤 5：保持 SeaTunnel 进程运行（不停止它们）
+	// Agent restart should not affect running SeaTunnel processes
+	// Agent 重启不应影响正在运行的 SeaTunnel 进程
+	fmt.Println("[5/6] Keeping SeaTunnel processes running... / 保持 SeaTunnel 进程运行...")
+	// Note: We intentionally do NOT call processManager.StopAll() here
+	// 注意：我们故意不在这里调用 processManager.StopAll()
 
-	if err := a.processManager.StopAll(shutdownCtx); err != nil {
-		fmt.Printf("Warning: Error stopping processes: %v / 警告：停止进程时出错：%v\n", err, err)
-	}
-
-	// Stop process manager / 停止进程管理器
+	// Stop process manager (just cleanup internal state, not the processes)
+	// 停止进程管理器（只清理内部状态，不停止进程）
 	if err := a.processManager.Stop(); err != nil {
 		fmt.Printf("Warning: Error stopping process manager: %v / 警告：停止进程管理器时出错：%v\n", err, err)
 	}
 
-	// Step 4: Close gRPC connection
-	// 步骤 4：关闭 gRPC 连接
-	fmt.Println("[4/4] Closing connections... / 关闭连接...")
+	// Step 6: Close gRPC connection
+	// 步骤 6：关闭 gRPC 连接
+	fmt.Println("[6/6] Closing connections... / 关闭连接...")
 	if err := a.grpcClient.Disconnect(); err != nil {
 		fmt.Printf("Warning: Error disconnecting: %v / 警告：断开连接时出错：%v\n", err, err)
 	}
@@ -1354,4 +1432,122 @@ func isNotFoundError(err error) bool {
 		strings.Contains(errStr, "not found") ||
 		strings.Contains(errStr, "not registered") ||
 		strings.Contains(errStr, "re-register")
+}
+
+// handleDiscoverClustersCommand handles the DISCOVER_CLUSTERS command (simplified)
+// handleDiscoverClustersCommand 处理 DISCOVER_CLUSTERS 命令（简化版）
+// Only scans for running SeaTunnel processes, returns PID, role, install_dir
+// 只扫描运行中的 SeaTunnel 进程，返回 PID、角色、安装目录
+func (a *Agent) handleDiscoverClustersCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	reporter.Report(10, "Scanning for SeaTunnel processes... / 正在扫描 SeaTunnel 进程...")
+
+	// Use simplified process discovery / 使用简化的进程发现
+	processDiscovery := discovery.NewProcessDiscovery()
+	processes, err := processDiscovery.DiscoverProcesses()
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+	}
+
+	reporter.Report(80, fmt.Sprintf("Found %d process(es) / 发现 %d 个进程", len(processes), len(processes)))
+
+	// Format output as JSON for easier parsing / 格式化输出为 JSON 以便于解析
+	// Include all discovered fields: PID, role, install_dir, version, hazelcast_port, api_port
+	// 包含所有发现的字段：PID、角色、安装目录、版本、hazelcast端口、api端口
+	type ProcessInfo struct {
+		PID           int    `json:"pid"`
+		Role          string `json:"role"`
+		InstallDir    string `json:"install_dir"`
+		Version       string `json:"version"`
+		HazelcastPort int    `json:"hazelcast_port"`
+		APIPort       int    `json:"api_port"`
+	}
+	type DiscoveryResult struct {
+		Success   bool          `json:"success"`
+		Message   string        `json:"message"`
+		Processes []ProcessInfo `json:"processes"`
+	}
+
+	result := DiscoveryResult{
+		Success:   true,
+		Message:   fmt.Sprintf("Discovered %d SeaTunnel process(es) / 发现 %d 个 SeaTunnel 进程", len(processes), len(processes)),
+		Processes: make([]ProcessInfo, 0, len(processes)),
+	}
+	for _, p := range processes {
+		result.Processes = append(result.Processes, ProcessInfo{
+			PID:           p.PID,
+			Role:          p.Role,
+			InstallDir:    p.InstallDir,
+			Version:       p.Version,
+			HazelcastPort: p.HazelcastPort,
+			APIPort:       p.APIPort,
+		})
+	}
+
+	jsonOutput, err := json.Marshal(result)
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+	}
+
+	reporter.Report(100, "Process discovery completed / 进程发现完成")
+	return executor.CreateSuccessResponse(cmd.CommandId, string(jsonOutput)), nil
+}
+
+// handleUpdateMonitorConfigCommand handles the UPDATE_MONITOR_CONFIG command
+// handleUpdateMonitorConfigCommand 处理 UPDATE_MONITOR_CONFIG 命令
+// Requirements 5.5: Apply new config immediately without restart
+// 需求 5.5：立即应用新配置，无需重启
+func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	reporter.Report(10, "Updating monitor config... / 更新监控配置...")
+
+	// Parse config from parameters / 从参数解析配置
+	config := &restart.RestartConfig{
+		Enabled:        getParamBool(cmd.Parameters, "auto_restart", true),
+		RestartDelay:   time.Duration(getParamInt(cmd.Parameters, "restart_delay", 10)) * time.Second,
+		MaxRestarts:    getParamInt(cmd.Parameters, "max_restarts", 3),
+		TimeWindow:     time.Duration(getParamInt(cmd.Parameters, "time_window", 300)) * time.Second,
+		CooldownPeriod: time.Duration(getParamInt(cmd.Parameters, "cooldown_period", 1800)) * time.Second,
+	}
+
+	// Update auto restarter config / 更新自动重启器配置
+	a.autoRestarter.UpdateConfig(config)
+
+	// Update process monitor interval if specified / 如果指定则更新进程监控间隔
+	monitorInterval := getParamInt(cmd.Parameters, "monitor_interval", 0)
+	if monitorInterval > 0 {
+		a.processMonitor.SetMonitorInterval(time.Duration(monitorInterval) * time.Second)
+	}
+
+	reporter.Report(100, "Monitor config updated / 监控配置已更新")
+	return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated successfully / 监控配置更新成功"), nil
+}
+
+// handleMarkManualStopCommand handles the MARK_MANUAL_STOP command
+// handleMarkManualStopCommand 处理 MARK_MANUAL_STOP 命令
+// Requirements 8.2: Mark process as manually stopped
+// 需求 8.2：将进程标记为手动停止
+func (a *Agent) handleMarkManualStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	processName := getParamString(cmd.Parameters, "process_name", "")
+	if processName == "" {
+		return executor.CreateErrorResponse(cmd.CommandId, "process_name is required / 需要 process_name 参数"), nil
+	}
+
+	a.processMonitor.MarkManuallyStopped(processName)
+
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process %s marked as manually stopped / 进程 %s 已标记为手动停止", processName, processName)), nil
+}
+
+// handleClearManualStopCommand handles the CLEAR_MANUAL_STOP command
+// handleClearManualStopCommand 处理 CLEAR_MANUAL_STOP 命令
+// Requirements 8.4: Clear manual stop flag when user starts process
+// 需求 8.4：当用户启动进程时清除手动停止标记
+func (a *Agent) handleClearManualStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	processName := getParamString(cmd.Parameters, "process_name", "")
+	if processName == "" {
+		return executor.CreateErrorResponse(cmd.CommandId, "process_name is required / 需要 process_name 参数"), nil
+	}
+
+	a.processMonitor.ClearManuallyStopped(processName)
+	a.autoRestarter.ResetRestartCount(processName)
+
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Manual stop flag cleared for %s / 已清除 %s 的手动停止标记", processName, processName)), nil
 }

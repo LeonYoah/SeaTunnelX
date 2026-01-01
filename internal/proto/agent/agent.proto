@@ -147,6 +147,12 @@ enum CommandType {
   
   // 安装包传输
   TRANSFER_PACKAGE = 60;    // 传输安装包文件
+  
+  // 集群发现与监控 (Requirements 7.1)
+  DISCOVER_CLUSTERS = 70;       // 发现集群
+  UPDATE_MONITOR_CONFIG = 71;   // 更新监控配置
+  MARK_MANUAL_STOP = 72;        // 标记手动停止
+  CLEAR_MANUAL_STOP = 73;       // 清除手动停止标记
 }
 
 // CommandResponse - 指令执行结果 (Agent -> Control Plane)
@@ -331,4 +337,93 @@ message UpdateConfigResponse {
   bool success = 1;           // 是否成功
   string message = 2;         // 消息
   string backup_path = 3;     // 备份文件路径 (如果启用备份)
+}
+
+
+// ============================================================================
+// 集群发现相关消息 (Requirements 7.1, 7.2)
+// Cluster Discovery Messages
+// ============================================================================
+
+// DiscoverClustersRequest - 发现集群请求
+// DiscoverClustersRequest - Discover clusters request
+message DiscoverClustersRequest {
+  string agent_id = 1;        // Agent 唯一标识 / Agent unique identifier
+}
+
+// DiscoveredClusterInfo - 发现的集群信息
+// DiscoveredClusterInfo - Discovered cluster information
+message DiscoveredClusterInfo {
+  string name = 1;                          // 集群名称 / Cluster name
+  string install_dir = 2;                   // 安装目录 / Installation directory
+  string version = 3;                       // SeaTunnel 版本 / SeaTunnel version
+  string deployment_mode = 4;               // 部署模式: hybrid, separated / Deployment mode
+  repeated DiscoveredNodeInfo nodes = 5;    // 节点列表 / Node list
+  map<string, string> config = 6;           // 配置信息 / Configuration
+  int64 discovered_at = 7;                  // 发现时间戳 (Unix 毫秒) / Discovery timestamp
+}
+
+// DiscoveredNodeInfo - 发现的节点信息
+// DiscoveredNodeInfo - Discovered node information
+message DiscoveredNodeInfo {
+  int32 pid = 1;              // 进程 ID / Process ID
+  string role = 2;            // 节点角色: master, worker, hybrid / Node role
+  int32 hazelcast_port = 3;   // Hazelcast 端口 / Hazelcast port
+  int32 api_port = 4;         // API 端口 / API port
+  int64 start_time = 5;       // 启动时间戳 (Unix 毫秒) / Start timestamp
+  string cmdline = 6;         // 命令行参数 / Command line arguments
+}
+
+// DiscoverClustersResponse - 发现集群响应
+// DiscoverClustersResponse - Discover clusters response
+message DiscoverClustersResponse {
+  bool success = 1;                             // 是否成功 / Success flag
+  string message = 2;                           // 消息 / Message
+  repeated DiscoveredClusterInfo clusters = 3;  // 发现的集群列表 / Discovered clusters
+}
+
+// ============================================================================
+// 进程事件相关消息 (Requirements 7.2, 7.3)
+// Process Event Messages
+// ============================================================================
+
+// ProcessEventType - 进程事件类型枚举
+// ProcessEventType - Process event type enumeration
+enum ProcessEventType {
+  PROCESS_EVENT_UNSPECIFIED = 0;
+  PROCESS_STARTED = 1;      // 进程启动 / Process started
+  PROCESS_STOPPED = 2;      // 进程停止 / Process stopped
+  PROCESS_CRASHED = 3;      // 进程崩溃 / Process crashed
+  PROCESS_RESTARTED = 4;    // 进程重启 / Process restarted
+}
+
+// ProcessEventReport - 进程事件上报
+// ProcessEventReport - Process event report
+message ProcessEventReport {
+  string agent_id = 1;                  // Agent 唯一标识 / Agent unique identifier
+  ProcessEventType event_type = 2;      // 事件类型 / Event type
+  int32 pid = 3;                        // 进程 ID / Process ID
+  string process_name = 4;              // 进程名称 / Process name
+  string install_dir = 5;               // 安装目录 / Installation directory
+  string role = 6;                      // 节点角色 / Node role
+  int64 timestamp = 7;                  // 时间戳 (Unix 毫秒) / Timestamp
+  map<string, string> details = 8;      // 详细信息 / Details
+}
+
+// ============================================================================
+// 监控配置相关消息 (Requirements 7.3)
+// Monitor Configuration Messages
+// ============================================================================
+
+// MonitorConfigUpdate - 监控配置更新
+// MonitorConfigUpdate - Monitor configuration update
+message MonitorConfigUpdate {
+  int32 config_version = 1;       // 配置版本号 / Configuration version
+  bool auto_monitor = 2;          // 是否启用自动监控 / Enable auto monitoring
+  bool auto_restart = 3;          // 是否启用自动拉起 / Enable auto restart
+  int32 monitor_interval = 4;     // 监控间隔 (秒) / Monitor interval (seconds)
+  int32 restart_delay = 5;        // 重启延迟 (秒) / Restart delay (seconds)
+  int32 max_restarts = 6;         // 最大重启次数 / Max restart count
+  int32 time_window = 7;          // 时间窗口 (秒) / Time window (seconds)
+  int32 cooldown_period = 8;      // 冷却时间 (秒) / Cooldown period (seconds)
 }

@@ -36,7 +36,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import {Eye, Pencil, Trash2, Server, Container, Cloud} from 'lucide-react';
+import {Eye, Pencil, Trash2, Server, Container, Cloud, Search} from 'lucide-react';
 import {HostInfo, HostType, HostStatus, AgentStatus} from '@/lib/services/host/types';
 
 interface HostTableProps {
@@ -49,6 +49,7 @@ interface HostTableProps {
   onViewDetail: (host: HostInfo) => void;
   onEdit: (host: HostInfo) => void;
   onDelete: (host: HostInfo) => void;
+  onDiscoverCluster?: (host: HostInfo) => void;
 }
 
 /**
@@ -141,6 +142,7 @@ export function HostTable({
   onViewDetail,
   onEdit,
   onDelete,
+  onDiscoverCluster,
 }: HostTableProps) {
   const t = useTranslations();
 
@@ -279,6 +281,32 @@ export function HostTable({
                           <TooltipContent>{t('common.view')}</TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
+
+                      {/* Discover Cluster Button - only for bare_metal hosts with installed agent */}
+                      {/* 发现集群按钮 - 仅对已安装 Agent 的物理机主机显示 */}
+                      {host.host_type === HostType.BARE_METAL && onDiscoverCluster && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() => onDiscoverCluster(host)}
+                                disabled={host.agent_status !== AgentStatus.INSTALLED || !host.is_online}
+                              >
+                                <Search className='h-4 w-4' />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {host.agent_status !== AgentStatus.INSTALLED
+                                ? t('discovery.agentNotInstalled')
+                                : !host.is_online
+                                  ? t('discovery.agentOffline')
+                                  : t('discovery.discoverCluster')}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
 
                       <TooltipProvider>
                         <Tooltip>

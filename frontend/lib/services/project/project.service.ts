@@ -31,7 +31,7 @@ export class ProjectService extends BaseService {
   /**
    * API基础路径
    */
-  protected static readonly basePath = '/api/v1/projects';
+  protected static readonly basePath = '/projects';
 
   /**
    * 获取项目详情
@@ -171,7 +171,7 @@ export class ProjectService extends BaseService {
    */
   static async getTags(): Promise<string[]> {
     try {
-      const response = await apiClient.get<TagsResponse>('/api/v1/tags');
+      const response = await apiClient.get<TagsResponse>('/tags');
 
       if (response.data.error_msg) {
         throw new Error(response.data.error_msg);

@@ -20,6 +20,7 @@ package grpc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/agent"
 	"github.com/seatunnel/seatunnelX/internal/apps/audit"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
+	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
 	pb "github.com/seatunnel/seatunnelX/internal/proto/agent"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -498,4 +500,297 @@ func generateAgentID(hostname, ipAddress string) string {
 	// Use first 16 characters of hex hash as agent ID
 	// 使用十六进制哈希的前 16 个字符作为 Agent ID
 	return fmt.Sprintf("agent-%x", hash[:8])
+}
+
+
+// ============================================================================
+// Process Monitor gRPC Handlers (Task 11)
+// 进程监控 gRPC 处理器
+// ============================================================================
+
+// MonitorService provides monitor-related operations for gRPC handlers.
+// MonitorService 为 gRPC 处理器提供监控相关操作。
+type MonitorService interface {
+	GetConfig(ctx context.Context, clusterID uint) (*monitor.MonitorConfig, error)
+	RecordEventFromReport(ctx context.Context, clusterID, nodeID, hostID uint, eventType monitor.ProcessEventType, pid int, processName, installDir, role string, details map[string]string) error
+}
+
+// ClusterNodeProvider provides cluster node information.
+// ClusterNodeProvider 提供集群节点信息。
+type ClusterNodeProvider interface {
+	GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error)
+	UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error
+}
+
+// monitorService is the monitor service for handling process events.
+// monitorService 是处理进程事件的监控服务。
+var monitorService MonitorService
+
+// clusterNodeProvider provides cluster node information.
+// clusterNodeProvider 提供集群节点信息。
+var clusterNodeProvider ClusterNodeProvider
+
+// SetMonitorService sets the monitor service for gRPC handlers.
+// SetMonitorService 设置 gRPC 处理器的监控服务。
+func SetMonitorService(svc MonitorService) {
+	monitorService = svc
+}
+
+// SetClusterNodeProvider sets the cluster node provider for gRPC handlers.
+// SetClusterNodeProvider 设置 gRPC 处理器的集群节点提供者。
+func SetClusterNodeProvider(provider ClusterNodeProvider) {
+	clusterNodeProvider = provider
+}
+
+// HandleDiscoverClusters handles DISCOVER_CLUSTERS command.
+// HandleDiscoverClusters 处理 DISCOVER_CLUSTERS 命令。
+// Requirements: 1.3, 1.7 - Trigger agent discovery
+// Task 11.1
+func (s *Server) HandleDiscoverClusters(ctx context.Context, agentID string, params map[string]string) (*pb.CommandResponse, error) {
+	s.logger.Info("Handling DISCOVER_CLUSTERS command / 处理 DISCOVER_CLUSTERS 命令",
+		zap.String("agent_id", agentID),
+	)
+
+	// Get agent connection / 获取 Agent 连接
+	conn, ok := s.agentManager.GetAgent(agentID)
+	if !ok {
+		return nil, agent.ErrAgentNotFound
+	}
+
+	// Send DISCOVER_CLUSTERS command to agent / 向 Agent 发送 DISCOVER_CLUSTERS 命令
+	cmdResp, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_DISCOVER_CLUSTERS, params, 60*time.Second)
+	if err != nil {
+		s.logger.Error("Failed to send DISCOVER_CLUSTERS command / 发送 DISCOVER_CLUSTERS 命令失败",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	s.logger.Info("DISCOVER_CLUSTERS command completed / DISCOVER_CLUSTERS 命令完成",
+		zap.String("agent_id", agentID),
+		zap.Uint("host_id", conn.HostID),
+		zap.String("status", cmdResp.Status.String()),
+	)
+
+	return cmdResp, nil
+}
+
+// HandleUpdateMonitorConfig handles UPDATE_MONITOR_CONFIG command.
+// HandleUpdateMonitorConfig 处理 UPDATE_MONITOR_CONFIG 命令。
+// Requirements: 5.4, 7.5 - Push monitor config to agent
+// Task 11.2
+func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, config *monitor.MonitorConfig) error {
+	s.logger.Info("Handling UPDATE_MONITOR_CONFIG command / 处理 UPDATE_MONITOR_CONFIG 命令",
+		zap.String("agent_id", agentID),
+		zap.Uint("cluster_id", config.ClusterID),
+		zap.Int("config_version", config.ConfigVersion),
+	)
+
+	// Build parameters / 构建参数
+	params := map[string]string{
+		"cluster_id":      fmt.Sprintf("%d", config.ClusterID),
+		"config_version":  fmt.Sprintf("%d", config.ConfigVersion),
+		"auto_monitor":    fmt.Sprintf("%t", config.AutoMonitor),
+		"auto_restart":    fmt.Sprintf("%t", config.AutoRestart),
+		"monitor_interval": fmt.Sprintf("%d", config.MonitorInterval),
+		"restart_delay":   fmt.Sprintf("%d", config.RestartDelay),
+		"max_restarts":    fmt.Sprintf("%d", config.MaxRestarts),
+		"time_window":     fmt.Sprintf("%d", config.TimeWindow),
+		"cooldown_period": fmt.Sprintf("%d", config.CooldownPeriod),
+	}
+
+	// Send UPDATE_MONITOR_CONFIG command to agent / 向 Agent 发送 UPDATE_MONITOR_CONFIG 命令
+	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_UPDATE_MONITOR_CONFIG, params, 30*time.Second)
+	if err != nil {
+		s.logger.Error("Failed to send UPDATE_MONITOR_CONFIG command / 发送 UPDATE_MONITOR_CONFIG 命令失败",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	s.logger.Info("UPDATE_MONITOR_CONFIG command sent / UPDATE_MONITOR_CONFIG 命令已发送",
+		zap.String("agent_id", agentID),
+		zap.Uint("cluster_id", config.ClusterID),
+	)
+
+	return nil
+}
+
+// HandleProcessEventReport handles ProcessEventReport from agent.
+// HandleProcessEventReport 处理来自 Agent 的 ProcessEventReport。
+// Requirements: 3.4, 3.5 - Receive and process process events
+// Task 11.3
+func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, report *pb.ProcessEventReport) error {
+	s.logger.Info("Handling ProcessEventReport / 处理 ProcessEventReport",
+		zap.String("agent_id", agentID),
+		zap.String("event_type", report.EventType.String()),
+		zap.Int32("pid", report.Pid),
+		zap.String("install_dir", report.InstallDir),
+	)
+
+	if monitorService == nil || clusterNodeProvider == nil {
+		s.logger.Warn("Monitor service or cluster node provider not configured / 监控服务或集群节点提供者未配置")
+		return nil
+	}
+
+	// Get agent connection to find host ID / 获取 Agent 连接以查找主机 ID
+	conn, ok := s.agentManager.GetAgent(agentID)
+	if !ok {
+		return agent.ErrAgentNotFound
+	}
+
+	// Find cluster and node by host ID and install dir / 根据主机 ID 和安装目录查找集群和节点
+	clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, report.InstallDir)
+	if err != nil {
+		s.logger.Error("Failed to find cluster node / 查找集群节点失败",
+			zap.Uint("host_id", conn.HostID),
+			zap.String("install_dir", report.InstallDir),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	if !found {
+		s.logger.Warn("Cluster node not found for event / 未找到事件对应的集群节点",
+			zap.Uint("host_id", conn.HostID),
+			zap.String("install_dir", report.InstallDir),
+		)
+		return nil
+	}
+
+	// Map protobuf event type to monitor event type / 将 protobuf 事件类型映射到监控事件类型
+	var eventType monitor.ProcessEventType
+	switch report.EventType {
+	case pb.ProcessEventType_PROCESS_STARTED:
+		eventType = monitor.EventTypeStarted
+	case pb.ProcessEventType_PROCESS_STOPPED:
+		eventType = monitor.EventTypeStopped
+	case pb.ProcessEventType_PROCESS_CRASHED:
+		eventType = monitor.EventTypeCrashed
+	case pb.ProcessEventType_PROCESS_RESTARTED:
+		eventType = monitor.EventTypeRestarted
+	default:
+		s.logger.Warn("Unknown process event type / 未知的进程事件类型",
+			zap.String("event_type", report.EventType.String()),
+		)
+		return nil
+	}
+
+	// Record event / 记录事件
+	err = monitorService.RecordEventFromReport(
+		ctx,
+		clusterID,
+		nodeID,
+		conn.HostID,
+		eventType,
+		int(report.Pid),
+		report.ProcessName,
+		report.InstallDir,
+		report.Role,
+		report.Details,
+	)
+	if err != nil {
+		s.logger.Error("Failed to record process event / 记录进程事件失败",
+			zap.Error(err),
+		)
+		return err
+	}
+
+	s.logger.Info("Process event recorded / 进程事件已记录",
+		zap.Uint("cluster_id", clusterID),
+		zap.Uint("node_id", nodeID),
+		zap.String("event_type", string(eventType)),
+	)
+
+	return nil
+}
+
+// HandleMarkManualStop handles MARK_MANUAL_STOP command.
+// HandleMarkManualStop 处理 MARK_MANUAL_STOP 命令。
+// Requirements: 8.1, 8.4 - Mark node as manually stopped
+// Task 11.4
+func (s *Server) HandleMarkManualStop(ctx context.Context, agentID string, params map[string]string) error {
+	s.logger.Info("Handling MARK_MANUAL_STOP command / 处理 MARK_MANUAL_STOP 命令",
+		zap.String("agent_id", agentID),
+		zap.Any("params", params),
+	)
+
+	// Send MARK_MANUAL_STOP command to agent / 向 Agent 发送 MARK_MANUAL_STOP 命令
+	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_MARK_MANUAL_STOP, params, 30*time.Second)
+	if err != nil {
+		s.logger.Error("Failed to send MARK_MANUAL_STOP command / 发送 MARK_MANUAL_STOP 命令失败",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	// Update node manually stopped status in database / 更新数据库中节点的手动停止状态
+	if clusterNodeProvider != nil {
+		installDir := params["install_dir"]
+		conn, ok := s.agentManager.GetAgent(agentID)
+		if ok && installDir != "" {
+			clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, installDir)
+			if err == nil && found {
+				_ = clusterNodeProvider.UpdateNodeManuallyStopped(ctx, nodeID, true)
+				s.logger.Info("Node marked as manually stopped / 节点已标记为手动停止",
+					zap.Uint("cluster_id", clusterID),
+					zap.Uint("node_id", nodeID),
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
+// HandleClearManualStop handles CLEAR_MANUAL_STOP command.
+// HandleClearManualStop 处理 CLEAR_MANUAL_STOP 命令。
+// Requirements: 8.3, 8.4 - Clear manual stop flag
+// Task 11.4
+func (s *Server) HandleClearManualStop(ctx context.Context, agentID string, params map[string]string) error {
+	s.logger.Info("Handling CLEAR_MANUAL_STOP command / 处理 CLEAR_MANUAL_STOP 命令",
+		zap.String("agent_id", agentID),
+		zap.Any("params", params),
+	)
+
+	// Send CLEAR_MANUAL_STOP command to agent / 向 Agent 发送 CLEAR_MANUAL_STOP 命令
+	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_CLEAR_MANUAL_STOP, params, 30*time.Second)
+	if err != nil {
+		s.logger.Error("Failed to send CLEAR_MANUAL_STOP command / 发送 CLEAR_MANUAL_STOP 命令失败",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	// Update node manually stopped status in database / 更新数据库中节点的手动停止状态
+	if clusterNodeProvider != nil {
+		installDir := params["install_dir"]
+		conn, ok := s.agentManager.GetAgent(agentID)
+		if ok && installDir != "" {
+			clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, installDir)
+			if err == nil && found {
+				_ = clusterNodeProvider.UpdateNodeManuallyStopped(ctx, nodeID, false)
+				s.logger.Info("Node manual stop flag cleared / 节点手动停止标记已清除",
+					zap.Uint("cluster_id", clusterID),
+					zap.Uint("node_id", nodeID),
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
+// parseProcessEventFromResponse parses process event from command response.
+// parseProcessEventFromResponse 从命令响应中解析进程事件。
+func parseProcessEventFromResponse(output string) (*pb.ProcessEventReport, error) {
+	var report pb.ProcessEventReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return nil, err
+	}
+	return &report, nil
 }

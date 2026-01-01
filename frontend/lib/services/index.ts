@@ -8,6 +8,8 @@ import {AuditService} from './audit/index';
 import {installerService} from './installer/index';
 import {pluginService} from './plugin/index';
 import {ConfigService} from './config/index';
+import * as MonitorService from './monitor/index';
+import * as DiscoveryService from './discovery/index';
 
 /**
  * 服务层架构说明：
@@ -130,6 +132,20 @@ const services = {
    * Config management service
    */
   config: ConfigService,
+
+  /**
+   * 监控配置服务
+   * Monitor configuration service
+   * Requirements: 5.1, 5.4, 6.4
+   */
+  monitor: MonitorService,
+
+  /**
+   * 集群发现服务
+   * Cluster discovery service
+   * Requirements: 1.2, 1.9, 9.3, 9.4
+   */
+  discovery: DiscoveryService,
 };
 
 export default services;

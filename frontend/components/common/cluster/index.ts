@@ -16,3 +16,5 @@ export {EditClusterDialog} from './EditClusterDialog';
 export {AddNodeDialog} from './AddNodeDialog';
 export {ClusterActions} from './ClusterActions';
 export {ClusterDeployWizard} from './ClusterDeployWizard';
+export {MonitorConfigPanel} from './MonitorConfigPanel';
+export {ProcessEventList} from './ProcessEventList';

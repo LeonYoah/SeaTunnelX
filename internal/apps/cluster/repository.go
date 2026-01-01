@@ -377,3 +377,41 @@ func (r *Repository) GetClustersWithHostID(ctx context.Context, hostID uint) ([]
 	}
 	return clusters, nil
 }
+
+
+// GetNodeByHostAndInstallDir retrieves a cluster node by host ID and install directory.
+// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录获取集群节点。
+// Returns clusterID, nodeID, found, error
+func (r *Repository) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (uint, uint, bool, error) {
+	var node ClusterNode
+	if err := r.db.WithContext(ctx).Where("host_id = ? AND install_dir = ?", hostID, installDir).First(&node).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, 0, false, nil
+		}
+		return 0, 0, false, err
+	}
+	return node.ClusterID, node.ID, true, nil
+}
+
+// UpdateNodeManuallyStopped updates the manually_stopped flag for a cluster node.
+// UpdateNodeManuallyStopped 更新集群节点的手动停止标记。
+func (r *Repository) UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error {
+	result := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("id = ?", nodeID).Update("manually_stopped", manuallyStopped)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+// GetNodesByClusterIDWithHost retrieves all nodes for a cluster with host information.
+// GetNodesByClusterIDWithHost 获取集群的所有节点及其主机信息。
+func (r *Repository) GetNodesByClusterIDWithHost(ctx context.Context, clusterID uint) ([]*ClusterNode, error) {
+	var nodes []*ClusterNode
+	if err := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}

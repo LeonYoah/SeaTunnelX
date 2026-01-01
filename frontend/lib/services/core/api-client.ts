@@ -3,9 +3,12 @@ import {ApiError, ApiResponse} from './types';
 
 /**
  * API客户端实例
+ * API client instance
  * 统一处理请求配置、响应解析和错误处理
+ * Unified handling of request configuration, response parsing, and error handling
  */
 const apiClient = axios.create({
+  baseURL: '/api/v1', // API 基础路径 / API base path
   timeout: 60000, // 60 seconds for plugin fetching from Maven / 60秒超时，用于从 Maven 获取插件
   withCredentials: true,
   headers: {
@@ -27,22 +30,23 @@ apiClient.interceptors.request.use(
 
 /**
  * 直接启动OAuth登录流程
- * @param currentPath - 当前路径，用于登录成功后重定向回来
+ * Initiate OAuth login flow
+ * @param currentPath - 当前路径，用于登录成功后重定向回来 / Current path for redirect after login
  */
 function initiateLogin(currentPath: string): Promise<never> {
-  // 防止循环重定向
+  // 防止循环重定向 / Prevent circular redirect
   if (
     !currentPath.startsWith('/login') &&
     !currentPath.startsWith('/callback')
   ) {
-    // 动态导入AuthService避免循环依赖
+    // 动态导入AuthService避免循环依赖 / Dynamic import to avoid circular dependency
     import('../auth/auth.service').then(({AuthService}) => {
-      // 直接调用登录方法，传入当前路径作为重定向目标
-      AuthService.login(currentPath);
+      // 调用OAuth登录方法，传入当前路径作为重定向目标 / Call OAuth login with current path as redirect target
+      AuthService.loginWithOAuth(undefined, currentPath);
     });
   }
 
-  // 返回永不解决的Promise
+  // 返回永不解决的Promise / Return never-resolving Promise
   return new Promise<never>(() => {});
 }
 

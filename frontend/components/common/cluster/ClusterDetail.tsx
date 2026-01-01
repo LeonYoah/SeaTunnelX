@@ -64,6 +64,8 @@ import {AddNodeDialog} from './AddNodeDialog';
 import {EditNodeDialog} from './EditNodeDialog';
 import {ClusterPlugins} from './ClusterPlugins';
 import {ClusterConfigs} from './ClusterConfigs';
+import {MonitorConfigPanel} from './MonitorConfigPanel';
+import {ProcessEventList} from './ProcessEventList';
 
 interface ClusterDetailProps {
   clusterId: number;
@@ -883,6 +885,16 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       {/* Cluster Configs / 集群配置 */}
       <motion.div variants={itemVariants}>
         <ClusterConfigs clusterId={clusterId} deploymentMode={cluster.deployment_mode} />
+      </motion.div>
+
+      {/* Monitor Config / 监控配置 */}
+      <motion.div variants={itemVariants}>
+        <MonitorConfigPanel clusterId={clusterId} clusterName={cluster.name} />
+      </motion.div>
+
+      {/* Process Events / 进程事件 */}
+      <motion.div variants={itemVariants}>
+        <ProcessEventList clusterId={clusterId} />
       </motion.div>
 
       {/* Cluster Info / 集群信息 */}

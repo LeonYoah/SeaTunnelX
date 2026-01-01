@@ -30,13 +30,13 @@ export class AuditService extends BaseService {
    * Command logs API base path
    * 命令日志 API 基础路径
    */
-  protected static readonly commandsPath = '/api/v1/commands';
+  protected static readonly commandsPath = '/commands';
 
   /**
    * Audit logs API base path
    * 审计日志 API 基础路径
    */
-  protected static readonly auditLogsPath = '/api/v1/audit-logs';
+  protected static readonly auditLogsPath = '/audit-logs';
 
   // ==================== Command Log Methods 命令日志方法 ====================
 

@@ -5,7 +5,9 @@
  * 添加节点对话框组件
  *
  * Dialog for adding a node to a cluster with installation directory.
+ * Supports process discovery to auto-fill install directory and role.
  * 用于向集群添加节点的对话框，包含安装目录配置。
+ * 支持进程发现以自动填充安装目录和角色。
  */
 
 import {useState, useEffect} from 'react';
@@ -28,11 +30,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {Loader2, Server, CheckCircle2, XCircle, AlertCircle} from 'lucide-react';
+import {Loader2, Server, CheckCircle2, XCircle, AlertCircle, Search, Cpu} from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import {NodeRole, AddNodeRequest, DefaultPorts, DeploymentMode, PrecheckResult, PrecheckCheckItem} from '@/lib/services/cluster/types';
 import {HostInfo, AgentStatus} from '@/lib/services/host/types';
+import {DiscoveredProcess} from '@/lib/services/discovery/discovery.service';
 
 interface AddNodeDialogProps {
   open: boolean;
@@ -73,6 +76,11 @@ export function AddNodeDialog({
   // Precheck state / 预检查状态
   const [precheckLoading, setPrecheckLoading] = useState(false);
   const [precheckResult, setPrecheckResult] = useState<PrecheckResult | null>(null);
+
+  // Process discovery state / 进程发现状态
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveredProcesses, setDiscoveredProcesses] = useState<DiscoveredProcess[]>([]);
+  const [selectedProcess, setSelectedProcess] = useState<string>('');
 
   // Update default ports when role changes / 角色变化时更新默认端口
   useEffect(() => {
@@ -134,6 +142,68 @@ export function AddNodeDialog({
     setApiPort(DefaultPorts.MASTER_API);
     setWorkerPort(DefaultPorts.WORKER_HAZELCAST);
     setPrecheckResult(null);
+    setDiscoveredProcesses([]);
+    setSelectedProcess('');
+  };
+
+  /**
+   * Handle process discovery
+   * 处理进程发现
+   */
+  const handleDiscoverProcesses = async () => {
+    if (!hostId) {
+      toast.error(t('cluster.hostRequired'));
+      return;
+    }
+
+    setDiscoveryLoading(true);
+    setDiscoveredProcesses([]);
+    setSelectedProcess('');
+    try {
+      const result = await services.discovery.discoverProcesses(parseInt(hostId, 10));
+      
+      if (result.success && result.processes) {
+        setDiscoveredProcesses(result.processes);
+        if (result.processes.length === 0) {
+          toast.info(t('discovery.noProcessesFound'));
+        } else {
+          toast.success(t('discovery.processesFound', {count: result.processes.length}));
+        }
+      } else {
+        toast.error(result.message || t('discovery.discoverError'));
+      }
+    } catch {
+      toast.error(t('discovery.discoverError'));
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  /**
+   * Handle process selection - auto-fill form
+   * 处理进程选择 - 自动填充表单
+   */
+  const handleProcessSelect = (processKey: string) => {
+    setSelectedProcess(processKey);
+    
+    const process = discoveredProcesses.find(
+      p => `${p.pid}-${p.install_dir}` === processKey
+    );
+    
+    if (process) {
+      // Auto-fill install directory / 自动填充安装目录
+      setInstallDir(process.install_dir);
+      
+      // Auto-fill role based on discovered role / 根据发现的角色自动填充
+      if (process.role === 'master') {
+        setRole(NodeRole.MASTER);
+      } else if (process.role === 'worker') {
+        setRole(NodeRole.WORKER);
+      }
+      // For hybrid, keep current selection / 对于 hybrid，保持当前选择
+      
+      toast.success(t('discovery.processSelected'));
+    }
   };
 
   /**
@@ -217,7 +287,6 @@ export function AddNodeDialog({
         role: role,
         install_dir: installDir.trim(),
         hazelcast_port: hazelcastPort,
-        // API port is optional, only send if > 0 / API 端口可选，仅当 > 0 时发送
         api_port: role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
         worker_port: deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER ? workerPort : undefined,
       };
@@ -248,7 +317,7 @@ export function AddNodeDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className='sm:max-w-[500px]'>
+      <DialogContent className='sm:max-w-[550px]'>
         <DialogHeader>
           <DialogTitle>{t('cluster.addNode')}</DialogTitle>
           <DialogDescription>{t('cluster.addNodeDescription')}</DialogDescription>
@@ -270,29 +339,82 @@ export function AddNodeDialog({
                 {t('cluster.noAvailableHosts')}
               </div>
             ) : (
-              <Select value={hostId} onValueChange={setHostId}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('cluster.selectHostPlaceholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableHosts.map((host) => (
-                    <SelectItem key={host.id} value={host.id.toString()}>
-                      <div className='flex items-center gap-2'>
-                        <Server className='h-4 w-4' />
-                        <span>{host.name}</span>
-                        {host.ip_address && (
-                          <span className='text-muted-foreground'>({host.ip_address})</span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className='flex gap-2'>
+                <Select value={hostId} onValueChange={(value) => {
+                  setHostId(value);
+                  setDiscoveredProcesses([]);
+                  setSelectedProcess('');
+                }}>
+                  <SelectTrigger className='flex-1'>
+                    <SelectValue placeholder={t('cluster.selectHostPlaceholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableHosts.map((host) => (
+                      <SelectItem key={host.id} value={host.id.toString()}>
+                        <div className='flex items-center gap-2'>
+                          <Server className='h-4 w-4' />
+                          <span>{host.name}</span>
+                          {host.ip_address && (
+                            <span className='text-muted-foreground'>({host.ip_address})</span>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={handleDiscoverProcesses}
+                  disabled={!hostId || discoveryLoading}
+                  title={t('discovery.discoverProcesses')}
+                >
+                  {discoveryLoading ? (
+                    <Loader2 className='h-4 w-4 animate-spin' />
+                  ) : (
+                    <Search className='h-4 w-4' />
+                  )}
+                </Button>
+              </div>
             )}
             <p className='text-xs text-muted-foreground'>
               {t('cluster.onlyAgentInstalledHosts')}
             </p>
           </div>
+
+          {/* Discovered Processes / 发现的进程 */}
+          {discoveredProcesses.length > 0 && (
+            <div className='space-y-2'>
+              <Label>{t('discovery.discoveredProcesses')}</Label>
+              <Select value={selectedProcess} onValueChange={handleProcessSelect}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('discovery.selectProcess')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {discoveredProcesses.map((proc) => (
+                    <SelectItem 
+                      key={`${proc.pid}-${proc.install_dir}`} 
+                      value={`${proc.pid}-${proc.install_dir}`}
+                    >
+                      <div className='flex items-center gap-2'>
+                        <Cpu className='h-4 w-4' />
+                        <span>PID: {proc.pid}</span>
+                        <span className='text-muted-foreground'>|</span>
+                        <span className='capitalize'>{proc.role}</span>
+                        <span className='text-muted-foreground'>|</span>
+                        <span className='text-xs text-muted-foreground truncate max-w-[200px]'>
+                          {proc.install_dir}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className='text-xs text-muted-foreground'>
+                {t('discovery.selectProcessHint')}
+              </p>
+            </div>
+          )}
 
           {/* Node Role / 节点角色 */}
           <div className='space-y-2'>
@@ -339,7 +461,6 @@ export function AddNodeDialog({
           <div className='space-y-3'>
             <Label>{t('cluster.portConfig')}</Label>
             
-            {/* Hazelcast Port / Hazelcast 端口 */}
             <div className='grid grid-cols-2 gap-4'>
               <div className='space-y-1'>
                 <Label htmlFor='hazelcastPort' className='text-xs'>
@@ -355,7 +476,6 @@ export function AddNodeDialog({
                 />
               </div>
 
-              {/* API Port (Master only, optional) / API 端口（仅 Master，可选） */}
               {role === NodeRole.MASTER && (
                 <div className='space-y-1'>
                   <Label htmlFor='apiPort' className='text-xs'>
@@ -371,7 +491,6 @@ export function AddNodeDialog({
                 </div>
               )}
 
-              {/* Worker Port (Hybrid mode Master only) / Worker 端口（仅混合模式 Master） */}
               {deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER && (
                 <div className='space-y-1'>
                   <Label htmlFor='workerPort' className='text-xs'>

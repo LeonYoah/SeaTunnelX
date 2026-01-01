@@ -128,19 +128,21 @@ func (Cluster) TableName() string {
 // ClusterNode represents a node within a SeaTunnel cluster.
 // 集群节点，每个节点可以有独立的安装目录和端口配置
 type ClusterNode struct {
-	ID            uint       `json:"id" gorm:"primaryKey;autoIncrement"`
-	ClusterID     uint       `json:"cluster_id" gorm:"index;not null"`
-	HostID        uint       `json:"host_id" gorm:"index;not null"`
-	Role          NodeRole   `json:"role" gorm:"size:20;not null"`
-	InstallDir    string     `json:"install_dir" gorm:"size:255"` // SeaTunnel installation directory on this node / 此节点上的 SeaTunnel 安装目录
-	HazelcastPort int        `json:"hazelcast_port"`              // Hazelcast cluster port / Hazelcast 集群端口
-	APIPort       int        `json:"api_port"`                    // REST API port (Master only) / REST API 端口（仅 Master）
-	WorkerPort    int        `json:"worker_port"`                 // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
-	Status        NodeStatus `json:"status" gorm:"size:20;default:pending"`
-	ProcessPID    int        `json:"process_pid" gorm:"column:process_pid"`
-	ProcessStatus string     `json:"process_status" gorm:"column:process_status;size:20"`
-	CreatedAt     time.Time  `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt     time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+	ID              uint       `json:"id" gorm:"primaryKey;autoIncrement"`
+	ClusterID       uint       `json:"cluster_id" gorm:"index;not null"`
+	HostID          uint       `json:"host_id" gorm:"index;not null"`
+	Role            NodeRole   `json:"role" gorm:"size:20;not null"`
+	InstallDir      string     `json:"install_dir" gorm:"size:255"` // SeaTunnel installation directory on this node / 此节点上的 SeaTunnel 安装目录
+	HazelcastPort   int        `json:"hazelcast_port"`              // Hazelcast cluster port / Hazelcast 集群端口
+	APIPort         int        `json:"api_port"`                    // REST API port (Master only) / REST API 端口（仅 Master）
+	WorkerPort      int        `json:"worker_port"`                 // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
+	Status          NodeStatus `json:"status" gorm:"size:20;default:pending"`
+	ProcessPID      int        `json:"process_pid" gorm:"column:process_pid"`
+	ProcessStatus   string     `json:"process_status" gorm:"column:process_status;size:20"`
+	ManuallyStopped bool       `json:"manually_stopped" gorm:"default:false"`  // 是否手动停止 / Whether manually stopped (Requirements: 8.2)
+	LastEventAt     *time.Time `json:"last_event_at"`                          // 最后事件时间 / Last event time
+	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt       time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 // TableName specifies the table name for the ClusterNode model.
@@ -190,13 +192,27 @@ func (c *Cluster) ToClusterInfo() *ClusterInfo {
 }
 
 // CreateClusterRequest represents a request to create a new cluster.
+// CreateClusterRequest 表示创建新集群的请求。
 type CreateClusterRequest struct {
 	Name           string         `json:"name" binding:"required,max=100"`
 	Description    string         `json:"description"`
 	DeploymentMode DeploymentMode `json:"deployment_mode" binding:"required"`
-	Version        string         `json:"version"`
+	Version        string         `json:"version" binding:"required"`
 	InstallDir     string         `json:"install_dir"`
 	Config         ClusterConfig  `json:"config"`
+	// Nodes to auto-create from discovery (optional)
+	// 从发现自动创建的节点（可选）
+	Nodes []CreateNodeFromDiscovery `json:"nodes,omitempty"`
+}
+
+// CreateNodeFromDiscovery represents a node to be created from process discovery.
+// CreateNodeFromDiscovery 表示从进程发现创建的节点。
+type CreateNodeFromDiscovery struct {
+	HostID        uint   `json:"host_id"`                   // Host ID / 主机 ID
+	InstallDir    string `json:"install_dir"`               // SeaTunnel installation directory / SeaTunnel 安装目录
+	Role          string `json:"role"`                      // Node role: master, worker, hybrid / 节点角色
+	HazelcastPort int    `json:"hazelcast_port,omitempty"`  // Hazelcast cluster port (optional) / Hazelcast 集群端口（可选）
+	APIPort       int    `json:"api_port,omitempty"`        // REST API port (optional) / REST API 端口（可选）
 }
 
 // UpdateClusterRequest represents a request to update an existing cluster.

@@ -36,6 +36,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	appconfig "github.com/seatunnel/seatunnelX/internal/apps/config"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
+	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
 	"github.com/seatunnel/seatunnelX/internal/apps/plugin"
 	"github.com/seatunnel/seatunnelX/internal/apps/project"
 	"github.com/seatunnel/seatunnelX/internal/config"
@@ -74,6 +75,8 @@ func Migrate() {
 		&plugin.PluginDependencyConfig{}, // 插件依赖配置表 / Plugin dependency config table
 		&appconfig.Config{},              // 配置文件表 / Config file table
 		&appconfig.ConfigVersion{},       // 配置版本表 / Config version table
+		&monitor.MonitorConfig{},         // 监控配置表 / Monitor config table (Requirements: 5.2)
+		&monitor.ProcessEvent{},          // 进程事件表 / Process event table (Requirements: 6.1)
 	); err != nil {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}

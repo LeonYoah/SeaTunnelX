@@ -220,6 +220,65 @@ func (s *Service) Create(ctx context.Context, req *CreateClusterRequest) (*Clust
 		return nil, err
 	}
 
+	// Auto-create nodes from discovery if provided
+	// 如果提供了发现的节点，自动创建节点
+	if len(req.Nodes) > 0 {
+		logger.InfoF(ctx, "[Cluster] Auto-creating %d nodes from discovery for cluster %s / 为集群 %s 自动创建 %d 个发现的节点",
+			len(req.Nodes), cluster.Name, cluster.Name, len(req.Nodes))
+
+		for _, nodeReq := range req.Nodes {
+			// Convert role string to NodeRole
+			// 将角色字符串转换为 NodeRole
+			var role NodeRole
+			switch nodeReq.Role {
+			case "master":
+				role = NodeRoleMaster
+			case "worker":
+				role = NodeRoleWorker
+			case "hybrid":
+				role = NodeRoleMasterWorker
+			default:
+				// Default to hybrid if unknown role / 未知角色默认为混合模式
+				role = NodeRoleMasterWorker
+			}
+
+			// Use discovered ports if available, otherwise use defaults
+			// 如果有发现的端口则使用，否则使用默认值
+			hazelcastPort, apiPort, workerPort := GetDefaultPorts(role, req.DeploymentMode)
+			if nodeReq.HazelcastPort > 0 {
+				hazelcastPort = nodeReq.HazelcastPort
+			}
+			if nodeReq.APIPort > 0 {
+				apiPort = nodeReq.APIPort
+			}
+
+			addNodeReq := &AddNodeRequest{
+				HostID:        nodeReq.HostID,
+				Role:          role,
+				InstallDir:    nodeReq.InstallDir,
+				HazelcastPort: hazelcastPort,
+				APIPort:       apiPort,
+				WorkerPort:    workerPort,
+				SkipPrecheck:  true, // Skip precheck for discovered nodes / 跳过发现节点的预检查
+			}
+
+			_, err := s.AddNode(ctx, cluster.ID, addNodeReq)
+			if err != nil {
+				// Log error but continue with other nodes
+				// 记录错误但继续处理其他节点
+				logger.ErrorF(ctx, "[Cluster] Failed to auto-create node for host %d: %v / 为主机 %d 自动创建节点失败: %v",
+					nodeReq.HostID, err, nodeReq.HostID, err)
+			} else {
+				logger.InfoF(ctx, "[Cluster] Auto-created node: host_id=%d, role=%s, install_dir=%s, hazelcast_port=%d, api_port=%d / 自动创建节点: host_id=%d, role=%s, install_dir=%s, hazelcast_port=%d, api_port=%d",
+					nodeReq.HostID, role, nodeReq.InstallDir, hazelcastPort, apiPort, nodeReq.HostID, role, nodeReq.InstallDir, hazelcastPort, apiPort)
+			}
+		}
+
+		// Reload cluster with nodes
+		// 重新加载集群及其节点
+		cluster, _ = s.repo.GetByID(ctx, cluster.ID, true)
+	}
+
 	return cluster, nil
 }
 
@@ -1515,4 +1574,105 @@ func (s *Service) GetNodeLogs(ctx context.Context, clusterID uint, nodeID uint, 
 	}
 
 	return message, nil
+}
+
+
+// ============================================================================
+// Monitor Config Push Methods (Task 8.5)
+// 监控配置下发方法
+// ============================================================================
+
+// GetNodeByHostAndInstallDir retrieves a cluster node by host ID and install directory.
+// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录获取集群节点。
+// This implements the grpc.ClusterNodeProvider interface.
+// 这实现了 grpc.ClusterNodeProvider 接口。
+func (s *Service) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error) {
+	return s.repo.GetNodeByHostAndInstallDir(ctx, hostID, installDir)
+}
+
+// UpdateNodeManuallyStopped updates the manually_stopped flag for a cluster node.
+// UpdateNodeManuallyStopped 更新集群节点的手动停止标记。
+// This implements the grpc.ClusterNodeProvider interface.
+// 这实现了 grpc.ClusterNodeProvider 接口。
+// Requirements: 8.2, 8.4 - Manage manual stop flag
+func (s *Service) UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error {
+	logger.InfoF(ctx, "[Cluster] UpdateNodeManuallyStopped: nodeID=%d, manuallyStopped=%t", nodeID, manuallyStopped)
+	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, manuallyStopped)
+}
+
+// GetClusterNodesWithAgentInfo retrieves all nodes for a cluster with agent information.
+// GetClusterNodesWithAgentInfo 获取集群的所有节点及其 Agent 信息。
+// Returns nodes with their associated agent IDs for config push.
+// 返回节点及其关联的 Agent ID 用于配置下发。
+func (s *Service) GetClusterNodesWithAgentInfo(ctx context.Context, clusterID uint) ([]*NodeInfo, error) {
+	nodes, err := s.repo.GetNodesByClusterID(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeInfos := make([]*NodeInfo, 0, len(nodes))
+	for _, node := range nodes {
+		nodeInfo := &NodeInfo{
+			ID:            node.ID,
+			ClusterID:     node.ClusterID,
+			HostID:        node.HostID,
+			Role:          node.Role,
+			InstallDir:    node.InstallDir,
+			HazelcastPort: node.HazelcastPort,
+			APIPort:       node.APIPort,
+			WorkerPort:    node.WorkerPort,
+			Status:        node.Status,
+			ProcessPID:    node.ProcessPID,
+			ProcessStatus: node.ProcessStatus,
+			CreatedAt:     node.CreatedAt,
+			UpdatedAt:     node.UpdatedAt,
+		}
+
+		// Get host information including agent ID / 获取主机信息包括 Agent ID
+		if s.hostProvider != nil {
+			hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+			if err == nil {
+				nodeInfo.HostName = hostInfo.Name
+				nodeInfo.HostIP = hostInfo.IPAddress
+			}
+		}
+
+		nodeInfos = append(nodeInfos, nodeInfo)
+	}
+
+	return nodeInfos, nil
+}
+
+// MarkNodeManuallyStopped marks a node as manually stopped.
+// MarkNodeManuallyStopped 将节点标记为手动停止。
+// Requirements: 8.1 - Mark manual stop when user stops node
+func (s *Service) MarkNodeManuallyStopped(ctx context.Context, clusterID uint, nodeID uint) error {
+	// Verify node belongs to the cluster / 验证节点属于该集群
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.ClusterID != clusterID {
+		return ErrNodeNotFound
+	}
+
+	logger.InfoF(ctx, "[Cluster] MarkNodeManuallyStopped: clusterID=%d, nodeID=%d", clusterID, nodeID)
+	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, true)
+}
+
+// ClearNodeManuallyStopped clears the manual stop flag for a node.
+// ClearNodeManuallyStopped 清除节点的手动停止标记。
+// Requirements: 8.3 - Clear manual stop when user starts node
+func (s *Service) ClearNodeManuallyStopped(ctx context.Context, clusterID uint, nodeID uint) error {
+	// Verify node belongs to the cluster / 验证节点属于该集群
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if node.ClusterID != clusterID {
+		return ErrNodeNotFound
+	}
+
+	logger.InfoF(ctx, "[Cluster] ClearNodeManuallyStopped: clusterID=%d, nodeID=%d", clusterID, nodeID)
+	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, false)
 }

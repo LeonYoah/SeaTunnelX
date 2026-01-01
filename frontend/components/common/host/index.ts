@@ -11,3 +11,4 @@ export {HostTable} from './HostTable';
 export {HostDetail} from './HostDetail';
 export {CreateHostDialog} from './CreateHostDialog';
 export {EditHostDialog} from './EditHostDialog';
+export {DiscoverClusterDialog} from './DiscoverClusterDialog';

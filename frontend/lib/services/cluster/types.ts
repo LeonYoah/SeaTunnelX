@@ -263,6 +263,14 @@ export interface CreateClusterRequest {
   install_dir?: string;
   /** Cluster configuration / 集群配置 */
   config?: ClusterConfig;
+  /** Initial nodes to add (from discovery) / 初始节点（来自发现） */
+  nodes?: Array<{
+    host_id: number;
+    install_dir: string;
+    role: string;
+    hazelcast_port?: number;
+    api_port?: number;
+  }>;
 }
 
 /**

@@ -34,7 +34,7 @@ export class DashboardService extends BaseService {
   /**
    * API基础路径
    */
-  protected static readonly basePath = '/api/v1/dashboard/stats';
+  protected static readonly basePath = '/dashboard/stats';
 
   /**
    * 获取所有仪表盘数据
@@ -206,7 +206,7 @@ export class DashboardService extends BaseService {
  * 处理集群/主机/节点管理的仪表盘概览数据
  */
 export class OverviewService extends BaseService {
-  protected static readonly basePath = '/api/v1/dashboard/overview';
+  protected static readonly basePath = '/dashboard/overview';
 
   /**
    * Get complete overview data / 获取完整概览数据
