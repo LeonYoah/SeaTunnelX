@@ -136,11 +136,9 @@ type ClusterNode struct {
 	HazelcastPort   int        `json:"hazelcast_port"`              // Hazelcast cluster port / Hazelcast 集群端口
 	APIPort         int        `json:"api_port"`                    // REST API port (Master only) / REST API 端口（仅 Master）
 	WorkerPort      int        `json:"worker_port"`                 // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
-	Status          NodeStatus `json:"status" gorm:"size:20;default:pending"`
-	ProcessPID      int        `json:"process_pid" gorm:"column:process_pid"`
-	ProcessStatus   string     `json:"process_status" gorm:"column:process_status;size:20"`
-	ManuallyStopped bool       `json:"manually_stopped" gorm:"default:false"`  // 是否手动停止 / Whether manually stopped (Requirements: 8.2)
-	LastEventAt     *time.Time `json:"last_event_at"`                          // 最后事件时间 / Last event time
+	Status      NodeStatus `json:"status" gorm:"size:20;default:pending"` // Unified status field: pending, installing, running, stopped, error / 统一状态字段
+	ProcessPID  int        `json:"process_pid" gorm:"column:process_pid"` // SeaTunnel process PID / SeaTunnel 进程 PID
+	LastEventAt *time.Time `json:"last_event_at"`                         // 最后事件时间 / Last event time
 	CreatedAt       time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt       time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 }
@@ -265,9 +263,8 @@ type NodeInfo struct {
 	HazelcastPort int        `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
 	APIPort       int        `json:"api_port"`       // REST API port (Master only) / REST API 端口（仅 Master）
 	WorkerPort    int        `json:"worker_port"`    // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
-	Status        NodeStatus `json:"status"`
-	ProcessPID    int        `json:"process_pid"`
-	ProcessStatus string     `json:"process_status"`
+	Status        NodeStatus `json:"status"`         // Unified status: pending, installing, running, stopped, error / 统一状态
+	ProcessPID    int        `json:"process_pid"`    // SeaTunnel process PID / SeaTunnel 进程 PID
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 }

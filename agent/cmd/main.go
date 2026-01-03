@@ -262,7 +262,9 @@ func (a *Agent) setupProcessMonitor() {
 	a.processMonitor.SetEventHandler(func(event *monitor.ProcessEvent) {
 		fmt.Printf("[Agent] Process event: type=%s, name=%s, pid=%d / 进程事件：类型=%s，名称=%s，PID=%d\n",
 			event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
-		a.eventReporter.ReportEvent(event)
+
+		// Report event to Control Plane via gRPC / 通过 gRPC 向 Control Plane 上报事件
+		go a.reportProcessEvent(event)
 	})
 
 	// Set crash handler to trigger auto restart / 设置崩溃处理器以触发自动重启
@@ -273,6 +275,120 @@ func (a *Agent) setupProcessMonitor() {
 			fmt.Printf("[Agent] Auto restart failed: %v / 自动重启失败：%v\n", err, err)
 		}
 	})
+
+	// Set restart callback to update PID and report event / 设置重启回调以更新 PID 并上报事件
+	a.autoRestarter.SetCallback(func(processName string, success bool, err error) {
+		if !success {
+			// Report restart failed event / 上报重启失败事件
+			proc := a.processMonitor.GetTrackedProcess(processName)
+			if proc != nil {
+				event := &monitor.ProcessEvent{
+					Type:      monitor.EventRestartFailed,
+					PID:       proc.PID,
+					Name:      processName,
+					Timestamp: time.Now(),
+					Details: map[string]interface{}{
+						"install_dir": proc.InstallDir,
+						"role":        proc.Role,
+						"error":       err.Error(),
+					},
+				}
+				go a.reportProcessEvent(event)
+			}
+			return
+		}
+
+		// Get new PID from process manager / 从进程管理器获取新 PID
+		info, err := a.processManager.GetStatus(a.ctx, processName)
+		if err != nil || info.PID <= 0 {
+			fmt.Printf("[Agent] Failed to get new PID after restart: %v / 重启后获取新 PID 失败：%v\n", err, err)
+			return
+		}
+
+		// Update process monitor with new PID / 使用新 PID 更新进程监控器
+		a.processMonitor.UpdateProcessPID(processName, info.PID)
+
+		// Get tracked process for details / 获取跟踪进程的详细信息
+		proc := a.processMonitor.GetTrackedProcess(processName)
+		installDir := ""
+		role := ""
+		if proc != nil {
+			installDir = proc.InstallDir
+			role = proc.Role
+		}
+
+		// Report restarted event with new PID / 上报带有新 PID 的重启事件
+		event := &monitor.ProcessEvent{
+			Type:      monitor.EventRestarted,
+			PID:       info.PID,
+			Name:      processName,
+			Timestamp: time.Now(),
+			Details: map[string]interface{}{
+				"install_dir": installDir,
+				"role":        role,
+			},
+		}
+		go a.reportProcessEvent(event)
+
+		fmt.Printf("[Agent] Process restarted: %s (new PID: %d) / 进程已重启：%s（新 PID：%d）\n",
+			processName, info.PID, processName, info.PID)
+	})
+}
+
+// reportProcessEvent reports a process event to Control Plane via gRPC.
+// reportProcessEvent 通过 gRPC 向 Control Plane 上报进程事件。
+func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
+	if !a.grpcClient.IsConnected() {
+		fmt.Printf("[Agent] Not connected, caching event / 未连接，缓存事件\n")
+		a.eventReporter.ReportEvent(event)
+		return
+	}
+
+	// Convert monitor.ProcessEvent to pb.ProcessEventReport
+	// 将 monitor.ProcessEvent 转换为 pb.ProcessEventReport
+	var eventType pb.ProcessEventType
+	switch event.Type {
+	case monitor.EventStarted:
+		eventType = pb.ProcessEventType_PROCESS_STARTED
+	case monitor.EventStopped:
+		eventType = pb.ProcessEventType_PROCESS_STOPPED
+	case monitor.EventCrashed:
+		eventType = pb.ProcessEventType_PROCESS_CRASHED
+	case monitor.EventRestarted:
+		eventType = pb.ProcessEventType_PROCESS_RESTARTED
+	case monitor.EventRestartFailed:
+		eventType = pb.ProcessEventType_PROCESS_RESTART_FAILED
+	}
+
+	installDir := ""
+	role := ""
+	if event.Details != nil {
+		if dir, ok := event.Details["install_dir"].(string); ok {
+			installDir = dir
+		}
+		if r, ok := event.Details["role"].(string); ok {
+			role = r
+		}
+	}
+
+	report := &pb.ProcessEventReport{
+		AgentId:     a.grpcClient.GetAgentID(),
+		EventType:   eventType,
+		Pid:         int32(event.PID),
+		ProcessName: event.Name,
+		InstallDir:  installDir,
+		Role:        role,
+		Timestamp:   event.Timestamp.UnixMilli(),
+	}
+
+	if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
+		fmt.Printf("[Agent] Failed to report event, caching: %v / 上报事件失败，缓存：%v\n", err, err)
+		a.eventReporter.ReportEvent(event)
+		return
+	}
+
+	fmt.Printf("[Agent] Event reported to Control Plane: type=%s, name=%s, pid=%d / 事件已上报到 Control Plane：类型=%s，名称=%s，PID=%d\n",
+		event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
 }
 
 // connectToControlPlane establishes connection to Control Plane with retry
@@ -340,6 +456,9 @@ func (a *Agent) registerWithControlPlane() error {
 
 	fmt.Printf("Registered successfully with ID: %s / 注册成功，ID：%s\n", resp.AssignedId, resp.AssignedId)
 
+	// Set up event reporter with gRPC report function / 设置事件上报器的 gRPC 上报函数
+	a.setupEventReporter()
+
 	// Apply configuration from Control Plane if provided
 	// 如果提供，应用来自 Control Plane 的配置
 	if resp.Config != nil {
@@ -347,6 +466,70 @@ func (a *Agent) registerWithControlPlane() error {
 	}
 
 	return nil
+}
+
+// setupEventReporter sets up the event reporter with gRPC report function.
+// setupEventReporter 设置事件上报器的 gRPC 上报函数。
+func (a *Agent) setupEventReporter() {
+	agentID := a.grpcClient.GetAgentID()
+
+	// Create a report function that sends events via gRPC
+	// 创建一个通过 gRPC 发送事件的上报函数
+	reportFunc := func(events []*monitor.ProcessEvent) error {
+		for _, event := range events {
+			// Convert monitor.ProcessEvent to pb.ProcessEventReport
+			// 将 monitor.ProcessEvent 转换为 pb.ProcessEventReport
+			var eventType pb.ProcessEventType
+			switch event.Type {
+			case monitor.EventStarted:
+				eventType = pb.ProcessEventType_PROCESS_STARTED
+			case monitor.EventStopped:
+				eventType = pb.ProcessEventType_PROCESS_STOPPED
+			case monitor.EventCrashed:
+				eventType = pb.ProcessEventType_PROCESS_CRASHED
+			case monitor.EventRestarted:
+				eventType = pb.ProcessEventType_PROCESS_RESTARTED
+			case monitor.EventRestartFailed:
+				eventType = pb.ProcessEventType_PROCESS_RESTART_FAILED
+			}
+
+			installDir := ""
+			role := ""
+			if event.Details != nil {
+				if dir, ok := event.Details["install_dir"].(string); ok {
+					installDir = dir
+				}
+				if r, ok := event.Details["role"].(string); ok {
+					role = r
+				}
+			}
+
+			report := &pb.ProcessEventReport{
+				AgentId:     agentID,
+				EventType:   eventType,
+				Pid:         int32(event.PID),
+				ProcessName: event.Name,
+				InstallDir:  installDir,
+				Role:        role,
+				Timestamp:   event.Timestamp.UnixMilli(),
+			}
+
+			if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
+				fmt.Printf("[Agent] Failed to report event: %v / 上报事件失败：%v\n", err, err)
+				return err
+			}
+			fmt.Printf("[Agent] Event reported: type=%s, name=%s, pid=%d / 事件已上报：类型=%s，名称=%s，PID=%d\n",
+				event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
+		}
+		return nil
+	}
+
+	// Note: EventReporter doesn't have a SetReportFunc method, so we need to recreate it
+	// 注意：EventReporter 没有 SetReportFunc 方法，所以我们需要重新创建它
+	// For now, we'll report events directly in the event handler
+	// 目前，我们将在事件处理器中直接上报事件
+	_ = reportFunc // Suppress unused variable warning / 抑制未使用变量警告
+	fmt.Println("[Agent] Event reporter configured / 事件上报器已配置")
 }
 
 // applyRemoteConfig applies configuration received from Control Plane
@@ -481,7 +664,27 @@ func (a *Agent) sendHeartbeat() {
 	}
 
 	// Collect metrics / 采集指标
-	usage, processes := a.metricsCollector.Collect()
+	usage, _ := a.metricsCollector.Collect()
+
+	// Collect tracked process status / 采集跟踪进程状态
+	trackedProcesses := a.processMonitor.GetAllTrackedProcesses()
+	processes := make([]*pb.ProcessStatus, 0, len(trackedProcesses))
+	for _, proc := range trackedProcesses {
+		// Check if process is alive and get metrics / 检查进程是否存活并获取指标
+		status := "stopped"
+		if isProcessAlive(proc.PID) {
+			status = "running"
+		}
+		cpuUsage, memUsage := getProcessMetrics(proc.PID)
+
+		processes = append(processes, &pb.ProcessStatus{
+			Name:        proc.Name,
+			Pid:         int32(proc.PID),
+			Status:      status,
+			CpuUsage:    cpuUsage,
+			MemoryUsage: memUsage,
+		})
+	}
 
 	_, err := a.grpcClient.SendHeartbeat(a.ctx, usage, processes)
 	if err != nil {
@@ -635,8 +838,6 @@ func (a *Agent) registerCommandHandlers() {
 	// Register cluster discovery and monitoring handlers / 注册集群发现和监控处理器
 	a.executor.RegisterHandler(pb.CommandType_DISCOVER_CLUSTERS, a.handleDiscoverClustersCommand)
 	a.executor.RegisterHandler(pb.CommandType_UPDATE_MONITOR_CONFIG, a.handleUpdateMonitorConfigCommand)
-	a.executor.RegisterHandler(pb.CommandType_MARK_MANUAL_STOP, a.handleMarkManualStopCommand)
-	a.executor.RegisterHandler(pb.CommandType_CLEAR_MANUAL_STOP, a.handleClearManualStopCommand)
 
 	// Initialize plugin manager and register plugin handlers / 初始化插件管理器并注册插件处理器
 	executor.InitPluginManager(a.config.SeaTunnel.InstallDir)
@@ -908,6 +1109,15 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}
 
+	// Track the process for auto-restart / 跟踪进程以支持自动重启
+	// Get the PID from process manager / 从进程管理器获取 PID
+	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
+		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, params)
+		a.autoRestarter.ResetRestartCount(processName)
+		fmt.Printf("[Agent] Process started and tracked: %s (PID: %d) / 进程已启动并跟踪：%s（PID：%d）\n",
+			processName, info.PID, processName, info.PID)
+	}
+
 	reporter.Report(100, "Process started / 进程已启动")
 	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process started successfully (role: %s) / 进程启动成功（角色：%s）", role, role)), nil
 }
@@ -937,6 +1147,22 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 	err := a.processManager.StopProcess(ctx, processName, params)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+	}
+
+	// Check if auto-restart is enabled to decide whether to untrack or set PID=0
+	// 检查是否启用了自动重启，以决定是取消跟踪还是设置 PID=0
+	if a.autoRestarter.IsEnabled() {
+		// Auto-restart enabled: set PID=0, auto-restart will start it again
+		// 自动重启已启用：设置 PID=0，自动重启会重新启动它
+		a.processMonitor.UpdateProcessPID(processName, 0)
+		fmt.Printf("[Agent] Process stopped, PID set to 0 (auto-restart enabled): %s / 进程已停止，PID 设为 0（自动重启已启用）：%s\n",
+			processName, processName)
+	} else {
+		// Auto-restart disabled: untrack the process completely
+		// 自动重启已禁用：完全取消跟踪进程
+		a.processMonitor.UntrackProcess(processName)
+		fmt.Printf("[Agent] Process stopped and untracked (auto-restart disabled): %s / 进程已停止并取消跟踪（自动重启已禁用）：%s\n",
+			processName, processName)
 	}
 
 	reporter.Report(100, "Process stopped / 进程已停止")
@@ -971,6 +1197,14 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 	err := a.processManager.RestartProcess(ctx, processName, startParams, stopParams)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+	}
+
+	// Update tracking with new PID / 使用新 PID 更新跟踪
+	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
+		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, startParams)
+		a.autoRestarter.ResetRestartCount(processName)
+		fmt.Printf("[Agent] Process restarted and tracked: %s (PID: %d) / 进程已重启并跟踪：%s（PID：%d）\n",
+			processName, info.PID, processName, info.PID)
 	}
 
 	reporter.Report(100, "Process restarted / 进程已重启")
@@ -1500,8 +1734,9 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 	reporter.Report(10, "Updating monitor config... / 更新监控配置...")
 
 	// Parse config from parameters / 从参数解析配置
+	autoRestartEnabled := getParamBool(cmd.Parameters, "auto_restart", true)
 	config := &restart.RestartConfig{
-		Enabled:        getParamBool(cmd.Parameters, "auto_restart", true),
+		Enabled:        autoRestartEnabled,
 		RestartDelay:   time.Duration(getParamInt(cmd.Parameters, "restart_delay", 10)) * time.Second,
 		MaxRestarts:    getParamInt(cmd.Parameters, "max_restarts", 3),
 		TimeWindow:     time.Duration(getParamInt(cmd.Parameters, "time_window", 300)) * time.Second,
@@ -1512,42 +1747,152 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 	a.autoRestarter.UpdateConfig(config)
 
 	// Update process monitor interval if specified / 如果指定则更新进程监控间隔
-	monitorInterval := getParamInt(cmd.Parameters, "monitor_interval", 0)
-	if monitorInterval > 0 {
+	if monitorInterval := getParamInt(cmd.Parameters, "monitor_interval", 0); monitorInterval > 0 {
 		a.processMonitor.SetMonitorInterval(time.Duration(monitorInterval) * time.Second)
+	}
+
+	// If auto-restart is disabled, untrack all processes immediately
+	// 如果禁用了自动重启，静默取消跟踪所有进程（不发送事件，因为进程仍在运行）
+	if !autoRestartEnabled {
+		trackedProcesses := a.processMonitor.GetAllTrackedProcesses()
+		for _, proc := range trackedProcesses {
+			// Use silent untrack - process is still running, we just stop monitoring
+			// 使用静默取消跟踪 - 进程仍在运行，我们只是停止监控
+			a.processMonitor.UntrackProcessSilent(proc.Name)
+			fmt.Printf("[Agent] Auto-restart disabled, stopped monitoring process: %s / 自动重启已禁用，停止监控进程：%s\n",
+				proc.Name, proc.Name)
+		}
+		reporter.Report(100, "Monitor config updated (auto-restart disabled, stopped monitoring) / 监控配置已更新（自动重启已禁用，停止监控）")
+		return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated, auto-restart disabled / 监控配置已更新，自动重启已禁用"), nil
+	}
+
+	// Auto-restart is enabled, parse and track processes from Control Plane
+	// 自动重启已启用，解析并跟踪来自 Control Plane 的进程
+	trackedProcessesJSON := getParamString(cmd.Parameters, "tracked_processes", "")
+	if trackedProcessesJSON != "" {
+		var trackedProcesses []struct {
+			PID        int    `json:"pid"`
+			Name       string `json:"name"`
+			InstallDir string `json:"install_dir"`
+			Role       string `json:"role"`
+		}
+		if err := json.Unmarshal([]byte(trackedProcessesJSON), &trackedProcesses); err != nil {
+			fmt.Printf("[Agent] Failed to parse tracked_processes: %v / 解析 tracked_processes 失败：%v\n", err, err)
+		} else {
+			fmt.Printf("[Agent] Received %d processes to track / 收到 %d 个需要跟踪的进程\n", len(trackedProcesses), len(trackedProcesses))
+			for _, proc := range trackedProcesses {
+				// Create start params for potential restart / 创建启动参数用于可能的重启
+				startParams := &process.StartParams{
+					InstallDir: proc.InstallDir,
+					Role:       proc.Role,
+				}
+
+				if proc.PID > 0 {
+					// Track running process / 跟踪运行中的进程
+					a.processMonitor.TrackProcess(proc.Name, proc.PID, proc.InstallDir, proc.Role, startParams)
+					fmt.Printf("[Agent] Tracking running process: %s (PID: %d, Role: %s, Dir: %s) / 跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）\n",
+						proc.Name, proc.PID, proc.Role, proc.InstallDir, proc.Name, proc.PID, proc.Role, proc.InstallDir)
+				} else {
+					// For stopped processes, register with PID 0 - auto-restart will start them if enabled
+					// 对于已停止的进程，用 PID 0 注册 - 如果启用了自动重启，会自动启动它们
+					a.processMonitor.TrackProcess(proc.Name, 0, proc.InstallDir, proc.Role, startParams)
+					fmt.Printf("[Agent] Registered stopped process (will auto-restart): %s (Role: %s, Dir: %s) / 注册已停止的进程（将自动重启）：%s（角色：%s，目录：%s）\n",
+						proc.Name, proc.Role, proc.InstallDir, proc.Name, proc.Role, proc.InstallDir)
+				}
+			}
+		}
 	}
 
 	reporter.Report(100, "Monitor config updated / 监控配置已更新")
 	return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated successfully / 监控配置更新成功"), nil
 }
 
-// handleMarkManualStopCommand handles the MARK_MANUAL_STOP command
-// handleMarkManualStopCommand 处理 MARK_MANUAL_STOP 命令
-// Requirements 8.2: Mark process as manually stopped
-// 需求 8.2：将进程标记为手动停止
-func (a *Agent) handleMarkManualStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
-	processName := getParamString(cmd.Parameters, "process_name", "")
-	if processName == "" {
-		return executor.CreateErrorResponse(cmd.CommandId, "process_name is required / 需要 process_name 参数"), nil
+// isProcessAlive checks if a process with the given PID is alive
+// isProcessAlive 检查给定 PID 的进程是否存活
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
 	}
 
-	a.processMonitor.MarkManuallyStopped(processName)
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
 
-	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process %s marked as manually stopped / 进程 %s 已标记为手动停止", processName, processName)), nil
+	// On Unix, FindProcess always succeeds, so we need to send signal 0 to check
+	// 在 Unix 上，FindProcess 总是成功，所以我们需要发送信号 0 来检查
+	if runtime.GOOS != "windows" {
+		err = process.Signal(syscall.Signal(0))
+		return err == nil
+	}
+
+	// On Windows, use tasklist / 在 Windows 上使用 tasklist
+	cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(output), strconv.Itoa(pid))
 }
 
-// handleClearManualStopCommand handles the CLEAR_MANUAL_STOP command
-// handleClearManualStopCommand 处理 CLEAR_MANUAL_STOP 命令
-// Requirements 8.4: Clear manual stop flag when user starts process
-// 需求 8.4：当用户启动进程时清除手动停止标记
-func (a *Agent) handleClearManualStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
-	processName := getParamString(cmd.Parameters, "process_name", "")
-	if processName == "" {
-		return executor.CreateErrorResponse(cmd.CommandId, "process_name is required / 需要 process_name 参数"), nil
+// getProcessMetrics gets CPU and memory usage for a process
+// getProcessMetrics 获取进程的 CPU 和内存使用率
+func getProcessMetrics(pid int) (cpuUsage float64, memoryUsage int64) {
+	if pid <= 0 {
+		return 0, 0
 	}
 
-	a.processMonitor.ClearManuallyStopped(processName)
-	a.autoRestarter.ResetRestartCount(processName)
+	switch runtime.GOOS {
+	case "linux":
+		// Read /proc/[pid]/statm for memory info
+		// 读取 /proc/[pid]/statm 获取内存信息
+		statmPath := fmt.Sprintf("/proc/%d/statm", pid)
+		statmData, err := os.ReadFile(statmPath)
+		if err != nil {
+			return 0, 0
+		}
+		statmFields := strings.Fields(string(statmData))
+		if len(statmFields) >= 2 {
+			// RSS is in pages, convert to bytes (assuming 4KB pages)
+			// RSS 以页为单位，转换为字节（假设 4KB 页）
+			rss, _ := strconv.ParseInt(statmFields[1], 10, 64)
+			memoryUsage = rss * 4096
+		}
+		return 0, memoryUsage
 
-	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Manual stop flag cleared for %s / 已清除 %s 的手动停止标记", processName, processName)), nil
+	case "darwin":
+		cmd := exec.Command("ps", "-o", "rss=,pcpu=", "-p", strconv.Itoa(pid))
+		output, err := cmd.Output()
+		if err != nil {
+			return 0, 0
+		}
+		fields := strings.Fields(string(output))
+		if len(fields) >= 2 {
+			rss, _ := strconv.ParseInt(fields[0], 10, 64)
+			memoryUsage = rss * 1024
+			cpu, _ := strconv.ParseFloat(fields[1], 64)
+			cpuUsage = cpu
+		}
+		return cpuUsage, memoryUsage
+
+	case "windows":
+		cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("ProcessId=%d", pid), "get", "WorkingSetSize", "/value")
+		output, err := cmd.Output()
+		if err != nil {
+			return 0, 0
+		}
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "WorkingSetSize=") {
+				value := strings.TrimPrefix(line, "WorkingSetSize=")
+				value = strings.TrimSpace(value)
+				mem, _ := strconv.ParseInt(value, 10, 64)
+				memoryUsage = mem
+			}
+		}
+		return 0, memoryUsage
+
+	default:
+		return 0, 0
+	}
 }

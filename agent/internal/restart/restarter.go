@@ -147,13 +147,6 @@ func (r *AutoRestarter) OnProcessCrashed(proc *monitor.TrackedProcess) error {
 		return nil
 	}
 
-	// Check if manually stopped / 检查是否手动停止
-	if proc.ManuallyStopped {
-		fmt.Printf("[AutoRestarter] Process %s was manually stopped, skipping restart / 进程 %s 已手动停止，跳过重启\n",
-			proc.Name, proc.Name)
-		return nil
-	}
-
 	// Check if should restart / 检查是否应该重启
 	if !r.ShouldRestart(proc) {
 		fmt.Printf("[AutoRestarter] Restart limit reached or in cooldown for %s / %s 已达重启限制或在冷却中\n",
@@ -179,11 +172,6 @@ func (r *AutoRestarter) ShouldRestart(proc *monitor.TrackedProcess) bool {
 	defer r.mu.Unlock()
 
 	if !r.config.Enabled {
-		return false
-	}
-
-	// Check if manually stopped / 检查是否手动停止
-	if proc.ManuallyStopped {
 		return false
 	}
 
@@ -363,4 +351,12 @@ func (r *AutoRestarter) IsInCooldown(processName string) bool {
 		return time.Now().Before(history.CooldownUntil)
 	}
 	return false
+}
+
+// IsEnabled returns whether auto restart is enabled
+// IsEnabled 返回是否启用了自动重启
+func (r *AutoRestarter) IsEnabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.config.Enabled
 }

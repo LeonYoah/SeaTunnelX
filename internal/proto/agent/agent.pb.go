@@ -270,6 +270,7 @@ const (
 	ProcessEventType_PROCESS_STOPPED           ProcessEventType = 2 // 进程停止 / Process stopped
 	ProcessEventType_PROCESS_CRASHED           ProcessEventType = 3 // 进程崩溃 / Process crashed
 	ProcessEventType_PROCESS_RESTARTED         ProcessEventType = 4 // 进程重启 / Process restarted
+	ProcessEventType_PROCESS_RESTART_FAILED    ProcessEventType = 5 // 重启失败 / Restart failed
 )
 
 // Enum value maps for ProcessEventType.
@@ -280,6 +281,7 @@ var (
 		2: "PROCESS_STOPPED",
 		3: "PROCESS_CRASHED",
 		4: "PROCESS_RESTARTED",
+		5: "PROCESS_RESTART_FAILED",
 	}
 	ProcessEventType_value = map[string]int32{
 		"PROCESS_EVENT_UNSPECIFIED": 0,
@@ -287,6 +289,7 @@ var (
 		"PROCESS_STOPPED":           2,
 		"PROCESS_CRASHED":           3,
 		"PROCESS_RESTARTED":         4,
+		"PROCESS_RESTART_FAILED":    5,
 	}
 )
 
@@ -2999,13 +3002,14 @@ const file_internal_proto_agent_agent_proto_rawDesc = "" +
 	"\x05DEBUG\x10\x01\x12\b\n" +
 	"\x04INFO\x10\x02\x12\b\n" +
 	"\x04WARN\x10\x03\x12\t\n" +
-	"\x05ERROR\x10\x04*\x87\x01\n" +
+	"\x05ERROR\x10\x04*\xa3\x01\n" +
 	"\x10ProcessEventType\x12\x1d\n" +
 	"\x19PROCESS_EVENT_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fPROCESS_STARTED\x10\x01\x12\x13\n" +
 	"\x0fPROCESS_STOPPED\x10\x02\x12\x13\n" +
 	"\x0fPROCESS_CRASHED\x10\x03\x12\x15\n" +
-	"\x11PROCESS_RESTARTED\x10\x042\xf1\x02\n" +
+	"\x11PROCESS_RESTARTED\x10\x04\x12\x1a\n" +
+	"\x16PROCESS_RESTART_FAILED\x10\x052\xf1\x02\n" +
 	"\fAgentService\x12U\n" +
 	"\bRegister\x12#.seatunnel.agent.v1.RegisterRequest\x1a$.seatunnel.agent.v1.RegisterResponse\x12X\n" +
 	"\tHeartbeat\x12$.seatunnel.agent.v1.HeartbeatRequest\x1a%.seatunnel.agent.v1.HeartbeatResponse\x12\\\n" +

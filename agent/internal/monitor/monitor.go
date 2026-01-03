@@ -60,15 +60,13 @@ const (
 
 // TrackedProcess represents a process being tracked by the monitor
 // TrackedProcess 表示被监控器跟踪的进程
-// Requirements 8.2, 8.4: Support manual stop marking
-// 需求 8.2, 8.4：支持手动停止标记
 type TrackedProcess struct {
 	PID              int                  `json:"pid"`
 	Name             string               `json:"name"`
 	InstallDir       string               `json:"install_dir"`
 	Role             string               `json:"role"`
 	Status           ProcessStatus        `json:"status"`
-	ManuallyStopped  bool                 `json:"manually_stopped"`  // 是否手动停止 / Whether manually stopped
+	Restarting       bool                 `json:"restarting"`        // 是否正在重启 / Whether restarting
 	ConsecutiveFails int                  `json:"consecutive_fails"` // 连续检查失败次数 / Consecutive check failures
 	LastCheck        time.Time            `json:"last_check"`
 	StartParams      *process.StartParams `json:"start_params"`
@@ -79,10 +77,11 @@ type TrackedProcess struct {
 type ProcessEventType string
 
 const (
-	EventStarted   ProcessEventType = "started"
-	EventStopped   ProcessEventType = "stopped"
-	EventCrashed   ProcessEventType = "crashed"
-	EventRestarted ProcessEventType = "restarted"
+	EventStarted       ProcessEventType = "started"
+	EventStopped       ProcessEventType = "stopped"
+	EventCrashed       ProcessEventType = "crashed"
+	EventRestarted     ProcessEventType = "restarted"
+	EventRestartFailed ProcessEventType = "restart_failed"
 )
 
 // ProcessEvent represents a process lifecycle event
@@ -226,8 +225,27 @@ func (m *ProcessMonitor) checkAllProcesses() {
 	defer m.mu.Unlock()
 
 	for name, proc := range m.trackedProcesses {
-		// Skip if manually stopped / 如果手动停止则跳过
-		if proc.ManuallyStopped {
+		// Skip if currently restarting / 如果正在重启则跳过
+		if proc.Restarting {
+			continue
+		}
+
+		// Handle PID=0 case: process is registered but not running, trigger auto-start
+		// 处理 PID=0 的情况：进程已注册但未运行，触发自动启动
+		if proc.PID <= 0 {
+			// Only trigger if we have start params (meaning we can restart it)
+			// 只有在有启动参数时才触发（意味着我们可以重启它）
+			if proc.StartParams != nil {
+				fmt.Printf("[ProcessMonitor] Process %s has PID=0, triggering auto-start / 进程 %s 的 PID=0，触发自动启动\n",
+					name, name)
+				proc.Restarting = true // Mark as restarting to prevent duplicate triggers / 标记为正在重启以防止重复触发
+
+				// Notify crash handler to start the process / 通知崩溃处理器启动进程
+				if m.crashHandler != nil {
+					procCopy := *proc
+					go m.crashHandler(&procCopy)
+				}
+			}
 			continue
 		}
 
@@ -248,6 +266,7 @@ func (m *ProcessMonitor) checkAllProcesses() {
 			// Check if threshold reached / 检查是否达到阈值
 			if proc.ConsecutiveFails >= m.consecutiveFailThreshold {
 				proc.Status = StatusStopped
+				proc.Restarting = true // Mark as restarting to prevent duplicate triggers / 标记为正在重启以防止重复触发
 
 				// Generate crash event / 生成崩溃事件
 				event := &ProcessEvent{
@@ -294,7 +313,6 @@ func (m *ProcessMonitor) TrackProcess(name string, pid int, installDir, role str
 		InstallDir:       installDir,
 		Role:             role,
 		Status:           StatusRunning,
-		ManuallyStopped:  false,
 		ConsecutiveFails: 0,
 		LastCheck:        time.Now(),
 		StartParams:      startParams,
@@ -330,9 +348,7 @@ func (m *ProcessMonitor) UntrackProcess(name string) {
 			PID:       proc.PID,
 			Name:      name,
 			Timestamp: time.Now(),
-			Details: map[string]interface{}{
-				"manually_stopped": proc.ManuallyStopped,
-			},
+			Details:   map[string]interface{}{},
 		}
 		m.notifyEvent(event)
 
@@ -341,31 +357,17 @@ func (m *ProcessMonitor) UntrackProcess(name string) {
 	}
 }
 
-// MarkManuallyStopped marks a process as manually stopped
-// MarkManuallyStopped 将进程标记为手动停止
-// Requirements 8.2, 8.4: Mark process as manually stopped
-// 需求 8.2, 8.4：将进程标记为手动停止
-func (m *ProcessMonitor) MarkManuallyStopped(name string) {
+// UntrackProcessSilent stops tracking a process without sending events.
+// Used when disabling auto-restart - the process is still running, we just stop monitoring it.
+// UntrackProcessSilent 静默停止跟踪进程，不发送事件。
+// 用于禁用自动重启时 - 进程仍在运行，我们只是停止监控它。
+func (m *ProcessMonitor) UntrackProcessSilent(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if proc, exists := m.trackedProcesses[name]; exists {
-		proc.ManuallyStopped = true
-		fmt.Printf("[ProcessMonitor] Marked process as manually stopped: %s / 将进程标记为手动停止：%s\n", name, name)
-	}
-}
-
-// ClearManuallyStopped clears the manually stopped flag
-// ClearManuallyStopped 清除手动停止标记
-// Requirements 8.4: Clear manual stop flag when user starts process
-// 需求 8.4：当用户启动进程时清除手动停止标记
-func (m *ProcessMonitor) ClearManuallyStopped(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if proc, exists := m.trackedProcesses[name]; exists {
-		proc.ManuallyStopped = false
-		fmt.Printf("[ProcessMonitor] Cleared manually stopped flag: %s / 清除手动停止标记：%s\n", name, name)
+	if _, exists := m.trackedProcesses[name]; exists {
+		delete(m.trackedProcesses, name)
+		fmt.Printf("[ProcessMonitor] Silently untracked process (still running): %s / 静默取消跟踪进程（仍在运行）：%s\n", name, name)
 	}
 }
 
@@ -377,8 +379,13 @@ func (m *ProcessMonitor) UpdateProcessPID(name string, newPID int) {
 
 	if proc, exists := m.trackedProcesses[name]; exists {
 		proc.PID = newPID
-		proc.Status = StatusRunning
-		proc.ConsecutiveFails = 0
+		if newPID > 0 {
+			proc.Status = StatusRunning
+			proc.ConsecutiveFails = 0
+		} else {
+			proc.Status = StatusStopped
+		}
+		proc.Restarting = false // Clear restarting flag / 清除重启标记
 		fmt.Printf("[ProcessMonitor] Updated process PID: %s -> %d / 更新进程 PID：%s -> %d\n", name, newPID, name, newPID)
 	}
 }
@@ -409,18 +416,6 @@ func (m *ProcessMonitor) GetAllTrackedProcesses() []*TrackedProcess {
 		processes = append(processes, &procCopy)
 	}
 	return processes
-}
-
-// IsManuallyStopped checks if a process is marked as manually stopped
-// IsManuallyStopped 检查进程是否被标记为手动停止
-func (m *ProcessMonitor) IsManuallyStopped(name string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if proc, exists := m.trackedProcesses[name]; exists {
-		return proc.ManuallyStopped
-	}
-	return false
 }
 
 // isProcessAlive checks if a process with the given PID is alive

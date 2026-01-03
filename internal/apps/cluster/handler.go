@@ -335,7 +335,6 @@ func (h *Handler) AddNode(c *gin.Context) {
 		WorkerPort:    node.WorkerPort,
 		Status:        node.Status,
 		ProcessPID:    node.ProcessPID,
-		ProcessStatus: node.ProcessStatus,
 		CreatedAt:     node.CreatedAt,
 		UpdatedAt:     node.UpdatedAt,
 	}
@@ -424,7 +423,6 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 		WorkerPort:    node.WorkerPort,
 		Status:        node.Status,
 		ProcessPID:    node.ProcessPID,
-		ProcessStatus: node.ProcessStatus,
 		CreatedAt:     node.CreatedAt,
 		UpdatedAt:     node.UpdatedAt,
 	}

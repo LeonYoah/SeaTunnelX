@@ -20,6 +20,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -393,10 +394,34 @@ func (r *Repository) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint
 	return node.ClusterID, node.ID, true, nil
 }
 
-// UpdateNodeManuallyStopped updates the manually_stopped flag for a cluster node.
-// UpdateNodeManuallyStopped 更新集群节点的手动停止标记。
-func (r *Repository) UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error {
-	result := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("id = ?", nodeID).Update("manually_stopped", manuallyStopped)
+// UpdateNodeProcessStatus updates the process PID, status, and last event time for a cluster node.
+// UpdateNodeProcessStatus 更新集群节点的进程 PID、状态和最后事件时间。
+// Uses the unified 'status' field (not 'process_status') for node state.
+// 使用统一的 'status' 字段（而非 'process_status'）表示节点状态。
+// Also updates 'last_event_at' to track when the last process event occurred.
+// 同时更新 'last_event_at' 以跟踪最后一次进程事件发生的时间。
+func (r *Repository) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, processStatus string) error {
+	// Map process status to node status / 将进程状态映射到节点状态
+	var nodeStatus NodeStatus
+	switch processStatus {
+	case "running":
+		nodeStatus = NodeStatusRunning
+	case "stopped":
+		nodeStatus = NodeStatusStopped
+	case "crashed":
+		nodeStatus = NodeStatusError
+	default:
+		nodeStatus = NodeStatusStopped
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"process_pid":   pid,
+		"status":        nodeStatus,
+		"last_event_at": now, // Update last event time / 更新最后事件时间
+	}
+
+	result := r.db.WithContext(ctx).Model(&ClusterNode{}).Where("id = ?", nodeID).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

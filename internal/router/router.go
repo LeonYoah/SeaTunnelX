@@ -283,6 +283,20 @@ func Serve() {
 			// Requirements: 5.1, 5.2, 6.4 - Monitor config and process events API
 			monitorRepo := monitor.NewRepository(db.DB(context.Background()))
 			monitorService := monitor.NewService(monitorRepo)
+
+			// Inject node provider and config sender if agent manager is available
+			// 如果 Agent Manager 可用，注入节点提供者和配置发送器
+			if agentManager != nil {
+				monitorService.SetNodeProvider(&monitorClusterNodeProviderAdapter{
+					clusterService: clusterService,
+					hostService:    hostService,
+				})
+				monitorService.SetConfigSender(&monitorAgentConfigSenderAdapter{
+					manager: agentManager,
+				})
+				log.Println("[API] Node provider and config sender injected into monitor service / 节点提供者和配置发送器已注入监控服务")
+			}
+
 			monitorHandler := monitor.NewHandler(monitorService)
 
 			// Monitor config routes on clusters 集群监控配置路由
@@ -701,6 +715,19 @@ func initGRPCServer(ctx context.Context) (*grpcServer.Server, *agent.Manager) {
 	// 创建并启动 gRPC 服务器
 	// Create and start gRPC server
 	srv := grpcServer.NewServer(serverConfig, agentManager, hostService, auditRepo, logger)
+
+	// Set cluster node provider for gRPC handlers (for monitor config push after agent registration)
+	// 设置 gRPC 处理器的集群节点提供者（用于 Agent 注册后推送监控配置）
+	clusterService := cluster.NewService(clusterRepo, hostService, &cluster.ServiceConfig{
+		HeartbeatTimeout: time.Duration(grpcConfig.HeartbeatTimeout) * time.Second,
+	})
+	monitorRepo := monitor.NewRepository(db.DB(ctx))
+	monitorService := monitor.NewService(monitorRepo)
+	grpcServer.SetClusterNodeProvider(&grpcClusterNodeProviderAdapter{
+		clusterService: clusterService,
+		monitorService: monitorService,
+	})
+	log.Println("[gRPC] Cluster node provider set for gRPC handlers / 已为 gRPC 处理器设置集群节点提供者")
 
 	if err := srv.Start(ctx); err != nil {
 		log.Printf("[gRPC] 启动 gRPC 服务器失败: %v / Failed to start gRPC server: %v\n", err, err)
@@ -1427,4 +1454,128 @@ func parseDiscoveredProcessesText(output string) []*discovery.DiscoveredProcess 
 	}
 
 	return processes
+}
+
+// monitorClusterNodeProviderAdapter adapts cluster.Service and host.Service to monitor.ClusterNodeProvider interface.
+// monitorClusterNodeProviderAdapter 将 cluster.Service 和 host.Service 适配到 monitor.ClusterNodeProvider 接口。
+type monitorClusterNodeProviderAdapter struct {
+	clusterService *cluster.Service
+	hostService    *host.Service
+}
+
+// GetNodesByClusterID returns all nodes for a cluster with agent info.
+// GetNodesByClusterID 返回集群的所有节点及其 Agent 信息。
+func (a *monitorClusterNodeProviderAdapter) GetNodesByClusterID(ctx context.Context, clusterID uint) ([]*monitor.NodeInfoForMonitor, error) {
+	nodes, err := a.clusterService.GetNodes(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*monitor.NodeInfoForMonitor, 0, len(nodes))
+	for _, node := range nodes {
+		// Get agent ID for this host / 获取此主机的 Agent ID
+		agentID := ""
+		h, err := a.hostService.Get(ctx, node.HostID)
+		if err == nil && h != nil {
+			agentID = h.AgentID
+		}
+
+		result = append(result, &monitor.NodeInfoForMonitor{
+			HostID:     node.HostID,
+			AgentID:    agentID,
+			InstallDir: node.InstallDir,
+			Role:       string(node.Role),
+			ProcessPID: node.ProcessPID,
+		})
+	}
+
+	return result, nil
+}
+
+// monitorAgentConfigSenderAdapter adapts agent.Manager to monitor.AgentConfigSender interface.
+// monitorAgentConfigSenderAdapter 将 agent.Manager 适配到 monitor.AgentConfigSender 接口。
+type monitorAgentConfigSenderAdapter struct {
+	manager *agent.Manager
+}
+
+// SendMonitorConfig sends monitor config and tracked processes to agent.
+// SendMonitorConfig 向 Agent 发送监控配置和跟踪的进程列表。
+func (a *monitorAgentConfigSenderAdapter) SendMonitorConfig(ctx context.Context, agentID string, config *monitor.MonitorConfig, processes []*monitor.TrackedProcessInfo) error {
+	// Build parameters / 构建参数
+	params := map[string]string{
+		"cluster_id":       fmt.Sprintf("%d", config.ClusterID),
+		"config_version":   fmt.Sprintf("%d", config.ConfigVersion),
+		"auto_monitor":     fmt.Sprintf("%t", config.AutoMonitor),
+		"auto_restart":     fmt.Sprintf("%t", config.AutoRestart),
+		"monitor_interval": fmt.Sprintf("%d", config.MonitorInterval),
+		"restart_delay":    fmt.Sprintf("%d", config.RestartDelay),
+		"max_restarts":     fmt.Sprintf("%d", config.MaxRestarts),
+		"time_window":      fmt.Sprintf("%d", config.TimeWindow),
+		"cooldown_period":  fmt.Sprintf("%d", config.CooldownPeriod),
+	}
+
+	// Add tracked processes as JSON / 添加跟踪进程列表（JSON 格式）
+	if len(processes) > 0 {
+		processesJSON, err := json.Marshal(processes)
+		if err != nil {
+			log.Printf("[Monitor] Failed to marshal processes: %v / 序列化进程列表失败: %v", err, err)
+		} else {
+			params["tracked_processes"] = string(processesJSON)
+		}
+	}
+
+	// Send UPDATE_MONITOR_CONFIG command to agent / 向 Agent 发送 UPDATE_MONITOR_CONFIG 命令
+	_, err := a.manager.SendCommand(ctx, agentID, pb.CommandType_UPDATE_MONITOR_CONFIG, params, 30*time.Second)
+	return err
+}
+
+// grpcClusterNodeProviderAdapter adapts cluster.Service to grpc.ClusterNodeProvider interface.
+// grpcClusterNodeProviderAdapter 将 cluster.Service 适配到 grpc.ClusterNodeProvider 接口。
+type grpcClusterNodeProviderAdapter struct {
+	clusterService *cluster.Service
+	monitorService *monitor.Service
+}
+
+// GetNodeByHostAndInstallDir returns cluster and node ID by host ID and install dir.
+// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录返回集群和节点 ID。
+func (a *grpcClusterNodeProviderAdapter) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error) {
+	return a.clusterService.GetNodeByHostAndInstallDir(ctx, hostID, installDir)
+}
+
+// GetNodesByHostID returns all nodes on a specific host with their cluster's monitor config.
+// GetNodesByHostID 返回特定主机上的所有节点及其集群的监控配置。
+func (a *grpcClusterNodeProviderAdapter) GetNodesByHostID(ctx context.Context, hostID uint) ([]*grpcServer.NodeWithMonitorConfig, error) {
+	nodes, err := a.clusterService.GetNodesByHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*grpcServer.NodeWithMonitorConfig, 0, len(nodes))
+	configCache := make(map[uint]*monitor.MonitorConfig) // Cache configs by cluster ID / 按集群 ID 缓存配置
+
+	for _, node := range nodes {
+		// Get or cache monitor config for this cluster / 获取或缓存此集群的监控配置
+		config, ok := configCache[node.ClusterID]
+		if !ok {
+			config, _ = a.monitorService.GetOrCreateConfig(ctx, node.ClusterID)
+			configCache[node.ClusterID] = config
+		}
+
+		result = append(result, &grpcServer.NodeWithMonitorConfig{
+			ClusterID:     node.ClusterID,
+			NodeID:        node.ID,
+			InstallDir:    node.InstallDir,
+			Role:          string(node.Role),
+			ProcessPID:    node.ProcessPID,
+			MonitorConfig: config,
+		})
+	}
+
+	return result, nil
+}
+
+// UpdateNodeProcessStatus updates the process PID and status for a node.
+// UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
+func (a *grpcClusterNodeProviderAdapter) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error {
+	return a.clusterService.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
 }

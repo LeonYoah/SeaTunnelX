@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -653,4 +654,44 @@ func (t *HeartbeatTracker) Clear() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.timestamps = make([]time.Time, 0)
+}
+
+// ReportProcessEvent sends a process event to Control Plane.
+// ReportProcessEvent 向 Control Plane 发送进程事件。
+func (c *Client) ReportProcessEvent(ctx context.Context, event *pb.ProcessEventReport) error {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+
+	if client == nil {
+		return errors.New("client not connected")
+	}
+
+	// Use CommandStream to send the event as a special command response
+	// 使用 CommandStream 将事件作为特殊命令响应发送
+	stream, err := client.CommandStream(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create command stream for event report: %w", err)
+	}
+
+	// Serialize event to JSON / 将事件序列化为 JSON
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal process event: %w", err)
+	}
+
+	// Send the event as a command response with special command ID
+	// 将事件作为带有特殊命令 ID 的命令响应发送
+	resp := &pb.CommandResponse{
+		CommandId: "PROCESS_EVENT_REPORT",
+		Output:    string(eventJSON),
+		Status:    pb.CommandStatus_SUCCESS,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	if err := stream.Send(resp); err != nil {
+		return fmt.Errorf("failed to send process event: %w", err)
+	}
+
+	return nil
 }

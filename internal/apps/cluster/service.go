@@ -95,15 +95,14 @@ type ClusterStatusInfo struct {
 // NodeStatusInfo represents detailed node status information.
 // NodeStatusInfo 表示详细的节点状态信息。
 type NodeStatusInfo struct {
-	NodeID        uint       `json:"node_id"`
-	HostID        uint       `json:"host_id"`
-	HostName      string     `json:"host_name"`
-	HostIP        string     `json:"host_ip"`
-	Role          NodeRole   `json:"role"`
-	Status        NodeStatus `json:"status"`
-	IsOnline      bool       `json:"is_online"`
-	ProcessPID    int        `json:"process_pid"`
-	ProcessStatus string     `json:"process_status"`
+	NodeID     uint       `json:"node_id"`
+	HostID     uint       `json:"host_id"`
+	HostName   string     `json:"host_name"`
+	HostIP     string     `json:"host_ip"`
+	Role       NodeRole   `json:"role"`
+	Status     NodeStatus `json:"status"`      // Unified status: pending, installing, running, stopped, error / 统一状态
+	IsOnline   bool       `json:"is_online"`   // Whether host is online / 主机是否在线
+	ProcessPID int        `json:"process_pid"` // SeaTunnel process PID / SeaTunnel 进程 PID
 }
 
 // OperationType represents the type of cluster operation.
@@ -572,7 +571,6 @@ func (s *Service) GetNodes(ctx context.Context, clusterID uint) ([]*NodeInfo, er
 			WorkerPort:    node.WorkerPort,
 			Status:        node.Status,
 			ProcessPID:    node.ProcessPID,
-			ProcessStatus: node.ProcessStatus,
 			CreatedAt:     node.CreatedAt,
 			UpdatedAt:     node.UpdatedAt,
 		}
@@ -724,12 +722,11 @@ func (s *Service) GetStatus(ctx context.Context, clusterID uint) (*ClusterStatus
 
 	for i, node := range cluster.Nodes {
 		nodeStatus := &NodeStatusInfo{
-			NodeID:        node.ID,
-			HostID:        node.HostID,
-			Role:          node.Role,
-			Status:        node.Status,
-			ProcessPID:    node.ProcessPID,
-			ProcessStatus: node.ProcessStatus,
+			NodeID:     node.ID,
+			HostID:     node.HostID,
+			Role:       node.Role,
+			Status:     node.Status,
+			ProcessPID: node.ProcessPID,
 		}
 
 		// Get host information and online status
@@ -1590,16 +1587,6 @@ func (s *Service) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, i
 	return s.repo.GetNodeByHostAndInstallDir(ctx, hostID, installDir)
 }
 
-// UpdateNodeManuallyStopped updates the manually_stopped flag for a cluster node.
-// UpdateNodeManuallyStopped 更新集群节点的手动停止标记。
-// This implements the grpc.ClusterNodeProvider interface.
-// 这实现了 grpc.ClusterNodeProvider 接口。
-// Requirements: 8.2, 8.4 - Manage manual stop flag
-func (s *Service) UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error {
-	logger.InfoF(ctx, "[Cluster] UpdateNodeManuallyStopped: nodeID=%d, manuallyStopped=%t", nodeID, manuallyStopped)
-	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, manuallyStopped)
-}
-
 // GetClusterNodesWithAgentInfo retrieves all nodes for a cluster with agent information.
 // GetClusterNodesWithAgentInfo 获取集群的所有节点及其 Agent 信息。
 // Returns nodes with their associated agent IDs for config push.
@@ -1623,7 +1610,6 @@ func (s *Service) GetClusterNodesWithAgentInfo(ctx context.Context, clusterID ui
 			WorkerPort:    node.WorkerPort,
 			Status:        node.Status,
 			ProcessPID:    node.ProcessPID,
-			ProcessStatus: node.ProcessStatus,
 			CreatedAt:     node.CreatedAt,
 			UpdatedAt:     node.UpdatedAt,
 		}
@@ -1643,36 +1629,19 @@ func (s *Service) GetClusterNodesWithAgentInfo(ctx context.Context, clusterID ui
 	return nodeInfos, nil
 }
 
-// MarkNodeManuallyStopped marks a node as manually stopped.
-// MarkNodeManuallyStopped 将节点标记为手动停止。
-// Requirements: 8.1 - Mark manual stop when user stops node
-func (s *Service) MarkNodeManuallyStopped(ctx context.Context, clusterID uint, nodeID uint) error {
-	// Verify node belongs to the cluster / 验证节点属于该集群
-	node, err := s.repo.GetNodeByID(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-	if node.ClusterID != clusterID {
-		return ErrNodeNotFound
-	}
-
-	logger.InfoF(ctx, "[Cluster] MarkNodeManuallyStopped: clusterID=%d, nodeID=%d", clusterID, nodeID)
-	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, true)
+// GetNodesByHostID retrieves all cluster nodes for a specific host.
+// GetNodesByHostID 获取特定主机上的所有集群节点。
+// This is used for pushing monitor config to agent after registration.
+// 这用于在 Agent 注册后推送监控配置。
+func (s *Service) GetNodesByHostID(ctx context.Context, hostID uint) ([]*ClusterNode, error) {
+	return s.repo.GetNodesByHostID(ctx, hostID)
 }
 
-// ClearNodeManuallyStopped clears the manual stop flag for a node.
-// ClearNodeManuallyStopped 清除节点的手动停止标记。
-// Requirements: 8.3 - Clear manual stop when user starts node
-func (s *Service) ClearNodeManuallyStopped(ctx context.Context, clusterID uint, nodeID uint) error {
-	// Verify node belongs to the cluster / 验证节点属于该集群
-	node, err := s.repo.GetNodeByID(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-	if node.ClusterID != clusterID {
-		return ErrNodeNotFound
-	}
-
-	logger.InfoF(ctx, "[Cluster] ClearNodeManuallyStopped: clusterID=%d, nodeID=%d", clusterID, nodeID)
-	return s.repo.UpdateNodeManuallyStopped(ctx, nodeID, false)
+// UpdateNodeProcessStatus updates the process PID and status for a node.
+// UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
+// This is called when agent reports process events (started, stopped, crashed, restarted).
+// 当 Agent 上报进程事件（启动、停止、崩溃、重启）时调用。
+func (s *Service) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error {
+	logger.InfoF(ctx, "[Cluster] UpdateNodeProcessStatus: nodeID=%d, pid=%d, status=%s", nodeID, pid, status)
+	return s.repo.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
 }

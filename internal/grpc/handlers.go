@@ -137,6 +137,14 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 		zap.Uint("host_id", conn.HostID),
 	)
 
+	// Push monitor config to agent after registration (async)
+	// Use background context since the gRPC request context may be canceled
+	// 注册后异步推送监控配置到 Agent
+	// 使用后台 context，因为 gRPC 请求 context 可能会被取消
+	if conn.HostID > 0 {
+		go s.pushMonitorConfigToAgent(context.Background(), req.AgentId, conn.HostID)
+	}
+
 	return response, nil
 }
 
@@ -179,6 +187,16 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.H
 				zap.String("agent_id", req.AgentId),
 				zap.Error(err),
 			)
+		}
+	}
+
+	// Update process status in cluster_nodes table / 更新 cluster_nodes 表中的进程状态
+	// Use background context since gRPC request context will be canceled after response
+	// 使用后台 context，因为 gRPC 请求 context 在响应后会被取消
+	if clusterNodeProvider != nil && len(req.Processes) > 0 {
+		conn, ok := s.agentManager.GetAgent(req.AgentId)
+		if ok && conn.HostID > 0 {
+			go s.updateProcessStatusFromHeartbeat(context.Background(), conn.HostID, req.Processes)
 		}
 	}
 
@@ -282,6 +300,42 @@ func (s *Server) handleCommandResponse(agentID string, resp *pb.CommandResponse)
 		return
 	}
 
+	// Handle special command IDs / 处理特殊命令 ID
+	if resp.CommandId == "PROCESS_EVENT_REPORT" {
+		s.logger.Info("Received PROCESS_EVENT_REPORT / 收到 PROCESS_EVENT_REPORT",
+			zap.String("agent_id", agentID),
+			zap.String("output_preview", truncateString(resp.Output, 200)),
+		)
+
+		// Parse process event from output / 从输出解析进程事件
+		report, err := parseProcessEventFromResponse(resp.Output)
+		if err != nil {
+			s.logger.Error("Failed to parse process event report / 解析进程事件报告失败",
+				zap.String("agent_id", agentID),
+				zap.String("output", resp.Output),
+				zap.Error(err),
+			)
+			return
+		}
+
+		s.logger.Info("Parsed process event report / 解析进程事件报告成功",
+			zap.String("agent_id", agentID),
+			zap.String("event_type", report.EventType.String()),
+			zap.Int32("pid", report.Pid),
+			zap.String("process_name", report.ProcessName),
+			zap.String("install_dir", report.InstallDir),
+		)
+
+		// Handle the process event / 处理进程事件
+		if err := s.HandleProcessEventReport(context.Background(), agentID, report); err != nil {
+			s.logger.Error("Failed to handle process event report / 处理进程事件报告失败",
+				zap.String("agent_id", agentID),
+				zap.Error(err),
+			)
+		}
+		return
+	}
+
 	s.logger.Debug("Received command response",
 		zap.String("agent_id", agentID),
 		zap.String("command_id", resp.CommandId),
@@ -298,6 +352,15 @@ func (s *Server) handleCommandResponse(agentID string, resp *pb.CommandResponse)
 	if s.auditRepo != nil {
 		s.updateCommandLog(resp)
 	}
+}
+
+// truncateString truncates a string to the specified length.
+// truncateString 将字符串截断到指定长度。
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // updateCommandLog updates the command log with the response data.
@@ -519,7 +582,23 @@ type MonitorService interface {
 // ClusterNodeProvider 提供集群节点信息。
 type ClusterNodeProvider interface {
 	GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error)
-	UpdateNodeManuallyStopped(ctx context.Context, nodeID uint, manuallyStopped bool) error
+	// GetNodesByHostID returns all nodes on a specific host with their cluster's monitor config.
+	// GetNodesByHostID 返回特定主机上的所有节点及其集群的监控配置。
+	GetNodesByHostID(ctx context.Context, hostID uint) ([]*NodeWithMonitorConfig, error)
+	// UpdateNodeProcessStatus updates the process PID and status for a node.
+	// UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
+	UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error
+}
+
+// NodeWithMonitorConfig represents a node with its cluster's monitor config.
+// NodeWithMonitorConfig 表示带有集群监控配置的节点。
+type NodeWithMonitorConfig struct {
+	ClusterID     uint                   `json:"cluster_id"`
+	NodeID        uint                   `json:"node_id"`
+	InstallDir    string                 `json:"install_dir"`
+	Role          string                 `json:"role"`
+	ProcessPID    int                    `json:"process_pid"`
+	MonitorConfig *monitor.MonitorConfig `json:"monitor_config"`
 }
 
 // monitorService is the monitor service for handling process events.
@@ -580,11 +659,12 @@ func (s *Server) HandleDiscoverClusters(ctx context.Context, agentID string, par
 // HandleUpdateMonitorConfig 处理 UPDATE_MONITOR_CONFIG 命令。
 // Requirements: 5.4, 7.5 - Push monitor config to agent
 // Task 11.2
-func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, config *monitor.MonitorConfig) error {
+func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, config *monitor.MonitorConfig, processes []*monitor.TrackedProcessInfo) error {
 	s.logger.Info("Handling UPDATE_MONITOR_CONFIG command / 处理 UPDATE_MONITOR_CONFIG 命令",
 		zap.String("agent_id", agentID),
 		zap.Uint("cluster_id", config.ClusterID),
 		zap.Int("config_version", config.ConfigVersion),
+		zap.Int("process_count", len(processes)),
 	)
 
 	// Build parameters / 构建参数
@@ -600,6 +680,16 @@ func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, 
 		"cooldown_period": fmt.Sprintf("%d", config.CooldownPeriod),
 	}
 
+	// Add tracked processes as JSON / 添加跟踪进程列表（JSON 格式）
+	if len(processes) > 0 {
+		processesJSON, err := json.Marshal(processes)
+		if err != nil {
+			s.logger.Error("Failed to marshal processes / 序列化进程列表失败", zap.Error(err))
+		} else {
+			params["tracked_processes"] = string(processesJSON)
+		}
+	}
+
 	// Send UPDATE_MONITOR_CONFIG command to agent / 向 Agent 发送 UPDATE_MONITOR_CONFIG 命令
 	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_UPDATE_MONITOR_CONFIG, params, 30*time.Second)
 	if err != nil {
@@ -613,6 +703,7 @@ func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, 
 	s.logger.Info("UPDATE_MONITOR_CONFIG command sent / UPDATE_MONITOR_CONFIG 命令已发送",
 		zap.String("agent_id", agentID),
 		zap.Uint("cluster_id", config.ClusterID),
+		zap.Int("process_count", len(processes)),
 	)
 
 	return nil
@@ -627,7 +718,9 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		zap.String("agent_id", agentID),
 		zap.String("event_type", report.EventType.String()),
 		zap.Int32("pid", report.Pid),
+		zap.String("process_name", report.ProcessName),
 		zap.String("install_dir", report.InstallDir),
+		zap.String("role", report.Role),
 	)
 
 	if monitorService == nil || clusterNodeProvider == nil {
@@ -638,8 +731,16 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 	// Get agent connection to find host ID / 获取 Agent 连接以查找主机 ID
 	conn, ok := s.agentManager.GetAgent(agentID)
 	if !ok {
+		s.logger.Warn("Agent not found for event report / 未找到事件上报的 Agent",
+			zap.String("agent_id", agentID),
+		)
 		return agent.ErrAgentNotFound
 	}
+
+	s.logger.Debug("Found agent connection / 找到 Agent 连接",
+		zap.String("agent_id", agentID),
+		zap.Uint("host_id", conn.HostID),
+	)
 
 	// Find cluster and node by host ID and install dir / 根据主机 ID 和安装目录查找集群和节点
 	clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, report.InstallDir)
@@ -660,6 +761,11 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		return nil
 	}
 
+	s.logger.Info("Found cluster node for event / 找到事件对应的集群节点",
+		zap.Uint("cluster_id", clusterID),
+		zap.Uint("node_id", nodeID),
+	)
+
 	// Map protobuf event type to monitor event type / 将 protobuf 事件类型映射到监控事件类型
 	var eventType monitor.ProcessEventType
 	switch report.EventType {
@@ -671,6 +777,8 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		eventType = monitor.EventTypeCrashed
 	case pb.ProcessEventType_PROCESS_RESTARTED:
 		eventType = monitor.EventTypeRestarted
+	case pb.ProcessEventType_PROCESS_RESTART_FAILED:
+		eventType = monitor.EventTypeRestartFailed
 	default:
 		s.logger.Warn("Unknown process event type / 未知的进程事件类型",
 			zap.String("event_type", report.EventType.String()),
@@ -698,6 +806,41 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		return err
 	}
 
+	// Update node process status in database / 更新数据库中节点的进程状态
+	var processStatus string
+	switch eventType {
+	case monitor.EventTypeStarted, monitor.EventTypeRestarted:
+		processStatus = "running"
+	case monitor.EventTypeStopped:
+		processStatus = "stopped"
+	case monitor.EventTypeCrashed, monitor.EventTypeRestartFailed:
+		processStatus = "crashed"
+	}
+
+	s.logger.Info("Updating node process status / 更新节点进程状态",
+		zap.Uint("node_id", nodeID),
+		zap.Int32("pid", report.Pid),
+		zap.String("status", processStatus),
+		zap.String("event_type", string(eventType)),
+	)
+
+	if processStatus != "" {
+		if err := clusterNodeProvider.UpdateNodeProcessStatus(ctx, nodeID, int(report.Pid), processStatus); err != nil {
+			s.logger.Error("Failed to update node process status / 更新节点进程状态失败",
+				zap.Uint("node_id", nodeID),
+				zap.Int32("pid", report.Pid),
+				zap.String("status", processStatus),
+				zap.Error(err),
+			)
+		} else {
+			s.logger.Info("Node process status updated successfully / 节点进程状态更新成功",
+				zap.Uint("node_id", nodeID),
+				zap.Int32("pid", report.Pid),
+				zap.String("status", processStatus),
+			)
+		}
+	}
+
 	s.logger.Info("Process event recorded / 进程事件已记录",
 		zap.Uint("cluster_id", clusterID),
 		zap.Uint("node_id", nodeID),
@@ -707,90 +850,241 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 	return nil
 }
 
-// HandleMarkManualStop handles MARK_MANUAL_STOP command.
-// HandleMarkManualStop 处理 MARK_MANUAL_STOP 命令。
-// Requirements: 8.1, 8.4 - Mark node as manually stopped
-// Task 11.4
-func (s *Server) HandleMarkManualStop(ctx context.Context, agentID string, params map[string]string) error {
-	s.logger.Info("Handling MARK_MANUAL_STOP command / 处理 MARK_MANUAL_STOP 命令",
-		zap.String("agent_id", agentID),
-		zap.Any("params", params),
-	)
-
-	// Send MARK_MANUAL_STOP command to agent / 向 Agent 发送 MARK_MANUAL_STOP 命令
-	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_MARK_MANUAL_STOP, params, 30*time.Second)
-	if err != nil {
-		s.logger.Error("Failed to send MARK_MANUAL_STOP command / 发送 MARK_MANUAL_STOP 命令失败",
-			zap.String("agent_id", agentID),
-			zap.Error(err),
-		)
-		return err
-	}
-
-	// Update node manually stopped status in database / 更新数据库中节点的手动停止状态
-	if clusterNodeProvider != nil {
-		installDir := params["install_dir"]
-		conn, ok := s.agentManager.GetAgent(agentID)
-		if ok && installDir != "" {
-			clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, installDir)
-			if err == nil && found {
-				_ = clusterNodeProvider.UpdateNodeManuallyStopped(ctx, nodeID, true)
-				s.logger.Info("Node marked as manually stopped / 节点已标记为手动停止",
-					zap.Uint("cluster_id", clusterID),
-					zap.Uint("node_id", nodeID),
-				)
-			}
-		}
-	}
-
-	return nil
-}
-
-// HandleClearManualStop handles CLEAR_MANUAL_STOP command.
-// HandleClearManualStop 处理 CLEAR_MANUAL_STOP 命令。
-// Requirements: 8.3, 8.4 - Clear manual stop flag
-// Task 11.4
-func (s *Server) HandleClearManualStop(ctx context.Context, agentID string, params map[string]string) error {
-	s.logger.Info("Handling CLEAR_MANUAL_STOP command / 处理 CLEAR_MANUAL_STOP 命令",
-		zap.String("agent_id", agentID),
-		zap.Any("params", params),
-	)
-
-	// Send CLEAR_MANUAL_STOP command to agent / 向 Agent 发送 CLEAR_MANUAL_STOP 命令
-	_, err := s.agentManager.SendCommand(ctx, agentID, pb.CommandType_CLEAR_MANUAL_STOP, params, 30*time.Second)
-	if err != nil {
-		s.logger.Error("Failed to send CLEAR_MANUAL_STOP command / 发送 CLEAR_MANUAL_STOP 命令失败",
-			zap.String("agent_id", agentID),
-			zap.Error(err),
-		)
-		return err
-	}
-
-	// Update node manually stopped status in database / 更新数据库中节点的手动停止状态
-	if clusterNodeProvider != nil {
-		installDir := params["install_dir"]
-		conn, ok := s.agentManager.GetAgent(agentID)
-		if ok && installDir != "" {
-			clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, installDir)
-			if err == nil && found {
-				_ = clusterNodeProvider.UpdateNodeManuallyStopped(ctx, nodeID, false)
-				s.logger.Info("Node manual stop flag cleared / 节点手动停止标记已清除",
-					zap.Uint("cluster_id", clusterID),
-					zap.Uint("node_id", nodeID),
-				)
-			}
-		}
-	}
-
-	return nil
-}
-
 // parseProcessEventFromResponse parses process event from command response.
 // parseProcessEventFromResponse 从命令响应中解析进程事件。
 func parseProcessEventFromResponse(output string) (*pb.ProcessEventReport, error) {
-	var report pb.ProcessEventReport
-	if err := json.Unmarshal([]byte(output), &report); err != nil {
-		return nil, err
+	// First try to unmarshal as a map to handle both numeric and string enum values
+	// 首先尝试解析为 map 以处理数字和字符串枚举值
+	var rawData map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &rawData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
-	return &report, nil
+
+	report := &pb.ProcessEventReport{}
+
+	// Parse agent_id / 解析 agent_id
+	if v, ok := rawData["agent_id"].(string); ok {
+		report.AgentId = v
+	}
+
+	// Parse event_type (can be number or string) / 解析 event_type（可以是数字或字符串）
+	if v, ok := rawData["event_type"].(float64); ok {
+		report.EventType = pb.ProcessEventType(int32(v))
+	} else if v, ok := rawData["event_type"].(string); ok {
+		// Handle string enum value / 处理字符串枚举值
+		if enumVal, ok := pb.ProcessEventType_value[v]; ok {
+			report.EventType = pb.ProcessEventType(enumVal)
+		}
+	}
+
+	// Parse pid / 解析 pid
+	if v, ok := rawData["pid"].(float64); ok {
+		report.Pid = int32(v)
+	}
+
+	// Parse process_name / 解析 process_name
+	if v, ok := rawData["process_name"].(string); ok {
+		report.ProcessName = v
+	}
+
+	// Parse install_dir / 解析 install_dir
+	if v, ok := rawData["install_dir"].(string); ok {
+		report.InstallDir = v
+	}
+
+	// Parse role / 解析 role
+	if v, ok := rawData["role"].(string); ok {
+		report.Role = v
+	}
+
+	// Parse timestamp / 解析 timestamp
+	if v, ok := rawData["timestamp"].(float64); ok {
+		report.Timestamp = int64(v)
+	}
+
+	// Parse details / 解析 details
+	if v, ok := rawData["details"].(map[string]interface{}); ok {
+		report.Details = make(map[string]string)
+		for k, val := range v {
+			if s, ok := val.(string); ok {
+				report.Details[k] = s
+			}
+		}
+	}
+
+	return report, nil
+}
+
+// pushMonitorConfigToAgent pushes monitor config to agent after registration.
+// pushMonitorConfigToAgent 在注册后向 Agent 推送监控配置。
+// This ensures agent has the correct process tracking info after restart.
+// 这确保 Agent 重启后有正确的进程跟踪信息。
+func (s *Server) pushMonitorConfigToAgent(ctx context.Context, agentID string, hostID uint) {
+	// Wait for agent command stream to be ready / 等待 Agent 命令流就绪
+	// Agent needs time to establish the bidirectional stream after registration
+	// Agent 注册后需要时间建立双向流
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		time.Sleep(3 * time.Second)
+		
+		// Check if agent has command stream available / 检查 Agent 是否有可用的命令流
+		conn, ok := s.agentManager.GetAgent(agentID)
+		if ok && conn.Stream != nil {
+			break
+		}
+		
+		if i == maxRetries-1 {
+			s.logger.Warn("Agent command stream not ready after retries, skipping config push / Agent 命令流重试后仍未就绪，跳过配置推送",
+				zap.String("agent_id", agentID),
+				zap.Int("retries", maxRetries),
+			)
+			return
+		}
+	}
+
+	if clusterNodeProvider == nil {
+		s.logger.Debug("Cluster node provider not configured, skipping monitor config push / 集群节点提供者未配置，跳过监控配置推送")
+		return
+	}
+
+	// Get all nodes on this host / 获取此主机上的所有节点
+	nodes, err := clusterNodeProvider.GetNodesByHostID(ctx, hostID)
+	if err != nil {
+		s.logger.Warn("Failed to get nodes for host / 获取主机节点失败",
+			zap.Uint("host_id", hostID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if len(nodes) == 0 {
+		s.logger.Debug("No nodes found on host, skipping monitor config push / 主机上没有节点，跳过监控配置推送",
+			zap.Uint("host_id", hostID),
+		)
+		return
+	}
+
+	// Group nodes by cluster and build tracked processes / 按集群分组节点并构建跟踪进程列表
+	// For simplicity, we send all processes in one command with the first cluster's config
+	// 为简单起见，我们使用第一个集群的配置发送所有进程
+	// Include all nodes (even stopped ones) to sync manually_stopped state
+	// 包含所有节点（即使已停止）以同步 manually_stopped 状态
+	var trackedProcesses []map[string]interface{}
+	var firstConfig *monitor.MonitorConfig
+
+	for _, node := range nodes {
+		// Include all nodes with install_dir, not just running ones
+		// 包含所有有安装目录的节点，不仅仅是运行中的
+		if node.InstallDir != "" {
+			processName := "seatunnel"
+			if node.Role != "" && node.Role != "hybrid" && node.Role != "master/worker" {
+				processName = "seatunnel-" + node.Role
+			}
+			trackedProcesses = append(trackedProcesses, map[string]interface{}{
+				"pid":         node.ProcessPID, // Can be 0 for stopped processes / 已停止的进程可以为 0
+				"name":        processName,
+				"install_dir": node.InstallDir,
+				"role":        node.Role,
+			})
+		}
+		if firstConfig == nil && node.MonitorConfig != nil {
+			firstConfig = node.MonitorConfig
+		}
+	}
+
+	if len(trackedProcesses) == 0 {
+		s.logger.Debug("No nodes to track on host / 主机上没有需要跟踪的节点",
+			zap.Uint("host_id", hostID),
+		)
+		return
+	}
+
+	// Use default config if none found / 如果没有找到配置则使用默认配置
+	if firstConfig == nil {
+		firstConfig = monitor.DefaultMonitorConfig(0)
+	}
+
+	// Build parameters / 构建参数
+	params := map[string]string{
+		"cluster_id":       "0", // Multiple clusters, use 0 / 多个集群，使用 0
+		"config_version":   fmt.Sprintf("%d", firstConfig.ConfigVersion),
+		"auto_monitor":     fmt.Sprintf("%t", firstConfig.AutoMonitor),
+		"auto_restart":     fmt.Sprintf("%t", firstConfig.AutoRestart),
+		"monitor_interval": fmt.Sprintf("%d", firstConfig.MonitorInterval),
+		"restart_delay":    fmt.Sprintf("%d", firstConfig.RestartDelay),
+		"max_restarts":     fmt.Sprintf("%d", firstConfig.MaxRestarts),
+		"time_window":      fmt.Sprintf("%d", firstConfig.TimeWindow),
+		"cooldown_period":  fmt.Sprintf("%d", firstConfig.CooldownPeriod),
+	}
+
+	// Add tracked processes as JSON / 添加跟踪进程列表（JSON 格式）
+	processesJSON, err := json.Marshal(trackedProcesses)
+	if err != nil {
+		s.logger.Error("Failed to marshal tracked processes / 序列化跟踪进程列表失败", zap.Error(err))
+		return
+	}
+	params["tracked_processes"] = string(processesJSON)
+
+	// Send UPDATE_MONITOR_CONFIG command / 发送 UPDATE_MONITOR_CONFIG 命令
+	_, err = s.agentManager.SendCommand(ctx, agentID, pb.CommandType_UPDATE_MONITOR_CONFIG, params, 30*time.Second)
+	if err != nil {
+		s.logger.Warn("Failed to push monitor config to agent / 向 Agent 推送监控配置失败",
+			zap.String("agent_id", agentID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	s.logger.Info("Monitor config pushed to agent after registration / 注册后已向 Agent 推送监控配置",
+		zap.String("agent_id", agentID),
+		zap.Uint("host_id", hostID),
+		zap.Int("process_count", len(trackedProcesses)),
+	)
+}
+
+// updateProcessStatusFromHeartbeat updates cluster_nodes process status from heartbeat data.
+// updateProcessStatusFromHeartbeat 从心跳数据更新 cluster_nodes 的进程状态。
+func (s *Server) updateProcessStatusFromHeartbeat(ctx context.Context, hostID uint, processes []*pb.ProcessStatus) {
+	if clusterNodeProvider == nil {
+		return
+	}
+
+	// Get all nodes on this host / 获取此主机上的所有节点
+	nodes, err := clusterNodeProvider.GetNodesByHostID(ctx, hostID)
+	if err != nil {
+		s.logger.Warn("Failed to get nodes for heartbeat update / 获取节点用于心跳更新失败",
+			zap.Uint("host_id", hostID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// Create a map of process name to status / 创建进程名到状态的映射
+	processMap := make(map[string]*pb.ProcessStatus)
+	for _, proc := range processes {
+		processMap[proc.Name] = proc
+	}
+
+	// Update each node's process status / 更新每个节点的进程状态
+	for _, node := range nodes {
+		// Determine process name based on role / 根据角色确定进程名
+		processName := "seatunnel"
+		if node.Role != "" && node.Role != "hybrid" && node.Role != "master/worker" {
+			processName = "seatunnel-" + node.Role
+		}
+
+		// Find matching process / 查找匹配的进程
+		proc, found := processMap[processName]
+		if !found {
+			continue
+		}
+
+		// Update node process status / 更新节点进程状态
+		if err := clusterNodeProvider.UpdateNodeProcessStatus(ctx, node.NodeID, int(proc.Pid), proc.Status); err != nil {
+			s.logger.Warn("Failed to update node process status from heartbeat / 从心跳更新节点进程状态失败",
+				zap.Uint("node_id", node.NodeID),
+				zap.Error(err),
+			)
+		}
+	}
 }

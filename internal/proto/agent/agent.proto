@@ -395,6 +395,7 @@ enum ProcessEventType {
   PROCESS_STOPPED = 2;      // 进程停止 / Process stopped
   PROCESS_CRASHED = 3;      // 进程崩溃 / Process crashed
   PROCESS_RESTARTED = 4;    // 进程重启 / Process restarted
+  PROCESS_RESTART_FAILED = 5; // 重启失败 / Restart failed
 }
 
 // ProcessEventReport - 进程事件上报

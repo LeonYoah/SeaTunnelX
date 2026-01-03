@@ -27,14 +27,44 @@ import (
 // AgentConfigSender defines the interface for sending config to agents.
 // AgentConfigSender 定义向 Agent 发送配置的接口。
 type AgentConfigSender interface {
-	SendMonitorConfig(ctx context.Context, agentID string, config *MonitorConfig) error
+	// SendMonitorConfig sends monitor config and tracked processes to agent.
+	// SendMonitorConfig 向 Agent 发送监控配置和跟踪的进程列表。
+	SendMonitorConfig(ctx context.Context, agentID string, config *MonitorConfig, processes []*TrackedProcessInfo) error
+}
+
+// TrackedProcessInfo represents a process to be tracked by the agent.
+// TrackedProcessInfo 表示需要被 Agent 跟踪的进程信息。
+type TrackedProcessInfo struct {
+	PID        int    `json:"pid"`         // 进程 PID / Process PID
+	Name       string `json:"name"`        // 进程名称 / Process name (e.g., "seatunnel-master")
+	InstallDir string `json:"install_dir"` // 安装目录 / Install directory
+	Role       string `json:"role"`        // 节点角色 / Node role
+}
+
+// ClusterNodeProvider defines the interface for getting cluster node information.
+// ClusterNodeProvider 定义获取集群节点信息的接口。
+type ClusterNodeProvider interface {
+	// GetNodesByClusterID returns all nodes for a cluster.
+	// GetNodesByClusterID 返回集群的所有节点。
+	GetNodesByClusterID(ctx context.Context, clusterID uint) ([]*NodeInfoForMonitor, error)
+}
+
+// NodeInfoForMonitor represents node info needed for monitoring.
+// NodeInfoForMonitor 表示监控所需的节点信息。
+type NodeInfoForMonitor struct {
+	HostID     uint   `json:"host_id"`
+	AgentID    string `json:"agent_id"`
+	InstallDir string `json:"install_dir"`
+	Role       string `json:"role"`
+	ProcessPID int    `json:"process_pid"`
 }
 
 // Service provides monitor configuration and event management.
 // Service 提供监控配置和事件管理。
 type Service struct {
-	repo        *Repository
-	configSender AgentConfigSender
+	repo             *Repository
+	configSender     AgentConfigSender
+	nodeProvider     ClusterNodeProvider
 }
 
 // NewService creates a new monitor service.
@@ -49,6 +79,12 @@ func NewService(repo *Repository) *Service {
 // SetConfigSender 设置 Agent 配置发送器。
 func (s *Service) SetConfigSender(sender AgentConfigSender) {
 	s.configSender = sender
+}
+
+// SetNodeProvider sets the cluster node provider.
+// SetNodeProvider 设置集群节点提供者。
+func (s *Service) SetNodeProvider(provider ClusterNodeProvider) {
+	s.nodeProvider = provider
 }
 
 // ==================== MonitorConfig Operations 监控配置操作 ====================
@@ -171,7 +207,67 @@ func (s *Service) UpdateConfig(ctx context.Context, clusterID uint, req *UpdateM
 	log.Printf("[Monitor] Updated config for cluster %d, version %d / 更新集群 %d 配置，版本 %d",
 		clusterID, config.ConfigVersion, clusterID, config.ConfigVersion)
 
+	// Push config to agents / 推送配置到 Agent
+	// This is done asynchronously to not block the API response
+	// Use a background context since the HTTP request context will be canceled after response
+	// 异步执行以不阻塞 API 响应
+	// 使用后台 context，因为 HTTP 请求 context 在响应后会被取消
+	go s.pushConfigToAgents(context.Background(), clusterID, config)
+
 	return config, nil
+}
+
+// pushConfigToAgents pushes monitor config to all agents in the cluster.
+// pushConfigToAgents 将监控配置推送到集群中的所有 Agent。
+func (s *Service) pushConfigToAgents(ctx context.Context, clusterID uint, config *MonitorConfig) {
+	if s.configSender == nil || s.nodeProvider == nil {
+		log.Printf("[Monitor] Config sender or node provider not configured, skipping push / 配置发送器或节点提供者未配置，跳过推送")
+		return
+	}
+
+	// Get all nodes in the cluster / 获取集群中的所有节点
+	nodes, err := s.nodeProvider.GetNodesByClusterID(ctx, clusterID)
+	if err != nil {
+		log.Printf("[Monitor] Failed to get nodes for cluster %d: %v / 获取集群 %d 节点失败：%v", clusterID, err, clusterID, err)
+		return
+	}
+
+	// Group nodes by agent ID / 按 Agent ID 分组节点
+	agentProcesses := make(map[string][]*TrackedProcessInfo)
+	for _, node := range nodes {
+		if node.AgentID == "" {
+			continue
+		}
+		// When auto-restart is enabled, track all processes (including PID=0) so agent can restart them
+		// When auto-restart is disabled, only track running processes (PID > 0)
+		// 当启用自动重启时，跟踪所有进程（包括 PID=0），以便 Agent 可以重启它们
+		// 当禁用自动重启时，只跟踪运行中的进程（PID > 0）
+		if config.AutoRestart || node.ProcessPID > 0 {
+			processName := "seatunnel"
+			if node.Role != "" && node.Role != "hybrid" && node.Role != "master/worker" {
+				processName = "seatunnel-" + node.Role
+			}
+			agentProcesses[node.AgentID] = append(agentProcesses[node.AgentID], &TrackedProcessInfo{
+				PID:        node.ProcessPID,
+				Name:       processName,
+				InstallDir: node.InstallDir,
+				Role:       node.Role,
+			})
+		}
+	}
+
+	// Send config to each agent / 向每个 Agent 发送配置
+	for agentID, processes := range agentProcesses {
+		if err := s.configSender.SendMonitorConfig(ctx, agentID, config, processes); err != nil {
+			log.Printf("[Monitor] Failed to send config to agent %s: %v / 向 Agent %s 发送配置失败：%v", agentID, err, agentID, err)
+		} else {
+			log.Printf("[Monitor] Sent config to agent %s with %d processes / 向 Agent %s 发送配置，包含 %d 个进程",
+				agentID, len(processes), agentID, len(processes))
+		}
+	}
+
+	// Mark config as synced / 标记配置已同步
+	s.MarkConfigSynced(ctx, clusterID)
 }
 
 // DeleteConfig deletes monitor config for a cluster.
