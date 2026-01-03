@@ -304,6 +304,20 @@ func (m *ProcessMonitor) notifyEvent(event *ProcessEvent) {
 // TrackProcess starts tracking a process
 // TrackProcess 开始跟踪一个进程
 func (m *ProcessMonitor) TrackProcess(name string, pid int, installDir, role string, startParams *process.StartParams) {
+	m.TrackProcessWithEvent(name, pid, installDir, role, startParams, true)
+}
+
+// TrackProcessSilent starts tracking a process without sending started event.
+// Used when Agent restarts and re-tracks existing running processes.
+// TrackProcessSilent 静默开始跟踪进程，不发送启动事件。
+// 用于 Agent 重启后重新跟踪已运行的进程。
+func (m *ProcessMonitor) TrackProcessSilent(name string, pid int, installDir, role string, startParams *process.StartParams) {
+	m.TrackProcessWithEvent(name, pid, installDir, role, startParams, false)
+}
+
+// TrackProcessWithEvent starts tracking a process with optional event notification.
+// TrackProcessWithEvent 开始跟踪进程，可选是否发送事件通知。
+func (m *ProcessMonitor) TrackProcessWithEvent(name string, pid int, installDir, role string, startParams *process.StartParams, sendEvent bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -321,18 +335,20 @@ func (m *ProcessMonitor) TrackProcess(name string, pid int, installDir, role str
 	m.trackedProcesses[name] = proc
 	fmt.Printf("[ProcessMonitor] Tracking process: %s (PID: %d) / 跟踪进程：%s（PID：%d）\n", name, pid, name, pid)
 
-	// Generate started event / 生成启动事件
-	event := &ProcessEvent{
-		Type:      EventStarted,
-		PID:       pid,
-		Name:      name,
-		Timestamp: time.Now(),
-		Details: map[string]interface{}{
-			"install_dir": installDir,
-			"role":        role,
-		},
+	// Generate started event only if requested / 仅在需要时生成启动事件
+	if sendEvent {
+		event := &ProcessEvent{
+			Type:      EventStarted,
+			PID:       pid,
+			Name:      name,
+			Timestamp: time.Now(),
+			Details: map[string]interface{}{
+				"install_dir": installDir,
+				"role":        role,
+			},
+		}
+		m.notifyEvent(event)
 	}
-	m.notifyEvent(event)
 }
 
 // UntrackProcess stops tracking a process

@@ -727,7 +727,10 @@ func initGRPCServer(ctx context.Context) (*grpcServer.Server, *agent.Manager) {
 		clusterService: clusterService,
 		monitorService: monitorService,
 	})
-	log.Println("[gRPC] Cluster node provider set for gRPC handlers / 已为 gRPC 处理器设置集群节点提供者")
+	// Set monitor service for gRPC handlers (for recording process events)
+	// 设置 gRPC 处理器的监控服务（用于记录进程事件）
+	grpcServer.SetMonitorService(monitorService)
+	log.Println("[gRPC] Cluster node provider and monitor service set for gRPC handlers / 已为 gRPC 处理器设置集群节点提供者和监控服务")
 
 	if err := srv.Start(ctx); err != nil {
 		log.Printf("[gRPC] 启动 gRPC 服务器失败: %v / Failed to start gRPC server: %v\n", err, err)
@@ -1536,10 +1539,10 @@ type grpcClusterNodeProviderAdapter struct {
 	monitorService *monitor.Service
 }
 
-// GetNodeByHostAndInstallDir returns cluster and node ID by host ID and install dir.
-// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录返回集群和节点 ID。
-func (a *grpcClusterNodeProviderAdapter) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error) {
-	return a.clusterService.GetNodeByHostAndInstallDir(ctx, hostID, installDir)
+// GetNodeByHostAndInstallDirAndRole returns cluster and node ID by host ID, install dir and role.
+// GetNodeByHostAndInstallDirAndRole 根据主机 ID、安装目录和角色返回集群和节点 ID。
+func (a *grpcClusterNodeProviderAdapter) GetNodeByHostAndInstallDirAndRole(ctx context.Context, hostID uint, installDir, role string) (clusterID, nodeID uint, found bool, err error) {
+	return a.clusterService.GetNodeByHostAndInstallDirAndRole(ctx, hostID, installDir, role)
 }
 
 // GetNodesByHostID returns all nodes on a specific host with their cluster's monitor config.

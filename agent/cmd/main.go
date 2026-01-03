@@ -1104,16 +1104,30 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 		LogDir:     getParamString(cmd.Parameters, "log_dir", ""),
 	}
 
+	// Check if auto-restart is enabled to avoid conflict
+	// 检查是否启用了自动重启以避免冲突
+	if a.autoRestarter.IsEnabled() {
+		// Auto-restart enabled: register process with PID=0, let auto-restarter handle the actual start
+		// 自动重启已启用：用 PID=0 注册进程，让自动重启器处理实际的启动
+		a.processMonitor.TrackProcessSilent(processName, 0, installDir, role, params)
+		a.autoRestarter.ResetRestartCount(processName)
+		fmt.Printf("[Agent] Process registered for auto-start: %s (auto-restart will handle startup) / 进程已注册等待自动启动：%s（自动重启将处理启动）\n",
+			processName, processName)
+		reporter.Report(100, "Process registered for auto-start / 进程已注册等待自动启动")
+		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process registered for auto-start (role: %s) / 进程已注册等待自动启动（角色：%s）", role, role)), nil
+	}
+
+	// Auto-restart disabled: start process directly
+	// 自动重启已禁用：直接启动进程
 	err := a.processManager.StartProcess(ctx, processName, params)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}
 
-	// Track the process for auto-restart / 跟踪进程以支持自动重启
+	// Track the process / 跟踪进程
 	// Get the PID from process manager / 从进程管理器获取 PID
 	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
 		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, params)
-		a.autoRestarter.ResetRestartCount(processName)
 		fmt.Printf("[Agent] Process started and tracked: %s (PID: %d) / 进程已启动并跟踪：%s（PID：%d）\n",
 			processName, info.PID, processName, info.PID)
 	}
@@ -1194,6 +1208,28 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 		Role:       role,
 	}
 
+	// Check if auto-restart is enabled to avoid conflict
+	// 检查是否启用了自动重启以避免冲突
+	if a.autoRestarter.IsEnabled() {
+		// Auto-restart enabled: stop process, then set PID=0 to let auto-restarter handle the start
+		// 自动重启已启用：停止进程，然后设置 PID=0 让自动重启器处理启动
+		err := a.processManager.StopProcess(ctx, processName, stopParams)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+
+		// Register process with PID=0, auto-restarter will start it
+		// 用 PID=0 注册进程，自动重启器会启动它
+		a.processMonitor.TrackProcessSilent(processName, 0, installDir, role, startParams)
+		a.autoRestarter.ResetRestartCount(processName)
+		fmt.Printf("[Agent] Process stopped, registered for auto-restart: %s / 进程已停止，已注册等待自动重启：%s\n",
+			processName, processName)
+		reporter.Report(100, "Process stopped, auto-restart will start it / 进程已停止，自动重启将启动它")
+		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process stopped, auto-restart will start it (role: %s) / 进程已停止，自动重启将启动它（角色：%s）", role, role)), nil
+	}
+
+	// Auto-restart disabled: restart process directly
+	// 自动重启已禁用：直接重启进程
 	err := a.processManager.RestartProcess(ctx, processName, startParams, stopParams)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
@@ -1202,7 +1238,6 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 	// Update tracking with new PID / 使用新 PID 更新跟踪
 	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
 		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, startParams)
-		a.autoRestarter.ResetRestartCount(processName)
 		fmt.Printf("[Agent] Process restarted and tracked: %s (PID: %d) / 进程已重启并跟踪：%s（PID：%d）\n",
 			processName, info.PID, processName, info.PID)
 	}
@@ -1788,14 +1823,15 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 				}
 
 				if proc.PID > 0 {
-					// Track running process / 跟踪运行中的进程
-					a.processMonitor.TrackProcess(proc.Name, proc.PID, proc.InstallDir, proc.Role, startParams)
-					fmt.Printf("[Agent] Tracking running process: %s (PID: %d, Role: %s, Dir: %s) / 跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）\n",
+					// Track running process silently - no started event since process was already running
+					// 静默跟踪运行中的进程 - 不发送 started 事件，因为进程已经在运行
+					a.processMonitor.TrackProcessSilent(proc.Name, proc.PID, proc.InstallDir, proc.Role, startParams)
+					fmt.Printf("[Agent] Tracking running process (silent): %s (PID: %d, Role: %s, Dir: %s) / 静默跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）\n",
 						proc.Name, proc.PID, proc.Role, proc.InstallDir, proc.Name, proc.PID, proc.Role, proc.InstallDir)
 				} else {
 					// For stopped processes, register with PID 0 - auto-restart will start them if enabled
 					// 对于已停止的进程，用 PID 0 注册 - 如果启用了自动重启，会自动启动它们
-					a.processMonitor.TrackProcess(proc.Name, 0, proc.InstallDir, proc.Role, startParams)
+					a.processMonitor.TrackProcessSilent(proc.Name, 0, proc.InstallDir, proc.Role, startParams)
 					fmt.Printf("[Agent] Registered stopped process (will auto-restart): %s (Role: %s, Dir: %s) / 注册已停止的进程（将自动重启）：%s（角色：%s，目录：%s）\n",
 						proc.Name, proc.Role, proc.InstallDir, proc.Name, proc.Role, proc.InstallDir)
 				}

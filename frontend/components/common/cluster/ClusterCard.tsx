@@ -113,7 +113,15 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
     try {
       const result = await services.cluster.startClusterSafe(cluster.id);
       if (result.success) {
-        toast.success(t('cluster.startSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.startSuccessAutoRestart') : t('cluster.startSuccess'));
         onRefresh();
       } else {
         toast.error(result.error || t('cluster.startError'));
@@ -151,7 +159,15 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
     try {
       const result = await services.cluster.restartClusterSafe(cluster.id);
       if (result.success) {
-        toast.success(t('cluster.restartSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.restartSuccessAutoRestart') : t('cluster.restartSuccess'));
         onRefresh();
       } else {
         toast.error(result.error || t('cluster.restartError'));

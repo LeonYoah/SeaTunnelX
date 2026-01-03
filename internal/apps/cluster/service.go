@@ -1579,12 +1579,12 @@ func (s *Service) GetNodeLogs(ctx context.Context, clusterID uint, nodeID uint, 
 // 监控配置下发方法
 // ============================================================================
 
-// GetNodeByHostAndInstallDir retrieves a cluster node by host ID and install directory.
-// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录获取集群节点。
+// GetNodeByHostAndInstallDirAndRole retrieves a cluster node by host ID, install directory and role.
+// GetNodeByHostAndInstallDirAndRole 根据主机 ID、安装目录和角色获取集群节点。
 // This implements the grpc.ClusterNodeProvider interface.
 // 这实现了 grpc.ClusterNodeProvider 接口。
-func (s *Service) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error) {
-	return s.repo.GetNodeByHostAndInstallDir(ctx, hostID, installDir)
+func (s *Service) GetNodeByHostAndInstallDirAndRole(ctx context.Context, hostID uint, installDir, role string) (clusterID, nodeID uint, found bool, err error) {
+	return s.repo.GetNodeByHostAndInstallDirAndRole(ctx, hostID, installDir, role)
 }
 
 // GetClusterNodesWithAgentInfo retrieves all nodes for a cluster with agent information.

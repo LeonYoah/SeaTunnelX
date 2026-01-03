@@ -27,7 +27,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Loader2, RefreshCw, Activity, AlertTriangle, CheckCircle, XCircle, Play, Square } from 'lucide-react';
+import { Pagination } from '@/components/ui/pagination';
+import { Loader2, RefreshCw, Activity, AlertTriangle, XCircle, Play, Square } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ProcessEvent,
@@ -167,6 +168,8 @@ export function ProcessEventList({ clusterId, nodeId, limit = 50 }: ProcessEvent
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('monitor.eventType')}</TableHead>
+                  <TableHead>{t('monitor.hostname')}</TableHead>
+                  <TableHead>{t('monitor.ip')}</TableHead>
                   <TableHead>{t('monitor.processName')}</TableHead>
                   <TableHead>{t('monitor.pid')}</TableHead>
                   <TableHead>{t('monitor.role')}</TableHead>
@@ -177,6 +180,8 @@ export function ProcessEventList({ clusterId, nodeId, limit = 50 }: ProcessEvent
                 {events.map((event) => (
                   <TableRow key={event.id}>
                     <TableCell>{renderEventTypeBadge(event.event_type)}</TableCell>
+                    <TableCell className="text-sm">{event.hostname || '-'}</TableCell>
+                    <TableCell className="font-mono text-sm">{event.ip || '-'}</TableCell>
                     <TableCell className="font-mono text-sm">{event.process_name || '-'}</TableCell>
                     <TableCell className="font-mono">{event.pid || '-'}</TableCell>
                     <TableCell>
@@ -191,34 +196,17 @@ export function ProcessEventList({ clusterId, nodeId, limit = 50 }: ProcessEvent
             </Table>
 
             {/* Pagination / 分页 */}
-            {total > pageSize && (
-              <div className="flex items-center justify-between mt-4">
-                <p className="text-sm text-muted-foreground">
-                  {t('common.totalItems', { total })}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1 || loading}
-                  >
-                    {t('common.previous')}
-                  </Button>
-                  <span className="text-sm">
-                    {page} / {Math.ceil(total / pageSize)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={page >= Math.ceil(total / pageSize) || loading}
-                  >
-                    {t('common.next')}
-                  </Button>
-                </div>
-              </div>
-            )}
+            <div className="mt-4 pt-4 border-t">
+              <Pagination
+                currentPage={page}
+                totalPages={Math.ceil(total / pageSize)}
+                pageSize={pageSize}
+                totalItems={total}
+                onPageChange={setPage}
+                showPageSizeSelector={false}
+                showTotalItems={true}
+              />
+            </div>
           </>
         )}
       </CardContent>

@@ -141,6 +141,78 @@ func (r *Repository) ListEvents(ctx context.Context, filter *ProcessEventFilter)
 	return events, total, nil
 }
 
+// ListEventsWithHost retrieves process events with host information.
+// ListEventsWithHost 获取带主机信息的进程事件列表。
+func (r *Repository) ListEventsWithHost(ctx context.Context, filter *ProcessEventFilter) ([]*ProcessEventWithHost, int64, error) {
+	var total int64
+
+	// Build base query for counting / 构建计数基础查询
+	countQuery := r.db.WithContext(ctx).Model(&ProcessEvent{})
+	if filter.ClusterID > 0 {
+		countQuery = countQuery.Where("cluster_id = ?", filter.ClusterID)
+	}
+	if filter.NodeID > 0 {
+		countQuery = countQuery.Where("node_id = ?", filter.NodeID)
+	}
+	if filter.HostID > 0 {
+		countQuery = countQuery.Where("host_id = ?", filter.HostID)
+	}
+	if filter.EventType != "" {
+		countQuery = countQuery.Where("event_type = ?", filter.EventType)
+	}
+	if filter.StartTime != nil {
+		countQuery = countQuery.Where("created_at >= ?", filter.StartTime)
+	}
+	if filter.EndTime != nil {
+		countQuery = countQuery.Where("created_at <= ?", filter.EndTime)
+	}
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Build query with join / 构建带 JOIN 的查询
+	query := r.db.WithContext(ctx).
+		Table("process_events").
+		Select("process_events.*, hosts.name as hostname, hosts.ip_address as ip").
+		Joins("LEFT JOIN hosts ON process_events.host_id = hosts.id")
+
+	// Apply filters / 应用过滤条件
+	if filter.ClusterID > 0 {
+		query = query.Where("process_events.cluster_id = ?", filter.ClusterID)
+	}
+	if filter.NodeID > 0 {
+		query = query.Where("process_events.node_id = ?", filter.NodeID)
+	}
+	if filter.HostID > 0 {
+		query = query.Where("process_events.host_id = ?", filter.HostID)
+	}
+	if filter.EventType != "" {
+		query = query.Where("process_events.event_type = ?", filter.EventType)
+	}
+	if filter.StartTime != nil {
+		query = query.Where("process_events.created_at >= ?", filter.StartTime)
+	}
+	if filter.EndTime != nil {
+		query = query.Where("process_events.created_at <= ?", filter.EndTime)
+	}
+
+	// Apply pagination / 应用分页
+	if filter.Page > 0 && filter.PageSize > 0 {
+		offset := (filter.Page - 1) * filter.PageSize
+		query = query.Offset(offset).Limit(filter.PageSize)
+	}
+
+	// Order by created_at desc / 按创建时间倒序
+	query = query.Order("process_events.created_at DESC")
+
+	var events []*ProcessEventWithHost
+	if err := query.Scan(&events).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return events, total, nil
+}
+
 // ListEventsByClusterID retrieves all events for a cluster.
 // ListEventsByClusterID 获取集群的所有事件。
 func (r *Repository) ListEventsByClusterID(ctx context.Context, clusterID uint, limit int) ([]*ProcessEvent, error) {

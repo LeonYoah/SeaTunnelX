@@ -380,12 +380,12 @@ func (r *Repository) GetClustersWithHostID(ctx context.Context, hostID uint) ([]
 }
 
 
-// GetNodeByHostAndInstallDir retrieves a cluster node by host ID and install directory.
-// GetNodeByHostAndInstallDir 根据主机 ID 和安装目录获取集群节点。
+// GetNodeByHostAndInstallDirAndRole retrieves a cluster node by host ID, install directory and role.
+// GetNodeByHostAndInstallDirAndRole 根据主机 ID、安装目录和角色获取集群节点。
 // Returns clusterID, nodeID, found, error
-func (r *Repository) GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (uint, uint, bool, error) {
+func (r *Repository) GetNodeByHostAndInstallDirAndRole(ctx context.Context, hostID uint, installDir, role string) (uint, uint, bool, error) {
 	var node ClusterNode
-	if err := r.db.WithContext(ctx).Where("host_id = ? AND install_dir = ?", hostID, installDir).First(&node).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("host_id = ? AND install_dir = ? AND role = ?", hostID, installDir, role).First(&node).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, 0, false, nil
 		}

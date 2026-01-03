@@ -161,6 +161,14 @@ type ProcessEventFilter struct {
 	PageSize  int              `json:"page_size"`
 }
 
+// ProcessEventWithHost represents a process event with host information.
+// ProcessEventWithHost 表示带有主机信息的进程事件。
+type ProcessEventWithHost struct {
+	ProcessEvent
+	Hostname string `json:"hostname"` // 主机名 / Hostname
+	IP       string `json:"ip"`       // 主机 IP / Host IP
+}
+
 // DefaultMonitorConfig returns the default monitor configuration.
 // DefaultMonitorConfig 返回默认的监控配置。
 // Requirements: 5.2 - Default config for new clusters

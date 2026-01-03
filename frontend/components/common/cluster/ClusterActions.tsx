@@ -72,10 +72,18 @@ export function ClusterActions({
       }
 
       if (result.success) {
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
         const successMessage = {
-          [OperationType.START]: t('cluster.startSuccess'),
+          [OperationType.START]: isAutoRestart ? t('cluster.startSuccessAutoRestart') : t('cluster.startSuccess'),
           [OperationType.STOP]: t('cluster.stopSuccess'),
-          [OperationType.RESTART]: t('cluster.restartSuccess'),
+          [OperationType.RESTART]: isAutoRestart ? t('cluster.restartSuccessAutoRestart') : t('cluster.restartSuccess'),
         }[operation];
         toast.success(successMessage);
         onOperationComplete();

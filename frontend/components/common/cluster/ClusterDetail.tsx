@@ -213,7 +213,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     try {
       const result = await services.cluster.startClusterSafe(clusterId);
       if (result.success) {
-        toast.success(t('cluster.startSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.startSuccessAutoRestart') : t('cluster.startSuccess'));
         loadClusterData();
       } else {
         toast.error(result.error || t('cluster.startError'));
@@ -251,7 +259,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     try {
       const result = await services.cluster.restartClusterSafe(clusterId);
       if (result.success) {
-        toast.success(t('cluster.restartSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.restartSuccessAutoRestart') : t('cluster.restartSuccess'));
         loadClusterData();
       } else {
         toast.error(result.error || t('cluster.restartError'));
@@ -370,7 +386,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     try {
       const result = await services.cluster.startNodeSafe(clusterId, node.id);
       if (result.success) {
-        toast.success(t('cluster.nodeStartSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.nodeStartSuccessAutoRestart') : t('cluster.nodeStartSuccess'));
         loadClusterData();
       } else {
         toast.error(result.error || t('cluster.nodeStartError'));
@@ -408,7 +432,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     try {
       const result = await services.cluster.restartNodeSafe(clusterId, node.id);
       if (result.success) {
-        toast.success(t('cluster.nodeRestartSuccess'));
+        // Check if auto-restart is managing the startup (check both message and node_results)
+        // 检查是否由自动重启托管启动（检查 message 和 node_results）
+        const isAutoRestart =
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          );
+        toast.success(isAutoRestart ? t('cluster.nodeRestartSuccessAutoRestart') : t('cluster.nodeRestartSuccess'));
         loadClusterData();
       } else {
         toast.error(result.error || t('cluster.nodeRestartError'));
@@ -480,10 +512,21 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     }
     setIsOperating(true);
     try {
+      let hasAutoRestart = false;
       for (const nodeId of selectedNodeIds) {
-        await services.cluster.startNodeSafe(clusterId, nodeId);
+        const result = await services.cluster.startNodeSafe(clusterId, nodeId);
+        // Check both message and node_results / 检查 message 和 node_results
+        if (
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          )
+        ) {
+          hasAutoRestart = true;
+        }
       }
-      toast.success(t('cluster.batchStartSuccess'));
+      toast.success(hasAutoRestart ? t('cluster.batchStartSuccessAutoRestart') : t('cluster.batchStartSuccess'));
       loadClusterData();
     } finally {
       setIsOperating(false);
@@ -522,10 +565,21 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     }
     setIsOperating(true);
     try {
+      let hasAutoRestart = false;
       for (const nodeId of selectedNodeIds) {
-        await services.cluster.restartNodeSafe(clusterId, nodeId);
+        const result = await services.cluster.restartNodeSafe(clusterId, nodeId);
+        // Check both message and node_results / 检查 message 和 node_results
+        if (
+          result.data?.message?.includes('auto-restart') ||
+          result.data?.message?.includes('auto-start') ||
+          result.data?.node_results?.some(
+            (nr) => nr.message?.includes('auto-restart') || nr.message?.includes('auto-start')
+          )
+        ) {
+          hasAutoRestart = true;
+        }
       }
-      toast.success(t('cluster.batchRestartSuccess'));
+      toast.success(hasAutoRestart ? t('cluster.batchRestartSuccessAutoRestart') : t('cluster.batchRestartSuccess'));
       loadClusterData();
     } finally {
       setIsOperating(false);
@@ -553,8 +607,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   }
 
   const canStart = cluster.status === ClusterStatus.CREATED || cluster.status === ClusterStatus.STOPPED;
-  const canStop = cluster.status === ClusterStatus.RUNNING;
-  const canRestart = cluster.status === ClusterStatus.RUNNING;
+  
+  
   const canDelete = cluster.status !== ClusterStatus.RUNNING && cluster.status !== ClusterStatus.DEPLOYING;
 
   const containerVariants = {

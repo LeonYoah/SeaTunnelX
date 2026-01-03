@@ -330,7 +330,7 @@ func (s *Service) GetEvent(ctx context.Context, id uint) (*ProcessEvent, error) 
 // ListEvents retrieves process events with filtering.
 // ListEvents 获取带过滤的进程事件列表。
 // Requirements: 6.4 - List process events
-func (s *Service) ListEvents(ctx context.Context, filter *ProcessEventFilter) ([]*ProcessEvent, int64, error) {
+func (s *Service) ListEvents(ctx context.Context, filter *ProcessEventFilter) ([]*ProcessEventWithHost, int64, error) {
 	// Set default pagination / 设置默认分页
 	if filter.Page <= 0 {
 		filter.Page = 1
@@ -341,7 +341,7 @@ func (s *Service) ListEvents(ctx context.Context, filter *ProcessEventFilter) ([
 	if filter.PageSize > 100 {
 		filter.PageSize = 100
 	}
-	return s.repo.ListEvents(ctx, filter)
+	return s.repo.ListEventsWithHost(ctx, filter)
 }
 
 // ListClusterEvents retrieves recent events for a cluster.

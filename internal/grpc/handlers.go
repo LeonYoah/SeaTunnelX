@@ -324,6 +324,7 @@ func (s *Server) handleCommandResponse(agentID string, resp *pb.CommandResponse)
 			zap.Int32("pid", report.Pid),
 			zap.String("process_name", report.ProcessName),
 			zap.String("install_dir", report.InstallDir),
+			zap.String("role", report.Role),
 		)
 
 		// Handle the process event / 处理进程事件
@@ -581,7 +582,7 @@ type MonitorService interface {
 // ClusterNodeProvider provides cluster node information.
 // ClusterNodeProvider 提供集群节点信息。
 type ClusterNodeProvider interface {
-	GetNodeByHostAndInstallDir(ctx context.Context, hostID uint, installDir string) (clusterID, nodeID uint, found bool, err error)
+	GetNodeByHostAndInstallDirAndRole(ctx context.Context, hostID uint, installDir, role string) (clusterID, nodeID uint, found bool, err error)
 	// GetNodesByHostID returns all nodes on a specific host with their cluster's monitor config.
 	// GetNodesByHostID 返回特定主机上的所有节点及其集群的监控配置。
 	GetNodesByHostID(ctx context.Context, hostID uint) ([]*NodeWithMonitorConfig, error)
@@ -714,7 +715,7 @@ func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, 
 // Requirements: 3.4, 3.5 - Receive and process process events
 // Task 11.3
 func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, report *pb.ProcessEventReport) error {
-	s.logger.Info("Handling ProcessEventReport / 处理 ProcessEventReport",
+	s.logger.Info("[ProcessEvent] Received event report / 收到事件上报",
 		zap.String("agent_id", agentID),
 		zap.String("event_type", report.EventType.String()),
 		zap.Int32("pid", report.Pid),
@@ -723,45 +724,51 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		zap.String("role", report.Role),
 	)
 
-	if monitorService == nil || clusterNodeProvider == nil {
-		s.logger.Warn("Monitor service or cluster node provider not configured / 监控服务或集群节点提供者未配置")
+	if monitorService == nil {
+		s.logger.Error("[ProcessEvent] monitorService is nil / monitorService 为空")
+		return nil
+	}
+	if clusterNodeProvider == nil {
+		s.logger.Error("[ProcessEvent] clusterNodeProvider is nil / clusterNodeProvider 为空")
 		return nil
 	}
 
 	// Get agent connection to find host ID / 获取 Agent 连接以查找主机 ID
 	conn, ok := s.agentManager.GetAgent(agentID)
 	if !ok {
-		s.logger.Warn("Agent not found for event report / 未找到事件上报的 Agent",
+		s.logger.Warn("[ProcessEvent] Agent not found / 未找到 Agent",
 			zap.String("agent_id", agentID),
 		)
 		return agent.ErrAgentNotFound
 	}
 
-	s.logger.Debug("Found agent connection / 找到 Agent 连接",
+	s.logger.Info("[ProcessEvent] Found agent connection / 找到 Agent 连接",
 		zap.String("agent_id", agentID),
 		zap.Uint("host_id", conn.HostID),
 	)
 
-	// Find cluster and node by host ID and install dir / 根据主机 ID 和安装目录查找集群和节点
-	clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDir(ctx, conn.HostID, report.InstallDir)
+	// Find cluster and node by host ID, install dir and role / 根据主机 ID、安装目录和角色查找集群和节点
+	clusterID, nodeID, found, err := clusterNodeProvider.GetNodeByHostAndInstallDirAndRole(ctx, conn.HostID, report.InstallDir, report.Role)
 	if err != nil {
-		s.logger.Error("Failed to find cluster node / 查找集群节点失败",
+		s.logger.Error("[ProcessEvent] Failed to find cluster node / 查找集群节点失败",
 			zap.Uint("host_id", conn.HostID),
 			zap.String("install_dir", report.InstallDir),
+			zap.String("role", report.Role),
 			zap.Error(err),
 		)
 		return err
 	}
 
 	if !found {
-		s.logger.Warn("Cluster node not found for event / 未找到事件对应的集群节点",
+		s.logger.Warn("[ProcessEvent] Cluster node not found / 未找到集群节点",
 			zap.Uint("host_id", conn.HostID),
 			zap.String("install_dir", report.InstallDir),
+			zap.String("role", report.Role),
 		)
 		return nil
 	}
 
-	s.logger.Info("Found cluster node for event / 找到事件对应的集群节点",
+	s.logger.Info("[ProcessEvent] Found cluster node / 找到集群节点",
 		zap.Uint("cluster_id", clusterID),
 		zap.Uint("node_id", nodeID),
 	)

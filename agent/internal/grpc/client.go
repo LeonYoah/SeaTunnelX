@@ -149,6 +149,8 @@ type Client struct {
 	heartbeatTicker *time.Ticker          // 心跳定时器
 	heartbeatMu     sync.Mutex            // 心跳锁
 	lastHeartbeat   time.Time             // 最后心跳时间
+	cmdStream       grpc.BidiStreamingClient[pb.CommandResponse, pb.CommandRequest] // 命令流
+	cmdStreamMu     sync.Mutex            // 命令流锁
 }
 
 // NewClient creates a new gRPC client
@@ -511,6 +513,12 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 		return fmt.Errorf("failed to create command stream: %w", err)
 	}
 
+	// Save stream for later use (e.g., sending process events)
+	// 保存 stream 以便后续使用（如发送进程事件）
+	c.cmdStreamMu.Lock()
+	c.cmdStream = stream
+	c.cmdStreamMu.Unlock()
+
 	// Send initial message with Agent ID to identify ourselves
 	// 发送包含 Agent ID 的初始消息来标识自己
 	initMsg := &pb.CommandResponse{
@@ -530,8 +538,14 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 	for {
 		select {
 		case <-ctx.Done():
+			c.cmdStreamMu.Lock()
+			c.cmdStream = nil
+			c.cmdStreamMu.Unlock()
 			return ctx.Err()
 		case <-c.stopCh:
+			c.cmdStreamMu.Lock()
+			c.cmdStream = nil
+			c.cmdStreamMu.Unlock()
 			return nil
 		default:
 		}
@@ -659,19 +673,12 @@ func (t *HeartbeatTracker) Clear() {
 // ReportProcessEvent sends a process event to Control Plane.
 // ReportProcessEvent 向 Control Plane 发送进程事件。
 func (c *Client) ReportProcessEvent(ctx context.Context, event *pb.ProcessEventReport) error {
-	c.mu.RLock()
-	client := c.client
-	c.mu.RUnlock()
+	c.cmdStreamMu.Lock()
+	stream := c.cmdStream
+	c.cmdStreamMu.Unlock()
 
-	if client == nil {
-		return errors.New("client not connected")
-	}
-
-	// Use CommandStream to send the event as a special command response
-	// 使用 CommandStream 将事件作为特殊命令响应发送
-	stream, err := client.CommandStream(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create command stream for event report: %w", err)
+	if stream == nil {
+		return errors.New("command stream not established, cannot send process event")
 	}
 
 	// Serialize event to JSON / 将事件序列化为 JSON
@@ -689,7 +696,11 @@ func (c *Client) ReportProcessEvent(ctx context.Context, event *pb.ProcessEventR
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	if err := stream.Send(resp); err != nil {
+	c.cmdStreamMu.Lock()
+	err = stream.Send(resp)
+	c.cmdStreamMu.Unlock()
+
+	if err != nil {
 		return fmt.Errorf("failed to send process event: %w", err)
 	}
 
