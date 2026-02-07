@@ -202,7 +202,7 @@ func Serve() {
 				HeartbeatTimeout: time.Duration(config.Config.GRPC.HeartbeatTimeout) * time.Second,
 				ControlPlaneAddr: config.GetExternalURL(),
 			})
-			hostHandler := host.NewHandler(hostService)
+			hostHandler := host.NewHandler(hostService, auditRepo)
 
 			hostRouter := apiV1Router.Group("/hosts")
 			hostRouter.Use(auth.LoginRequired())
@@ -245,7 +245,7 @@ func Serve() {
 				log.Println("[API] Agent command sender injected into cluster service / Agent 命令发送器已注入集群服务")
 			}
 
-			clusterHandler := cluster.NewHandler(clusterService)
+			clusterHandler := cluster.NewHandler(clusterService, auditRepo)
 
 			clusterRouter := apiV1Router.Group("/clusters")
 			clusterRouter.Use(auth.LoginRequired())
@@ -511,7 +511,7 @@ func Serve() {
 				log.Println("[API] Node starter injected into installer service / 节点启动器已注入安装服务")
 			}
 
-			pluginHandler := plugin.NewHandler(pluginService)
+			pluginHandler := plugin.NewHandler(pluginService, auditRepo)
 
 			// Plugin marketplace routes 插件市场路由
 			pluginRouter := apiV1Router.Group("/plugins")
@@ -1581,4 +1581,10 @@ func (a *grpcClusterNodeProviderAdapter) GetNodesByHostID(ctx context.Context, h
 // UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
 func (a *grpcClusterNodeProviderAdapter) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error {
 	return a.clusterService.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
+}
+
+// GetClusterNodeDisplayInfo returns cluster name and node display for audit resource name.
+// GetClusterNodeDisplayInfo 返回集群名及节点展示，用于审计资源名称。
+func (a *grpcClusterNodeProviderAdapter) GetClusterNodeDisplayInfo(ctx context.Context, clusterID, nodeID uint) (clusterName, nodeDisplay string) {
+	return a.clusterService.GetClusterNodeDisplayInfo(ctx, clusterID, nodeID)
 }

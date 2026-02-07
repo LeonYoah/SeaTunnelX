@@ -328,12 +328,12 @@ export function ManagementBar() {
       href: '/plugins',
     });
 
-        // 命令记录入口 / Command logs entry
-    items.push({
-      title: tDock('commandLogs'),
-      icon: StaticIcons.terminal,
-      href: '/commands',
-    });
+    // 命令记录入口暂时隐藏 / Command logs entry hidden for now
+    // items.push({
+    //   title: tDock('commandLogs'),
+    //   icon: StaticIcons.terminal,
+    //   href: '/commands',
+    // });
 
     // 审计日志入口 / Audit logs entry
     items.push({

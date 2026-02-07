@@ -117,6 +117,7 @@ export class AuditService extends BaseService {
           action: params.action,
           resource_type: params.resource_type,
           resource_id: params.resource_id,
+          trigger: params.trigger,
           start_time: params.start_time,
           end_time: params.end_time,
         },

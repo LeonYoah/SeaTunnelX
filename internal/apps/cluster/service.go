@@ -597,6 +597,40 @@ func (s *Service) GetNode(ctx context.Context, nodeID uint) (*ClusterNode, error
 	return s.repo.GetNodeByID(ctx, nodeID)
 }
 
+// GetClusterNodeDisplayInfo returns cluster name and node display string "主机名 - 角色" for audit log.
+// GetClusterNodeDisplayInfo 返回集群名及节点展示串「主机名 - 角色」，用于审计日志。
+func (s *Service) GetClusterNodeDisplayInfo(ctx context.Context, clusterID uint, nodeID uint) (clusterName, nodeDisplay string) {
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil || cluster == nil {
+		return "", ""
+	}
+	node, err := s.repo.GetNodeByID(ctx, nodeID)
+	if err != nil || node == nil {
+		return cluster.Name, ""
+	}
+	host, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+	if err != nil || host == nil {
+		return cluster.Name, ""
+	}
+	roleDisplay := string(node.Role)
+	switch node.Role {
+	case NodeRoleMaster:
+		roleDisplay = "Master"
+	case NodeRoleWorker:
+		roleDisplay = "Worker"
+	case NodeRoleMasterWorker:
+		roleDisplay = "Master/Worker"
+	}
+	hostName := host.Name
+	if hostName == "" {
+		hostName = host.IPAddress
+	}
+	if hostName == "" {
+		hostName = "node"
+	}
+	return cluster.Name, hostName + " - " + roleDisplay
+}
+
 // GetNodeInstallDir retrieves the install directory for a node by cluster ID and host ID.
 // GetNodeInstallDir 根据集群 ID 和主机 ID 获取节点的安装目录。
 // This implements the config.NodeInfoProvider interface.

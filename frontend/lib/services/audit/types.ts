@@ -91,6 +91,8 @@ export interface AuditLogInfo {
   resource_id: string;
   /** Resource name / 资源名称 */
   resource_name: string;
+  /** Trigger: "auto" (Agent) or "manual" (user), empty for legacy / 触发方式 */
+  trigger?: string;
   /** Additional details / 附加详情 */
   details: AuditDetails | null;
   /** Client IP address / 客户端 IP 地址 */
@@ -146,6 +148,8 @@ export interface ListAuditLogsRequest {
   resource_type?: string;
   /** Filter by resource ID / 按资源 ID 过滤 */
   resource_id?: string;
+  /** Filter by trigger: auto | manual / 按触发方式过滤 */
+  trigger?: string;
   /** Filter by start time (RFC3339 format) / 按开始时间过滤（RFC3339 格式） */
   start_time?: string;
   /** Filter by end time (RFC3339 format) / 按结束时间过滤（RFC3339 格式） */

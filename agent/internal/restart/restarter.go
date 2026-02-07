@@ -28,6 +28,7 @@ package restart
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -229,9 +230,6 @@ func (r *AutoRestarter) DoRestart(ctx context.Context, proc *monitor.TrackedProc
 
 	fmt.Printf("[AutoRestarter] Restarting process %s... / 正在重启进程 %s...\n", proc.Name, proc.Name)
 
-	// Record restart attempt / 记录重启尝试
-	r.recordRestart(proc.Name)
-
 	// Get start params / 获取启动参数
 	startParams := proc.StartParams
 	if startParams == nil {
@@ -244,6 +242,14 @@ func (r *AutoRestarter) DoRestart(ctx context.Context, proc *monitor.TrackedProc
 	// Perform restart / 执行重启
 	err := r.processManager.StartProcess(ctx, proc.Name, startParams)
 	if err != nil {
+		if errors.Is(err, process.ErrProcessAlreadyRunning) {
+			fmt.Printf("[AutoRestarter] Process %s already running, treating as success / 进程 %s 已在运行，视为成功\n", proc.Name, proc.Name)
+			if callback != nil {
+				callback(proc.Name, true, nil)
+			}
+			return nil
+		}
+		r.recordRestart(proc.Name)
 		fmt.Printf("[AutoRestarter] Failed to restart %s: %v / 重启 %s 失败：%v\n", proc.Name, err, proc.Name, err)
 		if callback != nil {
 			callback(proc.Name, false, err)
@@ -251,6 +257,7 @@ func (r *AutoRestarter) DoRestart(ctx context.Context, proc *monitor.TrackedProc
 		return err
 	}
 
+	r.recordRestart(proc.Name)
 	fmt.Printf("[AutoRestarter] Successfully restarted %s / 成功重启 %s\n", proc.Name, proc.Name)
 	if callback != nil {
 		callback(proc.Name, true, nil)

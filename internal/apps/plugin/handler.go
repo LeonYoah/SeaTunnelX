@@ -22,19 +22,23 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // Handler provides HTTP handlers for plugin management.
 // Handler 提供插件管理的 HTTP 处理器。
 type Handler struct {
-	service *Service
+	service   *Service
+	auditRepo *audit.Repository
 }
 
 // NewHandler creates a new Handler instance.
 // NewHandler 创建一个新的 Handler 实例。
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// auditRepo may be nil; audit logging is skipped when nil.
+func NewHandler(service *Service, auditRepo *audit.Repository) *Handler {
+	return &Handler{service: service, auditRepo: auditRepo}
 }
 
 // ==================== Available Plugins APIs 可用插件 API ====================
@@ -170,6 +174,9 @@ func (h *Handler) InstallPlugin(c *gin.Context) {
 		return
 	}
 
+	resID := audit.UintID(uint(clusterID)) + "/" + req.PluginName
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"install", "plugin", resID, req.PluginName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 安装插件成功: cluster=%d, plugin=%s", clusterID, req.PluginName)
 	c.JSON(http.StatusOK, InstallPluginResponse{Data: installed})
 }
@@ -207,6 +214,9 @@ func (h *Handler) UninstallPlugin(c *gin.Context) {
 		return
 	}
 
+	resID := audit.UintID(uint(clusterID)) + "/" + pluginName
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"uninstall", "plugin", resID, pluginName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 卸载插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, UninstallPluginResponse{})
 }
@@ -245,6 +255,9 @@ func (h *Handler) EnablePlugin(c *gin.Context) {
 		return
 	}
 
+	resID := audit.UintID(uint(clusterID)) + "/" + pluginName
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"enable", "plugin", resID, pluginName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 启用插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, EnableDisablePluginResponse{Data: plugin})
 }
@@ -276,6 +289,9 @@ func (h *Handler) DisablePlugin(c *gin.Context) {
 		return
 	}
 
+	resID := audit.UintID(uint(clusterID)) + "/" + pluginName
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"disable", "plugin", resID, pluginName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 禁用插件成功: cluster=%d, plugin=%s", clusterID, pluginName)
 	c.JSON(http.StatusOK, EnableDisablePluginResponse{Data: plugin})
 }
@@ -324,6 +340,8 @@ func (h *Handler) DownloadPlugin(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"download", "plugin", name+"/"+req.Version, name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 开始下载插件: plugin=%s, version=%s", name, req.Version)
 	c.JSON(http.StatusOK, DownloadPluginResponse{Data: progress})
 }
@@ -363,6 +381,8 @@ func (h *Handler) DownloadAllPlugins(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"download_all", "plugin", req.Version, "all", audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 开始下载所有插件: version=%s, total=%d", req.Version, progress.Total)
 	c.JSON(http.StatusOK, DownloadAllPluginsResponse{Data: progress})
 }
@@ -473,6 +493,8 @@ func (h *Handler) DeleteLocalPlugin(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"delete_local", "plugin", name+"/"+version, name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 删除本地插件成功: plugin=%s, version=%s", name, version)
 	c.JSON(http.StatusOK, DeleteLocalPluginResponse{})
 }
@@ -579,6 +601,8 @@ func (h *Handler) AddDependency(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"add_dependency", "plugin", name, name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 添加依赖成功: plugin=%s, dep=%s:%s", name, req.GroupID, req.ArtifactID)
 	c.JSON(http.StatusOK, AddDependencyResponse{Data: dep})
 }
@@ -599,6 +623,7 @@ type DeleteDependencyResponse struct {
 // @Success 200 {object} DeleteDependencyResponse
 // @Router /api/v1/plugins/{name}/dependencies/{depId} [delete]
 func (h *Handler) DeleteDependency(c *gin.Context) {
+	name := c.Param("name")
 	depID, err := strconv.ParseUint(c.Param("depId"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, DeleteDependencyResponse{ErrorMsg: "无效的依赖 ID / Invalid dependency ID"})
@@ -610,6 +635,8 @@ func (h *Handler) DeleteDependency(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"delete_dependency", "plugin", name+"/"+strconv.FormatUint(depID, 10), name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 删除依赖成功: depId=%d", depID)
 	c.JSON(http.StatusOK, DeleteDependencyResponse{})
 }

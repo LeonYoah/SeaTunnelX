@@ -80,6 +80,14 @@ func (r *EventReporter) SetBatchSize(size int) {
 	r.batchSize = size
 }
 
+// SetReportFunc sets the report function (e.g. after gRPC connection is ready).
+// SetReportFunc 设置上报函数（例如在 gRPC 连接就绪后）。
+func (r *EventReporter) SetReportFunc(fn EventReportFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reportFunc = fn
+}
+
 // SetConnected sets the connection status
 // SetConnected 设置连接状态
 func (r *EventReporter) SetConnected(connected bool) {

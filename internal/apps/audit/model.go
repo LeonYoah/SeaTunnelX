@@ -139,10 +139,13 @@ type AuditLog struct {
 	ResourceType string       `json:"resource_type" gorm:"size:50;not null;index:idx_resource"`
 	ResourceID   string       `json:"resource_id" gorm:"size:100;index:idx_resource"`
 	ResourceName string       `json:"resource_name" gorm:"size:200"`
-	Details      AuditDetails `json:"details" gorm:"type:json"`
-	IPAddress    string       `json:"ip_address" gorm:"size:45"`
-	UserAgent    string       `json:"user_agent" gorm:"size:500"`
-	CreatedAt    time.Time    `json:"created_at" gorm:"autoCreateTime;index"`
+	// Trigger: "auto" (Agent) or "manual" (user), empty for legacy records.
+	// Trigger：自动（Agent）或人为（用户），空表示旧数据。
+	Trigger  string       `json:"trigger" gorm:"size:20;index"`
+	Details  AuditDetails `json:"details" gorm:"type:json"`
+	IPAddress string      `json:"ip_address" gorm:"size:45"`
+	UserAgent string      `json:"user_agent" gorm:"size:500"`
+	CreatedAt time.Time   `json:"created_at" gorm:"autoCreateTime;index"`
 }
 
 // TableName specifies the table name for the AuditLog model.
@@ -175,10 +178,13 @@ type AuditLogFilter struct {
 	Action       string     `json:"action"`
 	ResourceType string     `json:"resource_type"`
 	ResourceID   string     `json:"resource_id"`
-	StartTime    *time.Time `json:"start_time"`
-	EndTime      *time.Time `json:"end_time"`
-	Page         int        `json:"page"`
-	PageSize     int        `json:"page_size"`
+	// Trigger filters by trigger column: "auto" (agent) or "manual" (user).
+	// Trigger 按 trigger 字段过滤：auto（Agent 自动）或 manual（人为）。
+	Trigger   string     `json:"trigger"`
+	StartTime *time.Time `json:"start_time"`
+	EndTime   *time.Time `json:"end_time"`
+	Page      int        `json:"page"`
+	PageSize  int        `json:"page_size"`
 }
 
 // CommandLogInfo represents command log information for API responses.
@@ -231,6 +237,7 @@ type AuditLogInfo struct {
 	ResourceType string       `json:"resource_type"`
 	ResourceID   string       `json:"resource_id"`
 	ResourceName string       `json:"resource_name"`
+	Trigger      string       `json:"trigger"` // "auto" | "manual" | ""
 	Details      AuditDetails `json:"details"`
 	IPAddress    string       `json:"ip_address"`
 	UserAgent    string       `json:"user_agent"`
@@ -248,6 +255,7 @@ func (a *AuditLog) ToAuditLogInfo() *AuditLogInfo {
 		ResourceType: a.ResourceType,
 		ResourceID:   a.ResourceID,
 		ResourceName: a.ResourceName,
+		Trigger:      a.Trigger,
 		Details:      a.Details,
 		IPAddress:    a.IPAddress,
 		UserAgent:    a.UserAgent,

@@ -157,6 +157,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   // Node selection state / 节点选择状态
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set());
   const [nodeOperating, setNodeOperating] = useState<number | null>(null);
+  // Confirmation for batch start/stop/restart (user must confirm)
+  const [confirmBatchOp, setConfirmBatchOp] = useState<'start' | 'stop' | 'restart' | null>(null);
+  // Confirmation for single node start/stop/restart
+  const [confirmNodeOp, setConfirmNodeOp] = useState<{op: 'start' | 'stop' | 'restart'; node: NodeInfo} | null>(null);
   const [isLogDialogOpen, setIsLogDialogOpen] = useState(false);
   const [logContent, setLogContent] = useState<string>('');
   const [logLoading, setLogLoading] = useState(false);
@@ -755,7 +759,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <div className='flex gap-2'>
               <Button
                 variant='outline'
-                onClick={handleBatchStart}
+                onClick={() => setConfirmBatchOp('start')}
                 disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
@@ -767,7 +771,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               </Button>
               <Button
                 variant='outline'
-                onClick={handleBatchStop}
+                onClick={() => setConfirmBatchOp('stop')}
                 disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
@@ -779,7 +783,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               </Button>
               <Button
                 variant='outline'
-                onClick={handleBatchRestart}
+                onClick={() => setConfirmBatchOp('restart')}
                 disabled={selectedNodeIds.size === 0 || isOperating}
               >
                 {isOperating ? (
@@ -868,7 +872,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <Button
                             variant='ghost'
                             size='icon'
-                            onClick={() => handleNodeStart(node)}
+                            onClick={() => setConfirmNodeOp({op: 'start', node})}
                             disabled={nodeOperating === node.id || node.status === NodeStatus.RUNNING}
                             title={t('cluster.start')}
                           >
@@ -881,7 +885,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <Button
                             variant='ghost'
                             size='icon'
-                            onClick={() => handleNodeStop(node)}
+                            onClick={() => setConfirmNodeOp({op: 'stop', node})}
                             disabled={nodeOperating === node.id || node.status !== NodeStatus.RUNNING}
                             title={t('cluster.stop')}
                           >
@@ -890,7 +894,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <Button
                             variant='ghost'
                             size='icon'
-                            onClick={() => handleNodeRestart(node)}
+                            onClick={() => setConfirmNodeOp({op: 'restart', node})}
                             disabled={nodeOperating === node.id || node.status !== NodeStatus.RUNNING}
                             title={t('cluster.restart')}
                           >
@@ -1033,6 +1037,82 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleRemoveNode}>
               {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Batch start/stop/restart confirmation / 批量启动/停止/重启二次确认 */}
+      <AlertDialog open={!!confirmBatchOp} onOpenChange={() => setConfirmBatchOp(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmBatchOp === 'start' && t('cluster.batchStartConfirmTitle')}
+              {confirmBatchOp === 'stop' && t('cluster.batchStopConfirmTitle')}
+              {confirmBatchOp === 'restart' && t('cluster.batchRestartConfirmTitle')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmBatchOp === 'start' && t('cluster.batchStartConfirmMessage', {count: selectedNodeIds.size})}
+              {confirmBatchOp === 'stop' && t('cluster.batchStopConfirmMessage', {count: selectedNodeIds.size})}
+              {confirmBatchOp === 'restart' && t('cluster.batchRestartConfirmMessage', {count: selectedNodeIds.size})}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (confirmBatchOp === 'start') await handleBatchStart();
+                else if (confirmBatchOp === 'stop') await handleBatchStop();
+                else if (confirmBatchOp === 'restart') await handleBatchRestart();
+                setConfirmBatchOp(null);
+              }}
+            >
+              {confirmBatchOp === 'start' && t('cluster.start')}
+              {confirmBatchOp === 'stop' && t('cluster.stop')}
+              {confirmBatchOp === 'restart' && t('cluster.restart')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Single node start/stop/restart confirmation / 单节点启动/停止/重启二次确认 */}
+      <AlertDialog open={!!confirmNodeOp} onOpenChange={() => setConfirmNodeOp(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmNodeOp?.op === 'start' && t('cluster.nodeStartConfirmTitle')}
+              {confirmNodeOp?.op === 'stop' && t('cluster.nodeStopConfirmTitle')}
+              {confirmNodeOp?.op === 'restart' && t('cluster.nodeRestartConfirmTitle')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmNodeOp &&
+                (confirmNodeOp.op === 'start'
+                  ? t('cluster.nodeStartConfirmMessage', {
+                      name: confirmNodeOp.node.host_name || confirmNodeOp.node.host_ip || `#${confirmNodeOp.node.id}`,
+                    })
+                  : confirmNodeOp.op === 'stop'
+                    ? t('cluster.nodeStopConfirmMessage', {
+                        name: confirmNodeOp.node.host_name || confirmNodeOp.node.host_ip || `#${confirmNodeOp.node.id}`,
+                      })
+                    : t('cluster.nodeRestartConfirmMessage', {
+                        name: confirmNodeOp.node.host_name || confirmNodeOp.node.host_ip || `#${confirmNodeOp.node.id}`,
+                      }))}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!confirmNodeOp) return;
+                if (confirmNodeOp.op === 'start') await handleNodeStart(confirmNodeOp.node);
+                else if (confirmNodeOp.op === 'stop') await handleNodeStop(confirmNodeOp.node);
+                else await handleNodeRestart(confirmNodeOp.node);
+                setConfirmNodeOp(null);
+              }}
+            >
+              {confirmNodeOp?.op === 'start' && t('cluster.start')}
+              {confirmNodeOp?.op === 'stop' && t('cluster.stop')}
+              {confirmNodeOp?.op === 'restart' && t('cluster.restart')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

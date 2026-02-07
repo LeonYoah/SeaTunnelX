@@ -98,10 +98,13 @@ function getStatusColorClass(status: ClusterStatus): string {
  * Cluster Card Component
  * 集群卡片组件
  */
+type ConfirmOp = 'start' | 'stop' | 'restart';
+
 export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardProps) {
   const t = useTranslations();
   const router = useRouter();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [confirmOp, setConfirmOp] = useState<ConfirmOp | null>(null);
   const [isOperating, setIsOperating] = useState(false);
 
   /**
@@ -225,21 +228,21 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={handleStart}
+                  onClick={() => setConfirmOp('start')}
                   disabled={!canStart || isOperating}
                 >
                   <Play className='h-4 w-4 mr-2' />
                   {t('cluster.start')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={handleStop}
+                  onClick={() => setConfirmOp('stop')}
                   disabled={!canStop || isOperating}
                 >
                   <Square className='h-4 w-4 mr-2' />
                   {t('cluster.stop')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={handleRestart}
+                  onClick={() => setConfirmOp('restart')}
                   disabled={!canRestart || isOperating}
                 >
                   <RotateCcw className='h-4 w-4 mr-2' />
@@ -304,7 +307,7 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
                 variant='outline'
                 size='sm'
                 className='flex-1'
-                onClick={handleStart}
+                onClick={() => setConfirmOp('start')}
                 disabled={isOperating}
               >
                 {isOperating ? (
@@ -320,7 +323,7 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
                 variant='outline'
                 size='sm'
                 className='flex-1'
-                onClick={handleStop}
+                onClick={() => setConfirmOp('stop')}
                 disabled={isOperating}
               >
                 {isOperating ? (
@@ -343,6 +346,43 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
           </div>
         </CardFooter>
       </Card>
+
+      {/* Start/Stop/Restart confirmation / 启动/停止/重启二次确认 */}
+      <AlertDialog open={!!confirmOp} onOpenChange={() => setConfirmOp(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmOp === 'start' && t('cluster.startConfirmTitle')}
+              {confirmOp === 'stop' && t('cluster.stopConfirmTitle')}
+              {confirmOp === 'restart' && t('cluster.restartConfirmTitle')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmOp === 'start' && t('cluster.startConfirmMessage', {name: cluster.name})}
+              {confirmOp === 'stop' && t('cluster.stopConfirmMessage', {name: cluster.name})}
+              {confirmOp === 'restart' && t('cluster.restartConfirmMessage', {name: cluster.name})}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (confirmOp === 'start') {
+                  await handleStart();
+                } else if (confirmOp === 'stop') {
+                  await handleStop();
+                } else if (confirmOp === 'restart') {
+                  await handleRestart();
+                }
+                setConfirmOp(null);
+              }}
+            >
+              {confirmOp === 'start' && t('cluster.start')}
+              {confirmOp === 'stop' && t('cluster.stop')}
+              {confirmOp === 'restart' && t('cluster.restart')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation Dialog / 删除确认对话框 */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>

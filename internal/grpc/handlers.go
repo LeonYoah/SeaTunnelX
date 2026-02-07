@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/agent"
@@ -190,9 +191,10 @@ func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.H
 		}
 	}
 
-	// Update process status in cluster_nodes table / 更新 cluster_nodes 表中的进程状态
-	// Use background context since gRPC request context will be canceled after response
-	// 使用后台 context，因为 gRPC 请求 context 在响应后会被取消
+	// Update process status in cluster_nodes from agent's monitored state (periodic correction).
+	// When auto-monitor is on, agent tracks processes and reports current PID + alive state in heartbeat;
+	// this corrects DB when it was stale (e.g. PID=0 in DB but process actually running on host).
+	// 用 Agent 监控结果周期性纠正 cluster_nodes：开启自动监控时，心跳携带当前 PID 与存活状态，可纠正 DB 与主机不一致（如 DB 为 PID=0 但进程实际在跑）。
 	if clusterNodeProvider != nil && len(req.Processes) > 0 {
 		conn, ok := s.agentManager.GetAgent(req.AgentId)
 		if ok && conn.HostID > 0 {
@@ -589,6 +591,9 @@ type ClusterNodeProvider interface {
 	// UpdateNodeProcessStatus updates the process PID and status for a node.
 	// UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
 	UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error
+	// GetClusterNodeDisplayInfo returns cluster name and node display "主机名 - 角色" for audit resource name.
+	// GetClusterNodeDisplayInfo 返回集群名及节点展示「主机名 - 角色」，用于审计资源名称。
+	GetClusterNodeDisplayInfo(ctx context.Context, clusterID, nodeID uint) (clusterName, nodeDisplay string)
 }
 
 // NodeWithMonitorConfig represents a node with its cluster's monitor config.
@@ -854,7 +859,64 @@ func (s *Server) HandleProcessEventReport(ctx context.Context, agentID string, r
 		zap.String("event_type", string(eventType)),
 	)
 
+	// 写入审计日志，区分自动（Agent 上报）与人为（UI 操作）；资源名称与人为操作一致：集群名（主机名 - 角色）
+	if s.auditRepo != nil {
+		action := eventTypeToAuditAction(eventType)
+		if action != "" {
+			resourceID := strconv.FormatUint(uint64(clusterID), 10) + "/" + strconv.FormatUint(uint64(nodeID), 10)
+			resourceName := report.ProcessName
+			if clusterNodeProvider != nil {
+				clusterName, nodeDisplay := clusterNodeProvider.GetClusterNodeDisplayInfo(ctx, clusterID, nodeID)
+				if clusterName != "" {
+					if nodeDisplay != "" {
+						resourceName = clusterName + "（" + nodeDisplay + "）"
+					} else {
+						resourceName = clusterName
+					}
+				}
+			}
+			details := audit.AuditDetails{
+				"event_type":   string(eventType),
+				"process_name": report.ProcessName,
+				"pid":          report.Pid,
+				"agent_id":     agentID,
+			}
+			auditLog := &audit.AuditLog{
+				Username:     "agent",
+				Action:       action,
+				ResourceType: "cluster_node",
+				ResourceID:   resourceID,
+				ResourceName: resourceName,
+				Trigger:      "auto",
+				Details:      details,
+				IPAddress:    "",
+				UserAgent:    "seatunnelx-agent",
+			}
+			if err := s.auditRepo.CreateAuditLog(ctx, auditLog); err != nil {
+				s.logger.Warn("Failed to create audit log for process event / 进程事件写审计失败", zap.Error(err))
+			}
+		}
+	}
+
 	return nil
+}
+
+// eventTypeToAuditAction maps monitor event type to audit action string.
+func eventTypeToAuditAction(t monitor.ProcessEventType) string {
+	switch t {
+	case monitor.EventTypeStarted:
+		return "start"
+	case monitor.EventTypeStopped:
+		return "stop"
+	case monitor.EventTypeRestarted:
+		return "restart"
+	case monitor.EventTypeCrashed:
+		return "crashed"
+	case monitor.EventTypeRestartFailed:
+		return "restart_failed"
+	default:
+		return ""
+	}
 }
 
 // parseProcessEventFromResponse parses process event from command response.
@@ -1050,7 +1112,10 @@ func (s *Server) pushMonitorConfigToAgent(ctx context.Context, agentID string, h
 }
 
 // updateProcessStatusFromHeartbeat updates cluster_nodes process status from heartbeat data.
-// updateProcessStatusFromHeartbeat 从心跳数据更新 cluster_nodes 的进程状态。
+// It unconditionally overwrites DB (process_pid and status) with agent-reported values; no check
+// against previous state (e.g. no "do not overwrite if user just stopped"). This is the periodic
+// correction so DB matches the agent's view of actual host state.
+// updateProcessStatusFromHeartbeat 从心跳数据更新 cluster_nodes，会强制覆盖 DB 中的 process_pid 与 status，不做与旧状态对比；用于周期性纠正使 DB 与主机实际状态一致。
 func (s *Server) updateProcessStatusFromHeartbeat(ctx context.Context, hostID uint, processes []*pb.ProcessStatus) {
 	if clusterNodeProvider == nil {
 		return

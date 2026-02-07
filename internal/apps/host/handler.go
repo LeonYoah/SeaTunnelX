@@ -25,19 +25,23 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // Handler provides HTTP handlers for host management operations.
 // Handler 提供主机管理操作的 HTTP 处理器。
 type Handler struct {
-	service *Service
+	service   *Service
+	auditRepo *audit.Repository
 }
 
 // NewHandler creates a new Handler instance.
 // NewHandler 创建一个新的 Handler 实例。
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// auditRepo may be nil; audit logging is skipped when nil.
+func NewHandler(service *Service, auditRepo *audit.Repository) *Handler {
+	return &Handler{service: service, auditRepo: auditRepo}
 }
 
 // ==================== Request/Response Types 请求/响应类型 ====================
@@ -126,6 +130,8 @@ func (h *Handler) CreateHost(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"create", "host", audit.UintID(host.ID), host.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Host] 创建主机成功: %s (type: %s)", host.Name, host.HostType)
 	c.JSON(http.StatusOK, CreateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout())})
 }
@@ -227,6 +233,8 @@ func (h *Handler) UpdateHost(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"update", "host", audit.UintID(host.ID), host.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Host] 更新主机成功: %s", host.Name)
 	c.JSON(http.StatusOK, UpdateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout())})
 }
@@ -270,6 +278,8 @@ func (h *Handler) DeleteHost(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"delete", "host", audit.UintID(uint(hostID)), host.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Host] 删除主机成功: %s", host.Name)
 	c.JSON(http.StatusOK, DeleteHostResponse{})
 }

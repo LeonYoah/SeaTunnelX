@@ -20,24 +20,29 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
 // Handler provides HTTP handlers for cluster management operations.
 // Handler 提供集群管理操作的 HTTP 处理器。
 type Handler struct {
-	service *Service
+	service   *Service
+	auditRepo *audit.Repository
 }
 
 // NewHandler creates a new Handler instance.
 // NewHandler 创建一个新的 Handler 实例。
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// auditRepo may be nil; audit logging is skipped when nil.
+func NewHandler(service *Service, auditRepo *audit.Repository) *Handler {
+	return &Handler{service: service, auditRepo: auditRepo}
 }
 
 // ==================== Request/Response Types 请求/响应类型 ====================
@@ -156,6 +161,8 @@ func (h *Handler) CreateCluster(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"create", "cluster", audit.UintID(cluster.ID), cluster.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 创建集群成功: %s (mode: %s)", cluster.Name, cluster.DeploymentMode)
 	c.JSON(http.StatusOK, CreateClusterResponse{Data: cluster.ToClusterInfo()})
 }
@@ -254,6 +261,8 @@ func (h *Handler) UpdateCluster(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"update", "cluster", audit.UintID(cluster.ID), cluster.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 更新集群成功: %s", cluster.Name)
 	c.JSON(http.StatusOK, UpdateClusterResponse{Data: cluster.ToClusterInfo()})
 }
@@ -287,6 +296,8 @@ func (h *Handler) DeleteCluster(c *gin.Context) {
 		return
 	}
 
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"delete", "cluster", audit.UintID(uint(clusterID)), cluster.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 删除集群成功: %s", cluster.Name)
 	c.JSON(http.StatusOK, DeleteClusterResponse{})
 }
@@ -339,6 +350,10 @@ func (h *Handler) AddNode(c *gin.Context) {
 		UpdatedAt:     node.UpdatedAt,
 	}
 
+	resourceName := h.getClusterNodeResourceName(c, uint(clusterID), node.ID)
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(node.ID)
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"add_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 添加节点成功: cluster_id=%d, host_id=%d, role=%s, hazelcast_port=%d", clusterID, req.HostID, req.Role, node.HazelcastPort)
 	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
 }
@@ -364,12 +379,17 @@ func (h *Handler) RemoveNode(c *gin.Context) {
 		return
 	}
 
+	resourceName := h.getClusterNodeResourceName(c, uint(clusterID), uint(nodeID))
+
 	if err := h.service.RemoveNode(c.Request.Context(), uint(clusterID), uint(nodeID)); err != nil {
 		statusCode := h.getStatusCodeForError(err)
 		c.JSON(statusCode, RemoveNodeResponse{ErrorMsg: err.Error()})
 		return
 	}
 
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(uint(nodeID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"remove_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 移除节点成功: cluster_id=%d, node_id=%d", clusterID, nodeID)
 	c.JSON(http.StatusOK, RemoveNodeResponse{})
 }
@@ -427,6 +447,10 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 		UpdatedAt:     node.UpdatedAt,
 	}
 
+	resourceName := h.getClusterNodeResourceName(c, uint(clusterID), node.ID)
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(node.ID)
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"update_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 更新节点成功: cluster_id=%d, node_id=%d", clusterID, nodeID)
 	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
 }
@@ -477,7 +501,9 @@ func (h *Handler) StartCluster(c *gin.Context) {
 		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
 		return
 	}
-
+	clusterName := h.getClusterNameForAudit(c.Request.Context(), uint(clusterID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"start", "cluster", audit.UintID(uint(clusterID)), clusterName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 启动集群: cluster_id=%d, success=%v", clusterID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }
@@ -502,7 +528,9 @@ func (h *Handler) StopCluster(c *gin.Context) {
 		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
 		return
 	}
-
+	clusterName := h.getClusterNameForAudit(c.Request.Context(), uint(clusterID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"stop", "cluster", audit.UintID(uint(clusterID)), clusterName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 停止集群: cluster_id=%d, success=%v", clusterID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }
@@ -527,7 +555,9 @@ func (h *Handler) RestartCluster(c *gin.Context) {
 		c.JSON(statusCode, ClusterOperationResponse{ErrorMsg: err.Error()})
 		return
 	}
-
+	clusterName := h.getClusterNameForAudit(c.Request.Context(), uint(clusterID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"restart", "cluster", audit.UintID(uint(clusterID)), clusterName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 重启集群: cluster_id=%d, success=%v", clusterID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }
@@ -593,6 +623,29 @@ func (h *Handler) PrecheckNode(c *gin.Context) {
 
 // ==================== Helper Methods 辅助方法 ====================
 
+// getClusterNodeResourceName returns display name for cluster_node audit: "集群名（主机名 - 角色）" or "集群名".
+// getClusterNodeResourceName 返回集群节点审计展示名：集群名（主机名 - 角色）或仅集群名。
+func (h *Handler) getClusterNodeResourceName(c *gin.Context, clusterID, nodeID uint) string {
+	clusterName, nodeDisplay := h.service.GetClusterNodeDisplayInfo(c.Request.Context(), clusterID, nodeID)
+	if clusterName == "" {
+		return ""
+	}
+	if nodeDisplay != "" {
+		return clusterName + "（" + nodeDisplay + "）"
+	}
+	return clusterName
+}
+
+// getClusterNameForAudit returns cluster name by ID for audit log resource_name; empty string on error.
+// getClusterNameForAudit 按 ID 取集群名称用于审计资源名称，失败时返回空字符串。
+func (h *Handler) getClusterNameForAudit(ctx context.Context, clusterID uint) string {
+	cluster, err := h.service.Get(ctx, clusterID)
+	if err != nil || cluster == nil {
+		return ""
+	}
+	return cluster.Name
+}
+
 // getStatusCodeForError returns the appropriate HTTP status code for an error.
 // getStatusCodeForError 根据错误返回适当的 HTTP 状态码。
 func (h *Handler) getStatusCodeForError(err error) int {
@@ -644,6 +697,14 @@ func (h *Handler) StartNode(c *gin.Context) {
 		return
 	}
 
+	clusterName, nodeDisplay := h.service.GetClusterNodeDisplayInfo(c.Request.Context(), uint(clusterID), uint(nodeID))
+	resourceName := clusterName
+	if nodeDisplay != "" {
+		resourceName = clusterName + "（" + nodeDisplay + "）"
+	}
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(uint(nodeID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"start_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 启动节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }
@@ -670,6 +731,14 @@ func (h *Handler) StopNode(c *gin.Context) {
 		return
 	}
 
+	clusterName, nodeDisplay := h.service.GetClusterNodeDisplayInfo(c.Request.Context(), uint(clusterID), uint(nodeID))
+	resourceName := clusterName
+	if nodeDisplay != "" {
+		resourceName = clusterName + "（" + nodeDisplay + "）"
+	}
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(uint(nodeID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"stop_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 停止节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }
@@ -696,6 +765,14 @@ func (h *Handler) RestartNode(c *gin.Context) {
 		return
 	}
 
+	clusterName, nodeDisplay := h.service.GetClusterNodeDisplayInfo(c.Request.Context(), uint(clusterID), uint(nodeID))
+	resourceName := clusterName
+	if nodeDisplay != "" {
+		resourceName = clusterName + "（" + nodeDisplay + "）"
+	}
+	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(uint(nodeID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"restart_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 重启节点: cluster_id=%d, node_id=%d, success=%v", clusterID, nodeID, result.Success)
 	c.JSON(http.StatusOK, ClusterOperationResponse{Data: result})
 }

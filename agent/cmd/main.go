@@ -524,11 +524,7 @@ func (a *Agent) setupEventReporter() {
 		return nil
 	}
 
-	// Note: EventReporter doesn't have a SetReportFunc method, so we need to recreate it
-	// 注意：EventReporter 没有 SetReportFunc 方法，所以我们需要重新创建它
-	// For now, we'll report events directly in the event handler
-	// 目前，我们将在事件处理器中直接上报事件
-	_ = reportFunc // Suppress unused variable warning / 抑制未使用变量警告
+	a.eventReporter.SetReportFunc(reportFunc)
 	fmt.Println("[Agent] Event reporter configured / 事件上报器已配置")
 }
 
@@ -666,7 +662,9 @@ func (a *Agent) sendHeartbeat() {
 	// Collect metrics / 采集指标
 	usage, _ := a.metricsCollector.Collect()
 
-	// Collect tracked process status / 采集跟踪进程状态
+	// Collect tracked process status (same view as monitor loop) and send to Control Plane.
+	// This allows the server to correct DB when it was stale (e.g. DB says PID=0/stopped but process is actually running).
+	// 采集与监控巡检一致的进程状态并上报，便于服务端纠正 DB 与主机不一致（如 DB 显示停止但进程实际在跑）。
 	trackedProcesses := a.processMonitor.GetAllTrackedProcesses()
 	processes := make([]*pb.ProcessStatus, 0, len(trackedProcesses))
 	for _, proc := range trackedProcesses {

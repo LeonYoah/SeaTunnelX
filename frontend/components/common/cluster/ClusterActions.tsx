@@ -105,13 +105,9 @@ export function ClusterActions({
    * 处理操作点击
    */
   const handleOperationClick = (operation: OperationType) => {
-    // For stop and restart, show confirmation dialog
-    // 对于停止和重启，显示确认对话框
-    if (operation === OperationType.STOP || operation === OperationType.RESTART) {
-      setConfirmOperation(operation);
-    } else {
-      executeOperation(operation);
-    }
+    // All start / stop / restart require user confirmation
+    // 所有启动、停止、重启均需用户二次确认
+    setConfirmOperation(operation);
   };
 
   /**
@@ -120,6 +116,8 @@ export function ClusterActions({
    */
   const getConfirmMessage = (operation: OperationType) => {
     switch (operation) {
+      case OperationType.START:
+        return t('cluster.startConfirmMessage', {name: cluster.name});
       case OperationType.STOP:
         return t('cluster.stopConfirmMessage', {name: cluster.name});
       case OperationType.RESTART:
@@ -135,6 +133,8 @@ export function ClusterActions({
    */
   const getConfirmTitle = (operation: OperationType) => {
     switch (operation) {
+      case OperationType.START:
+        return t('cluster.startConfirmTitle');
       case OperationType.STOP:
         return t('cluster.stopConfirmTitle');
       case OperationType.RESTART:

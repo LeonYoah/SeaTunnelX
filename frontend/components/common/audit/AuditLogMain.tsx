@@ -20,15 +20,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
 import {Separator} from '@/components/ui/separator';
 import {toast} from 'sonner';
-import {Search, FileText, RefreshCw} from 'lucide-react';
+import {Search, FileText, RefreshCw, Filter} from 'lucide-react';
 import {motion} from 'motion/react';
 import services from '@/lib/services';
 import {AuditLogInfo, ListAuditLogsRequest} from '@/lib/services/audit/types';
 import {AuditLogTable} from './AuditLogTable';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 /**
  * Audit Log Main Component
@@ -45,8 +46,11 @@ export function AuditLogMain() {
 
   // Filter state / 过滤状态
   const [searchUsername, setSearchUsername] = useState('');
+  const [filterTrigger, setFilterTrigger] = useState<string>('all');
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterResourceType, setFilterResourceType] = useState<string>('all');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
 
 
   /**
@@ -56,13 +60,25 @@ export function AuditLogMain() {
   const loadLogs = useCallback(async () => {
     setLoading(true);
     try {
+      // 日期转 RFC3339：开始日 00:00:00，结束日 23:59:59.999（含当天整日）
+      let startTime: string | undefined;
+      let endTime: string | undefined;
+      if (filterStartDate) {
+        startTime = new Date(filterStartDate + 'T00:00:00').toISOString();
+      }
+      if (filterEndDate) {
+        endTime = new Date(filterEndDate + 'T23:59:59.999').toISOString();
+      }
       const params: ListAuditLogsRequest = {
         current: currentPage,
         size: PAGE_SIZE,
         username: searchUsername || undefined,
+        trigger: filterTrigger !== 'all' ? filterTrigger : undefined,
         action: filterAction !== 'all' ? filterAction : undefined,
         resource_type:
           filterResourceType !== 'all' ? filterResourceType : undefined,
+        start_time: startTime,
+        end_time: endTime,
       };
 
       const result = await services.audit.getAuditLogsSafe(params);
@@ -84,7 +100,16 @@ export function AuditLogMain() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchUsername, filterAction, filterResourceType, t]);
+  }, [
+    currentPage,
+    searchUsername,
+    filterTrigger,
+    filterAction,
+    filterResourceType,
+    filterStartDate,
+    filterEndDate,
+    t,
+  ]);
 
   useEffect(() => {
     loadLogs();
@@ -121,8 +146,11 @@ export function AuditLogMain() {
    */
   const handleClearFilters = () => {
     setSearchUsername('');
+    setFilterTrigger('all');
     setFilterAction('all');
     setFilterResourceType('all');
+    setFilterStartDate('');
+    setFilterEndDate('');
     setCurrentPage(1);
   };
 
@@ -180,63 +208,182 @@ export function AuditLogMain() {
 
       <Separator />
 
-      {/* Filters / 过滤器 */}
-      <motion.div
-        className='flex flex-wrap gap-4 items-end'
-        variants={itemVariants}
-      >
-        <div className='flex-1 min-w-[200px] max-w-sm'>
-          <Input
-            placeholder={t('audit.searchUsernamePlaceholder')}
-            value={searchUsername}
-            onChange={(e) => setSearchUsername(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          />
-        </div>
-
-        <Select value={filterAction} onValueChange={setFilterAction}>
-          <SelectTrigger className='w-[150px]'>
-            <SelectValue placeholder={t('audit.action')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value='all'>{t('audit.allActions')}</SelectItem>
-            <SelectItem value='create'>{t('audit.actions.create')}</SelectItem>
-            <SelectItem value='update'>{t('audit.actions.update')}</SelectItem>
-            <SelectItem value='delete'>{t('audit.actions.delete')}</SelectItem>
-            <SelectItem value='start'>{t('audit.actions.start')}</SelectItem>
-            <SelectItem value='stop'>{t('audit.actions.stop')}</SelectItem>
-            <SelectItem value='restart'>{t('audit.actions.restart')}</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={filterResourceType}
-          onValueChange={setFilterResourceType}
-        >
-          <SelectTrigger className='w-[150px]'>
-            <SelectValue placeholder={t('audit.resourceType')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value='all'>{t('audit.allResourceTypes')}</SelectItem>
-            <SelectItem value='host'>{t('audit.resourceTypes.host')}</SelectItem>
-            <SelectItem value='cluster'>
-              {t('audit.resourceTypes.cluster')}
-            </SelectItem>
-            <SelectItem value='user'>{t('audit.resourceTypes.user')}</SelectItem>
-            <SelectItem value='project'>
-              {t('audit.resourceTypes.project')}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Button variant='outline' onClick={handleSearch}>
-          <Search className='h-4 w-4 mr-2' />
-          {t('common.search')}
-        </Button>
-
-        <Button variant='ghost' onClick={handleClearFilters}>
-          {t('common.clearFilters')}
-        </Button>
+      {/* Filters / 筛选条件 */}
+      <motion.div variants={itemVariants}>
+        <Card>
+          <CardHeader className='pb-3'>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <Filter className='h-4 w-4' />
+              {t('audit.filterConditions')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className='grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-4 items-end'>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.user')}
+                </label>
+                <Input
+                  placeholder={t('audit.searchUsernamePlaceholder')}
+                  value={searchUsername}
+                  onChange={(e) => setSearchUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                />
+              </div>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.trigger')}
+                </label>
+                <Select value={filterTrigger} onValueChange={setFilterTrigger}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>{t('audit.allTriggers')}</SelectItem>
+                    <SelectItem value='auto'>{t('audit.triggerAuto')}</SelectItem>
+                    <SelectItem value='manual'>
+                      {t('audit.triggerManual')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.action')}
+                </label>
+                <Select value={filterAction} onValueChange={setFilterAction}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>{t('audit.allActions')}</SelectItem>
+                    <SelectItem value='create'>
+                      {t('audit.actions.create')}
+                    </SelectItem>
+                    <SelectItem value='update'>
+                      {t('audit.actions.update')}
+                    </SelectItem>
+                    <SelectItem value='delete'>
+                      {t('audit.actions.delete')}
+                    </SelectItem>
+                    <SelectItem value='start'>
+                      {t('audit.actions.start')}
+                    </SelectItem>
+                    <SelectItem value='stop'>
+                      {t('audit.actions.stop')}
+                    </SelectItem>
+                    <SelectItem value='restart'>
+                      {t('audit.actions.restart')}
+                    </SelectItem>
+                    <SelectItem value='add_node'>
+                      {t('audit.actions.add_node')}
+                    </SelectItem>
+                    <SelectItem value='remove_node'>
+                      {t('audit.actions.remove_node')}
+                    </SelectItem>
+                    <SelectItem value='update_node'>
+                      {t('audit.actions.update_node')}
+                    </SelectItem>
+                    <SelectItem value='start_node'>
+                      {t('audit.actions.start_node')}
+                    </SelectItem>
+                    <SelectItem value='stop_node'>
+                      {t('audit.actions.stop_node')}
+                    </SelectItem>
+                    <SelectItem value='restart_node'>
+                      {t('audit.actions.restart_node')}
+                    </SelectItem>
+                    <SelectItem value='crashed'>
+                      {t('audit.actions.crashed')}
+                    </SelectItem>
+                    <SelectItem value='restart_failed'>
+                      {t('audit.actions.restart_failed')}
+                    </SelectItem>
+                    <SelectItem value='install'>
+                      {t('audit.actions.install')}
+                    </SelectItem>
+                    <SelectItem value='uninstall'>
+                      {t('audit.actions.uninstall')}
+                    </SelectItem>
+                    <SelectItem value='enable'>
+                      {t('audit.actions.enable')}
+                    </SelectItem>
+                    <SelectItem value='disable'>
+                      {t('audit.actions.disable')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.resourceType')}
+                </label>
+                <Select
+                  value={filterResourceType}
+                  onValueChange={setFilterResourceType}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>
+                      {t('audit.allResourceTypes')}
+                    </SelectItem>
+                    <SelectItem value='host'>
+                      {t('audit.resourceTypes.host')}
+                    </SelectItem>
+                    <SelectItem value='cluster'>
+                      {t('audit.resourceTypes.cluster')}
+                    </SelectItem>
+                    <SelectItem value='cluster_node'>
+                      {t('audit.resourceTypes.cluster_node')}
+                    </SelectItem>
+                    <SelectItem value='user'>
+                      {t('audit.resourceTypes.user')}
+                    </SelectItem>
+                    <SelectItem value='plugin'>
+                      {t('audit.resourceTypes.plugin')}
+                    </SelectItem>
+                    <SelectItem value='project'>
+                      {t('audit.resourceTypes.project')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.startDate')}
+                </label>
+                <Input
+                  type='date'
+                  value={filterStartDate}
+                  onChange={(e) => setFilterStartDate(e.target.value)}
+                  className='w-full'
+                />
+              </div>
+              <div className='min-w-0'>
+                <label className='text-xs text-muted-foreground mb-1 block'>
+                  {t('audit.endDate')}
+                </label>
+                <Input
+                  type='date'
+                  value={filterEndDate}
+                  onChange={(e) => setFilterEndDate(e.target.value)}
+                  className='w-full'
+                />
+              </div>
+              <div className='min-w-0 flex gap-2 flex-shrink-0 xl:col-span-2'>
+                <Button onClick={handleSearch}>
+                  <Search className='h-4 w-4 mr-2' />
+                  {t('common.search')}
+                </Button>
+                <Button variant='outline' onClick={handleClearFilters}>
+                  {t('common.clearFilters')}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </motion.div>
 
       {/* Audit Log Table / 审计日志表格 */}

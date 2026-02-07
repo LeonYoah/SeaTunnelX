@@ -83,6 +83,7 @@ type ListAuditLogsRequest struct {
 	Action       string `json:"action" form:"action"`
 	ResourceType string `json:"resource_type" form:"resource_type"`
 	ResourceID   string `json:"resource_id" form:"resource_id"`
+	Trigger      string `json:"trigger" form:"trigger"` // "auto" | "manual"
 	StartTime    string `json:"start_time" form:"start_time"`
 	EndTime      string `json:"end_time" form:"end_time"`
 }
@@ -141,7 +142,10 @@ func (h *Handler) ListCommandLogs(c *gin.Context) {
 			})
 			return
 		}
-		endTime = &t
+		utc := t.UTC()
+		y, m, d := utc.Date()
+		endOfDay := time.Date(y, m, d, 23, 59, 59, 999999999, time.UTC)
+		endTime = &endOfDay
 	}
 
 	// Build filter from request - 从请求构建过滤条件
@@ -244,7 +248,11 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 			})
 			return
 		}
-		endTime = &t
+		// 结束时间规范为“该日”在 UTC 的当日 23:59:59.999，避免选“今天”时漏掉当天数据（时区/存储差异）
+		utc := t.UTC()
+		y, m, d := utc.Date()
+		endOfDay := time.Date(y, m, d, 23, 59, 59, 999999999, time.UTC)
+		endTime = &endOfDay
 	}
 
 	// Build filter from request - 从请求构建过滤条件
@@ -254,6 +262,7 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 		Action:       req.Action,
 		ResourceType: req.ResourceType,
 		ResourceID:   req.ResourceID,
+		Trigger:      req.Trigger,
 		StartTime:    startTime,
 		EndTime:      endTime,
 		Page:         req.Current,

@@ -51,8 +51,8 @@ export default function DashboardPage() {
       value: stats?.total_hosts ?? 0,
       subValue: `${stats?.online_hosts ?? 0} ${t('online')}`,
       icon: Server,
-      color: 'text-blue-500',
-      bgColor: 'bg-blue-500/10',
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
       href: '/hosts',
     },
     {
@@ -60,8 +60,8 @@ export default function DashboardPage() {
       value: stats?.total_clusters ?? 0,
       subValue: `${stats?.running_clusters ?? 0} ${t('running')}`,
       icon: Database,
-      color: 'text-green-500',
-      bgColor: 'bg-green-500/10',
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
       href: '/clusters',
     },
     {
@@ -69,8 +69,8 @@ export default function DashboardPage() {
       value: stats?.total_nodes ?? 0,
       subValue: `${stats?.running_nodes ?? 0} ${t('running')}`,
       icon: Layers,
-      color: 'text-purple-500',
-      bgColor: 'bg-purple-500/10',
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
       href: '/clusters',
     },
     {
@@ -80,8 +80,8 @@ export default function DashboardPage() {
         ? t('onlineRate', {rate: Math.round((stats.online_agents / stats.total_agents) * 100)})
         : t('noAgent'),
       icon: Activity,
-      color: 'text-cyan-500',
-      bgColor: 'bg-cyan-500/10',
+      color: 'text-primary',
+      bgColor: 'bg-primary/10',
       href: '/hosts',
     },
   ];
@@ -95,7 +95,7 @@ export default function DashboardPage() {
         className='flex items-center justify-between'
       >
         <div className='flex items-center gap-3'>
-          <Ship className='w-8 h-8 text-cyan-500' />
+          <Ship className='w-8 h-8 text-primary' />
           <div>
             <h1 className='text-2xl font-bold'>{t('title')}</h1>
             <p className='text-muted-foreground text-sm'>{t('subtitle')}</p>
@@ -151,7 +151,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle className='flex items-center gap-2'>
-                <Database className='w-5 h-5 text-cyan-500' />
+                <Database className='w-5 h-5 text-primary' />
                 {t('clusterStatus')}
               </CardTitle>
             </CardHeader>
@@ -204,7 +204,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle className='flex items-center gap-2'>
-                <Server className='w-5 h-5 text-cyan-500' />
+                <Server className='w-5 h-5 text-primary' />
                 {t('hostStatus')}
               </CardTitle>
             </CardHeader>
@@ -260,7 +260,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle className='flex items-center gap-2'>
-              <Activity className='w-5 h-5 text-cyan-500' />
+              <Activity className='w-5 h-5 text-primary' />
               {t('recentActivities')}
             </CardTitle>
           </CardHeader>
@@ -283,7 +283,7 @@ export default function DashboardPage() {
                         <AlertCircle className='w-4 h-4 text-red-500' />
                       )}
                       {activity.type === 'info' && (
-                        <Activity className='w-4 h-4 text-blue-500' />
+                        <Activity className='w-4 h-4 text-primary' />
                       )}
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -310,11 +310,11 @@ export default function DashboardPage() {
         animate={{opacity: 1, y: 0}}
         transition={{delay: 0.6, duration: 0.5}}
       >
-        <Card className='bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border-cyan-500/20'>
+        <Card className='bg-primary/5 border-primary/20'>
           <CardContent className='py-4'>
             <div className='flex items-center justify-between'>
               <div className='flex items-center gap-3'>
-                <Ship className='w-6 h-6 text-cyan-500' />
+                <Ship className='w-6 h-6 text-primary' />
                 <div>
                   <p className='font-medium'>{t('welcome')}</p>
                   <p className='text-sm text-muted-foreground'>{t('welcomeDesc')}</p>

@@ -275,6 +275,10 @@ func (r *Repository) ListAuditLogs(ctx context.Context, filter *AuditLogFilter) 
 		if filter.ResourceID != "" {
 			query = query.Where("resource_id = ?", filter.ResourceID)
 		}
+		// Filter by trigger column - 按 trigger 字段过滤
+		if filter.Trigger == "auto" || filter.Trigger == "manual" {
+			query = query.Where("trigger = ?", filter.Trigger)
+		}
 		// Filter by time range - 按时间范围过滤
 		if filter.StartTime != nil {
 			query = query.Where("created_at >= ?", *filter.StartTime)

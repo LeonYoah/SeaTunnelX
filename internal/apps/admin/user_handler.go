@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/apps/audit"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
@@ -161,6 +162,9 @@ func CreateUserHandler(c *gin.Context) {
 		return
 	}
 
+	auditRepo := audit.NewRepository(db.DB(c.Request.Context()))
+	_ = audit.RecordFromGin(c, auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"create", "user", strconv.FormatUint(uint64(user.ID), 10), user.Username, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Admin] 创建用户成功: %s", user.Username)
 	c.JSON(http.StatusOK, CreateUserResponse{Data: user.ToUserInfo()})
 }
@@ -242,6 +246,9 @@ func UpdateUserHandler(c *gin.Context) {
 	// 重新查询用户信息
 	user, _ = auth.FindByID(db.DB(c.Request.Context()), userID)
 
+	auditRepo := audit.NewRepository(db.DB(c.Request.Context()))
+	_ = audit.RecordFromGin(c, auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"update", "user", strconv.FormatUint(userID, 10), user.Username, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Admin] 更新用户成功: %s", user.Username)
 	c.JSON(http.StatusOK, UpdateUserResponse{Data: user.ToUserInfo()})
 }
@@ -288,6 +295,9 @@ func DeleteUserHandler(c *gin.Context) {
 		return
 	}
 
+	auditRepo := audit.NewRepository(db.DB(c.Request.Context()))
+	_ = audit.RecordFromGin(c, auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"delete", "user", strconv.FormatUint(userID, 10), user.Username, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Admin] 删除用户成功: %s", user.Username)
 	c.JSON(http.StatusOK, DeleteUserResponse{})
 }
