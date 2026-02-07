@@ -477,15 +477,44 @@ func (s *Service) InstallPlugin(ctx context.Context, clusterID uint, req *Instal
 
 // UninstallPlugin uninstalls a plugin from a cluster.
 // UninstallPlugin 从集群上卸载插件。
+// Sends uninstall_plugin command to each cluster node's agent to remove plugin files from install dir, then deletes the DB record.
+// 向集群各节点 Agent 发送 uninstall_plugin 命令以从安装目录删除插件文件，再删除数据库记录。
 func (s *Service) UninstallPlugin(ctx context.Context, clusterID uint, pluginName string) error {
-	// Check if plugin exists / 检查插件是否存在
-	_, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
+	plugin, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 	if err != nil {
 		return err
 	}
 
-	// TODO: Send uninstall command to Agent via gRPC
-	// TODO: 通过 gRPC 向 Agent 发送卸载命令
+	// Send uninstall command to each node's agent so plugin files are removed from install dir
+	// 向各节点 Agent 发送卸载命令，使安装目录中的插件文件被删除
+	if s.agentCommandSender != nil && s.clusterNodeGetter != nil && s.hostInfoGetter != nil {
+		nodes, err := s.clusterNodeGetter.GetClusterNodes(ctx, clusterID)
+		if err != nil {
+			logger.WarnF(ctx, "[Plugin] Uninstall: failed to get cluster nodes: %v / 卸载：获取集群节点失败: %v", err, err)
+		} else {
+			for _, node := range nodes {
+				agentID, err := s.hostInfoGetter.GetHostAgentID(ctx, node.HostID)
+				if err != nil || agentID == "" {
+					logger.WarnF(ctx, "[Plugin] Uninstall: skip node %d (host %d), no agent / 卸载：跳过节点 %d（主机 %d），无 Agent", node.NodeID, node.HostID, node.NodeID, node.HostID)
+					continue
+				}
+				params := map[string]string{
+					"plugin_name":         pluginName,
+					"version":             plugin.Version,
+					"install_path":        node.InstallDir,
+					"remove_dependencies": "true",
+				}
+				success, message, sendErr := s.agentCommandSender.SendCommand(ctx, agentID, "uninstall_plugin", params)
+				if sendErr != nil {
+					logger.WarnF(ctx, "[Plugin] Uninstall: send to agent %s failed: %v / 卸载：向 Agent %s 发送失败: %v", agentID, sendErr, agentID, sendErr)
+					continue
+				}
+				if !success {
+					logger.WarnF(ctx, "[Plugin] Uninstall: agent %s returned failure: %s / 卸载：Agent %s 返回失败: %s", agentID, message, agentID, message)
+				}
+			}
+		}
+	}
 
 	// Delete installed plugin record / 删除已安装插件记录
 	return s.repo.DeleteByClusterAndName(ctx, clusterID, pluginName)
@@ -1259,15 +1288,39 @@ func (s *Service) DownloadPluginSync(ctx context.Context, pluginName, version st
 
 // RecordInstalledPlugin records a plugin as installed for a cluster.
 // RecordInstalledPlugin 记录插件已安装到集群。
+// Sets category (e.g. connector) and artifact_id so one-click install shows correct classification.
+// 设置分类（如 connector）和 artifact_id，以便一键安装后显示正确分类。
 // This implements the installer.PluginTransferer interface.
 // 这实现了 installer.PluginTransferer 接口。
 func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error {
+	// Resolve category and artifact_id (for display and DB not-null) / 解析分类与 artifact_id（用于展示及 DB 非空）
+	category := PluginCategoryConnector
+	artifactID := getArtifactID(pluginName)
+	if info, err := s.GetPluginInfo(ctx, pluginName, version); err == nil && info != nil && info.Category != "" {
+		category = info.Category
+		if info.ArtifactID != "" {
+			artifactID = info.ArtifactID
+		}
+	}
+
 	// Check if already recorded / 检查是否已记录
 	existing, err := s.repo.GetByClusterAndName(ctx, clusterID, pluginName)
 	if err == nil && existing != nil {
-		// Already exists, update version if different / 已存在，如果版本不同则更新
+		// Already exists, update version/category/artifact_id if different / 已存在则更新版本/分类/artifact_id
+		updated := false
 		if existing.Version != version {
 			existing.Version = version
+			updated = true
+		}
+		if existing.Category != category {
+			existing.Category = category
+			updated = true
+		}
+		if existing.ArtifactID != artifactID {
+			existing.ArtifactID = artifactID
+			updated = true
+		}
+		if updated {
 			return s.repo.Update(ctx, existing)
 		}
 		return nil
@@ -1277,6 +1330,8 @@ func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, plu
 	installed := &InstalledPlugin{
 		ClusterID:   clusterID,
 		PluginName:  pluginName,
+		ArtifactID:  artifactID,
+		Category:    category,
 		Version:     version,
 		Status:      PluginStatusInstalled,
 		InstalledAt: time.Now(),

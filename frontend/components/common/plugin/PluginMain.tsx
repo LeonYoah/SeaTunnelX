@@ -831,20 +831,15 @@ export function PluginMain() {
                               <span className="text-muted-foreground text-sm">{t('plugin.notInstalled')}</span>
                             ) : (
                               <div className="flex flex-wrap gap-1">
-                                {installedClusters.map(cluster => {
-                                  const status = clusterStatusMap?.get(cluster.id);
-                                  const isEnabled = status?.status === 'enabled' || status?.status === 'installed';
-                                  return (
-                                    <Badge 
-                                      key={cluster.id} 
-                                      variant={isEnabled ? 'default' : 'secondary'}
+                                {installedClusters.map(cluster => (
+                                    <Badge
+                                      key={cluster.id}
+                                      variant="default"
                                       className="text-xs"
                                     >
                                       {cluster.name}
-                                      {!isEnabled && <span className="ml-1 opacity-70">({t('plugin.status.disabled')})</span>}
                                     </Badge>
-                                  );
-                                })}
+                                  ))}
                               </div>
                             )}
                           </TableCell>

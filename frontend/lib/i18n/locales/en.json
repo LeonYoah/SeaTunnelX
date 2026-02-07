@@ -559,6 +559,7 @@
       "complete": "Complete",
       "completeDesc": "Deployment completed",
       "selectHostsDesc": "Select hosts with Agent installed to deploy SeaTunnel",
+      "separatedRoleHint": "A node can be both Master and Worker (deployment still runs two separate processes)",
       "hostsSelected": "hosts selected",
       "noAvailableHosts": "No available hosts",
       "noAvailableHostsDesc": "Please add hosts with Agent installed first",
@@ -878,6 +879,8 @@
       "disabled": "Disabled"
     },
     "notInstalled": "Not Installed",
+    "installedLabel": "Installed",
+    "installStatus": "Install status",
     "statuses": {
       "installed": "Enabled",
       "enabled": "Enabled",

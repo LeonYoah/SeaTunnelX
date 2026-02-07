@@ -31,10 +31,16 @@ import {NodeInfo, NodeRole, DeploymentMode, DefaultPorts, PrecheckResult, Preche
  * 获取角色翻译键
  */
 function getRoleTranslationKey(role: string): string {
+  if (!role || typeof role !== 'string') {
+    return 'undefined';
+  }
   if (role === 'master/worker') {
     return 'masterWorker';
   }
-  return role;
+  if (role === 'master' || role === 'worker') {
+    return role;
+  }
+  return 'undefined';
 }
 
 interface EditNodeDialogProps {

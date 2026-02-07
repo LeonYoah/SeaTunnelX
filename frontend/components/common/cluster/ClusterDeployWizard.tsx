@@ -98,10 +98,13 @@ const WIZARD_STEPS: StepConfig[] = [
 ];
 
 // Host with role assignment / 带角色分配的主机
+// For separated mode, roles can be [MASTER], [WORKER], or [MASTER, WORKER] (one node can be both; deploy runs one process per role).
+// 分离模式下 roles 可为 [MASTER]、[WORKER] 或 [MASTER, WORKER]（同一节点可兼两角；部署时每个角色一个进程）
 interface HostWithRole {
   host: HostInfo;
   selected: boolean;
-  role: NodeRole;
+  /** Single role for hybrid; one or both of MASTER/WORKER for separated / 混合模式为单角色；分离模式为 MASTER/WORKER 之一或两者 */
+  roles: NodeRole[];
 }
 
 // Host precheck result / 主机预检查结果
@@ -136,7 +139,7 @@ interface ClusterDeployConfig {
 const defaultConfig: ClusterDeployConfig = {
   name: '',
   description: '',
-  deploymentMode: DeploymentMode.HYBRID,
+  deploymentMode: DeploymentMode.SEPARATED,
   version: '2.3.12',
   installDir: '/opt/seatunnel-2.3.12', // Default install dir with version / 默认安装目录带版本号
   mirror: 'aliyun',
@@ -235,8 +238,11 @@ export function ClusterDeployWizard({
           availableHosts.map((host) => ({
             host,
             selected: false,
-            // Hybrid mode uses MASTER_WORKER role for all nodes / 混合模式所有节点使用 MASTER_WORKER 角色
-            role: config.deploymentMode === DeploymentMode.HYBRID ? NodeRole.MASTER_WORKER : NodeRole.WORKER,
+            // Hybrid: single MASTER_WORKER; separated: default Worker, user can add Master / 混合：单一 MASTER_WORKER；分离：默认 Worker，用户可勾选 Master
+            roles:
+              config.deploymentMode === DeploymentMode.HYBRID
+                ? [NodeRole.MASTER_WORKER]
+                : [NodeRole.WORKER],
           }))
         );
       }
@@ -265,6 +271,17 @@ export function ClusterDeployWizard({
     () => hostsWithRole.filter((h) => h.selected),
     [hostsWithRole]
   );
+
+  // Deploy nodes: one entry per (host, role). For separated, one host with both roles => two nodes; for hybrid, one node per host.
+  // 部署节点列表：每个 (host, role) 一条。分离模式下同一主机兼两角 => 两个节点；混合模式每主机一个节点。
+  const deployNodes = useMemo(() => {
+    if (config.deploymentMode === DeploymentMode.HYBRID) {
+      return selectedHosts.map((h) => ({ host: h.host, role: NodeRole.MASTER_WORKER }));
+    }
+    return selectedHosts.flatMap((h) =>
+      (h.roles as NodeRole[]).map((role) => ({ host: h.host, role }))
+    );
+  }, [config.deploymentMode, selectedHosts]);
 
   // Local packages for offline mode / 离线模式的本地安装包
   const localPackages = useMemo(
@@ -406,10 +423,22 @@ export function ClusterDeployWizard({
     setPrecheckRunning(false);
   }, []);
 
-  // Update host role / 更新主机角色
-  const updateHostRole = useCallback((hostId: number, role: NodeRole) => {
+  // Toggle one role for a host (separated mode). Keeps at least one role. / 切换主机的某一角色（分离模式），至少保留一个角色
+  const toggleHostRole = useCallback((hostId: number, role: NodeRole) => {
     setHostsWithRole((prev) =>
-      prev.map((h) => (h.host.id === hostId ? { ...h, role } : h))
+      prev.map((h) => {
+        if (h.host.id !== hostId) {
+          return h;
+        }
+        const hasRole = h.roles.includes(role);
+        if (hasRole && h.roles.length <= 1) {
+          return h; // keep at least one / 至少保留一个
+        }
+        if (hasRole) {
+          return { ...h, roles: h.roles.filter((r) => r !== role) };
+        }
+        return { ...h, roles: [...h.roles, role] };
+      })
     );
   }, []);
 
@@ -422,10 +451,10 @@ export function ClusterDeployWizard({
         if (selectedHosts.length === 0) {
           return false;
         }
-        // For separated mode, need at least one master / 分离模式需要至少一个 master
+        // For separated mode, need at least one master and one worker (can be on same host) / 分离模式需至少一个 Master 与一个 Worker（可在同一主机）
         if (config.deploymentMode === DeploymentMode.SEPARATED) {
-          const hasMaster = selectedHosts.some((h) => h.role === NodeRole.MASTER);
-          const hasWorker = selectedHosts.some((h) => h.role === NodeRole.WORKER);
+          const hasMaster = selectedHosts.some((h) => h.roles.includes(NodeRole.MASTER));
+          const hasWorker = selectedHosts.some((h) => h.roles.includes(NodeRole.WORKER));
           return hasMaster && hasWorker;
         }
         return true;
@@ -491,66 +520,53 @@ export function ClusterDeployWizard({
       }
       setDeployProgress(20);
 
-      // Step 2: Add nodes to cluster / 步骤2：添加节点到集群
+      // Step 2: Add nodes to cluster (one node per host+role; same host can have master and worker) / 步骤2：添加节点（每 host+role 一个节点；同一主机可有 master 与 worker）
       updateStep('add_nodes', 'running', t('cluster.wizard.steps.addingNodes'));
-      for (let i = 0; i < selectedHosts.length; i++) {
-        const hostWithRole = selectedHosts[i];
-        updateStep('add_node', 'running', t('cluster.wizard.steps.addingNode'), hostWithRole.host.name);
-        // Use addNodeSafe which handles duplicates gracefully
-        // 使用 addNodeSafe，它会优雅地处理重复添加
-        // Pass install_dir and port configuration / 传递安装目录和端口配置
+      for (let i = 0; i < deployNodes.length; i++) {
+        const { host, role } = deployNodes[i];
+        const label = deployNodes.length > selectedHosts.length ? `${host.name} (${role})` : host.name;
+        updateStep('add_node', 'running', t('cluster.wizard.steps.addingNode'), label);
         await services.cluster.addNodeSafe(clusterId, {
-          host_id: hostWithRole.host.id,
-          role: hostWithRole.role,
+          host_id: host.id,
+          role,
           install_dir: config.installDir,
-          hazelcast_port: hostWithRole.role === 'worker' && config.deploymentMode === DeploymentMode.SEPARATED
+          hazelcast_port: role === 'worker' && config.deploymentMode === DeploymentMode.SEPARATED
             ? config.workerPort
             : config.clusterPort,
-          api_port: hostWithRole.role === 'master' ? config.httpPort : undefined,
+          api_port: role === 'master' ? config.httpPort : undefined,
         });
-        updateStep('add_node', 'success', t('cluster.wizard.steps.nodeAdded'), hostWithRole.host.name);
-        setDeployProgress(20 + ((i + 1) / selectedHosts.length) * 30);
+        updateStep('add_node', 'success', t('cluster.wizard.steps.nodeAdded'), label);
+        setDeployProgress(20 + ((i + 1) / deployNodes.length) * 30);
       }
       updateStep('add_nodes', 'success', t('cluster.wizard.steps.nodesAdded'));
 
-      // Collect master addresses for cluster configuration
-      // 收集 master 节点地址用于集群配置
-      // For hybrid mode, all nodes act as both master and worker, so collect all addresses
-      // 对于混合模式，所有节点同时作为 master 和 worker，所以收集所有地址
+      // Collect master/worker addresses from deploy nodes / 从部署节点列表收集 master/worker 地址
       const masterAddresses = config.deploymentMode === DeploymentMode.HYBRID
-        ? selectedHosts.map(h => h.host.ip_address || '').filter(ip => ip !== '')
-        : selectedHosts
-            .filter(h => h.role === 'master')
-            .map(h => h.host.ip_address || '')
-            .filter(ip => ip !== '');
+        ? deployNodes.map((n) => n.host.ip_address || '').filter((ip) => ip !== '')
+        : [...new Set(deployNodes.filter((n) => n.role === 'master').map((n) => n.host.ip_address || '').filter(Boolean))];
+      const workerAddresses =
+        config.deploymentMode === DeploymentMode.SEPARATED
+          ? [...new Set(deployNodes.filter((n) => n.role === 'worker').map((n) => n.host.ip_address || '').filter(Boolean))]
+          : [];
 
-      // Collect worker addresses for separated mode
-      // 收集分离模式的 worker 地址
-      const workerAddresses = config.deploymentMode === DeploymentMode.SEPARATED
-        ? selectedHosts
-            .filter(h => h.role === 'worker')
-            .map(h => h.host.ip_address || '')
-            .filter(ip => ip !== '')
-        : [];
+      // Step 3: Install SeaTunnel (one install per deploy node; same host may be installed twice for master + worker) / 步骤3：按部署节点安装（同一主机可能先装 master 再装 worker）
+      for (let i = 0; i < deployNodes.length; i++) {
+        const { host, role } = deployNodes[i];
+        const label = deployNodes.length > selectedHosts.length ? `${host.name} (${role})` : host.name;
 
-      // Step 3: Install SeaTunnel on each host / 步骤3：在每台主机上安装 SeaTunnel
-      for (let i = 0; i < selectedHosts.length; i++) {
-        const hostWithRole = selectedHosts[i];
-
-        // Start installation / 开始安装
-        updateStep('install', 'running', t('cluster.wizard.steps.startingInstall'), hostWithRole.host.name, 0);
-        const installResult = await services.installer.startInstallation(hostWithRole.host.id, {
+        updateStep('install', 'running', t('cluster.wizard.steps.startingInstall'), label, 0);
+        const installResult = await services.installer.startInstallation(host.id, {
           cluster_id: String(clusterId),
           version: config.version,
           install_dir: config.installDir,
-          install_mode: 'online', // Always use online mode, backend handles local package check / 始终使用在线模式，后端会检查本地安装包
+          install_mode: 'online',
           mirror: config.mirror,
           deployment_mode: config.deploymentMode,
-          node_role: hostWithRole.role,
-          master_addresses: masterAddresses, // Pass all master addresses for hazelcast.yaml configuration / 传递所有 master 地址用于 hazelcast.yaml 配置
-          worker_addresses: workerAddresses, // Pass worker addresses for separated mode / 传递分离模式的 worker 地址
-          cluster_port: config.clusterPort, // Use configured cluster port / 使用配置的集群端口
-          http_port: config.httpPort, // Use configured HTTP port / 使用配置的 HTTP 端口
+          node_role: role,
+          master_addresses: masterAddresses,
+          worker_addresses: workerAddresses,
+          cluster_port: config.clusterPort,
+          http_port: config.httpPort,
           jvm: config.jvm,
           checkpoint: config.checkpoint,
           connector: config.selectedPlugins.length > 0 ? {
@@ -566,45 +582,40 @@ export function ClusterDeployWizard({
         // Helper to update steps from backend response / 从后端响应更新步骤的辅助函数
         const updateStepsFromStatus = () => {
           if (status.steps && status.steps.length > 0) {
-            // Show each step from backend with host name prefix
-            // 显示后端返回的每个步骤，带主机名前缀
             for (const step of status.steps) {
-              const stepKey = `${step.step}_${hostWithRole.host.id}`;
+              const stepKey = `${step.step}_${host.id}_${role}`;
               const stepStatus = step.status === 'success' ? 'success'
                 : step.status === 'failed' ? 'failed'
                 : step.status === 'running' ? 'running'
                 : 'pending';
               const stepMessage = step.message || step.name || step.step;
-              updateStep(stepKey, stepStatus, stepMessage, hostWithRole.host.name, step.progress || 0);
+              updateStep(stepKey, stepStatus, stepMessage, label, step.progress || 0);
             }
           }
         };
 
         while (status.status === 'running') {
           await new Promise((resolve) => setTimeout(resolve, 1000));
-          status = await services.installer.getInstallationStatus(hostWithRole.host.id);
+          status = await services.installer.getInstallationStatus(host.id);
 
           // Update detailed steps from backend / 从后端更新详细步骤
           updateStepsFromStatus();
 
           if (!status.steps || status.steps.length === 0) {
-            // Fallback to simple message / 回退到简单消息
             const stepMessage = status.message || status.current_step || t('cluster.wizard.steps.installing');
-            updateStep('install', 'running', stepMessage, hostWithRole.host.name, status.progress || 0);
+            updateStep('install', 'running', stepMessage, label, status.progress || 0);
           }
         }
 
-        // Update steps one final time after loop exits (handles immediate success case)
-        // 循环退出后最后更新一次步骤（处理立即成功的情况）
         updateStepsFromStatus();
 
         if (status.status === 'failed') {
-          updateStep('install', 'failed', status.error || t('cluster.wizard.steps.installFailed'), hostWithRole.host.name);
-          throw new Error(`Installation failed on host ${hostWithRole.host.name}: ${status.error}`);
+          updateStep('install', 'failed', status.error || t('cluster.wizard.steps.installFailed'), label);
+          throw new Error(`Installation failed on ${label}: ${status.error}`);
         }
 
-        updateStep('install', 'success', t('cluster.wizard.steps.installComplete'), hostWithRole.host.name, 100);
-        setDeployProgress(50 + ((i + 1) / selectedHosts.length) * 40);
+        updateStep('install', 'success', t('cluster.wizard.steps.installComplete'), label, 100);
+        setDeployProgress(50 + ((i + 1) / deployNodes.length) * 40);
       }
 
       // Step 4: Complete / 步骤4：完成
@@ -625,7 +636,7 @@ export function ClusterDeployWizard({
     } finally {
       setDeploying(false);
     }
-  }, [config, selectedHosts, t, createdClusterId]);
+  }, [config, selectedHosts, deployNodes, t, createdClusterId]);
 
   // Handle next step / 处理下一步
   const handleNext = useCallback(() => {
@@ -805,16 +816,21 @@ export function ClusterDeployWizard({
       </div>
 
       {config.deploymentMode === DeploymentMode.SEPARATED && (
-        <div className="flex gap-4 text-sm">
-          <div className="flex items-center gap-2">
-            <Crown className="h-4 w-4 text-yellow-500" />
-            <span>Master: {selectedHosts.filter((h) => h.role === NodeRole.MASTER).length}</span>
+        <>
+          <p className="text-xs text-muted-foreground mt-1">
+            {t('cluster.wizard.separatedRoleHint')}
+          </p>
+          <div className="flex gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <Crown className="h-4 w-4 text-yellow-500" />
+              <span>Master: {selectedHosts.filter((h) => h.roles.includes(NodeRole.MASTER)).length}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-blue-500" />
+              <span>Worker: {selectedHosts.filter((h) => h.roles.includes(NodeRole.WORKER)).length}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-blue-500" />
-            <span>Worker: {selectedHosts.filter((h) => h.role === NodeRole.WORKER).length}</span>
-          </div>
-        </div>
+        </>
       )}
 
       <ScrollArea className="flex-1 min-h-0 pr-4 mt-4">
@@ -857,28 +873,24 @@ export function ClusterDeployWizard({
                       </p>
                     </div>
                     {hostWithRole.selected && config.deploymentMode === DeploymentMode.SEPARATED && (
-                      <Select
-                        value={hostWithRole.role}
-                        onValueChange={(value) => updateHostRole(hostWithRole.host.id, value as NodeRole)}
-                      >
-                        <SelectTrigger className="w-[120px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NodeRole.MASTER}>
-                            <div className="flex items-center gap-2">
-                              <Crown className="h-3 w-3 text-yellow-500" />
-                              Master
-                            </div>
-                          </SelectItem>
-                          <SelectItem value={NodeRole.WORKER}>
-                            <div className="flex items-center gap-2">
-                              <Wrench className="h-3 w-3 text-blue-500" />
-                              Worker
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <label className="flex items-center gap-2 cursor-pointer text-sm">
+                          <Checkbox
+                            checked={hostWithRole.roles.includes(NodeRole.MASTER)}
+                            onCheckedChange={() => toggleHostRole(hostWithRole.host.id, NodeRole.MASTER)}
+                          />
+                          <Crown className="h-3 w-3 text-yellow-500" />
+                          {t('cluster.roles.master')}
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-sm">
+                          <Checkbox
+                            checked={hostWithRole.roles.includes(NodeRole.WORKER)}
+                            onCheckedChange={() => toggleHostRole(hostWithRole.host.id, NodeRole.WORKER)}
+                          />
+                          <Wrench className="h-3 w-3 text-blue-500" />
+                          {t('cluster.roles.worker')}
+                        </label>
+                      </div>
                     )}
                   </div>
                 </CardContent>

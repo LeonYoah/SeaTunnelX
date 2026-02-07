@@ -2,8 +2,9 @@
  * Install Plugin Dialog Component
  * 安装插件对话框组件
  *
- * Shows cluster list with install/enable/disable actions for each cluster
- * 显示集群列表，每个集群可以安装/启用/禁用插件
+ * Shows cluster list with install action. SeaTunnel plugins are not dynamically
+ * loaded, so enable/disable is not used.
+ * 显示集群列表及安装操作。SeaTunnel 插件非动态加载，无启用/禁用。
  */
 
 'use client';
@@ -36,8 +37,7 @@ import {
   AlertCircle,
   Info,
   CloudDownload,
-  Power,
-  PowerOff,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Plugin, PluginDownloadProgress, InstalledPlugin } from '@/lib/services/plugin';
@@ -223,35 +223,17 @@ export function InstallPluginDialog({
   };
 
   /**
-   * Handle enable plugin on cluster
-   * 处理在集群上启用插件
+   * Handle uninstall plugin from cluster
+   * 处理从集群卸载插件
    */
-  const handleEnable = async (clusterId: number) => {
+  const handleUninstall = async (clusterId: number) => {
     setOperatingClusterId(clusterId);
     try {
-      await PluginService.enablePlugin(clusterId, plugin.name);
-      toast.success(t('plugin.enableSuccess'));
+      await PluginService.uninstallPlugin(clusterId, plugin.name);
+      toast.success(t('plugin.uninstallSuccess'));
       await refreshClusterStatus(clusterId);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('plugin.enableError');
-      toast.error(errorMsg);
-    } finally {
-      setOperatingClusterId(null);
-    }
-  };
-
-  /**
-   * Handle disable plugin on cluster
-   * 处理在集群上禁用插件
-   */
-  const handleDisable = async (clusterId: number) => {
-    setOperatingClusterId(clusterId);
-    try {
-      await PluginService.disablePlugin(clusterId, plugin.name);
-      toast.success(t('plugin.disableSuccess'));
-      await refreshClusterStatus(clusterId);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('plugin.disableError');
+      const errorMsg = err instanceof Error ? err.message : t('plugin.uninstallFailed');
       toast.error(errorMsg);
     } finally {
       setOperatingClusterId(null);
@@ -293,8 +275,8 @@ export function InstallPluginDialog({
   };
 
   /**
-   * Get status badge for installed plugin
-   * 获取已安装插件的状态徽章
+   * Get status badge for installed plugin (installed or not; no enable/disable)
+   * 获取已安装插件的状态徽章（仅已安装/未安装，无启用禁用）
    */
   const getStatusBadge = (installedPlugin: InstalledPlugin | null) => {
     if (!installedPlugin) {
@@ -304,10 +286,9 @@ export function InstallPluginDialog({
         </Badge>
       );
     }
-    const isEnabled = installedPlugin.status === 'enabled' || installedPlugin.status === 'installed';
     return (
-      <Badge variant={isEnabled ? 'default' : 'secondary'}>
-        {t(`plugin.statuses.${installedPlugin.status}`)}
+      <Badge variant="default">
+        {t('plugin.installedLabel')}
       </Badge>
     );
   };
@@ -401,7 +382,7 @@ export function InstallPluginDialog({
                   <TableRow>
                     <TableHead>{t('cluster.name')}</TableHead>
                     <TableHead>{t('cluster.status')}</TableHead>
-                    <TableHead>{t('plugin.status.label')}</TableHead>
+                    <TableHead>{t('plugin.installStatus')}</TableHead>
                     <TableHead className="text-right">{t('common.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -409,9 +390,6 @@ export function InstallPluginDialog({
                   {clusterStatuses.map(({ cluster, installedPlugin, loading }) => {
                     const isOperating = operatingClusterId === cluster.id;
                     const isInstalled = !!installedPlugin;
-                    const isEnabled =
-                      installedPlugin?.status === 'enabled' ||
-                      installedPlugin?.status === 'installed';
 
                     return (
                       <TableRow key={cluster.id}>
@@ -452,33 +430,20 @@ export function InstallPluginDialog({
                               )}
                               {t('plugin.install')}
                             </Button>
-                          ) : isEnabled ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDisable(cluster.id)}
-                              disabled={isOperating}
-                            >
-                              {isOperating ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <PowerOff className="h-4 w-4 mr-1 text-orange-600" />
-                              )}
-                              {t('plugin.disable')}
-                            </Button>
                           ) : (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleEnable(cluster.id)}
+                              onClick={() => handleUninstall(cluster.id)}
                               disabled={isOperating}
+                              className="text-destructive hover:text-destructive"
                             >
                               {isOperating ? (
                                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                               ) : (
-                                <Power className="h-4 w-4 mr-1 text-green-600" />
+                                <Trash2 className="h-4 w-4 mr-1" />
                               )}
-                              {t('plugin.enable')}
+                              {t('plugin.uninstall')}
                             </Button>
                           )}
                         </TableCell>

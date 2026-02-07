@@ -1365,11 +1365,11 @@ func (s *Service) StartNode(ctx context.Context, clusterID uint, nodeID uint) (*
 
 // StartNodeByClusterAndHost starts a node by cluster ID and host ID.
 // StartNodeByClusterAndHost 根据集群 ID 和主机 ID 启动节点。
+// When a host has multiple nodes (master + worker), use StartNodeByClusterAndHostAndRole to start the specific role.
+// 当同一主机有多个节点（master+worker）时，请使用 StartNodeByClusterAndHostAndRole 启动指定角色。
 // This implements the installer.NodeStarter interface.
 // 这实现了 installer.NodeStarter 接口。
 func (s *Service) StartNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (bool, string, error) {
-	// Find node by cluster ID and host ID
-	// 根据集群 ID 和主机 ID 查找节点
 	node, err := s.repo.GetNodeByClusterAndHost(ctx, clusterID, hostID)
 	if err != nil {
 		return false, "", fmt.Errorf("failed to find node: %w / 查找节点失败: %w", err, err)
@@ -1377,16 +1377,32 @@ func (s *Service) StartNodeByClusterAndHost(ctx context.Context, clusterID uint,
 	if node == nil {
 		return false, "", fmt.Errorf("node not found for cluster %d and host %d / 未找到集群 %d 主机 %d 对应的节点", clusterID, hostID, clusterID, hostID)
 	}
-
-	// Use existing StartNode logic
-	// 使用现有的 StartNode 逻辑
 	result, err := s.executeNodeOperation(ctx, clusterID, node.ID, OperationStart)
 	if err != nil {
 		return false, "", err
 	}
+	if len(result.NodeResults) > 0 {
+		return result.NodeResults[0].Success, result.NodeResults[0].Message, nil
+	}
+	return result.Success, result.Message, nil
+}
 
-	// Return success status and message
-	// 返回成功状态和消息
+// StartNodeByClusterAndHostAndRole starts a node by cluster ID, host ID and role.
+// StartNodeByClusterAndHostAndRole 根据集群 ID、主机 ID 和角色启动节点。
+// Used after install when one host has both master and worker (separated mode); starts the node that was just installed.
+// 安装完成后、同一主机兼有 master 与 worker 时使用，用于启动刚安装完成的那一个节点。
+func (s *Service) StartNodeByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (bool, string, error) {
+	node, err := s.repo.GetNodeByClusterAndHostAndRole(ctx, clusterID, hostID, role)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to find node: %w / 查找节点失败: %w", err, err)
+	}
+	if node == nil {
+		return false, "", fmt.Errorf("node not found for cluster %d, host %d, role %s / 未找到集群 %d 主机 %d 角色 %s 对应的节点", clusterID, hostID, role, clusterID, hostID, role)
+	}
+	result, err := s.executeNodeOperation(ctx, clusterID, node.ID, OperationStart)
+	if err != nil {
+		return false, "", err
+	}
 	if len(result.NodeResults) > 0 {
 		return result.NodeResults[0].Success, result.NodeResults[0].Message, nil
 	}

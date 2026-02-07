@@ -119,6 +119,9 @@ type NodeStarter interface {
 	// StartNodeByClusterAndHost starts a node by cluster ID and host ID
 	// StartNodeByClusterAndHost 根据集群 ID 和主机 ID 启动节点
 	StartNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (bool, string, error)
+	// StartNodeByClusterAndHostAndRole starts a node by cluster ID, host ID and role (for separated mode: same host can have master + worker)
+	// StartNodeByClusterAndHostAndRole 根据集群 ID、主机 ID 和角色启动节点（分离模式下同一主机可有 master+worker）
+	StartNodeByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (bool, string, error)
 }
 
 // ConfigInitializer is the interface for initializing cluster configs after installation
@@ -1675,7 +1678,9 @@ func (s *Service) startClusterAfterInstall(ctx context.Context, agentID string, 
 		return
 	}
 
-	success, message, err := s.nodeStarter.StartNodeByClusterAndHost(ctx, clusterID, hostID)
+	// Use role to start the specific node; same host may have both master and worker (separated mode)
+	// 按角色启动对应节点；同一主机可能同时有 master 与 worker（分离模式）
+	success, message, err := s.nodeStarter.StartNodeByClusterAndHostAndRole(ctx, clusterID, hostID, nodeRole)
 	if err != nil {
 		logger.ErrorF(ctx, "[Installer] 启动节点失败 / Failed to start node: cluster=%d, host=%d, role=%s, error=%v",
 			clusterID, hostID, nodeRole, err)

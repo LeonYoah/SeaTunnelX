@@ -123,12 +123,16 @@ function getHealthBadgeVariant(
  * 处理 "master/worker" 角色的特殊情况
  */
 function getRoleTranslationKey(role: string): string {
-  // Replace "/" with "_" for i18n key compatibility
-  // 将 "/" 替换为 "_" 以兼容 i18n 键
+  if (!role || typeof role !== 'string') {
+    return 'undefined';
+  }
   if (role === 'master/worker') {
     return 'masterWorker';
   }
-  return role;
+  if (role === 'master' || role === 'worker') {
+    return role;
+  }
+  return 'undefined';
 }
 
 /**

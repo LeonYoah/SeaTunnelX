@@ -270,9 +270,26 @@ func (r *Repository) GetNodesByClusterID(ctx context.Context, clusterID uint) ([
 
 // GetNodeByClusterAndHost retrieves a cluster node by cluster ID and host ID.
 // GetNodeByClusterAndHost 根据集群 ID 和主机 ID 获取集群节点。
+// When a host has multiple nodes (e.g. master + worker in separated mode), use GetNodeByClusterAndHostAndRole instead.
+// 当同一主机有多个节点（如分离模式下 master+worker）时，请使用 GetNodeByClusterAndHostAndRole。
 func (r *Repository) GetNodeByClusterAndHost(ctx context.Context, clusterID uint, hostID uint) (*ClusterNode, error) {
 	var node ClusterNode
 	if err := r.db.WithContext(ctx).Where("cluster_id = ? AND host_id = ?", clusterID, hostID).First(&node).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &node, nil
+}
+
+// GetNodeByClusterAndHostAndRole retrieves a cluster node by cluster ID, host ID and role.
+// GetNodeByClusterAndHostAndRole 根据集群 ID、主机 ID 和角色获取集群节点。
+// Used when one host has both master and worker nodes (separated mode).
+// 用于同一主机同时有 master 和 worker 节点（分离模式）时。
+func (r *Repository) GetNodeByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (*ClusterNode, error) {
+	var node ClusterNode
+	if err := r.db.WithContext(ctx).Where("cluster_id = ? AND host_id = ? AND role = ?", clusterID, hostID, role).First(&node).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
