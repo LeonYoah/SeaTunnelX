@@ -591,6 +591,9 @@ type ClusterNodeProvider interface {
 	// UpdateNodeProcessStatus updates the process PID and status for a node.
 	// UpdateNodeProcessStatus 更新节点的进程 PID 和状态。
 	UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error
+	// RefreshClusterStatusFromNodes recalculates cluster status from its nodes (e.g. after heartbeat).
+	// RefreshClusterStatusFromNodes 根据节点状态重新计算集群状态（如心跳更新节点后）。
+	RefreshClusterStatusFromNodes(ctx context.Context, clusterID uint)
 	// GetClusterNodeDisplayInfo returns cluster name and node display "主机名 - 角色" for audit resource name.
 	// GetClusterNodeDisplayInfo 返回集群名及节点展示「主机名 - 角色」，用于审计资源名称。
 	GetClusterNodeDisplayInfo(ctx context.Context, clusterID, nodeID uint) (clusterName, nodeDisplay string)
@@ -1138,6 +1141,7 @@ func (s *Server) updateProcessStatusFromHeartbeat(ctx context.Context, hostID ui
 	}
 
 	// Update each node's process status / 更新每个节点的进程状态
+	clusterIDsSeen := make(map[uint]struct{})
 	for _, node := range nodes {
 		// Determine process name based on role / 根据角色确定进程名
 		processName := "seatunnel"
@@ -1158,5 +1162,12 @@ func (s *Server) updateProcessStatusFromHeartbeat(ctx context.Context, hostID ui
 				zap.Error(err),
 			)
 		}
+		clusterIDsSeen[node.ClusterID] = struct{}{}
+	}
+
+	// Refresh cluster status from nodes so cluster.status stays in sync (not only on read).
+	// 根据节点状态刷新集群 status，使集群状态随心跳持续更新。
+	for cid := range clusterIDsSeen {
+		clusterNodeProvider.RefreshClusterStatusFromNodes(ctx, cid)
 	}
 }

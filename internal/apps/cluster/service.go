@@ -1679,3 +1679,10 @@ func (s *Service) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid 
 	logger.InfoF(ctx, "[Cluster] UpdateNodeProcessStatus: nodeID=%d, pid=%d, status=%s", nodeID, pid, status)
 	return s.repo.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
 }
+
+// RefreshClusterStatusFromNodes recalculates and updates cluster status from its nodes' status.
+// Called after heartbeat updates node process status so cluster status stays in sync.
+// RefreshClusterStatusFromNodes 根据节点状态重新计算并更新集群状态；心跳更新节点后调用以保持集群状态一致。
+func (s *Service) RefreshClusterStatusFromNodes(ctx context.Context, clusterID uint) {
+	s.updateClusterStatusFromNodes(ctx, clusterID)
+}

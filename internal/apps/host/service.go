@@ -415,6 +415,8 @@ func (s *Service) UpdateAgentStatusByID(ctx context.Context, hostID uint, status
 // UpdateHeartbeat updates the heartbeat timestamp and resource usage for a host.
 // UpdateHeartbeat 更新主机的心跳时间戳和资源使用率。
 // Requirements: 3.3 - Updates last heartbeat time, CPU, memory, and disk usage.
+// If the host was marked offline, it is set back to installed so dashboard and host management show the same state.
+// 若主机此前被标为离线，会恢复为已安装，使首页与主机管理状态一致。
 func (s *Service) UpdateHeartbeat(ctx context.Context, agentID string, cpuUsage, memoryUsage, diskUsage float64) error {
 	// Find host by agent ID
 	// 根据 Agent ID 查找主机
@@ -425,7 +427,15 @@ func (s *Service) UpdateHeartbeat(ctx context.Context, agentID string, cpuUsage,
 
 	// Update heartbeat data
 	// 更新心跳数据
-	return s.repo.UpdateHeartbeat(ctx, host.ID, cpuUsage, memoryUsage, diskUsage)
+	if err := s.repo.UpdateHeartbeat(ctx, host.ID, cpuUsage, memoryUsage, diskUsage); err != nil {
+		return err
+	}
+
+	// 若当前为离线，收到心跳后恢复为已安装，与首页“在线”一致
+	if host.AgentStatus == AgentStatusOffline {
+		_ = s.repo.UpdateAgentStatus(ctx, host.ID, AgentStatusInstalled, host.AgentID, host.AgentVersion)
+	}
+	return nil
 }
 
 // UpdateHeartbeatByID updates the heartbeat for a specific host ID.

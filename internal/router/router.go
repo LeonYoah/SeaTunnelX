@@ -1583,6 +1583,12 @@ func (a *grpcClusterNodeProviderAdapter) UpdateNodeProcessStatus(ctx context.Con
 	return a.clusterService.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
 }
 
+// RefreshClusterStatusFromNodes recalculates cluster status from its nodes (e.g. after heartbeat).
+// RefreshClusterStatusFromNodes 根据节点状态重新计算集群状态（如心跳更新节点后）。
+func (a *grpcClusterNodeProviderAdapter) RefreshClusterStatusFromNodes(ctx context.Context, clusterID uint) {
+	a.clusterService.RefreshClusterStatusFromNodes(ctx, clusterID)
+}
+
 // GetClusterNodeDisplayInfo returns cluster name and node display for audit resource name.
 // GetClusterNodeDisplayInfo 返回集群名及节点展示，用于审计资源名称。
 func (a *grpcClusterNodeProviderAdapter) GetClusterNodeDisplayInfo(ctx context.Context, clusterID, nodeID uint) (clusterName, nodeDisplay string) {
