@@ -370,6 +370,8 @@
     "editClusterDescription": "Edit cluster information",
     "deleteCluster": "Delete Cluster",
     "deleteConfirm": "Are you sure you want to delete cluster {name}? This action cannot be undone.",
+    "deleteConfirmWarning": "After deletion, the cluster and node records will be removed from the control plane, and agents on each host will be notified to stop processes. If \"Force delete\" is checked, agents will also be told to remove the install directory on the host (e.g. /opt/seatunnel-xxx); data cannot be recovered.",
+    "forceDeleteOption": "Force delete (also remove install directory on hosts)",
     "name": "Cluster Name",
     "namePlaceholder": "Enter cluster name",
     "nameRequired": "Cluster name is required",

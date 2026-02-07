@@ -152,6 +152,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [isEditNodeDialogOpen, setIsEditNodeDialogOpen] = useState(false);
   const [nodeToEdit, setNodeToEdit] = useState<NodeInfo | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
   const [nodeToRemove, setNodeToRemove] = useState<NodeInfo | null>(null);
 
   // Node selection state / 节点选择状态
@@ -286,7 +287,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
    * 处理删除集群
    */
   const handleDelete = async () => {
-    const result = await services.cluster.deleteClusterSafe(clusterId);
+    const result = await services.cluster.deleteClusterSafe(clusterId, {
+      forceDelete,
+    });
     if (result.success) {
       toast.success(t('cluster.deleteSuccess'));
       router.push('/clusters');
@@ -294,6 +297,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       toast.error(result.error || t('cluster.deleteError'));
     }
     setIsDeleteDialogOpen(false);
+    setForceDelete(false);
   };
 
   /**
@@ -1007,12 +1011,30 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       />
 
       {/* Delete Cluster Dialog / 删除集群对话框 */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) setForceDelete(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('cluster.deleteCluster')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('cluster.deleteConfirm', {name: cluster.name})}
+            <AlertDialogDescription asChild>
+              <div className='space-y-3'>
+                <p>{t('cluster.deleteConfirm', {name: cluster.name})}</p>
+                <p className='text-sm text-muted-foreground'>
+                  {t('cluster.deleteConfirmWarning')}
+                </p>
+                <label className='flex items-center gap-2 cursor-pointer'>
+                  <Checkbox
+                    checked={forceDelete}
+                    onCheckedChange={(v) => setForceDelete(v === true)}
+                  />
+                  <span className='text-sm'>{t('cluster.forceDeleteOption')}</span>
+                </label>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

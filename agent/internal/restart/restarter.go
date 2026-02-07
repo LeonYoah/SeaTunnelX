@@ -160,6 +160,17 @@ func (r *AutoRestarter) OnProcessCrashed(proc *monitor.TrackedProcess) error {
 		config.RestartDelay, proc.Name, config.RestartDelay, proc.Name)
 	time.Sleep(config.RestartDelay)
 
+	// Re-check enabled after delay: config may have been set to disabled (e.g. cluster deleted).
+	// 延迟后再次检查是否启用：配置可能已被设为禁用（例如集群已删除）。
+	r.mu.Lock()
+	stillEnabled := r.config.Enabled
+	r.mu.Unlock()
+	if !stillEnabled {
+		fmt.Printf("[AutoRestarter] Auto restart disabled after delay, skipping restart for %s / 延迟后自动重启已禁用，跳过 %s 的重启\n",
+			proc.Name, proc.Name)
+		return nil
+	}
+
 	// Perform restart / 执行重启
 	return r.DoRestart(context.Background(), proc)
 }

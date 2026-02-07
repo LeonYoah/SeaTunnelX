@@ -297,6 +297,13 @@ func Serve() {
 				log.Println("[API] Node provider and config sender injected into monitor service / 节点提供者和配置发送器已注入监控服务")
 			}
 
+			// Delete cluster 前：先向各 Agent 推送关闭监控配置（停止监控且不再重启进程），再清理 DB 中的监控配置与事件；cluster.Service 已向各节点 Agent 发送 stop 命令
+			clusterService.SetOnBeforeClusterDelete(func(ctx context.Context, clusterID uint) {
+				monitorService.PushDisableConfigForCluster(ctx, clusterID)
+				_ = monitorService.DeleteConfig(ctx, clusterID)
+				_ = monitorService.DeleteClusterEvents(ctx, clusterID)
+			})
+
 			monitorHandler := monitor.NewHandler(monitorService)
 
 			// Monitor config routes on clusters 集群监控配置路由
@@ -850,6 +857,8 @@ func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.Comma
 		return pb.CommandType_STATUS
 	case "get_logs":
 		return pb.CommandType_COLLECT_LOGS
+	case "remove_install_dir":
+		return pb.CommandType_REMOVE_INSTALL_DIR
 	default:
 		return pb.CommandType_PRECHECK
 	}

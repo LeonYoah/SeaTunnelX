@@ -290,7 +290,8 @@ func (h *Handler) DeleteCluster(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.Delete(c.Request.Context(), uint(clusterID)); err != nil {
+	forceDelete := c.Query("force_delete") == "1" || c.Query("force_delete") == "true"
+	if err := h.service.Delete(c.Request.Context(), uint(clusterID), forceDelete); err != nil {
 		statusCode := h.getStatusCodeForError(err)
 		c.JSON(statusCode, DeleteClusterResponse{ErrorMsg: err.Error()})
 		return

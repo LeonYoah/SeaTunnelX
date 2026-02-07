@@ -141,8 +141,11 @@ export function ClusterMain() {
    * Handle delete cluster
    * 处理删除集群
    */
-  const handleDelete = async (cluster: ClusterInfo) => {
-    const result = await services.cluster.deleteClusterSafe(cluster.id);
+  const handleDelete = async (
+    cluster: ClusterInfo,
+    options?: { forceDelete?: boolean },
+  ) => {
+    const result = await services.cluster.deleteClusterSafe(cluster.id, options);
     if (result.success) {
       toast.success(t('cluster.deleteSuccess'));
       loadClusters();

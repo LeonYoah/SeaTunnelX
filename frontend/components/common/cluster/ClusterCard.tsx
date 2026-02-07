@@ -42,6 +42,7 @@ import {
   Server,
   Loader2,
 } from 'lucide-react';
+import {Checkbox} from '@/components/ui/checkbox';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import {ClusterInfo, ClusterStatus} from '@/lib/services/cluster/types';
@@ -49,7 +50,7 @@ import {ClusterInfo, ClusterStatus} from '@/lib/services/cluster/types';
 interface ClusterCardProps {
   cluster: ClusterInfo;
   onEdit: (cluster: ClusterInfo) => void;
-  onDelete: (cluster: ClusterInfo) => void;
+  onDelete: (cluster: ClusterInfo, options?: { forceDelete?: boolean }) => void;
   onRefresh: () => void;
 }
 
@@ -104,6 +105,7 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
   const t = useTranslations();
   const router = useRouter();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
   const [confirmOp, setConfirmOp] = useState<ConfirmOp | null>(null);
   const [isOperating, setIsOperating] = useState(false);
 
@@ -194,7 +196,8 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
    */
   const handleConfirmDelete = () => {
     setIsDeleteDialogOpen(false);
-    onDelete(cluster);
+    onDelete(cluster, { forceDelete });
+    setForceDelete(false);
   };
 
   const canStart = cluster.status === ClusterStatus.CREATED || cluster.status === ClusterStatus.STOPPED;
@@ -385,12 +388,30 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
       </AlertDialog>
 
       {/* Delete Confirmation Dialog / 删除确认对话框 */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) setForceDelete(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('cluster.deleteCluster')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('cluster.deleteConfirm', {name: cluster.name})}
+            <AlertDialogDescription asChild>
+              <div className='space-y-3'>
+                <p>{t('cluster.deleteConfirm', {name: cluster.name})}</p>
+                <p className='text-sm text-muted-foreground'>
+                  {t('cluster.deleteConfirmWarning')}
+                </p>
+                <label className='flex items-center gap-2 cursor-pointer'>
+                  <Checkbox
+                    checked={forceDelete}
+                    onCheckedChange={(v) => setForceDelete(v === true)}
+                  />
+                  <span className='text-sm'>{t('cluster.forceDeleteOption')}</span>
+                </label>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

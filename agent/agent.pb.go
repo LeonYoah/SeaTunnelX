@@ -61,6 +61,7 @@ const (
 	CommandType_UPDATE_MONITOR_CONFIG CommandType = 71 // 更新监控配置
 	CommandType_MARK_MANUAL_STOP      CommandType = 72 // 标记手动停止
 	CommandType_CLEAR_MANUAL_STOP     CommandType = 73 // 清除手动停止标记
+	CommandType_REMOVE_INSTALL_DIR    CommandType = 74 // 强制删除：删除主机上的安装目录
 )
 
 // Enum value maps for CommandType.
@@ -90,6 +91,7 @@ var (
 		71: "UPDATE_MONITOR_CONFIG",
 		72: "MARK_MANUAL_STOP",
 		73: "CLEAR_MANUAL_STOP",
+		74: "REMOVE_INSTALL_DIR",
 	}
 	CommandType_value = map[string]int32{
 		"COMMAND_TYPE_UNSPECIFIED": 0,
@@ -116,6 +118,7 @@ var (
 		"UPDATE_MONITOR_CONFIG":    71,
 		"MARK_MANUAL_STOP":         72,
 		"CLEAR_MANUAL_STOP":        73,
+		"REMOVE_INSTALL_DIR":       74,
 	}
 )
 

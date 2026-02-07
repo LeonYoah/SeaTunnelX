@@ -270,6 +270,41 @@ func (s *Service) pushConfigToAgents(ctx context.Context, clusterID uint, config
 	s.MarkConfigSynced(ctx, clusterID)
 }
 
+// PushDisableConfigForCluster pushes a config with auto_monitor=false and auto_restart=false
+// to all agents that have nodes in this cluster, so they stop monitoring and won't restart processes.
+// Call before deleting the cluster so agents are notified.
+// PushDisableConfigForCluster 向该集群下所有 Agent 推送关闭监控的配置，使 Agent 停止监控且不再重启进程；删除集群前调用以通知 Agent。
+func (s *Service) PushDisableConfigForCluster(ctx context.Context, clusterID uint) {
+	if s.configSender == nil || s.nodeProvider == nil {
+		log.Printf("[Monitor] PushDisableConfigForCluster: config sender or node provider not set, skip / 未配置，跳过")
+		return
+	}
+	nodes, err := s.nodeProvider.GetNodesByClusterID(ctx, clusterID)
+	if err != nil || len(nodes) == 0 {
+		return
+	}
+	config, _ := s.repo.GetConfigByClusterID(ctx, clusterID)
+	if config == nil {
+		config = DefaultMonitorConfig(clusterID)
+	}
+	config.AutoMonitor = false
+	config.AutoRestart = false
+	config.ConfigVersion++
+	agentIDs := make(map[string]struct{})
+	for _, node := range nodes {
+		if node.AgentID != "" {
+			agentIDs[node.AgentID] = struct{}{}
+		}
+	}
+	for agentID := range agentIDs {
+		if err := s.configSender.SendMonitorConfig(ctx, agentID, config, nil); err != nil {
+			log.Printf("[Monitor] PushDisableConfigForCluster: send to agent %s failed: %v / 向 Agent 推送关闭监控失败: %v", agentID, err, err)
+		} else {
+			log.Printf("[Monitor] PushDisableConfigForCluster: sent disable config to agent %s / 已向 Agent %s 推送关闭监控配置", agentID, agentID)
+		}
+	}
+}
+
 // DeleteConfig deletes monitor config for a cluster.
 // DeleteConfig 删除集群的监控配置。
 func (s *Service) DeleteConfig(ctx context.Context, clusterID uint) error {

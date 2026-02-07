@@ -836,6 +836,7 @@ func (a *Agent) registerCommandHandlers() {
 	// Register cluster discovery and monitoring handlers / 注册集群发现和监控处理器
 	a.executor.RegisterHandler(pb.CommandType_DISCOVER_CLUSTERS, a.handleDiscoverClustersCommand)
 	a.executor.RegisterHandler(pb.CommandType_UPDATE_MONITOR_CONFIG, a.handleUpdateMonitorConfigCommand)
+	a.executor.RegisterHandler(pb.CommandType_REMOVE_INSTALL_DIR, a.handleRemoveInstallDirCommand)
 
 	// Initialize plugin manager and register plugin handlers / 初始化插件管理器并注册插件处理器
 	executor.InitPluginManager(a.config.SeaTunnel.InstallDir)
@@ -1839,6 +1840,37 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 
 	reporter.Report(100, "Monitor config updated / 监控配置已更新")
 	return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated successfully / 监控配置更新成功"), nil
+}
+
+// handleRemoveInstallDirCommand handles the REMOVE_INSTALL_DIR command (force delete: remove install directory on host).
+// handleRemoveInstallDirCommand 处理 REMOVE_INSTALL_DIR 命令（强制删除：删除主机上的安装目录）。
+func (a *Agent) handleRemoveInstallDirCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	reporter.Report(10, "Removing install directory... / 正在删除安装目录...")
+
+	installDir := getParamString(cmd.Parameters, "install_dir", "")
+	if installDir == "" {
+		msg := "install_dir is required / install_dir 为必填"
+		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
+	}
+
+	clean := filepath.Clean(installDir)
+	if !filepath.IsAbs(clean) {
+		msg := fmt.Sprintf("install_dir must be an absolute path / install_dir 必须为绝对路径: %s", clean)
+		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
+	}
+	if clean == "/" || clean == "." || strings.Contains(clean, "..") {
+		msg := fmt.Sprintf("install_dir is not allowed / 不允许的 install_dir: %s", clean)
+		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
+	}
+
+	if err := os.RemoveAll(clean); err != nil {
+		msg := fmt.Sprintf("failed to remove install dir / 删除安装目录失败: %v", err)
+		return executor.CreateErrorResponse(cmd.CommandId, msg), err
+	}
+
+	fmt.Printf("[Agent] Removed install directory: %s / 已删除安装目录：%s\n", clean, clean)
+	reporter.Report(100, "Install directory removed / 安装目录已删除")
+	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Install directory removed: %s / 安装目录已删除：%s", clean, clean)), nil
 }
 
 // isProcessAlive checks if a process with the given PID is alive

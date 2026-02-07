@@ -140,10 +140,19 @@ export class ClusterService extends BaseService {
    * 删除集群
    *
    * @param clusterId - Cluster ID / 集群 ID
+   * @param options - forceDelete: if true, notify agents to remove install dir on hosts
    */
-  static async deleteCluster(clusterId: number): Promise<void> {
+  static async deleteCluster(
+    clusterId: number,
+    options?: { forceDelete?: boolean },
+  ): Promise<void> {
+    const params =
+      options?.forceDelete === true
+        ? { force_delete: '1' }
+        : undefined;
     const response = await apiClient.delete<DeleteClusterResponse>(
       `${this.basePath}/${clusterId}`,
+      { params },
     );
 
     if (response.data.error_msg) {
@@ -420,12 +429,15 @@ export class ClusterService extends BaseService {
    * Delete a cluster (with error handling)
    * 删除集群（带错误处理）
    */
-  static async deleteClusterSafe(clusterId: number): Promise<{
+  static async deleteClusterSafe(
+    clusterId: number,
+    options?: { forceDelete?: boolean },
+  ): Promise<{
     success: boolean;
     error?: string;
   }> {
     try {
-      await this.deleteCluster(clusterId);
+      await this.deleteCluster(clusterId, options);
       return {success: true};
     } catch (error) {
       const errorMessage =

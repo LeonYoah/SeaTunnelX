@@ -154,10 +154,11 @@ type AgentCommandSender interface {
 // Service provides business logic for cluster management operations.
 // Service 提供集群管理操作的业务逻辑。
 type Service struct {
-	repo             *Repository
-	hostProvider     HostProvider
-	heartbeatTimeout time.Duration
-	agentSender      AgentCommandSender
+	repo                 *Repository
+	hostProvider         HostProvider
+	heartbeatTimeout     time.Duration
+	agentSender          AgentCommandSender
+	onBeforeClusterDelete func(context.Context, uint) // optional hook for monitor cleanup etc.
 }
 
 // ServiceConfig holds configuration for the Cluster Service.
@@ -185,6 +186,12 @@ func NewService(repo *Repository, hostProvider HostProvider, cfg *ServiceConfig)
 // SetAgentCommandSender 设置用于集群操作的 Agent 命令发送器。
 func (s *Service) SetAgentCommandSender(sender AgentCommandSender) {
 	s.agentSender = sender
+}
+
+// SetOnBeforeClusterDelete sets an optional hook called before cluster DB deletion (e.g. monitor config cleanup).
+// SetOnBeforeClusterDelete 设置删除集群前可选钩子（如清理监控配置）。
+func (s *Service) SetOnBeforeClusterDelete(fn func(context.Context, uint)) {
+	s.onBeforeClusterDelete = fn
 }
 
 // Create creates a new cluster with validation.
@@ -389,9 +396,10 @@ func (s *Service) Update(ctx context.Context, id uint, req *UpdateClusterRequest
 }
 
 // Delete removes a cluster after checking for running tasks.
-// Delete 在检查运行中的任务后删除集群。
+// Before DB deletion it sends stop to all nodes' agents (best effort). If forceRemoveInstallDir is true, also sends REMOVE_INSTALL_DIR to each agent.
+// Delete 在检查运行中的任务后删除集群；删除前向各节点 Agent 发送停止命令；若 forceRemoveInstallDir 为 true 则再发送删除安装目录命令。
 // Requirements: 7.5 - Checks if cluster has running tasks before deletion.
-func (s *Service) Delete(ctx context.Context, id uint) error {
+func (s *Service) Delete(ctx context.Context, id uint, forceRemoveInstallDir bool) error {
 	// Get cluster to check status
 	// 获取集群以检查状态
 	cluster, err := s.repo.GetByID(ctx, id, false)
@@ -405,7 +413,82 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 		return ErrClusterHasRunningTask
 	}
 
+	// Get cluster with nodes to send stop to each node's agent (best effort)
+	// 获取带节点的集群，向各节点 Agent 发送停止命令（尽力而为）
+	clusterWithNodes, err := s.repo.GetByID(ctx, id, true)
+	if err == nil && len(clusterWithNodes.Nodes) > 0 {
+		s.stopProcessesForDeletion(ctx, clusterWithNodes)
+		if forceRemoveInstallDir {
+			s.removeInstallDirOnAgents(ctx, clusterWithNodes)
+		}
+	}
+
+	// Optional hook (e.g. delete monitor config and events for this cluster)
+	// 可选钩子（如删除该集群的监控配置与事件）
+	if s.onBeforeClusterDelete != nil {
+		s.onBeforeClusterDelete(ctx, id)
+	}
+
 	return s.repo.Delete(ctx, id)
+}
+
+// stopProcessesForDeletion sends stop command to each node's agent so actual SeaTunnel processes are stopped.
+// Best effort: logs errors but does not fail the deletion.
+// stopProcessesForDeletion 向各节点 Agent 发送停止命令以停止主机上的 SeaTunnel 进程；尽力而为，不阻断删除。
+func (s *Service) stopProcessesForDeletion(ctx context.Context, cluster *Cluster) {
+	if s.hostProvider == nil || s.agentSender == nil {
+		logger.WarnF(ctx, "[Cluster] Delete: skip notifying agents (hostProvider or agentSender not set) / 删除集群：未通知 Agent（主机提供者或命令发送器未配置）")
+		return
+	}
+	for _, node := range cluster.Nodes {
+		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+		if err != nil || hostInfo.AgentID == "" {
+			logger.WarnF(ctx, "[Cluster] Delete: skip node (no host or no agent) / 删除集群：跳过节点: node_id=%d, host_id=%d", node.ID, node.HostID)
+			continue
+		}
+		installDir := node.InstallDir
+		if installDir == "" {
+			installDir = cluster.InstallDir
+		}
+		params := map[string]string{
+			"cluster_id":  fmt.Sprintf("%d", cluster.ID),
+			"node_id":     fmt.Sprintf("%d", node.ID),
+			"role":        string(node.Role),
+			"install_dir": installDir,
+		}
+		logger.InfoF(ctx, "[Cluster] Delete: sending stop to agent / 删除集群：向 Agent 发送停止命令: agent_id=%s, node_id=%d", hostInfo.AgentID, node.ID)
+		_, _, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, string(OperationStop), params)
+		if err != nil {
+			logger.WarnF(ctx, "[Cluster] Delete: stop process on agent failed / 删除集群时向 Agent 发送停止失败: host_id=%d, node_id=%d, err=%v", node.HostID, node.ID, err)
+		}
+	}
+}
+
+// removeInstallDirOnAgents sends REMOVE_INSTALL_DIR to each node's agent so the install directory is removed on the host (force delete).
+// removeInstallDirOnAgents 向各节点 Agent 发送删除安装目录命令（强制删除时）。
+func (s *Service) removeInstallDirOnAgents(ctx context.Context, cluster *Cluster) {
+	if s.hostProvider == nil || s.agentSender == nil {
+		return
+	}
+	for _, node := range cluster.Nodes {
+		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+		if err != nil || hostInfo.AgentID == "" {
+			continue
+		}
+		installDir := node.InstallDir
+		if installDir == "" {
+			installDir = cluster.InstallDir
+		}
+		if installDir == "" {
+			continue
+		}
+		params := map[string]string{"install_dir": installDir}
+		logger.InfoF(ctx, "[Cluster] Delete: sending remove_install_dir to agent / 删除集群：向 Agent 发送删除安装目录: agent_id=%s, install_dir=%s", hostInfo.AgentID, installDir)
+		_, _, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, "remove_install_dir", params)
+		if err != nil {
+			logger.WarnF(ctx, "[Cluster] Delete: remove_install_dir on agent failed / 删除集群时向 Agent 发送删除安装目录失败: host_id=%d, err=%v", node.HostID, err)
+		}
+	}
 }
 
 // UpdateStatus updates the status of a cluster.
@@ -1676,7 +1759,7 @@ func (s *Service) GetNodesByHostID(ctx context.Context, hostID uint) ([]*Cluster
 // This is called when agent reports process events (started, stopped, crashed, restarted).
 // 当 Agent 上报进程事件（启动、停止、崩溃、重启）时调用。
 func (s *Service) UpdateNodeProcessStatus(ctx context.Context, nodeID uint, pid int, status string) error {
-	logger.InfoF(ctx, "[Cluster] UpdateNodeProcessStatus: nodeID=%d, pid=%d, status=%s", nodeID, pid, status)
+	logger.DebugF(ctx, "[Cluster] UpdateNodeProcessStatus: nodeID=%d, pid=%d, status=%s", nodeID, pid, status)
 	return s.repo.UpdateNodeProcessStatus(ctx, nodeID, pid, status)
 }
 

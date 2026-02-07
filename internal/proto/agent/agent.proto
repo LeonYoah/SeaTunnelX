@@ -153,6 +153,7 @@ enum CommandType {
   UPDATE_MONITOR_CONFIG = 71;   // 更新监控配置
   MARK_MANUAL_STOP = 72;        // 标记手动停止
   CLEAR_MANUAL_STOP = 73;       // 清除手动停止标记
+  REMOVE_INSTALL_DIR = 74;      // 强制删除：删除主机上的安装目录 (Control Plane -> Agent)
 }
 
 // CommandResponse - 指令执行结果 (Agent -> Control Plane)

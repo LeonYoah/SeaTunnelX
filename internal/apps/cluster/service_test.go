@@ -665,7 +665,7 @@ func TestClusterServiceBasicOperations(t *testing.T) {
 
 	// Test Delete
 	// 测试删除
-	err = svc.Delete(ctx, cluster.ID)
+	err = svc.Delete(ctx, cluster.ID, false)
 	if err != nil {
 		t.Fatalf("Failed to delete cluster: %v", err)
 	}
@@ -708,7 +708,7 @@ func TestClusterServiceDeleteConstraint(t *testing.T) {
 
 	// Try to delete running cluster
 	// 尝试删除运行中的集群
-	err = svc.Delete(ctx, cluster.ID)
+	err = svc.Delete(ctx, cluster.ID, false)
 	if err != ErrClusterHasRunningTask {
 		t.Errorf("Expected ErrClusterHasRunningTask, got: %v", err)
 	}
