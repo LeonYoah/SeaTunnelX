@@ -37,7 +37,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {Eye, Pencil, Trash2, Server, Container, Cloud, Search} from 'lucide-react';
-import {HostInfo, HostType, HostStatus, AgentStatus} from '@/lib/services/host/types';
+import {HostInfo, HostType, HostStatus} from '@/lib/services/host/types';
 
 interface HostTableProps {
   hosts: HostInfo[];
@@ -86,25 +86,6 @@ function getStatusBadgeVariant(
       return 'outline';
     case HostStatus.ERROR:
       return 'destructive';
-    default:
-      return 'secondary';
-  }
-}
-
-/**
- * Get agent status badge variant
- * 获取 Agent 状态徽章变体
- */
-function getAgentStatusBadgeVariant(
-  status: AgentStatus,
-): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case AgentStatus.INSTALLED:
-      return 'default';
-    case AgentStatus.NOT_INSTALLED:
-      return 'secondary';
-    case AgentStatus.OFFLINE:
-      return 'outline';
     default:
       return 'secondary';
   }
@@ -200,17 +181,7 @@ export function HostTable({
                   </TableCell>
                   <TableCell>
                     {host.host_type === HostType.BARE_METAL && (
-                      <div className='text-sm'>
-                        <div>{host.ip_address || '-'}</div>
-                        {host.agent_status && (
-                          <Badge
-                            variant={getAgentStatusBadgeVariant(host.agent_status)}
-                            className='mt-1'
-                          >
-                            {t(`host.agentStatuses.${host.agent_status === AgentStatus.NOT_INSTALLED ? 'notInstalled' : host.agent_status}`)}
-                          </Badge>
-                        )}
-                      </div>
+                      <div className='text-sm'>{host.ip_address || '-'}</div>
                     )}
                     {host.host_type === HostType.DOCKER && (
                       <div className='text-sm truncate max-w-[150px]'>
@@ -231,19 +202,9 @@ export function HostTable({
                     )}
                   </TableCell>
                   <TableCell>
-                    <div className='flex flex-col gap-1'>
-                      <Badge variant={getStatusBadgeVariant(host.status)}>
-                        {t(`host.statuses.${host.status}`)}
-                      </Badge>
-                      {host.is_online !== undefined && (
-                        <Badge
-                          variant={host.is_online ? 'default' : 'outline'}
-                          className={`text-xs ${host.is_online ? 'bg-green-100 text-green-700 border-green-300' : ''}`}
-                        >
-                          Agent: {host.is_online ? t('host.online') : t('host.offline')}
-                        </Badge>
-                      )}
-                    </div>
+                    <Badge variant={getStatusBadgeVariant(host.status)}>
+                      {t(`host.statuses.${host.status}`)}
+                    </Badge>
                   </TableCell>
                   <TableCell>
                     <div className='text-sm space-y-1'>
@@ -292,15 +253,15 @@ export function HostTable({
                                 variant='ghost'
                                 size='icon'
                                 onClick={() => onDiscoverCluster(host)}
-                                disabled={host.agent_status !== AgentStatus.INSTALLED || !host.is_online}
+                                disabled={host.status !== HostStatus.CONNECTED}
                               >
                                 <Search className='h-4 w-4' />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {host.agent_status !== AgentStatus.INSTALLED
+                              {host.status === HostStatus.PENDING
                                 ? t('discovery.agentNotInstalled')
-                                : !host.is_online
+                                : host.status === HostStatus.OFFLINE
                                   ? t('discovery.agentOffline')
                                   : t('discovery.discoverCluster')}
                             </TooltipContent>

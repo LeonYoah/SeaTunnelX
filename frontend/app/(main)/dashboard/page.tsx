@@ -231,7 +231,11 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <div className='mt-2 text-sm text-muted-foreground'>
-                          {t('agent')}: {host.agent_status === 'installed' ? t('installed') : t('notInstalled')}
+                          {t('agent')}: {host.agent_status !== 'installed' && host.agent_status !== 'offline'
+                            ? t('notInstalled')
+                            : host.is_online
+                              ? t('online')
+                              : t('offline')}
                         </div>
                       </div>
                     </Link>

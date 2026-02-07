@@ -9,6 +9,7 @@
 export {HostMain} from './HostMain';
 export {HostTable} from './HostTable';
 export {HostDetail} from './HostDetail';
+export {HostDetailPage} from './HostDetailPage';
 export {CreateHostDialog} from './CreateHostDialog';
 export {EditHostDialog} from './EditHostDialog';
 export {DiscoverClusterDialog} from './DiscoverClusterDialog';

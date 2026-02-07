@@ -56,6 +56,7 @@
     "agent": "Agent",
     "installed": "已安装",
     "notInstalled": "未安装",
+    "offline": "离线",
     "welcome": "欢迎使用 SeaTunnelX",
     "welcomeDesc": "开始添加主机并部署您的第一个 SeaTunnel 集群",
     "addHost": "添加主机",
@@ -339,14 +340,14 @@
       "kubernetes": "Kubernetes"
     },
     "statuses": {
-      "pending": "等待连接",
-      "connected": "已连接",
+      "pending": "未安装",
+      "connected": "在线",
       "offline": "离线",
-      "error": "错误"
+      "error": "异常"
     },
     "agentStatuses": {
       "notInstalled": "未安装",
-      "installed": "已安装",
+      "installed": "在线",
       "offline": "离线"
     },
     "errors": {

@@ -56,6 +56,7 @@
     "agent": "Agent",
     "installed": "Installed",
     "notInstalled": "Not Installed",
+    "offline": "Offline",
     "welcome": "Welcome to SeaTunnelX",
     "welcomeDesc": "Start by adding hosts and deploying your first SeaTunnel cluster",
     "addHost": "Add Host",
@@ -339,14 +340,14 @@
       "kubernetes": "Kubernetes"
     },
     "statuses": {
-      "pending": "Pending",
-      "connected": "Connected",
+      "pending": "Not Installed",
+      "connected": "Online",
       "offline": "Offline",
       "error": "Error"
     },
     "agentStatuses": {
       "notInstalled": "Not Installed",
-      "installed": "Installed",
+      "installed": "Online",
       "offline": "Offline"
     },
     "errors": {

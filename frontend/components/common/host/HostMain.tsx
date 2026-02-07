@@ -29,7 +29,6 @@ import {
   HostInfo,
   HostType,
   HostStatus,
-  AgentStatus,
   ListHostsRequest,
 } from '@/lib/services/host/types';
 import {HostTable} from './HostTable';
@@ -57,7 +56,6 @@ export function HostMain() {
   const [searchName, setSearchName] = useState('');
   const [filterHostType, setFilterHostType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterAgentStatus, setFilterAgentStatus] = useState<string>('all');
 
   // Dialog state / 对话框状态
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -79,10 +77,6 @@ export function HostMain() {
         host_type:
           filterHostType !== 'all' ? (filterHostType as HostType) : undefined,
         status: filterStatus !== 'all' ? (filterStatus as HostStatus) : undefined,
-        agent_status:
-          filterAgentStatus !== 'all'
-            ? (filterAgentStatus as AgentStatus)
-            : undefined,
       };
 
       const result = await services.host.getHostsSafe(params);
@@ -102,7 +96,7 @@ export function HostMain() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchName, filterHostType, filterStatus, filterAgentStatus, t]);
+  }, [currentPage, searchName, filterHostType, filterStatus, t]);
 
   useEffect(() => {
     loadHosts();
@@ -193,7 +187,6 @@ export function HostMain() {
     setSearchName('');
     setFilterHostType('all');
     setFilterStatus('all');
-    setFilterAgentStatus('all');
     setCurrentPage(1);
   };
 
@@ -307,26 +300,6 @@ export function HostMain() {
             </SelectItem>
           </SelectContent>
         </Select>
-
-        {filterHostType === HostType.BARE_METAL && (
-          <Select value={filterAgentStatus} onValueChange={setFilterAgentStatus}>
-            <SelectTrigger className='w-[150px]'>
-              <SelectValue placeholder={t('host.agentStatus')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='all'>{t('host.allAgentStatuses')}</SelectItem>
-              <SelectItem value={AgentStatus.NOT_INSTALLED}>
-                {t('host.agentStatuses.notInstalled')}
-              </SelectItem>
-              <SelectItem value={AgentStatus.INSTALLED}>
-                {t('host.agentStatuses.installed')}
-              </SelectItem>
-              <SelectItem value={AgentStatus.OFFLINE}>
-                {t('host.agentStatuses.offline')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        )}
 
         <Button variant='outline' onClick={handleSearch}>
           <Search className='h-4 w-4 mr-2' />

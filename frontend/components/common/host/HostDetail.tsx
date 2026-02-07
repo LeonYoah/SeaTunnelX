@@ -36,7 +36,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import services from '@/lib/services';
-import {HostInfo, HostType, HostStatus, AgentStatus} from '@/lib/services/host/types';
+import {HostInfo, HostType, HostStatus} from '@/lib/services/host/types';
 
 interface HostDetailProps {
   open: boolean;
@@ -213,20 +213,6 @@ export function HostDetail({open, onOpenChange, host, onEdit}: HostDetailProps) 
                 <div className='flex justify-between'>
                   <span className='text-muted-foreground'>{t('host.sshPort')}:</span>
                   <span>{host.ssh_port || 22}</span>
-                </div>
-                <div className='flex justify-between'>
-                  <span className='text-muted-foreground'>{t('host.agentStatus')}:</span>
-                  <Badge
-                    variant={
-                      host.agent_status === AgentStatus.INSTALLED
-                        ? 'default'
-                        : host.agent_status === AgentStatus.OFFLINE
-                          ? 'outline'
-                          : 'secondary'
-                    }
-                  >
-                    {t(`host.agentStatuses.${host.agent_status === AgentStatus.NOT_INSTALLED ? 'notInstalled' : host.agent_status}`)}
-                  </Badge>
                 </div>
                 {host.agent_version && (
                   <div className='flex justify-between'>

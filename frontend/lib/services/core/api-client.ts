@@ -58,7 +58,10 @@ apiClient.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => response,
   (error: AxiosError<ApiError>) => {
     // 处理401未授权错误
-    if (error.response?.status === 401) {
+    // 注意：登录接口 /auth/login 返回 401 表示凭证错误，应直接 reject 显示错误信息，不触发 OAuth 重定向
+    const isLoginRequest =
+      error.config?.url?.includes('/auth/login') ?? false;
+    if (error.response?.status === 401 && !isLoginRequest) {
       return initiateLogin(window.location.pathname);
     }
 

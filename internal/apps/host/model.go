@@ -1,4 +1,10 @@
 /*
+ * @Author: Leon Yoah 1733839298@qq.com
+ * @Date: 2025-12-17 17:31:49
+ * @LastEditTime: 2026-02-07 17:32:33
+ * @FilePath: \SeaTunnelX\internal\apps\host\model.go
+ */
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -219,6 +225,8 @@ type HostInfo struct {
 
 // ToHostInfo converts a Host to HostInfo with online status calculated.
 // ToHostInfo 将 Host 转换为 HostInfo，并计算在线状态。
+// For bare_metal: Agent status is the single source of truth (host status is derived from Agent).
+// 对于物理机：Agent 状态是唯一来源（主机状态由 Agent 推导）。
 func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 	info := &HostInfo{
 		ID:          h.ID,
@@ -234,10 +242,12 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 		UpdatedAt:   h.UpdatedAt,
 	}
 
-	// Set online status based on host type
-	// 根据主机类型设置在线状态
+	// Set online status and unified status based on host type
+	// 根据主机类型设置在线状态和统一状态
 	switch h.HostType {
 	case HostTypeBareMetal:
+		// Agent is the source of truth: agent_status dictates host state
+		// Agent 是唯一来源：agent_status 决定主机状态
 		info.IsOnline = h.IsOnline(heartbeatTimeout)
 		info.IPAddress = h.IPAddress
 		info.SSHPort = h.SSHPort
@@ -250,6 +260,8 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 		info.TotalMemory = h.TotalMemory
 		info.TotalDisk = h.TotalDisk
 		info.LastHeartbeat = h.LastHeartbeat
+		// Use agent_status as unified status for bare_metal (Status is derived from it)
+		info.Status = agentStatusToHostStatus(h.AgentStatus)
 	case HostTypeDocker:
 		info.IsOnline = h.Status == HostStatusConnected
 		info.DockerAPIURL = h.DockerAPIURL
@@ -269,9 +281,25 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 		info.AgentID = h.AgentID
 		info.AgentStatus = h.AgentStatus
 		info.AgentVersion = h.AgentVersion
+		info.Status = agentStatusToHostStatus(h.AgentStatus)
 	}
 
 	return info
+}
+
+// agentStatusToHostStatus maps AgentStatus to HostStatus for unified display.
+// agentStatusToHostStatus 将 AgentStatus 映射为 HostStatus 用于统一展示。
+func agentStatusToHostStatus(s AgentStatus) HostStatus {
+	switch s {
+	case AgentStatusNotInstalled:
+		return HostStatusPending
+	case AgentStatusInstalled:
+		return HostStatusConnected
+	case AgentStatusOffline:
+		return HostStatusOffline
+	default:
+		return HostStatusPending
+	}
 }
 
 // CreateHostRequest represents a request to create a new host.

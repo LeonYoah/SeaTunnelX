@@ -57,7 +57,7 @@ import { toast } from 'sonner';
 import services from '@/lib/services';
 import { usePackages } from '@/hooks/use-installer';
 import { PluginService } from '@/lib/services/plugin';
-import { HostInfo, HostType, AgentStatus } from '@/lib/services/host/types';
+import { HostInfo, HostType, HostStatus } from '@/lib/services/host/types';
 import { DeploymentMode, NodeRole } from '@/lib/services/cluster/types';
 import type { LocalPlugin } from '@/lib/services/plugin/types';
 import type {
@@ -229,7 +229,7 @@ export function ClusterDeployWizard({
       if (result.success && result.data) {
         // Filter hosts with Agent installed / 过滤已安装 Agent 的主机
         const availableHosts = (result.data.hosts || []).filter(
-          (h) => h.host_type === HostType.BARE_METAL && h.agent_status === AgentStatus.INSTALLED
+          (h) => h.host_type === HostType.BARE_METAL && h.status === HostStatus.CONNECTED
         );
         setHostsWithRole(
           availableHosts.map((host) => ({
@@ -275,13 +275,13 @@ export function ClusterDeployWizard({
   // Filter local plugins by version and search / 按版本和搜索过滤本地插件
   const filteredLocalPlugins = useMemo(() => {
     let result = localPlugins.filter((lp) => lp.version === config.version);
-    
+
     // Filter by search keyword / 按搜索关键词过滤
     if (pluginSearch.trim()) {
       const keyword = pluginSearch.toLowerCase();
       result = result.filter((p) => p.name.toLowerCase().includes(keyword));
     }
-    
+
     return result;
   }, [localPlugins, config.version, pluginSearch]);
 
@@ -298,7 +298,7 @@ export function ClusterDeployWizard({
     }
 
     setPrecheckRunning(true);
-    
+
     // Initialize results for all selected hosts / 初始化所有选中主机的结果
     const initialResults: HostPrecheckResult[] = selectedHosts.map((h) => ({
       hostId: h.host.id,
@@ -375,7 +375,7 @@ export function ClusterDeployWizard({
         setPrecheckResults([]);
         setPrecheckRunning(false);
       }
-      
+
       // If version changes, update install dir with new version / 如果版本变化，更新安装目录中的版本号
       const newUpdates = { ...updates };
       if (updates.version !== undefined && updates.version !== prev.version) {
@@ -389,7 +389,7 @@ export function ClusterDeployWizard({
           newUpdates.installDir = `/opt/seatunnel-${updates.version}`;
         }
       }
-      
+
       return { ...prev, ...newUpdates };
     });
   }, []);
@@ -536,7 +536,7 @@ export function ClusterDeployWizard({
       // Step 3: Install SeaTunnel on each host / 步骤3：在每台主机上安装 SeaTunnel
       for (let i = 0; i < selectedHosts.length; i++) {
         const hostWithRole = selectedHosts[i];
-        
+
         // Start installation / 开始安装
         updateStep('install', 'running', t('cluster.wizard.steps.startingInstall'), hostWithRole.host.name, 0);
         const installResult = await services.installer.startInstallation(hostWithRole.host.id, {
@@ -562,7 +562,7 @@ export function ClusterDeployWizard({
 
         // Poll for completion / 轮询等待完成
         let status = installResult;
-        
+
         // Helper to update steps from backend response / 从后端响应更新步骤的辅助函数
         const updateStepsFromStatus = () => {
           if (status.steps && status.steps.length > 0) {
@@ -570,30 +570,30 @@ export function ClusterDeployWizard({
             // 显示后端返回的每个步骤，带主机名前缀
             for (const step of status.steps) {
               const stepKey = `${step.step}_${hostWithRole.host.id}`;
-              const stepStatus = step.status === 'success' ? 'success' 
+              const stepStatus = step.status === 'success' ? 'success'
                 : step.status === 'failed' ? 'failed'
-                : step.status === 'running' ? 'running' 
+                : step.status === 'running' ? 'running'
                 : 'pending';
               const stepMessage = step.message || step.name || step.step;
               updateStep(stepKey, stepStatus, stepMessage, hostWithRole.host.name, step.progress || 0);
             }
           }
         };
-        
+
         while (status.status === 'running') {
           await new Promise((resolve) => setTimeout(resolve, 1000));
           status = await services.installer.getInstallationStatus(hostWithRole.host.id);
-          
+
           // Update detailed steps from backend / 从后端更新详细步骤
           updateStepsFromStatus();
-          
+
           if (!status.steps || status.steps.length === 0) {
             // Fallback to simple message / 回退到简单消息
             const stepMessage = status.message || status.current_step || t('cluster.wizard.steps.installing');
             updateStep('install', 'running', stepMessage, hostWithRole.host.name, status.progress || 0);
           }
         }
-        
+
         // Update steps one final time after loop exits (handles immediate success case)
         // 循环退出后最后更新一次步骤（处理立即成功的情况）
         updateStepsFromStatus();
@@ -611,11 +611,11 @@ export function ClusterDeployWizard({
       setDeployProgress(100);
       setDeployStatus('success');
       toast.success(t('cluster.wizard.deploySuccess'));
-      
+
       // Wait 1 second before auto advancing to let user see the final status
       // 等待 1 秒后再自动跳转，让用户看到最终状态
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      
+
       // Auto advance to complete step / 自动跳转到完成步骤
       setCurrentStepIndex(6); // complete step index
     } catch (err) {
@@ -852,7 +852,7 @@ export function ClusterDeployWizard({
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        CPU: {hostWithRole.host.cpu_cores} cores | 
+                        CPU: {hostWithRole.host.cpu_cores} cores |
                         Memory: {((hostWithRole.host.total_memory || 0) / 1024 / 1024 / 1024).toFixed(1)} GB
                       </p>
                     </div>
@@ -1484,7 +1484,7 @@ export function ClusterDeployWizard({
                 <div className="grid grid-cols-4 gap-2">
                   {filteredLocalPlugins.map((plugin) => {
                     const isSelected = config.selectedPlugins.includes(plugin.name);
-                    
+
                     return (
                       <Card
                         key={plugin.name}
@@ -1506,8 +1506,8 @@ export function ClusterDeployWizard({
                       >
                         <CardContent className="p-3">
                           <div className="flex items-start gap-2">
-                            <Checkbox 
-                              checked={isSelected} 
+                            <Checkbox
+                              checked={isSelected}
                               className="mt-0.5"
                               onClick={(e) => e.stopPropagation()}
                               onCheckedChange={(checked) => {
