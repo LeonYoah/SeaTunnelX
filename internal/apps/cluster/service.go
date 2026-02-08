@@ -341,8 +341,8 @@ func (s *Service) List(ctx context.Context, filter *ClusterFilter) ([]*Cluster, 
 	return s.repo.List(ctx, filter)
 }
 
-// ListWithInfo retrieves clusters and converts them to ClusterInfo.
-// ListWithInfo 获取集群列表并转换为 ClusterInfo。
+// ListWithInfo retrieves clusters and converts them to ClusterInfo with online_nodes and health_status.
+// ListWithInfo 获取集群列表并转换为 ClusterInfo，包含 online_nodes 与 health_status。
 func (s *Service) ListWithInfo(ctx context.Context, filter *ClusterFilter) ([]*ClusterInfo, int64, error) {
 	clusters, total, err := s.List(ctx, filter)
 	if err != nil {
@@ -352,6 +352,12 @@ func (s *Service) ListWithInfo(ctx context.Context, filter *ClusterFilter) ([]*C
 	infos := make([]*ClusterInfo, len(clusters))
 	for i, c := range clusters {
 		infos[i] = c.ToClusterInfo()
+		// Populate online_nodes and health_status so list UI can show "异常" when running but 0 online
+		status, err := s.GetStatus(ctx, c.ID)
+		if err == nil {
+			infos[i].OnlineNodes = status.OnlineNodes
+			infos[i].HealthStatus = string(status.HealthStatus)
+		}
 	}
 
 	return infos, total, nil
@@ -662,13 +668,19 @@ func (s *Service) GetNodes(ctx context.Context, clusterID uint) ([]*NodeInfo, er
 			UpdatedAt:     node.UpdatedAt,
 		}
 
-		// Get host information
-		// 获取主机信息
+		// Get host information and online status; when host is offline, show node as offline
 		if s.hostProvider != nil {
 			hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
 			if err == nil {
 				nodeInfo.HostName = hostInfo.Name
 				nodeInfo.HostIP = hostInfo.IPAddress
+				nodeInfo.IsOnline = hostInfo.IsOnline(s.heartbeatTimeout)
+				if !nodeInfo.IsOnline {
+					nodeInfo.Status = NodeStatusOffline
+				}
+			} else {
+				nodeInfo.IsOnline = false
+				nodeInfo.Status = NodeStatusOffline
 			}
 		}
 
@@ -850,21 +862,24 @@ func (s *Service) GetStatus(ctx context.Context, clusterID uint) (*ClusterStatus
 			ProcessPID: node.ProcessPID,
 		}
 
-		// Get host information and online status
-		// 获取主机信息和在线状态
+		// Get host information and online status; when host is offline, show node status as offline
 		if s.hostProvider != nil {
 			hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
 			if err == nil {
 				nodeStatus.HostName = hostInfo.Name
 				nodeStatus.HostIP = hostInfo.IPAddress
 				nodeStatus.IsOnline = hostInfo.IsOnline(s.heartbeatTimeout)
-
+				if !nodeStatus.IsOnline {
+					nodeStatus.Status = NodeStatusOffline
+				}
 				if nodeStatus.IsOnline {
 					onlineCount++
 				} else {
 					offlineCount++
 				}
 			} else {
+				nodeStatus.IsOnline = false
+				nodeStatus.Status = NodeStatusOffline
 				offlineCount++
 			}
 		}
@@ -1751,12 +1766,19 @@ func (s *Service) GetClusterNodesWithAgentInfo(ctx context.Context, clusterID ui
 			UpdatedAt:     node.UpdatedAt,
 		}
 
-		// Get host information including agent ID / 获取主机信息包括 Agent ID
+		// Get host information; when host is offline, show node as offline
 		if s.hostProvider != nil {
 			hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
 			if err == nil {
 				nodeInfo.HostName = hostInfo.Name
 				nodeInfo.HostIP = hostInfo.IPAddress
+				nodeInfo.IsOnline = hostInfo.IsOnline(s.heartbeatTimeout)
+				if !nodeInfo.IsOnline {
+					nodeInfo.Status = NodeStatusOffline
+				}
+			} else {
+				nodeInfo.IsOnline = false
+				nodeInfo.Status = NodeStatusOffline
 			}
 		}
 

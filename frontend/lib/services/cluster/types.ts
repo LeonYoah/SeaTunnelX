@@ -64,6 +64,8 @@ export enum NodeStatus {
   STOPPED = 'stopped',
   /** Node is in error state / 节点处于错误状态 */
   ERROR = 'error',
+  /** Host/agent is offline; display-only / 主机或 Agent 离线，仅展示用 */
+  OFFLINE = 'offline',
 }
 
 /**
@@ -121,6 +123,10 @@ export interface ClusterInfo {
   config: ClusterConfig;
   /** Number of nodes / 节点数量 */
   node_count: number;
+  /** Number of nodes whose host is online / 主机在线的节点数 */
+  online_nodes?: number;
+  /** Health status: healthy, unhealthy, unknown / 健康状态 */
+  health_status?: string;
   /** Creation time / 创建时间 */
   created_at: string;
   /** Update time / 更新时间 */
@@ -152,8 +158,10 @@ export interface NodeInfo {
   api_port: number;
   /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
   worker_port: number;
-  /** Node status / 节点状态 */
+  /** Node status / 节点状态 (may be 'offline' when host is offline) */
   status: NodeStatus;
+  /** Whether host is online / 主机是否在线 */
+  is_online?: boolean;
   /** Process PID / 进程 PID */
   process_pid: number;
   /** Process status / 进程状态 */

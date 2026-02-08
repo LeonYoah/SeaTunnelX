@@ -493,7 +493,8 @@
       "installing": "Installing",
       "running": "Running",
       "stopped": "Stopped",
-      "error": "Error"
+      "error": "Error",
+      "offline": "Offline"
     },
     "healthStatuses": {
       "healthy": "Healthy",

@@ -493,7 +493,8 @@
       "installing": "安装中",
       "running": "运行中",
       "stopped": "已停止",
-      "error": "错误"
+      "error": "错误",
+      "offline": "离线"
     },
     "healthStatuses": {
       "healthy": "健康",

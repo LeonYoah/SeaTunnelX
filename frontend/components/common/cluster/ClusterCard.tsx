@@ -77,11 +77,14 @@ function getStatusBadgeVariant(
 }
 
 /**
- * Get status color class
- * 获取状态颜色类
+ * Get status color class; when running but 0 nodes online, show as unhealthy (red).
+ * 获取状态颜色类；运行中但 0 节点在线时按异常显示（红点）。
  */
-function getStatusColorClass(status: ClusterStatus): string {
-  switch (status) {
+function getStatusColorClass(cluster: ClusterInfo): string {
+  if (cluster.status === ClusterStatus.RUNNING && (cluster.online_nodes === 0 || cluster.health_status === 'unhealthy')) {
+    return 'bg-red-500';
+  }
+  switch (cluster.status) {
     case ClusterStatus.RUNNING:
       return 'bg-green-500';
     case ClusterStatus.DEPLOYING:
@@ -93,6 +96,14 @@ function getStatusColorClass(status: ClusterStatus): string {
     default:
       return 'bg-gray-300';
   }
+}
+
+/**
+ * Whether to show cluster as "unhealthy" on the card (running but 0 online).
+ * 是否在卡片上显示为「异常」（运行中但 0 在线）。
+ */
+function isRunningButUnhealthy(cluster: ClusterInfo): boolean {
+  return cluster.status === ClusterStatus.RUNNING && (cluster.online_nodes === 0 || cluster.health_status === 'unhealthy');
 }
 
 /**
@@ -211,7 +222,7 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
         <CardHeader className='pb-2'>
           <div className='flex items-start justify-between'>
             <div className='flex items-center gap-2'>
-              <div className={`w-2 h-2 rounded-full ${getStatusColorClass(cluster.status)}`} />
+              <div className={`w-2 h-2 rounded-full ${getStatusColorClass(cluster)}`} />
               <CardTitle className='text-lg'>{cluster.name}</CardTitle>
             </div>
             <DropdownMenu>
@@ -274,8 +285,12 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
           <div className='space-y-3'>
             <div className='flex items-center justify-between'>
               <span className='text-sm text-muted-foreground'>{t('cluster.status')}</span>
-              <Badge variant={getStatusBadgeVariant(cluster.status)}>
-                {t(`cluster.statuses.${cluster.status}`)}
+              <Badge
+                variant={isRunningButUnhealthy(cluster) ? 'destructive' : getStatusBadgeVariant(cluster.status)}
+              >
+                {isRunningButUnhealthy(cluster)
+                  ? t('cluster.healthStatuses.unhealthy')
+                  : t(`cluster.statuses.${cluster.status}`)}
               </Badge>
             </div>
 

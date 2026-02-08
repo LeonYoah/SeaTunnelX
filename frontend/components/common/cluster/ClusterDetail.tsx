@@ -93,6 +93,8 @@ function getStatusBadgeVariant(
     case ClusterStatus.ERROR:
     case NodeStatus.ERROR:
       return 'destructive';
+    case NodeStatus.OFFLINE:
+      return 'outline';
     default:
       return 'secondary';
   }
@@ -881,7 +883,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                             variant='ghost'
                             size='icon'
                             onClick={() => setConfirmNodeOp({op: 'start', node})}
-                            disabled={nodeOperating === node.id || node.status === NodeStatus.RUNNING}
+                            disabled={nodeOperating === node.id || node.status === NodeStatus.RUNNING || node.status === NodeStatus.OFFLINE}
                             title={t('cluster.start')}
                           >
                             {nodeOperating === node.id ? (

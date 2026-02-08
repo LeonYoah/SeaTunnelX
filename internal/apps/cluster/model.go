@@ -78,6 +78,8 @@ const (
 	NodeStatusStopped NodeStatus = "stopped"
 	// NodeStatusError indicates the node is in an error state.
 	NodeStatusError NodeStatus = "error"
+	// NodeStatusOffline indicates the host/agent is offline; display-only, not persisted.
+	NodeStatusOffline NodeStatus = "offline"
 )
 
 // ClusterConfig represents the JSON configuration for a cluster.
@@ -168,11 +170,13 @@ type ClusterInfo struct {
 	InstallDir     string         `json:"install_dir"`
 	Config         ClusterConfig  `json:"config"`
 	NodeCount      int            `json:"node_count"`
+	OnlineNodes    int            `json:"online_nodes"`    // number of nodes whose host is online / 主机在线的节点数
+	HealthStatus   string         `json:"health_status"`  // healthy, unhealthy, unknown / 健康状态
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
-// ToClusterInfo converts a Cluster to ClusterInfo.
+// ToClusterInfo converts a Cluster to ClusterInfo (OnlineNodes and HealthStatus are set by caller).
 func (c *Cluster) ToClusterInfo() *ClusterInfo {
 	return &ClusterInfo{
 		ID:             c.ID,
@@ -263,7 +267,8 @@ type NodeInfo struct {
 	HazelcastPort int        `json:"hazelcast_port"` // Hazelcast cluster port / Hazelcast 集群端口
 	APIPort       int        `json:"api_port"`       // REST API port (Master only) / REST API 端口（仅 Master）
 	WorkerPort    int        `json:"worker_port"`    // Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式）
-	Status        NodeStatus `json:"status"`         // Unified status: pending, installing, running, stopped, error / 统一状态
+	Status        NodeStatus `json:"status"`         // Unified status: pending, installing, running, stopped, error, offline / 统一状态
+	IsOnline      bool       `json:"is_online"`      // Whether host is online; when false, status may be shown as offline / 主机是否在线
 	ProcessPID    int        `json:"process_pid"`    // SeaTunnel process PID / SeaTunnel 进程 PID
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
