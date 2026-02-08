@@ -73,32 +73,42 @@ func (s *OverviewService) GetOverviewStats(ctx context.Context) (*OverviewStats,
 		return nil, err
 	}
 	stats.TotalClusters = len(clusters)
-	for _, c := range clusters {
-		switch c.Status {
-		case cluster.ClusterStatusRunning:
-			stats.RunningClusters++
-		case cluster.ClusterStatusStopped:
-			stats.StoppedClusters++
-		case cluster.ClusterStatusError:
-			stats.ErrorClusters++
-		}
-	}
 
+	// Count running clusters/nodes only when host is online (consistent with host/agent offline)
 	for _, c := range clusters {
 		clusterWithNodes, err := s.clusterRepo.GetByID(ctx, c.ID, true)
 		if err != nil {
 			continue
 		}
 		stats.TotalNodes += len(clusterWithNodes.Nodes)
+		clusterHasOnlineNode := false
 		for _, n := range clusterWithNodes.Nodes {
+			h, err := s.hostRepo.GetByID(ctx, n.HostID)
+			online := err == nil && h.IsOnlineWithSince(s.heartbeatTimeout, s.processStartedAt)
+			if online {
+				clusterHasOnlineNode = true
+			}
 			switch n.Status {
 			case cluster.NodeStatusRunning:
-				stats.RunningNodes++
+				if online {
+					stats.RunningNodes++
+				}
+				// stopped/error count unchanged (by DB status only)
 			case cluster.NodeStatusStopped:
 				stats.StoppedNodes++
 			case cluster.NodeStatusError:
 				stats.ErrorNodes++
 			}
+		}
+		switch c.Status {
+		case cluster.ClusterStatusRunning:
+			if clusterHasOnlineNode {
+				stats.RunningClusters++
+			}
+		case cluster.ClusterStatusStopped:
+			stats.StoppedClusters++
+		case cluster.ClusterStatusError:
+			stats.ErrorClusters++
 		}
 	}
 
@@ -137,9 +147,18 @@ func (s *OverviewService) GetClusterSummaries(ctx context.Context, limit int) ([
 			} else {
 				summary.WorkerNodes++
 			}
-			if n.Status == cluster.NodeStatusRunning {
+			h, err := s.hostRepo.GetByID(ctx, n.HostID)
+			online := err == nil && h.IsOnlineWithSince(s.heartbeatTimeout, s.processStartedAt)
+			if online {
+				summary.OnlineNodes++
+			}
+			if n.Status == cluster.NodeStatusRunning && online {
 				summary.RunningNodes++
 			}
+		}
+		// When DB status is running but 0 nodes online, show as unhealthy on dashboard
+		if c.Status == cluster.ClusterStatusRunning && summary.OnlineNodes == 0 {
+			summary.Status = "unhealthy"
 		}
 
 		summaries = append(summaries, summary)

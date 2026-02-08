@@ -47,6 +47,7 @@
     "hostStatus": "Host Status",
     "recentActivities": "Recent Activities",
     "noClusterData": "No cluster data",
+    "clusterUnhealthy": "Unhealthy",
     "noHostData": "No host data",
     "noActivityData": "No activity records",
     "nodes": "Nodes",

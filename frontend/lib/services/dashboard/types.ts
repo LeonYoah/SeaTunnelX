@@ -301,12 +301,16 @@ export interface OverviewStats {
 export interface ClusterSummary {
   id: number;
   name: string;
+  /** DB status; may be "unhealthy" when running but 0 nodes online */
   status: string;
   deployment_mode: string;
   total_nodes: number;
   master_nodes: number;
   worker_nodes: number;
+  /** Nodes with status running AND host online */
   running_nodes: number;
+  /** Number of nodes whose host is online */
+  online_nodes?: number;
 }
 
 /**

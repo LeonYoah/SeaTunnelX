@@ -48,12 +48,13 @@ type OverviewStats struct {
 type ClusterSummary struct {
 	ID             uint   `json:"id"`
 	Name           string `json:"name"`
-	Status         string `json:"status"`
+	Status         string `json:"status"`           // DB status; display as "unhealthy" when running but 0 online
 	DeploymentMode string `json:"deployment_mode"`
 	TotalNodes     int    `json:"total_nodes"`
 	MasterNodes    int    `json:"master_nodes"`
 	WorkerNodes    int    `json:"worker_nodes"`
-	RunningNodes   int    `json:"running_nodes"`
+	RunningNodes   int    `json:"running_nodes"`   // nodes with status running AND host online
+	OnlineNodes    int    `json:"online_nodes"`    // number of nodes whose host is online
 }
 
 // HostSummary represents a host summary for dashboard.

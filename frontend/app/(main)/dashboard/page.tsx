@@ -165,7 +165,9 @@ export default function DashboardPage() {
                           <div className='flex items-center gap-2'>
                             <span
                               className={`w-2 h-2 rounded-full ${
-                                cluster.status === 'running'
+                                cluster.status === 'unhealthy' || (cluster.status === 'running' && (cluster.online_nodes ?? 0) === 0)
+                                  ? 'bg-red-500'
+                                  : cluster.status === 'running'
                                   ? 'bg-green-500'
                                   : cluster.status === 'error'
                                   ? 'bg-red-500'
@@ -176,6 +178,9 @@ export default function DashboardPage() {
                           </div>
                           <span className='text-sm text-muted-foreground'>
                             {cluster.total_nodes} {t('nodes')}
+                            {cluster.status === 'unhealthy' && (
+                              <span className='ml-1 text-destructive'>（{t('clusterUnhealthy')}）</span>
+                            )}
                           </span>
                         </div>
                         <div className='grid grid-cols-3 gap-4 text-sm text-muted-foreground'>

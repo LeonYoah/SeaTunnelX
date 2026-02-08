@@ -47,6 +47,7 @@
     "hostStatus": "主机状态",
     "recentActivities": "最近活动",
     "noClusterData": "暂无集群数据",
+    "clusterUnhealthy": "异常",
     "noHostData": "暂无主机数据",
     "noActivityData": "暂无活动记录",
     "nodes": "节点",
