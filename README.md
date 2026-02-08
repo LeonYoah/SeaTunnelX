@@ -38,6 +38,10 @@ SeatunnelX: SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据�
 |------------|----------|----------|
 | ![安装包](docs/screenshots/04-packages.png) | ![插件](docs/screenshots/05-plugins.png) | ![审计日志](docs/screenshots/06-audit-logs.png) |
 
+| 集群节点管理 |
+|--------------|
+| ![集群节点](docs/screenshots/07-cluster-nodes.png) |
+
 ## 🏗️ 架构概览
 
 ```
