@@ -9,17 +9,34 @@
 
 ## 📖 项目简介
 
-SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据集成引擎打造的运维管理工具，提供任务管理、监控告警、资源调度等功能。
+SeatunnelX: SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据集成引擎打造的运维管理工具，提供**主机管理、集群与节点管理、Agent 运维、安装包与插件管理**等功能。
 
 > 本项目基于 [linux-do/cdk](https://github.com/linux-do/cdk) 项目改造，原项目采用 MIT 协议开源。
 
 ### ✨ 主要特性
 
 - 🔐 **多种认证方式** - 支持用户名密码登录和 OAuth（GitHub、Google）登录
+- 🖥️ **主机与 Agent 管理** - 主机注册、Agent 安装与心跳、在线状态与资源监控
+- 📦 **集群与节点管理** - SeaTunnel 集群创建、节点部署、启停与状态展示
+- 📥 **安装包与插件** - 安装包管理、插件安装/卸载、多版本 SeaTunnel 支持
 - 🗄️ **多数据库支持** - 支持 SQLite（默认）、MySQL、PostgreSQL
 - 🌍 **国际化支持** - 内置中英文切换
 - ⚡ **轻量化部署** - Redis 可选，支持内存会话存储
 - 🎨 **现代化界面** - 基于 Next.js 15 和 React 19 的响应式设计
+
+### 📸 界面展示
+
+| 登录 | 控制台 |
+|------|--------|
+| ![登录页](docs/screenshots/00-login.png) | ![控制台](docs/screenshots/01-dashboard.png) |
+
+| 主机管理 | 集群管理 |
+|----------|----------|
+| ![主机管理](docs/screenshots/02-hosts.png) | ![集群管理](docs/screenshots/03-clusters.png) |
+
+| 安装包管理 | 插件管理 | 审计日志 |
+|------------|----------|----------|
+| ![安装包](docs/screenshots/04-packages.png) | ![插件](docs/screenshots/05-plugins.png) | ![审计日志](docs/screenshots/06-audit-logs.png) |
 
 ## 🏗️ 架构概览
 
