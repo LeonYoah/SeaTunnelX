@@ -133,7 +133,7 @@ func (h *Handler) CreateHost(c *gin.Context) {
 	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
 		"create", "host", audit.UintID(host.ID), host.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Host] 创建主机成功: %s (type: %s)", host.Name, host.HostType)
-	c.JSON(http.StatusOK, CreateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout())})
+	c.JSON(http.StatusOK, CreateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout(), h.service.GetProcessStartedAt())})
 }
 
 // ListHosts handles GET /api/v1/hosts - lists hosts with filtering and pagination.
@@ -201,7 +201,7 @@ func (h *Handler) GetHost(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, GetHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout())})
+	c.JSON(http.StatusOK, GetHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout(), h.service.GetProcessStartedAt())})
 }
 
 // UpdateHost handles PUT /api/v1/hosts/:id - updates an existing host.
@@ -236,7 +236,7 @@ func (h *Handler) UpdateHost(c *gin.Context) {
 	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
 		"update", "host", audit.UintID(host.ID), host.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Host] 更新主机成功: %s", host.Name)
-	c.JSON(http.StatusOK, UpdateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout())})
+	c.JSON(http.StatusOK, UpdateHostResponse{Data: host.ToHostInfo(h.service.GetHeartbeatTimeout(), h.service.GetProcessStartedAt())})
 }
 
 // DeleteHost handles DELETE /api/v1/hosts/:id - deletes a host.

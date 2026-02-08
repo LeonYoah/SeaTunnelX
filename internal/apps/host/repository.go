@@ -121,8 +121,9 @@ func (r *Repository) GetByAgentID(ctx context.Context, agentID string) (*Host, e
 
 // List retrieves hosts based on filter criteria with pagination.
 // List 根据过滤条件和分页获取主机列表。
+// since: when non-zero, IsOnline filter uses heartbeat after since (e.g. process start).
 // Returns the list of hosts and total count.
-func (r *Repository) List(ctx context.Context, filter *HostFilter, heartbeatTimeout time.Duration) ([]*Host, int64, error) {
+func (r *Repository) List(ctx context.Context, filter *HostFilter, heartbeatTimeout time.Duration, since time.Time) ([]*Host, int64, error) {
 	query := r.db.WithContext(ctx).Model(&Host{})
 
 	// Apply filters / 应用过滤条件
@@ -167,11 +168,11 @@ func (r *Repository) List(ctx context.Context, filter *HostFilter, heartbeatTime
 		return nil, 0, err
 	}
 
-	// Filter by online status if specified
+	// Filter by online status if specified (use since for consistency with display)
 	if filter != nil && filter.IsOnline != nil {
 		filteredHosts := make([]*Host, 0)
 		for _, h := range hosts {
-			if h.IsOnline(heartbeatTimeout) == *filter.IsOnline {
+			if h.IsOnlineWithSince(heartbeatTimeout, since) == *filter.IsOnline {
 				filteredHosts = append(filteredHosts, h)
 			}
 		}

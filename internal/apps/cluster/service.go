@@ -51,19 +51,23 @@ const (
 // This interface decouples cluster from host package to avoid import cycles.
 // 此接口将集群与主机包解耦以避免导入循环。
 type HostInfo struct {
-	ID            uint
-	Name          string
-	HostType      string
-	IPAddress     string
-	AgentID       string
-	AgentStatus   string
-	LastHeartbeat *time.Time
+	ID                uint
+	Name              string
+	HostType          string
+	IPAddress         string
+	AgentID           string
+	AgentStatus       string
+	LastHeartbeat     *time.Time
+	ProcessStartedAt  *time.Time // when set, online requires heartbeat after this (e.g. API process start)
 }
 
 // IsOnline checks if the host is online based on heartbeat timeout.
-// IsOnline 根据心跳超时检查主机是否在线。
+// When ProcessStartedAt is set, also requires last_heartbeat to be after that time.
 func (h *HostInfo) IsOnline(timeout time.Duration) bool {
 	if h.LastHeartbeat == nil {
+		return false
+	}
+	if h.ProcessStartedAt != nil && !h.LastHeartbeat.After(*h.ProcessStartedAt) {
 		return false
 	}
 	return time.Since(*h.LastHeartbeat) <= timeout

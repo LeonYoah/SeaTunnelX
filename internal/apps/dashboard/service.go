@@ -32,15 +32,18 @@ type OverviewService struct {
 	clusterRepo      *cluster.Repository
 	auditRepo        *audit.Repository
 	heartbeatTimeout time.Duration
+	processStartedAt time.Time // online requires heartbeat after this (e.g. API process start)
 }
 
 // NewOverviewService creates a new dashboard overview service.
-func NewOverviewService(hostRepo *host.Repository, clusterRepo *cluster.Repository, auditRepo *audit.Repository, heartbeatTimeout time.Duration) *OverviewService {
+// processStartedAt is used so hosts are not shown online until at least one heartbeat is received after platform start.
+func NewOverviewService(hostRepo *host.Repository, clusterRepo *cluster.Repository, auditRepo *audit.Repository, heartbeatTimeout time.Duration, processStartedAt time.Time) *OverviewService {
 	return &OverviewService{
 		hostRepo:         hostRepo,
 		clusterRepo:      clusterRepo,
 		auditRepo:        auditRepo,
 		heartbeatTimeout: heartbeatTimeout,
+		processStartedAt: processStartedAt,
 	}
 }
 
@@ -48,18 +51,18 @@ func NewOverviewService(hostRepo *host.Repository, clusterRepo *cluster.Reposito
 func (s *OverviewService) GetOverviewStats(ctx context.Context) (*OverviewStats, error) {
 	stats := &OverviewStats{}
 
-	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: 1000}, s.heartbeatTimeout)
+	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: 1000}, s.heartbeatTimeout, s.processStartedAt)
 	if err != nil {
 		return nil, err
 	}
 	stats.TotalHosts = len(hosts)
 	for _, h := range hosts {
-		if h.IsOnline(s.heartbeatTimeout) {
+		if h.IsOnlineWithSince(s.heartbeatTimeout, s.processStartedAt) {
 			stats.OnlineHosts++
 		}
 		if h.AgentStatus == host.AgentStatusInstalled {
 			stats.TotalAgents++
-			if h.IsOnline(s.heartbeatTimeout) {
+			if h.IsOnlineWithSince(s.heartbeatTimeout, s.processStartedAt) {
 				stats.OnlineAgents++
 			}
 		}
@@ -151,7 +154,7 @@ func (s *OverviewService) GetHostSummaries(ctx context.Context, limit int) ([]*H
 		limit = 5
 	}
 
-	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: limit}, s.heartbeatTimeout)
+	hosts, _, err := s.hostRepo.List(ctx, &host.HostFilter{PageSize: limit}, s.heartbeatTimeout, s.processStartedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +177,7 @@ func (s *OverviewService) GetHostSummaries(ctx context.Context, limit int) ([]*H
 			ID:          h.ID,
 			Name:        h.Name,
 			IPAddress:   h.IPAddress,
-			IsOnline:    h.IsOnline(s.heartbeatTimeout),
+			IsOnline:    h.IsOnlineWithSince(s.heartbeatTimeout, s.processStartedAt),
 			AgentStatus: string(h.AgentStatus),
 			NodeCount:   hostNodeCount[h.ID],
 		})

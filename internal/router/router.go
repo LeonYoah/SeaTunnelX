@@ -218,7 +218,7 @@ func Serve() {
 			// Dashboard Overview 仪表盘概览
 			// Initialize dashboard overview service and handler
 			// 初始化仪表盘概览服务和处理器
-			overviewService := dashboard.NewOverviewService(hostRepo, clusterRepo, auditRepo, time.Duration(config.Config.GRPC.HeartbeatTimeout)*time.Second)
+			overviewService := dashboard.NewOverviewService(hostRepo, clusterRepo, auditRepo, time.Duration(config.Config.GRPC.HeartbeatTimeout)*time.Second, hostService.GetProcessStartedAt())
 			overviewHandler := dashboard.NewOverviewHandler(overviewService)
 
 			overviewRouter := apiV1Router.Group("/dashboard/overview")

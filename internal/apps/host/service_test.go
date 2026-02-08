@@ -806,3 +806,41 @@ func containsSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// TestIsOnlineWithSince verifies Host.IsOnlineWithSince: when since is set, online requires
+// last_heartbeat after since and within timeout.
+func TestIsOnlineWithSince(t *testing.T) {
+	timeout := 30 * time.Second
+	now := time.Now()
+	recent := now.Add(-5 * time.Second)   // within timeout
+	old := now.Add(-60 * time.Second)    // outside timeout
+	processStart := now.Add(-10 * time.Second) // e.g. platform started 10s ago
+
+	// LastHeartbeat before processStart -> offline even if within timeout window from "now"
+	hBefore := &Host{LastHeartbeat: ptrTime(processStart.Add(-1 * time.Second))}
+	if hBefore.IsOnlineWithSince(timeout, processStart) {
+		t.Error("expected offline when LastHeartbeat is before processStart")
+	}
+
+	// LastHeartbeat after processStart and within timeout -> online
+	hAfter := &Host{LastHeartbeat: &recent}
+	if !hAfter.IsOnlineWithSince(timeout, processStart) {
+		t.Error("expected online when LastHeartbeat is after processStart and within timeout")
+	}
+
+	// LastHeartbeat after processStart but outside timeout -> offline
+	hOld := &Host{LastHeartbeat: &old}
+	if hOld.IsOnlineWithSince(timeout, processStart) {
+		t.Error("expected offline when LastHeartbeat is outside timeout")
+	}
+
+	// Zero since: backward compat, only timeout matters
+	if !hAfter.IsOnlineWithSince(timeout, time.Time{}) {
+		t.Error("expected online with zero since when within timeout")
+	}
+	if hOld.IsOnlineWithSince(timeout, time.Time{}) {
+		t.Error("expected offline with zero since when outside timeout")
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }

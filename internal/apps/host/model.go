@@ -151,8 +151,19 @@ func (Host) TableName() string {
 
 // IsOnline returns true if the host has received a heartbeat within the timeout period.
 // The default timeout is 30 seconds as per Requirements 3.4.
+// For backward compatibility this uses no "since" cutoff; use IsOnlineWithSince for process-start awareness.
 func (h *Host) IsOnline(timeout time.Duration) bool {
+	return h.IsOnlineWithSince(timeout, time.Time{})
+}
+
+// IsOnlineWithSince returns true if the host has received a heartbeat within the timeout period
+// and (when since is non-zero) the last heartbeat is after since (e.g. process start time).
+// This avoids showing hosts as online after platform restart before any heartbeat is received.
+func (h *Host) IsOnlineWithSince(timeout time.Duration, since time.Time) bool {
 	if h.LastHeartbeat == nil {
+		return false
+	}
+	if !since.IsZero() && !h.LastHeartbeat.After(since) {
 		return false
 	}
 	return time.Since(*h.LastHeartbeat) <= timeout
@@ -225,9 +236,9 @@ type HostInfo struct {
 
 // ToHostInfo converts a Host to HostInfo with online status calculated.
 // ToHostInfo 将 Host 转换为 HostInfo，并计算在线状态。
-// For bare_metal: Agent status is the single source of truth (host status is derived from Agent).
-// 对于物理机：Agent 状态是唯一来源（主机状态由 Agent 推导）。
-func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
+// since: if non-zero, host is considered online only if last_heartbeat is after since (e.g. process start).
+// For bare_metal: when !IsOnline the displayed status is forced to offline for consistency.
+func (h *Host) ToHostInfo(heartbeatTimeout time.Duration, since time.Time) *HostInfo {
 	info := &HostInfo{
 		ID:          h.ID,
 		Name:        h.Name,
@@ -243,12 +254,9 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 	}
 
 	// Set online status and unified status based on host type
-	// 根据主机类型设置在线状态和统一状态
 	switch h.HostType {
 	case HostTypeBareMetal:
-		// Agent is the source of truth: agent_status dictates host state
-		// Agent 是唯一来源：agent_status 决定主机状态
-		info.IsOnline = h.IsOnline(heartbeatTimeout)
+		info.IsOnline = h.IsOnlineWithSince(heartbeatTimeout, since)
 		info.IPAddress = h.IPAddress
 		info.SSHPort = h.SSHPort
 		info.AgentID = h.AgentID
@@ -260,8 +268,12 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 		info.TotalMemory = h.TotalMemory
 		info.TotalDisk = h.TotalDisk
 		info.LastHeartbeat = h.LastHeartbeat
-		// Use agent_status as unified status for bare_metal (Status is derived from it)
-		info.Status = agentStatusToHostStatus(h.AgentStatus)
+		// Display status: offline when not online for consistency after platform restart
+		if info.IsOnline {
+			info.Status = agentStatusToHostStatus(h.AgentStatus)
+		} else {
+			info.Status = HostStatusOffline
+		}
 	case HostTypeDocker:
 		info.IsOnline = h.Status == HostStatusConnected
 		info.DockerAPIURL = h.DockerAPIURL
@@ -273,15 +285,17 @@ func (h *Host) ToHostInfo(heartbeatTimeout time.Duration) *HostInfo {
 		info.K8sNamespace = h.K8sNamespace
 		info.K8sVersion = h.K8sVersion
 	default:
-		// Default to bare_metal behavior for backward compatibility
-		// 默认使用 bare_metal 行为以保持向后兼容
-		info.IsOnline = h.IsOnline(heartbeatTimeout)
+		info.IsOnline = h.IsOnlineWithSince(heartbeatTimeout, since)
 		info.IPAddress = h.IPAddress
 		info.SSHPort = h.SSHPort
 		info.AgentID = h.AgentID
 		info.AgentStatus = h.AgentStatus
 		info.AgentVersion = h.AgentVersion
-		info.Status = agentStatusToHostStatus(h.AgentStatus)
+		if info.IsOnline {
+			info.Status = agentStatusToHostStatus(h.AgentStatus)
+		} else {
+			info.Status = HostStatusOffline
+		}
 	}
 
 	return info

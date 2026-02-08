@@ -34,10 +34,11 @@ const DefaultHeartbeatTimeout = 30 * time.Second
 // Service provides business logic for host management operations.
 // Service 提供主机管理操作的业务逻辑。
 type Service struct {
-	repo             *Repository
-	clusterRepo      *cluster.Repository
-	heartbeatTimeout time.Duration
-	controlPlaneAddr string
+	repo               *Repository
+	clusterRepo        *cluster.Repository
+	heartbeatTimeout   time.Duration
+	controlPlaneAddr   string
+	processStartedAt   time.Time // process start time; online requires heartbeat after this
 }
 
 // ServiceConfig holds configuration for the Host Service.
@@ -67,7 +68,13 @@ func NewService(repo *Repository, clusterRepo *cluster.Repository, cfg *ServiceC
 		clusterRepo:      clusterRepo,
 		heartbeatTimeout: timeout,
 		controlPlaneAddr: controlPlaneAddr,
+		processStartedAt: time.Now(),
 	}
+}
+
+// GetProcessStartedAt returns the process start time used for "online since start" checks.
+func (s *Service) GetProcessStartedAt() time.Time {
+	return s.processStartedAt
 }
 
 // Create creates a new host with validation.
@@ -215,20 +222,20 @@ func (s *Service) GetByAgentID(ctx context.Context, agentID string) (*Host, erro
 // List 根据过滤条件获取主机列表。
 // Requirements: 3.5 - Returns host name, IP, agent status, online status, resource usage, last heartbeat.
 func (s *Service) List(ctx context.Context, filter *HostFilter) ([]*Host, int64, error) {
-	return s.repo.List(ctx, filter, s.heartbeatTimeout)
+	return s.repo.List(ctx, filter, s.heartbeatTimeout, s.processStartedAt)
 }
 
 // ListWithInfo retrieves hosts and converts them to HostInfo with online status.
 // ListWithInfo 获取主机列表并转换为包含在线状态的 HostInfo。
 func (s *Service) ListWithInfo(ctx context.Context, filter *HostFilter) ([]*HostInfo, int64, error) {
-	hosts, total, err := s.repo.List(ctx, filter, s.heartbeatTimeout)
+	hosts, total, err := s.repo.List(ctx, filter, s.heartbeatTimeout, s.processStartedAt)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	infos := make([]*HostInfo, len(hosts))
 	for i, h := range hosts {
-		infos[i] = h.ToHostInfo(s.heartbeatTimeout)
+		infos[i] = h.ToHostInfo(s.heartbeatTimeout, s.processStartedAt)
 	}
 
 	return infos, total, nil
@@ -676,14 +683,16 @@ func (s *Service) GetHostByID(ctx context.Context, id uint) (*cluster.HostInfo, 
 		return nil, err
 	}
 
+	startedAt := s.processStartedAt
 	return &cluster.HostInfo{
-		ID:            host.ID,
-		Name:          host.Name,
-		HostType:      string(host.HostType),
-		IPAddress:     host.IPAddress,
-		AgentID:       host.AgentID,
-		AgentStatus:   string(host.AgentStatus),
-		LastHeartbeat: host.LastHeartbeat,
+		ID:               host.ID,
+		Name:             host.Name,
+		HostType:         string(host.HostType),
+		IPAddress:        host.IPAddress,
+		AgentID:          host.AgentID,
+		AgentStatus:      string(host.AgentStatus),
+		LastHeartbeat:    host.LastHeartbeat,
+		ProcessStartedAt: &startedAt,
 	}, nil
 }
 
