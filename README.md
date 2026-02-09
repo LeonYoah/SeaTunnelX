@@ -1,48 +1,59 @@
 # SeaTunnel 一站式运维管理平台
 
-🚀 Apache SeaTunnel 数据集成平台的运维管理工具
+Apache SeaTunnel 数据集成平台的运维管理工具
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Go Version](https://img.shields.io/badge/Go-1.24-blue.svg)](https://golang.org/)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
-
-## 📖 项目简介
+## 项目简介
 
 SeatunnelX: SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据集成引擎打造的运维管理工具，提供**主机管理、集群与节点管理、Agent 运维、安装包与插件管理**等功能。
 
 > 本项目基于 [linux-do/cdk](https://github.com/linux-do/cdk) 项目改造，原项目采用 MIT 协议开源。
 
-### ✨ 主要特性
+### 主要特性
 
-- 🔐 **多种认证方式** - 支持用户名密码登录和 OAuth（GitHub、Google）登录
-- 🖥️ **主机与 Agent 管理** - 主机注册、Agent 安装与心跳、在线状态与资源监控
-- 📦 **集群与节点管理** - SeaTunnel 集群创建、节点部署、启停与状态展示
-- 📥 **安装包与插件** - 安装包管理、插件安装/卸载、多版本 SeaTunnel 支持
-- 🗄️ **多数据库支持** - 支持 SQLite（默认）、MySQL、PostgreSQL
-- 🌍 **国际化支持** - 内置中英文切换
-- ⚡ **轻量化部署** - Redis 可选，支持内存会话存储
-- 🎨 **现代化界面** - 基于 Next.js 15 和 React 19 的响应式设计
+- **多种认证方式** - 支持用户名密码登录和 OAuth（GitHub、Google）登录
+- **主机与 Agent 管理** - 主机注册、Agent 安装与心跳、在线状态与资源监控
+- **集群与节点管理** - SeaTunnel 集群创建、节点部署、启停与状态展示
+- **安装包与插件** - 安装包管理、插件安装/卸载、多版本 SeaTunnel 支持
+- **多数据库支持** - 支持 SQLite（默认）、MySQL、PostgreSQL
+- **国际化支持** - 内置中英文切换
+- **轻量化部署** - Redis 可选，支持内存会话存储
+- **现代化界面** - 基于 Next.js 15 和 React 19 的响应式设计
 
-### 📸 界面展示
+### 界面展示
 
-| 登录 | 控制台 |
-|------|--------|
-| ![登录页](docs/screenshots/00-login.png) | ![控制台](docs/screenshots/01-dashboard.png) |
+#### 登录
 
-| 主机管理 | 集群管理 |
-|----------|----------|
-| ![主机管理](docs/screenshots/02-hosts.png) | ![集群管理](docs/screenshots/03-clusters.png) |
+![登录页](docs/screenshots/00-login.png)
 
-| 安装包管理 | 插件管理 | 审计日志 |
-|------------|----------|----------|
-| ![安装包](docs/screenshots/04-packages.png) | ![插件](docs/screenshots/05-plugins.png) | ![审计日志](docs/screenshots/06-audit-logs.png) |
+#### 控制台
 
-| 集群节点管理 |
-|--------------|
-| ![集群节点](docs/screenshots/07-cluster-nodes.png) |
+![控制台](docs/screenshots/01-dashboard.png)
 
-## 🏗️ 架构概览
+#### 主机管理
+
+![主机管理](docs/screenshots/02-hosts.png)
+
+#### 集群管理
+
+![集群管理](docs/screenshots/03-clusters.png)
+
+#### 安装包管理
+
+![安装包](docs/screenshots/04-packages.png)
+
+#### 插件管理
+
+![插件](docs/screenshots/05-plugins.png)
+
+#### 审计日志
+
+![审计日志](docs/screenshots/06-audit-logs.png)
+
+#### 集群节点管理
+
+![集群节点](docs/screenshots/07-cluster-nodes.png)
+
+## 架构概览
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -56,7 +67,7 @@ SeatunnelX: SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据�
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-## 🛠️ 技术栈
+## 技术栈
 
 ### 后端
 - **Go 1.24** - 主要开发语言
@@ -72,13 +83,13 @@ SeatunnelX: SeaTunnel 一站式运维管理平台是为 Apache SeaTunnel 数据�
 - **Tailwind CSS 4** - 样式框架
 - **Shadcn UI** - 组件库
 
-## 📋 环境要求
+## 环境要求
 
 - **Go** >= 1.24
 - **Node.js** >= 18.0
 - **pnpm** >= 8.0 (推荐)
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 克隆项目
 
@@ -126,7 +137,7 @@ pnpm dev
 | `database.type` | 数据库类型 | `sqlite` |
 | `redis.enabled` | 是否启用 Redis | `false` |
 
-### 🔐 OAuth 登录配置（可选）
+### OAuth 登录配置（可选）
 
 平台支持 GitHub 和 Google OAuth 登录作为备选登录方式。
 
@@ -140,7 +151,7 @@ pnpm dev
    - **Authorization callback URL**: `http://localhost:3000/callback`
 4. 创建后获取 **Client ID** 和 **Client Secret**
 
-> 📖 详细教程：[GitHub OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-github-oauth2/)
+> 详细教程：[GitHub OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-github-oauth2/)
 
 #### 获取 Google OAuth 凭证
 
@@ -148,7 +159,7 @@ pnpm dev
 2. APIs & Services → Credentials → Create Credentials → OAuth client ID
 3. 添加 Authorized redirect URIs: `http://localhost:3000/callback`
 
-> 📖 详细教程：[Google OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-google-oauth2/)
+> 详细教程：[Google OAuth2 配置指南](https://apifox.com/apiskills/how-to-use-google-oauth2/)
 
 #### 配置 OAuth 凭证
 
@@ -166,7 +177,7 @@ oauth_providers:
     redirect_uri: "http://localhost:3000/callback"
 ```
 
-## 🧪 测试
+## 测试
 
 ```bash
 # 后端测试
@@ -176,7 +187,7 @@ go test ./...
 cd frontend && pnpm test
 ```
 
-## 🔧 二次开发指南
+## 二次开发指南
 
 ### Protocol Buffers 代码生成
 
@@ -255,7 +266,7 @@ protoc --proto_path=. `
     internal/proto/agent/agent.proto
 ```
 
-> 💡 **提示**: 为了避免每次都设置环境变量，建议将 `D:\protoc\bin` 添加到系统 PATH 环境变量：
+> 提示：为了避免每次都设置环境变量，建议将 `D:\protoc\bin` 添加到系统 PATH 环境变量：
 > - 右键 "此电脑" → "属性" → "高级系统设置" → "环境变量"
 > - 在 "系统变量" 中找到 `Path`，点击 "编辑"
 > - 添加新条目：`D:\protoc\bin`
@@ -357,7 +368,7 @@ go build ./...           # 编译主项目
 cd agent && go build ./... # 编译 Agent
 ```
 
-## 🚀 部署
+## 部署
 
 ### Docker 部署
 
