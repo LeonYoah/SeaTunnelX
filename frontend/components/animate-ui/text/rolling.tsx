@@ -7,6 +7,7 @@ import {
   type UseInViewOptions,
   type Transition,
 } from 'motion/react';
+import {easeOut} from 'motion';
 
 const ENTRY_ANIMATION = {
   initial: {rotateX: 0},
@@ -32,7 +33,7 @@ type RollingTextProps = Omit<React.ComponentProps<'span'>, 'children'> & {
 
 function RollingText({
   ref,
-  transition = {duration: 0.5, delay: 0.1, ease: 'easeOut'},
+  transition = {duration: 0.5, delay: 0.1, ease: easeOut},
   inView = false,
   inViewMargin = '0px',
   inViewOnce = true,

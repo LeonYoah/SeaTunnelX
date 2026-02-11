@@ -9,6 +9,7 @@ import {
   type HTMLMotionProps,
   type Transition,
 } from 'motion/react';
+import {easeOut} from 'motion';
 
 import {cn} from '@/lib/utils';
 
@@ -125,7 +126,7 @@ function DialogContent({
               initial={{opacity: 0}}
               animate={{opacity: 1}}
               exit={{opacity: 0}}
-              transition={{duration: 0.15, ease: 'easeOut'}}
+              transition={{duration: 0.15, ease: easeOut}}
             />
           </DialogOverlay>
           <DialogPrimitive.Content asChild forceMount {...props}>
@@ -147,7 +148,7 @@ function DialogContent({
                 scale: 0.95,
                 transform: `perspective(500px) ${rotateAxis}(${initialRotation})`,
               }}
-              transition={{...transition, duration: 0.15, ease: 'easeOut'}}
+              transition={{...transition, duration: 0.15, ease: easeOut}}
               className={cn(
                 'fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg rounded-xl',
                 className,

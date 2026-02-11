@@ -24,6 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { RefreshCw, Search, Puzzle, Package, HardDrive, Trash2, CheckSquare, Server, Upload, DownloadCloud } from 'lucide-react';
 import { motion } from 'motion/react';
+import { easeOut } from 'motion';
 import { PluginService } from '@/lib/services/plugin';
 import { ClusterService } from '@/lib/services/cluster';
 import type { Plugin, MirrorSource, AvailablePluginsResponse, LocalPlugin, PluginDownloadProgress, InstalledPlugin } from '@/lib/services/plugin';
@@ -506,7 +507,7 @@ export function PluginMain() {
       transition: {
         duration: 0.5,
         staggerChildren: 0.1,
-        ease: 'easeOut',
+        ease: easeOut,
       },
     },
   };
@@ -516,7 +517,7 @@ export function PluginMain() {
     visible: {
       opacity: 1,
       y: 0,
-      transition: { duration: 0.6, ease: 'easeOut' },
+      transition: { duration: 0.6, ease: easeOut },
     },
   };
 

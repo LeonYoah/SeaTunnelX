@@ -24,6 +24,7 @@ import {Separator} from '@/components/ui/separator';
 import {toast} from 'sonner';
 import {Plus, Search, Database, RefreshCw} from 'lucide-react';
 import {motion} from 'motion/react';
+import {easeOut} from 'motion';
 import services from '@/lib/services';
 import {
   ClusterInfo,
@@ -194,7 +195,7 @@ export function ClusterMain() {
       transition: {
         duration: 0.5,
         staggerChildren: 0.1,
-        ease: 'easeOut',
+        ease: easeOut,
       },
     },
   };
@@ -204,7 +205,7 @@ export function ClusterMain() {
     visible: {
       opacity: 1,
       y: 0,
-      transition: {duration: 0.6, ease: 'easeOut'},
+      transition: {duration: 0.6, ease: easeOut},
     },
   };
 

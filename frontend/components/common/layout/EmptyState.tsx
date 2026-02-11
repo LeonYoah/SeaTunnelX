@@ -1,6 +1,7 @@
 import React from 'react';
 import {LucideIcon} from 'lucide-react';
 import {motion} from 'motion/react';
+import {easeOut, backOut} from 'motion';
 
 /**
  * 空状态组件的Props接口
@@ -35,8 +36,8 @@ export function EmptyState({
       y: 0,
       transition: {
         duration: 0.6,
-        ease: 'easeOut',
         staggerChildren: 0.1,
+        ease: easeOut,
       },
     },
   };
@@ -49,7 +50,7 @@ export function EmptyState({
       scale: 1,
       transition: {
         duration: 0.4,
-        ease: 'easeOut',
+        ease: easeOut,
       },
     },
   };
@@ -61,7 +62,7 @@ export function EmptyState({
       scale: 1,
       transition: {
         duration: 0.5,
-        ease: 'backOut',
+        ease: backOut,
       },
     },
   };
