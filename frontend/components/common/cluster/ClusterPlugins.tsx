@@ -216,7 +216,9 @@ export function ClusterPlugins({clusterId}: ClusterPluginsProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('plugin.uninstallPlugin')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('plugin.uninstallConfirm', {name: pluginToUninstall?.plugin_name})}
+              {t('plugin.uninstallConfirm', {
+                name: pluginToUninstall?.plugin_name ?? '',
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -3,7 +3,10 @@
 import {useState, useCallback} from 'react';
 import {TrustLevel} from '@/lib/services/core/types';
 import {DistributionType, ProjectListItem} from '@/lib/services/project/types';
-import {DEFAULT_FORM_VALUES} from '@/components/common/project';
+
+// 默认表单配置（本地定义，避免依赖不存在的组件）
+const DEFAULT_TIME_OFFSET_24H = 24 * 60 * 60 * 1000; // 24 小时
+const DEFAULT_RISK_LEVEL = 3;
 
 export interface ProjectFormData {
   name: string;
@@ -45,10 +48,10 @@ export function useProjectForm(options: UseProjectFormOptions) {
         name: '',
         description: '',
         startTime: new Date(),
-        endTime: new Date(Date.now() + DEFAULT_FORM_VALUES.TIME_OFFSET_24H),
+        endTime: new Date(Date.now() + DEFAULT_TIME_OFFSET_24H),
         minimumTrustLevel: TrustLevel.BASIC_USER,
         allowSameIP: false,
-        riskLevel: DEFAULT_FORM_VALUES.RISK_LEVEL,
+        riskLevel: DEFAULT_RISK_LEVEL,
         distributionType: DistributionType.ONE_FOR_EACH,
       }
     );

@@ -81,12 +81,24 @@ export function BatchInstallDialog({
   const loadClusters = async () => {
     setLoading(true);
     try {
-      const result = await services.cluster.listClusters();
-      // Filter clusters with matching version / 过滤版本匹配的集群
-      const matchingClusters = (result || []).filter(
-        (c: Cluster) => c.version === version
-      );
-      setClusters(matchingClusters);
+      // 获取集群列表（只取前 100 条，按需要可调整）
+      const result = await services.cluster.getClustersSafe({
+        current: 1,
+        size: 100,
+        name: undefined,
+        status: undefined,
+        deployment_mode: undefined,
+      });
+
+      if (result.success && result.data) {
+        // Filter clusters with matching version / 过滤版本匹配的集群
+        const matchingClusters = (result.data.clusters || []).filter(
+          (c: Cluster) => c.version === version,
+        );
+        setClusters(matchingClusters);
+      } else {
+        setClusters([]);
+      }
     } catch (error) {
       console.error('Failed to load clusters:', error);
       setClusters([]);

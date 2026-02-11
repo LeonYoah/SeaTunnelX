@@ -2,7 +2,6 @@
 
 import {useState, useCallback} from 'react';
 import {toast} from 'sonner';
-import {handleBulkImportContentWithFilter} from '@/components/common/project';
 
 /**
  * 检测文件内容是否为二进制文件
@@ -194,25 +193,42 @@ export function useFileUpload() {
         return;
       }
 
-      // 执行导入
-      handleBulkImportContentWithFilter(
-        processedContent,
-        currentItems,
-        allowDuplicates,
-        (
-          updatedItems: string[],
-          importedCount: number,
-          skippedInfo?: string,
-        ) => {
-          onSuccess(updatedItems, importedCount, skippedInfo);
-          const message = `从文件成功导入 ${importedCount} 个内容${skippedInfo || ''}`;
-          toast.success(message);
-          setFileUploadOpen(false);
-        },
-        (errorMessage: string) => {
-          toast.error(errorMessage);
-        },
-      );
+      // 执行导入（本地实现，避免依赖不存在的组件）
+      const lines = processedContent
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      if (lines.length === 0) {
+        toast.error('文件内容为空或格式无效');
+        return;
+      }
+
+      let importedCount = 0;
+      let skippedDuplicates = 0;
+      const newItems = [...currentItems];
+
+      for (const line of lines) {
+        if (!allowDuplicates && newItems.includes(line)) {
+          skippedDuplicates++;
+          continue;
+        }
+        newItems.push(line);
+        importedCount++;
+      }
+
+      if (importedCount === 0) {
+        toast.error('没有新内容被导入');
+        return;
+      }
+
+      const skippedInfo =
+        skippedDuplicates > 0 ? `（跳过重复 ${skippedDuplicates} 条）` : '';
+
+      onSuccess(newItems, importedCount, skippedInfo);
+      const message = `从文件成功导入 ${importedCount} 个内容${skippedInfo}`;
+      toast.success(message);
+      setFileUploadOpen(false);
     },
     [],
   );

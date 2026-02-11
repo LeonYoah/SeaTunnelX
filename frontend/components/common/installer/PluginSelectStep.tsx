@@ -155,7 +155,7 @@ export function PluginSelectStep({
   const isCategoryAllSelected = useCallback((category: PluginCategory) => {
     const categoryPlugins = pluginsByCategory[category];
     if (categoryPlugins.length === 0) return false;
-    return categoryPlugins.every((p) => selectedPlugins.includes(p));
+    return categoryPlugins.every((p) => selectedPlugins.includes(p.name));
   }, [pluginsByCategory, selectedPlugins]);
 
   // Render plugin card / 渲染插件卡片

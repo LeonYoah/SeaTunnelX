@@ -2,7 +2,6 @@
 
 import {useState, useCallback} from 'react';
 import {toast} from 'sonner';
-import {handleBulkImportContentWithFilter} from '@/components/common/project';
 
 export function useBulkImport(initialItems: string[] = []) {
   const [items, setItems] = useState<string[]>(initialItems);
@@ -10,20 +9,41 @@ export function useBulkImport(initialItems: string[] = []) {
   const [allowDuplicates, setAllowDuplicates] = useState(false);
 
   const handleBulkImport = useCallback(() => {
-    handleBulkImportContentWithFilter(
-      bulkContent,
-      items,
-      allowDuplicates,
-      (newItems: string[], importedCount: number, skippedInfo?: string) => {
-        setItems(newItems);
-        setBulkContent('');
-        const message = `成功导入 ${importedCount} 个内容${skippedInfo || ''}`;
-        toast.success(message);
-      },
-      (errorMessage: string) => {
-        toast.error(errorMessage);
-      },
-    );
+    const lines = bulkContent
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) {
+      toast.error('没有可导入的内容');
+      return;
+    }
+
+    let importedCount = 0;
+    let skippedDuplicates = 0;
+    const newItems = [...items];
+
+    for (const line of lines) {
+      if (!allowDuplicates && newItems.includes(line)) {
+        skippedDuplicates++;
+        continue;
+      }
+      newItems.push(line);
+      importedCount++;
+    }
+
+    if (importedCount === 0) {
+      toast.error('没有新内容被导入');
+      return;
+    }
+
+    setItems(newItems);
+    setBulkContent('');
+
+    const skippedInfo =
+      skippedDuplicates > 0 ? `（跳过重复 ${skippedDuplicates} 条）` : '';
+    const message = `成功导入 ${importedCount} 个内容${skippedInfo}`;
+    toast.success(message);
   }, [bulkContent, items, allowDuplicates]);
 
   const removeItem = useCallback((index: number) => {
