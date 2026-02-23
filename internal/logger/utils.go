@@ -1,4 +1,4 @@
-﻿/*
+/*
  * MIT License
  *
  * Copyright (c) 2025 linux.do
@@ -57,15 +57,26 @@ func GetLogWriter() (zapcore.WriteSyncer, error) {
 func initWriter() (zapcore.WriteSyncer, error) {
 	logConfig := config.Config.Log
 
-	if logConfig.Output == "file" {
-		// 初始化日志目录
+	var writers []zapcore.WriteSyncer
+
+	// 兼容旧配置：默认 stdout
+	output := logConfig.Output
+	if output == "" {
+		output = "stdout"
+	}
+
+	// 是否写入文件（file 或 both）
+	if output == "file" || output == "both" {
 		logPath := logConfig.FilePath
+		if logPath == "" {
+			logPath = "./logs/seatunnelx.log"
+		}
+
 		logDir := filepath.Dir(logPath)
 		if err := os.MkdirAll(logDir, 0750); err != nil {
 			return nil, fmt.Errorf("[Logger] create log file dir err: %w", err)
 		}
 
-		// 配置日志轮转
 		logOutput := &lumberjack.Logger{
 			Filename:   logPath,
 			MaxSize:    logConfig.MaxSize,
@@ -73,11 +84,23 @@ func initWriter() (zapcore.WriteSyncer, error) {
 			MaxAge:     logConfig.MaxAge,
 			Compress:   logConfig.Compress,
 		}
-
-		return zapcore.AddSync(logOutput), nil
+		writers = append(writers, zapcore.AddSync(logOutput))
 	}
 
-	return zapcore.AddSync(os.Stdout), nil
+	// 是否输出到控制台（stdout 或 both）
+	if output == "stdout" || output == "both" {
+		writers = append(writers, zapcore.AddSync(os.Stdout))
+	}
+
+	// 兜底：如果配置了未知值，仍然输出到 stdout
+	if len(writers) == 0 {
+		writers = append(writers, zapcore.AddSync(os.Stdout))
+	}
+
+	if len(writers) == 1 {
+		return writers[0], nil
+	}
+	return zapcore.NewMultiWriteSyncer(writers...), nil
 }
 
 // getEncoder 获取日志编码器

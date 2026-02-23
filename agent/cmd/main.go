@@ -47,6 +47,7 @@ import (
 	"github.com/seatunnel/seatunnelX/agent/internal/discovery"
 	"github.com/seatunnel/seatunnelX/agent/internal/executor"
 	agentgrpc "github.com/seatunnel/seatunnelX/agent/internal/grpc"
+	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
 	"github.com/seatunnel/seatunnelX/agent/internal/installer"
 	"github.com/seatunnel/seatunnelX/agent/internal/monitor"
 	"github.com/seatunnel/seatunnelX/agent/internal/process"
@@ -185,18 +186,18 @@ func (a *Agent) Run() error {
 	a.running = true
 	a.mu.Unlock()
 
-	fmt.Println("========================================")
-	fmt.Println("  SeaTunnelX Agent Starting...")
-	fmt.Println("  SeaTunnelX Agent 正在启动...")
-	fmt.Println("========================================")
-	fmt.Printf("Version: %s, Commit: %s, Build: %s\n", Version, GitCommit, BuildTime)
-	fmt.Printf("Control Plane: %v\n", a.config.ControlPlane.Addresses)
-	fmt.Printf("Heartbeat Interval: %v\n", a.config.Heartbeat.Interval)
-	fmt.Printf("Log Level: %s\n", a.config.Log.Level)
+	agentlogger.Infof("========================================")
+	agentlogger.Infof("  SeaTunnelX Agent Starting...")
+	agentlogger.Infof("  SeaTunnelX Agent 正在启动...")
+	agentlogger.Infof("========================================")
+	agentlogger.Infof("Version: %s, Commit: %s, Build: %s", Version, GitCommit, BuildTime)
+	agentlogger.Infof("Control Plane: %v", a.config.ControlPlane.Addresses)
+	agentlogger.Infof("Heartbeat Interval: %v", a.config.Heartbeat.Interval)
+	agentlogger.Infof("Log Level: %s", a.config.Log.Level)
 
 	// Step 1: Start process manager for monitoring
 	// 步骤 1：启动进程管理器进行监控
-	fmt.Println("[1/8] Starting process manager... / 启动进程管理器...")
+	agentlogger.Infof("[1/8] Starting process manager... / 启动进程管理器...")
 	if err := a.processManager.Start(a.ctx); err != nil {
 		return fmt.Errorf("failed to start process manager: %w / 启动进程管理器失败：%w", err, err)
 	}
@@ -205,48 +206,48 @@ func (a *Agent) Run() error {
 	a.processManager.SetEventHandler(a.handleProcessEvent)
 
 	// Step 2: Start process monitor / 启动进程监控器
-	fmt.Println("[2/8] Starting process monitor... / 启动进程监控器...")
+	agentlogger.Infof("[2/8] Starting process monitor... / 启动进程监控器...")
 	a.setupProcessMonitor()
 	if err := a.processMonitor.Start(a.ctx); err != nil {
-		fmt.Printf("Warning: failed to start process monitor: %v / 警告：启动进程监控器失败：%v\n", err, err)
+		agentlogger.Warnf("Warning: failed to start process monitor: %v / 警告：启动进程监控器失败：%v", err, err)
 	}
 
 	// Step 3: Initialize process discovery (simplified, no auto-scan)
 	// 步骤 3：初始化进程发现（简化版，无自动扫描）
-	fmt.Println("[3/8] Initializing process discovery... / 初始化进程发现...")
+	agentlogger.Infof("[3/8] Initializing process discovery... / 初始化进程发现...")
 
 	// Step 4: Start event reporter / 启动事件上报器
-	fmt.Println("[4/8] Starting event reporter... / 启动事件上报器...")
+	agentlogger.Infof("[4/8] Starting event reporter... / 启动事件上报器...")
 	a.eventReporter.Start()
 
 	// Step 5: Register command handlers
 	// 步骤 5：注册命令处理器
-	fmt.Println("[5/8] Registering command handlers... / 注册命令处理器...")
+	agentlogger.Infof("[5/8] Registering command handlers... / 注册命令处理器...")
 	a.registerCommandHandlers()
 
 	// Step 6: Connect to Control Plane
 	// 步骤 6：连接到 Control Plane
-	fmt.Println("[6/8] Connecting to Control Plane... / 连接到 Control Plane...")
+	agentlogger.Infof("[6/8] Connecting to Control Plane... / 连接到 Control Plane...")
 	if err := a.connectToControlPlane(); err != nil {
 		return fmt.Errorf("failed to connect to Control Plane: %w / 连接 Control Plane 失败：%w", err, err)
 	}
 
 	// Step 7: Register with Control Plane
 	// 步骤 7：向 Control Plane 注册
-	fmt.Println("[7/8] Registering with Control Plane... / 向 Control Plane 注册...")
+	agentlogger.Infof("[7/8] Registering with Control Plane... / 向 Control Plane 注册...")
 	if err := a.registerWithControlPlane(); err != nil {
 		return fmt.Errorf("failed to register with Control Plane: %w / 向 Control Plane 注册失败：%w", err, err)
 	}
 
 	// Step 8: Start background services
 	// 步骤 8：启动后台服务
-	fmt.Println("[8/8] Starting background services... / 启动后台服务...")
+	agentlogger.Infof("[8/8] Starting background services... / 启动后台服务...")
 	a.startBackgroundServices()
 
-	fmt.Println("========================================")
-	fmt.Println("  Agent started successfully!")
-	fmt.Println("  Agent 启动成功！")
-	fmt.Println("========================================")
+	agentlogger.Infof("========================================")
+	agentlogger.Infof("  Agent started successfully!")
+	agentlogger.Infof("  Agent 启动成功！")
+	agentlogger.Infof("========================================")
 
 	// Wait for context cancellation (shutdown signal)
 	// 等待上下文取消（关闭信号）
@@ -260,7 +261,7 @@ func (a *Agent) Run() error {
 func (a *Agent) setupProcessMonitor() {
 	// Set event handler / 设置事件处理器
 	a.processMonitor.SetEventHandler(func(event *monitor.ProcessEvent) {
-		fmt.Printf("[Agent] Process event: type=%s, name=%s, pid=%d / 进程事件：类型=%s，名称=%s，PID=%d\n",
+		agentlogger.Infof("[Agent] Process event: type=%s, name=%s, pid=%d / 进程事件：类型=%s，名称=%s，PID=%d",
 			event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
 
 		// Report event to Control Plane via gRPC / 通过 gRPC 向 Control Plane 上报事件
@@ -269,10 +270,10 @@ func (a *Agent) setupProcessMonitor() {
 
 	// Set crash handler to trigger auto restart / 设置崩溃处理器以触发自动重启
 	a.processMonitor.SetCrashHandler(func(proc *monitor.TrackedProcess) {
-		fmt.Printf("[Agent] Process crashed: %s (PID: %d), triggering auto restart / 进程崩溃：%s（PID：%d），触发自动重启\n",
+		agentlogger.Errorf("[Agent] Process crashed: %s (PID: %d), triggering auto restart / 进程崩溃：%s（PID：%d），触发自动重启",
 			proc.Name, proc.PID, proc.Name, proc.PID)
 		if err := a.autoRestarter.OnProcessCrashed(proc); err != nil {
-			fmt.Printf("[Agent] Auto restart failed: %v / 自动重启失败：%v\n", err, err)
+			agentlogger.Errorf("[Agent] Auto restart failed: %v / 自动重启失败：%v", err, err)
 		}
 	})
 
@@ -301,7 +302,7 @@ func (a *Agent) setupProcessMonitor() {
 		// Get new PID from process manager / 从进程管理器获取新 PID
 		info, err := a.processManager.GetStatus(a.ctx, processName)
 		if err != nil || info.PID <= 0 {
-			fmt.Printf("[Agent] Failed to get new PID after restart: %v / 重启后获取新 PID 失败：%v\n", err, err)
+			agentlogger.Errorf("[Agent] Failed to get new PID after restart: %v / 重启后获取新 PID 失败：%v", err, err)
 			return
 		}
 
@@ -330,7 +331,7 @@ func (a *Agent) setupProcessMonitor() {
 		}
 		go a.reportProcessEvent(event)
 
-		fmt.Printf("[Agent] Process restarted: %s (new PID: %d) / 进程已重启：%s（新 PID：%d）\n",
+		agentlogger.Infof("[Agent] Process restarted: %s (new PID: %d) / 进程已重启：%s（新 PID：%d）",
 			processName, info.PID, processName, info.PID)
 	})
 }
@@ -339,7 +340,7 @@ func (a *Agent) setupProcessMonitor() {
 // reportProcessEvent 通过 gRPC 向 Control Plane 上报进程事件。
 func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
 	if !a.grpcClient.IsConnected() {
-		fmt.Printf("[Agent] Not connected, caching event / 未连接，缓存事件\n")
+		agentlogger.Warnf("[Agent] Not connected, caching event / 未连接，缓存事件")
 		a.eventReporter.ReportEvent(event)
 		return
 	}
@@ -382,12 +383,12 @@ func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
 	}
 
 	if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
-		fmt.Printf("[Agent] Failed to report event, caching: %v / 上报事件失败，缓存：%v\n", err, err)
+		agentlogger.Errorf("[Agent] Failed to report event, caching: %v / 上报事件失败，缓存：%v", err, err)
 		a.eventReporter.ReportEvent(event)
 		return
 	}
 
-	fmt.Printf("[Agent] Event reported to Control Plane: type=%s, name=%s, pid=%d / 事件已上报到 Control Plane：类型=%s，名称=%s，PID=%d\n",
+	agentlogger.Infof("[Agent] Event reported to Control Plane: type=%s, name=%s, pid=%d / 事件已上报到 Control Plane：类型=%s，名称=%s，PID=%d",
 		event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
 }
 
@@ -402,20 +403,20 @@ func (a *Agent) connectToControlPlane() error {
 	if err := a.grpcClient.Connect(connectCtx); err != nil {
 		// If initial connection fails, start reconnection in background
 		// 如果初始连接失败，在后台启动重连
-		fmt.Printf("Initial connection failed, will retry in background: %v\n", err)
-		fmt.Printf("初始连接失败，将在后台重试：%v\n", err)
+		agentlogger.Warnf("Initial connection failed, will retry in background: %v", err)
+		agentlogger.Warnf("初始连接失败，将在后台重试：%v", err)
 
 		a.wg.Add(1)
 		go func() {
 			defer a.wg.Done()
 			if err := a.grpcClient.Reconnect(a.ctx); err != nil {
-				fmt.Printf("Reconnection failed: %v / 重连失败：%v\n", err, err)
+				agentlogger.Errorf("Reconnection failed: %v / 重连失败：%v", err, err)
 			}
 		}()
 		return nil // Don't fail startup, let reconnection handle it
 	}
 
-	fmt.Println("Connected to Control Plane / 已连接到 Control Plane")
+	agentlogger.Infof("Connected to Control Plane / 已连接到 Control Plane")
 	return nil
 }
 
@@ -423,7 +424,7 @@ func (a *Agent) connectToControlPlane() error {
 // registerWithControlPlane 向 Control Plane 发送注册请求
 func (a *Agent) registerWithControlPlane() error {
 	if !a.grpcClient.IsConnected() {
-		fmt.Println("Not connected yet, registration will happen after connection / 尚未连接，将在连接后注册")
+		agentlogger.Warnf("Not connected yet, registration will happen after connection / 尚未连接，将在连接后注册")
 		return nil
 	}
 
@@ -454,7 +455,7 @@ func (a *Agent) registerWithControlPlane() error {
 	// Save the assigned agent ID / 保存分配的 Agent ID
 	a.grpcClient.SetAgentID(resp.AssignedId)
 
-	fmt.Printf("Registered successfully with ID: %s / 注册成功，ID：%s\n", resp.AssignedId, resp.AssignedId)
+	agentlogger.Infof("Registered successfully with ID: %s / 注册成功，ID：%s", resp.AssignedId, resp.AssignedId)
 
 	// Set up event reporter with gRPC report function / 设置事件上报器的 gRPC 上报函数
 	a.setupEventReporter()
@@ -515,24 +516,24 @@ func (a *Agent) setupEventReporter() {
 			}
 
 			if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
-				fmt.Printf("[Agent] Failed to report event: %v / 上报事件失败：%v\n", err, err)
+				agentlogger.Errorf("[Agent] Failed to report event: %v / 上报事件失败：%v", err, err)
 				return err
 			}
-			fmt.Printf("[Agent] Event reported: type=%s, name=%s, pid=%d / 事件已上报：类型=%s，名称=%s，PID=%d\n",
+			agentlogger.Infof("[Agent] Event reported: type=%s, name=%s, pid=%d / 事件已上报：类型=%s，名称=%s，PID=%d",
 				event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
 		}
 		return nil
 	}
 
 	a.eventReporter.SetReportFunc(reportFunc)
-	fmt.Println("[Agent] Event reporter configured / 事件上报器已配置")
+	agentlogger.Infof("[Agent] Event reporter configured / 事件上报器已配置")
 }
 
 // applyRemoteConfig applies configuration received from Control Plane
 // applyRemoteConfig 应用从 Control Plane 接收的配置
 func (a *Agent) applyRemoteConfig(cfg *pb.AgentConfig) {
-	fmt.Printf("Received remote config from Control Plane: HeartbeatInterval=%d seconds / 收到来自 Control Plane 的远程配置：HeartbeatInterval=%d 秒\n", cfg.HeartbeatInterval, cfg.HeartbeatInterval)
-	fmt.Printf("Current local heartbeat interval: %v / 当前本地心跳间隔：%v\n", a.config.Heartbeat.Interval, a.config.Heartbeat.Interval)
+	agentlogger.Infof("Received remote config from Control Plane: HeartbeatInterval=%d seconds / 收到来自 Control Plane 的远程配置：HeartbeatInterval=%d 秒", cfg.HeartbeatInterval, cfg.HeartbeatInterval)
+	agentlogger.Infof("Current local heartbeat interval: %v / 当前本地心跳间隔：%v", a.config.Heartbeat.Interval, a.config.Heartbeat.Interval)
 
 	configChanged := false
 
@@ -541,18 +542,18 @@ func (a *Agent) applyRemoteConfig(cfg *pb.AgentConfig) {
 		if a.config.Heartbeat.Interval != newInterval {
 			a.config.Heartbeat.Interval = newInterval
 			configChanged = true
-			fmt.Printf("Applied heartbeat interval from Control Plane: %v / 已应用来自 Control Plane 的心跳间隔：%v\n", newInterval, newInterval)
+			agentlogger.Infof("Applied heartbeat interval from Control Plane: %v / 已应用来自 Control Plane 的心跳间隔：%v", newInterval, newInterval)
 		}
 	} else {
-		fmt.Printf("Remote HeartbeatInterval is 0 or negative, keeping local config / 远程 HeartbeatInterval 为 0 或负数，保持本地配置\n")
+		agentlogger.Warnf("Remote HeartbeatInterval is 0 or negative, keeping local config / 远程 HeartbeatInterval 为 0 或负数，保持本地配置")
 	}
 
 	// Persist config changes to local file / 将配置变更持久化到本地文件
 	if configChanged {
 		if err := a.persistConfigToFile(); err != nil {
-			fmt.Printf("Warning: Failed to persist config to file: %v / 警告：持久化配置到文件失败：%v\n", err, err)
+			agentlogger.Warnf("Warning: Failed to persist config to file: %v / 警告：持久化配置到文件失败：%v", err, err)
 		} else {
-			fmt.Printf("Config persisted to local file / 配置已持久化到本地文件\n")
+			agentlogger.Infof("Config persisted to local file / 配置已持久化到本地文件")
 		}
 	}
 }
@@ -587,7 +588,7 @@ func (a *Agent) persistConfigToFile() error {
 		if inHeartbeatSection && strings.HasPrefix(trimmed, "interval:") {
 			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 			lines[i] = fmt.Sprintf("%sinterval: %s", indent, a.config.Heartbeat.Interval.String())
-			fmt.Printf("Updated config line: %s\n", lines[i])
+			agentlogger.Infof("Updated config line: %s", lines[i])
 			break
 		}
 	}
@@ -639,12 +640,12 @@ func (a *Agent) runHeartbeatLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	fmt.Printf("Heartbeat loop started with interval: %v / 心跳循环已启动，间隔：%v\n", interval, interval)
+	agentlogger.Infof("Heartbeat loop started with interval: %v / 心跳循环已启动，间隔：%v", interval, interval)
 
 	for {
 		select {
 		case <-a.ctx.Done():
-			fmt.Println("Heartbeat loop stopped / 心跳循环已停止")
+			agentlogger.Infof("Heartbeat loop stopped / 心跳循环已停止")
 			return
 		case <-ticker.C:
 			a.sendHeartbeat()
@@ -686,15 +687,15 @@ func (a *Agent) sendHeartbeat() {
 
 	_, err := a.grpcClient.SendHeartbeat(a.ctx, usage, processes)
 	if err != nil {
-		fmt.Printf("Heartbeat failed: %v / 心跳失败：%v\n", err, err)
+		agentlogger.Errorf("Heartbeat failed: %v / 心跳失败：%v", err, err)
 
 		// Check if agent needs to re-register (Control Plane restarted)
 		// 检查是否需要重新注册（Control Plane 重启了）
 		if isNotFoundError(err) {
-			fmt.Println("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
+			agentlogger.Warnf("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
 			go func() {
 				if regErr := a.registerWithControlPlane(); regErr != nil {
-					fmt.Printf("Re-registration failed: %v / 重新注册失败：%v\n", regErr, regErr)
+					agentlogger.Errorf("Re-registration failed: %v / 重新注册失败：%v", regErr, regErr)
 				}
 			}()
 		}
@@ -708,12 +709,12 @@ func (a *Agent) sendHeartbeat() {
 // 需求 1.2：建立双向 gRPC 流用于命令
 // 需求 1.5：接收命令、验证、执行并上报结果
 func (a *Agent) runCommandStreamLoop() {
-	fmt.Println("Command stream loop started / 命令流循环已启动")
+	agentlogger.Infof("Command stream loop started / 命令流循环已启动")
 
 	for {
 		select {
 		case <-a.ctx.Done():
-			fmt.Println("Command stream loop stopped / 命令流循环已停止")
+			agentlogger.Infof("Command stream loop stopped / 命令流循环已停止")
 			return
 		default:
 		}
@@ -726,14 +727,14 @@ func (a *Agent) runCommandStreamLoop() {
 		// Start command stream / 启动命令流
 		err := a.grpcClient.StartCommandStream(a.ctx, a.handleCommand)
 		if err != nil {
-			fmt.Printf("Command stream error: %v, will retry... / 命令流错误：%v，将重试...\n", err, err)
+			agentlogger.Errorf("Command stream error: %v, will retry... / 命令流错误：%v，将重试...", err, err)
 
 			// Check if agent needs to re-register (Control Plane restarted)
 			// 检查是否需要重新注册（Control Plane 重启了）
 			if isNotFoundError(err) {
-				fmt.Println("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
+				agentlogger.Warnf("Agent not found on Control Plane, re-registering... / Agent 在 Control Plane 上未找到，重新注册...")
 				if regErr := a.registerWithControlPlane(); regErr != nil {
-					fmt.Printf("Re-registration failed: %v / 重新注册失败：%v\n", regErr, regErr)
+					agentlogger.Errorf("Re-registration failed: %v / 重新注册失败：%v", regErr, regErr)
 				}
 			}
 
@@ -745,7 +746,7 @@ func (a *Agent) runCommandStreamLoop() {
 // handleCommand handles a command received from Control Plane
 // handleCommand 处理从 Control Plane 接收的命令
 func (a *Agent) handleCommand(ctx context.Context, cmd *pb.CommandRequest) (*pb.CommandResponse, error) {
-	fmt.Printf("Received command: %s (type: %s) / 收到命令：%s（类型：%s）\n",
+	agentlogger.Infof("Received command: %s (type: %s) / 收到命令：%s（类型：%s）",
 		cmd.CommandId, cmd.Type.String(), cmd.CommandId, cmd.Type.String())
 
 	// Create a progress reporter that sends updates via gRPC
@@ -761,9 +762,9 @@ func (a *Agent) handleCommand(ctx context.Context, cmd *pb.CommandRequest) (*pb.
 	// Execute the command / 执行命令
 	resp, err := a.executor.Execute(ctx, cmd, reporter)
 	if err != nil {
-		fmt.Printf("Command %s failed: %v / 命令 %s 失败：%v\n", cmd.CommandId, err, cmd.CommandId, err)
+		agentlogger.Errorf("Command %s failed: %v / 命令 %s 失败：%v", cmd.CommandId, err, cmd.CommandId, err)
 	} else {
-		fmt.Printf("Command %s completed with status: %s / 命令 %s 完成，状态：%s\n",
+		agentlogger.Infof("Command %s completed with status: %s / 命令 %s 完成，状态：%s",
 			cmd.CommandId, resp.Status.String(), cmd.CommandId, resp.Status.String())
 	}
 
@@ -778,23 +779,23 @@ func (a *Agent) runConnectionMonitor() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	fmt.Println("Connection monitor started / 连接监控已启动")
+	agentlogger.Infof("Connection monitor started / 连接监控已启动")
 
 	for {
 		select {
 		case <-a.ctx.Done():
-			fmt.Println("Connection monitor stopped / 连接监控已停止")
+			agentlogger.Infof("Connection monitor stopped / 连接监控已停止")
 			return
 		case <-ticker.C:
 			if !a.grpcClient.IsConnected() {
-				fmt.Println("Connection lost, attempting reconnection... / 连接丢失，尝试重连...")
+				agentlogger.Warnf("Connection lost, attempting reconnection... / 连接丢失，尝试重连...")
 				go func() {
 					if err := a.grpcClient.Reconnect(a.ctx); err != nil {
-						fmt.Printf("Reconnection failed: %v / 重连失败：%v\n", err, err)
+						agentlogger.Errorf("Reconnection failed: %v / 重连失败：%v", err, err)
 					} else {
 						// Re-register after reconnection / 重连后重新注册
 						if err := a.registerWithControlPlane(); err != nil {
-							fmt.Printf("Re-registration failed: %v / 重新注册失败：%v\n", err, err)
+							agentlogger.Errorf("Re-registration failed: %v / 重新注册失败：%v", err, err)
 						}
 					}
 				}()
@@ -806,7 +807,7 @@ func (a *Agent) runConnectionMonitor() {
 // handleProcessEvent handles process lifecycle events
 // handleProcessEvent 处理进程生命周期事件
 func (a *Agent) handleProcessEvent(name string, event process.ProcessEvent, info *process.ProcessInfo) {
-	fmt.Printf("Process event: %s - %s (PID: %d, Status: %s) / 进程事件：%s - %s（PID：%d，状态：%s）\n",
+	agentlogger.Infof("Process event: %s - %s (PID: %d, Status: %s) / 进程事件：%s - %s（PID：%d，状态：%s）",
 		name, event, info.PID, info.Status, name, event, info.PID, info.Status)
 
 	// TODO: Report process events to Control Plane
@@ -849,7 +850,7 @@ func (a *Agent) registerCommandHandlers() {
 	configHandlers := executor.NewConfigHandlers()
 	configHandlers.RegisterHandlers(a.executor)
 
-	fmt.Printf("Registered %d command handlers / 已注册 %d 个命令处理器\n",
+	agentlogger.Infof("Registered %d command handlers / 已注册 %d 个命令处理器",
 		len(a.executor.GetRegisteredTypes()), len(a.executor.GetRegisteredTypes()))
 }
 
@@ -909,16 +910,16 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 	jvmHybridHeap := getParamInt(cmd.Parameters, "jvm_hybrid_heap", 0)
 	jvmMasterHeap := getParamInt(cmd.Parameters, "jvm_master_heap", 0)
 	jvmWorkerHeap := getParamInt(cmd.Parameters, "jvm_worker_heap", 0)
-	fmt.Printf("[Install] JVM params received: hybrid=%d, master=%d, worker=%d\n", jvmHybridHeap, jvmMasterHeap, jvmWorkerHeap)
+	agentlogger.Infof("[Install] JVM params received: hybrid=%d, master=%d, worker=%d", jvmHybridHeap, jvmMasterHeap, jvmWorkerHeap)
 	if jvmHybridHeap > 0 || jvmMasterHeap > 0 || jvmWorkerHeap > 0 {
 		params.JVM = &installer.JVMConfig{
 			HybridHeapSize: jvmHybridHeap,
 			MasterHeapSize: jvmMasterHeap,
 			WorkerHeapSize: jvmWorkerHeap,
 		}
-		fmt.Printf("[Install] JVM config created: %+v\n", params.JVM)
+		agentlogger.Infof("[Install] JVM config created: %+v", params.JVM)
 	} else {
-		fmt.Println("[Install] JVM config not created (all values are 0)")
+		agentlogger.Infof("[Install] JVM config not created (all values are 0)")
 	}
 
 	// Parse checkpoint config / 解析检查点配置
@@ -962,7 +963,7 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 			params.Checkpoint.StorageAccessKey = getParamString(cmd.Parameters, "checkpoint_storage_access_key", "")
 			params.Checkpoint.StorageSecretKey = getParamString(cmd.Parameters, "checkpoint_storage_secret_key", "")
 		}
-		fmt.Printf("[Install] Checkpoint config created: type=%s, namespace=%s\n", checkpointStorageType, checkpointNamespace)
+		agentlogger.Infof("[Install] Checkpoint config created: type=%s, namespace=%s", checkpointStorageType, checkpointNamespace)
 	}
 
 	// Parse master addresses / 解析 master 地址列表
@@ -1110,7 +1111,7 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 		// 自动重启已启用：用 PID=0 注册进程，让自动重启器处理实际的启动
 		a.processMonitor.TrackProcessSilent(processName, 0, installDir, role, params)
 		a.autoRestarter.ResetRestartCount(processName)
-		fmt.Printf("[Agent] Process registered for auto-start: %s (auto-restart will handle startup) / 进程已注册等待自动启动：%s（自动重启将处理启动）\n",
+		agentlogger.Infof("[Agent] Process registered for auto-start: %s (auto-restart will handle startup) / 进程已注册等待自动启动：%s（自动重启将处理启动）",
 			processName, processName)
 		reporter.Report(100, "Process registered for auto-start / 进程已注册等待自动启动")
 		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process registered for auto-start (role: %s) / 进程已注册等待自动启动（角色：%s）", role, role)), nil
@@ -1127,7 +1128,7 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 	// Get the PID from process manager / 从进程管理器获取 PID
 	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
 		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, params)
-		fmt.Printf("[Agent] Process started and tracked: %s (PID: %d) / 进程已启动并跟踪：%s（PID：%d）\n",
+		agentlogger.Infof("[Agent] Process started and tracked: %s (PID: %d) / 进程已启动并跟踪：%s（PID：%d）",
 			processName, info.PID, processName, info.PID)
 	}
 
@@ -1168,13 +1169,13 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 		// Auto-restart enabled: set PID=0, auto-restart will start it again
 		// 自动重启已启用：设置 PID=0，自动重启会重新启动它
 		a.processMonitor.UpdateProcessPID(processName, 0)
-		fmt.Printf("[Agent] Process stopped, PID set to 0 (auto-restart enabled): %s / 进程已停止，PID 设为 0（自动重启已启用）：%s\n",
+		agentlogger.Infof("[Agent] Process stopped, PID set to 0 (auto-restart enabled): %s / 进程已停止，PID 设为 0（自动重启已启用）：%s",
 			processName, processName)
 	} else {
 		// Auto-restart disabled: untrack the process completely
 		// 自动重启已禁用：完全取消跟踪进程
 		a.processMonitor.UntrackProcess(processName)
-		fmt.Printf("[Agent] Process stopped and untracked (auto-restart disabled): %s / 进程已停止并取消跟踪（自动重启已禁用）：%s\n",
+		agentlogger.Infof("[Agent] Process stopped and untracked (auto-restart disabled): %s / 进程已停止并取消跟踪（自动重启已禁用）：%s",
 			processName, processName)
 	}
 
@@ -1221,7 +1222,7 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 		// 用 PID=0 注册进程，自动重启器会启动它
 		a.processMonitor.TrackProcessSilent(processName, 0, installDir, role, startParams)
 		a.autoRestarter.ResetRestartCount(processName)
-		fmt.Printf("[Agent] Process stopped, registered for auto-restart: %s / 进程已停止，已注册等待自动重启：%s\n",
+		agentlogger.Infof("[Agent] Process stopped, registered for auto-restart: %s / 进程已停止，已注册等待自动重启：%s",
 			processName, processName)
 		reporter.Report(100, "Process stopped, auto-restart will start it / 进程已停止，自动重启将启动它")
 		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Process stopped, auto-restart will start it (role: %s) / 进程已停止，自动重启将启动它（角色：%s）", role, role)), nil
@@ -1237,7 +1238,7 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 	// Update tracking with new PID / 使用新 PID 更新跟踪
 	if info, err := a.processManager.GetStatus(ctx, processName); err == nil && info.PID > 0 {
 		a.processMonitor.TrackProcess(processName, info.PID, installDir, role, startParams)
-		fmt.Printf("[Agent] Process restarted and tracked: %s (PID: %d) / 进程已重启并跟踪：%s（PID：%d）\n",
+		agentlogger.Infof("[Agent] Process restarted and tracked: %s (PID: %d) / 进程已重启并跟踪：%s（PID：%d）",
 			processName, info.PID, processName, info.PID)
 	}
 
@@ -1418,28 +1419,28 @@ func (a *Agent) Shutdown() {
 	a.running = false
 	a.mu.Unlock()
 
-	fmt.Println("========================================")
-	fmt.Println("  Shutting down Agent service...")
-	fmt.Println("  正在关闭 Agent 服务...")
-	fmt.Println("========================================")
+	agentlogger.Infof("========================================")
+	agentlogger.Infof("  Shutting down Agent service...")
+	agentlogger.Infof("  正在关闭 Agent 服务...")
+	agentlogger.Infof("========================================")
 
 	// Step 1: Stop accepting new commands
 	// 步骤 1：停止接受新命令
-	fmt.Println("[1/6] Stopping command acceptance... / 停止接受命令...")
+	agentlogger.Infof("[1/6] Stopping command acceptance... / 停止接受命令...")
 
 	// Step 2: Stop process monitor / 停止进程监控器
-	fmt.Println("[2/6] Stopping process monitor... / 停止进程监控器...")
+	agentlogger.Infof("[2/6] Stopping process monitor... / 停止进程监控器...")
 	if err := a.processMonitor.Stop(); err != nil {
-		fmt.Printf("Warning: Error stopping process monitor: %v / 警告：停止进程监控器时出错：%v\n", err, err)
+		agentlogger.Warnf("Warning: Error stopping process monitor: %v / 警告：停止进程监控器时出错：%v", err, err)
 	}
 
 	// Step 3: Stop event reporter / 停止事件上报器
-	fmt.Println("[3/6] Stopping event reporter... / 停止事件上报器...")
+	agentlogger.Infof("[3/6] Stopping event reporter... / 停止事件上报器...")
 	a.eventReporter.Stop()
 
 	// Step 4: Wait for running tasks to complete (with timeout)
 	// 步骤 4：等待运行中的任务完成（带超时）
-	fmt.Println("[4/6] Waiting for running tasks... / 等待运行中的任务...")
+	agentlogger.Infof("[4/6] Waiting for running tasks... / 等待运行中的任务...")
 	// Note: The executor handles task completion internally
 	// 注意：执行器内部处理任务完成
 
@@ -1447,21 +1448,21 @@ func (a *Agent) Shutdown() {
 	// 步骤 5：保持 SeaTunnel 进程运行（不停止它们）
 	// Agent restart should not affect running SeaTunnel processes
 	// Agent 重启不应影响正在运行的 SeaTunnel 进程
-	fmt.Println("[5/6] Keeping SeaTunnel processes running... / 保持 SeaTunnel 进程运行...")
+	agentlogger.Infof("[5/6] Keeping SeaTunnel processes running... / 保持 SeaTunnel 进程运行...")
 	// Note: We intentionally do NOT call processManager.StopAll() here
 	// 注意：我们故意不在这里调用 processManager.StopAll()
 
 	// Stop process manager (just cleanup internal state, not the processes)
 	// 停止进程管理器（只清理内部状态，不停止进程）
 	if err := a.processManager.Stop(); err != nil {
-		fmt.Printf("Warning: Error stopping process manager: %v / 警告：停止进程管理器时出错：%v\n", err, err)
+		agentlogger.Warnf("Warning: Error stopping process manager: %v / 警告：停止进程管理器时出错：%v", err, err)
 	}
 
 	// Step 6: Close gRPC connection
 	// 步骤 6：关闭 gRPC 连接
-	fmt.Println("[6/6] Closing connections... / 关闭连接...")
+	agentlogger.Infof("[6/6] Closing connections... / 关闭连接...")
 	if err := a.grpcClient.Disconnect(); err != nil {
-		fmt.Printf("Warning: Error disconnecting: %v / 警告：断开连接时出错：%v\n", err, err)
+		agentlogger.Warnf("Warning: Error disconnecting: %v / 警告：断开连接时出错：%v", err, err)
 	}
 
 	// Cancel main context to stop all goroutines
@@ -1478,15 +1479,15 @@ func (a *Agent) Shutdown() {
 
 	select {
 	case <-done:
-		fmt.Println("All goroutines stopped / 所有 goroutine 已停止")
+		agentlogger.Infof("All goroutines stopped / 所有 goroutine 已停止")
 	case <-time.After(10 * time.Second):
-		fmt.Println("Timeout waiting for goroutines / 等待 goroutine 超时")
+		agentlogger.Warnf("Timeout waiting for goroutines / 等待 goroutine 超时")
 	}
 
-	fmt.Println("========================================")
-	fmt.Println("  Agent shutdown complete")
-	fmt.Println("  Agent 关闭完成")
-	fmt.Println("========================================")
+	agentlogger.Infof("========================================")
+	agentlogger.Infof("  Agent shutdown complete")
+	agentlogger.Infof("  Agent 关闭完成")
+	agentlogger.Infof("========================================")
 }
 
 // Helper functions / 辅助函数
@@ -1649,6 +1650,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid config: %w / 无效配置：%w", err, err)
 	}
 
+	// 初始化 Agent 日志（同时输出到控制台和文件）
+	if err := agentlogger.Init(cfg); err != nil {
+		return fmt.Errorf("failed to init logger: %w / 初始化日志失败：%w", err, err)
+	}
+
 	// Create agent
 	// 创建 Agent
 	agent := NewAgent(cfg)
@@ -1669,7 +1675,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// 等待信号或错误
 	select {
 	case sig := <-sigChan:
-		fmt.Printf("\nReceived signal: %v / 收到信号：%v\n", sig, sig)
+		agentlogger.Infof("Received signal: %v / 收到信号：%v", sig, sig)
 		agent.Shutdown()
 	case err := <-errChan:
 		if err != nil {
@@ -1793,7 +1799,7 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 			// Use silent untrack - process is still running, we just stop monitoring
 			// 使用静默取消跟踪 - 进程仍在运行，我们只是停止监控
 			a.processMonitor.UntrackProcessSilent(proc.Name)
-			fmt.Printf("[Agent] Auto-restart disabled, stopped monitoring process: %s / 自动重启已禁用，停止监控进程：%s\n",
+			agentlogger.Infof("[Agent] Auto-restart disabled, stopped monitoring process: %s / 自动重启已禁用，停止监控进程：%s",
 				proc.Name, proc.Name)
 		}
 		reporter.Report(100, "Monitor config updated (auto-restart disabled, stopped monitoring) / 监控配置已更新（自动重启已禁用，停止监控）")
@@ -1811,9 +1817,9 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 			Role       string `json:"role"`
 		}
 		if err := json.Unmarshal([]byte(trackedProcessesJSON), &trackedProcesses); err != nil {
-			fmt.Printf("[Agent] Failed to parse tracked_processes: %v / 解析 tracked_processes 失败：%v\n", err, err)
+			agentlogger.Errorf("[Agent] Failed to parse tracked_processes: %v / 解析 tracked_processes 失败：%v", err, err)
 		} else {
-			fmt.Printf("[Agent] Received %d processes to track / 收到 %d 个需要跟踪的进程\n", len(trackedProcesses), len(trackedProcesses))
+			agentlogger.Infof("[Agent] Received %d processes to track / 收到 %d 个需要跟踪的进程", len(trackedProcesses), len(trackedProcesses))
 			for _, proc := range trackedProcesses {
 				// Create start params for potential restart / 创建启动参数用于可能的重启
 				startParams := &process.StartParams{
@@ -1825,13 +1831,13 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 					// Track running process silently - no started event since process was already running
 					// 静默跟踪运行中的进程 - 不发送 started 事件，因为进程已经在运行
 					a.processMonitor.TrackProcessSilent(proc.Name, proc.PID, proc.InstallDir, proc.Role, startParams)
-					fmt.Printf("[Agent] Tracking running process (silent): %s (PID: %d, Role: %s, Dir: %s) / 静默跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）\n",
+					agentlogger.Infof("[Agent] Tracking running process (silent): %s (PID: %d, Role: %s, Dir: %s) / 静默跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）",
 						proc.Name, proc.PID, proc.Role, proc.InstallDir, proc.Name, proc.PID, proc.Role, proc.InstallDir)
 				} else {
 					// For stopped processes, register with PID 0 - auto-restart will start them if enabled
 					// 对于已停止的进程，用 PID 0 注册 - 如果启用了自动重启，会自动启动它们
 					a.processMonitor.TrackProcessSilent(proc.Name, 0, proc.InstallDir, proc.Role, startParams)
-					fmt.Printf("[Agent] Registered stopped process (will auto-restart): %s (Role: %s, Dir: %s) / 注册已停止的进程（将自动重启）：%s（角色：%s，目录：%s）\n",
+					agentlogger.Infof("[Agent] Registered stopped process (will auto-restart): %s (Role: %s, Dir: %s) / 注册已停止的进程（将自动重启）：%s（角色：%s，目录：%s）",
 						proc.Name, proc.Role, proc.InstallDir, proc.Name, proc.Role, proc.InstallDir)
 				}
 			}
@@ -1868,7 +1874,7 @@ func (a *Agent) handleRemoveInstallDirCommand(ctx context.Context, cmd *pb.Comma
 		return executor.CreateErrorResponse(cmd.CommandId, msg), err
 	}
 
-	fmt.Printf("[Agent] Removed install directory: %s / 已删除安装目录：%s\n", clean, clean)
+	agentlogger.Infof("[Agent] Removed install directory: %s / 已删除安装目录：%s", clean, clean)
 	reporter.Report(100, "Install directory removed / 安装目录已删除")
 	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Install directory removed: %s / 安装目录已删除：%s", clean, clean)), nil
 }

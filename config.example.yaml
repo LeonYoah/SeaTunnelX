@@ -175,8 +175,8 @@ storage:
 log:
   level: "info"  # debug, info, warn, error, fatal, panic
   format: "json"  # text, json
-  output: "stdout"  # stdout, file
-  file_path: "./logs/app.log"
+  output: "both"  # stdout, file, both
+  file_path: "./logs/seatunnelx.log"
   max_size: 100
   max_age: 30
   max_backups: 10
