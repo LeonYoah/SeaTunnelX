@@ -1415,9 +1415,9 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 			}
 
 			// Wait for download to complete
-			// 等待下载完成
+			// 等待下载完成（GetDownloadStatus 按 version 查 map，勿用 task.ID）
 			for {
-				task, err = s.GetDownloadStatus(ctx, task.ID)
+				task, err = s.GetDownloadStatus(ctx, task.Version)
 				if err != nil {
 					logger.ErrorF(ctx, "[Installer] 获取下载状态失败 / Failed to get download status: %v", err)
 					s.installMu.Lock()
