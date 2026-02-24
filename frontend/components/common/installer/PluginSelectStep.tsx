@@ -268,10 +268,10 @@ export function PluginSelectStep({
             <div>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Package className="h-5 w-5" />
-                {t('installer.pluginSelection') || 'Plugin Selection'}
+                {t('installer.pluginSelection') || 'Connector Selection'}
               </CardTitle>
               <CardDescription>
-                {t('installer.pluginSelectionDesc') || 'Select plugins to install with SeaTunnel'}
+                {t('installer.pluginSelectionDesc') || 'Select connectors to install with SeaTunnel'}
               </CardDescription>
             </div>
             <Badge variant="outline" className="gap-1">

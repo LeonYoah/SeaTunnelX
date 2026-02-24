@@ -38,6 +38,7 @@ func NewRepository(db *gorm.DB) *Repository {
 // Create creates a new host record in the database.
 // Create 在数据库中创建新的主机记录。
 // Returns ErrHostNameDuplicate if a host with the same name already exists.
+// Returns ErrHostIPDuplicate if a host with the same IP already exists.
 // Returns ErrHostIPInvalid if the IP address format is invalid (for bare_metal).
 func (r *Repository) Create(ctx context.Context, host *Host) error {
 	// Validate host name is not empty
@@ -62,6 +63,18 @@ func (r *Repository) Create(ctx context.Context, host *Host) error {
 	}
 	if count > 0 {
 		return ErrHostNameDuplicate
+	}
+
+	// Check for duplicate IP (bare_metal)
+	// 检查 IP 是否重复（物理机/VM）
+	if (host.HostType == HostTypeBareMetal || host.HostType == "") && host.IPAddress != "" {
+		count = 0
+		if err := r.db.WithContext(ctx).Model(&Host{}).Where("ip_address = ?", host.IPAddress).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrHostIPDuplicate
+		}
 	}
 
 	return r.db.WithContext(ctx).Create(host).Error
@@ -185,6 +198,7 @@ func (r *Repository) List(ctx context.Context, filter *HostFilter, heartbeatTime
 // Update updates an existing host record.
 // Returns ErrHostNotFound if the host does not exist.
 // Returns ErrHostNameDuplicate if updating to a name that already exists.
+// Returns ErrHostIPDuplicate if updating to an IP that already exists.
 // Returns ErrHostIPInvalid if the IP address format is invalid.
 func (r *Repository) Update(ctx context.Context, host *Host) error {
 	// Check if host exists
@@ -209,6 +223,18 @@ func (r *Repository) Update(ctx context.Context, host *Host) error {
 		}
 		if count > 0 {
 			return ErrHostNameDuplicate
+		}
+	}
+
+	// Check for duplicate IP if changed
+	// 如果 IP 发生变化，检查是否与其他主机重复
+	if host.IPAddress != "" && host.IPAddress != existing.IPAddress {
+		var count int64
+		if err := r.db.WithContext(ctx).Model(&Host{}).Where("ip_address = ? AND id != ?", host.IPAddress, host.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrHostIPDuplicate
 		}
 	}
 

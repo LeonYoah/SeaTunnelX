@@ -253,18 +253,6 @@ export function CreateHostDialog({
                   placeholder='192.168.1.100'
                 />
               </div>
-              <div className='space-y-2'>
-                <Label htmlFor='ssh_port'>{t('host.sshPort')}</Label>
-                <Input
-                  id='ssh_port'
-                  type='number'
-                  value={formData.ssh_port}
-                  onChange={(e) =>
-                    setFormData({...formData, ssh_port: parseInt(e.target.value) || 22})
-                  }
-                  placeholder='22'
-                />
-              </div>
             </>
           )}
 

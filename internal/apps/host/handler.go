@@ -324,6 +324,8 @@ func (h *Handler) getStatusCodeForError(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrHostNameDuplicate):
 		return http.StatusConflict
+	case errors.Is(err, ErrHostIPDuplicate):
+		return http.StatusConflict
 	case errors.Is(err, ErrHostIPInvalid),
 		errors.Is(err, ErrHostNameEmpty),
 		errors.Is(err, ErrHostTypeInvalid),

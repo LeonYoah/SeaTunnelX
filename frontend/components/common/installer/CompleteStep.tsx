@@ -85,7 +85,7 @@ export function CompleteStep({
     }
   };
 
-  // Navigate to plugin marketplace / 导航到插件市场
+  // Navigate to connector marketplace / 导航到连接器市场
   const handleGoToPlugins = () => {
     onClose();
     router.push('/plugins');
@@ -173,7 +173,7 @@ export function CompleteStep({
           {selectedPlugins.length > 0 && (
             <div>
               <h4 className="text-sm font-medium mb-2">
-                {t('installer.installedPlugins') || 'Installed Plugins'}
+                {t('installer.installedPlugins') || 'Installed Connectors'}
               </h4>
               <div className="flex flex-wrap gap-2">
                 {selectedPlugins.map((plugin) => (
@@ -189,10 +189,10 @@ export function CompleteStep({
           {selectedPlugins.length === 0 && (
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">
-                {t('installer.installedPlugins') || 'Installed Plugins'}
+                {t('installer.installedPlugins') || 'Installed Connectors'}
               </span>
               <span className="text-sm text-muted-foreground">
-                {t('installer.noPluginsInstalled') || 'No plugins installed'}
+                {t('installer.noPluginsInstalled') || 'No connectors installed'}
               </span>
             </div>
           )}
@@ -232,14 +232,14 @@ export function CompleteStep({
               </Button>
             )}
 
-            {/* Go to plugins / 进入插件市场 */}
+            {/* Go to connectors / 进入连接器市场 */}
             <Button
               variant="outline"
               className="h-auto py-4 flex flex-col items-center gap-2"
               onClick={handleGoToPlugins}
             >
               <Package className="h-6 w-6" />
-              <span>{t('installer.goToPlugins') || 'Plugin Marketplace'}</span>
+              <span>{t('installer.goToPlugins') || 'Connector Marketplace'}</span>
             </Button>
           </div>
         </CardContent>

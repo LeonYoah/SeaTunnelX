@@ -31,6 +31,9 @@ var (
 	// ErrHostIPInvalid indicates the IP address format is invalid.
 	// ErrHostIPInvalid 表示 IP 地址格式无效。
 	ErrHostIPInvalid = errors.New("host: invalid IP address format")
+	// ErrHostIPDuplicate indicates a host with the same IP already exists.
+	// ErrHostIPDuplicate 表示相同 IP 的主机已存在。
+	ErrHostIPDuplicate = errors.New("host: host IP address already exists")
 	// ErrHostHasCluster indicates the host is associated with one or more clusters.
 	// ErrHostHasCluster 表示主机关联了一个或多个集群。
 	ErrHostHasCluster = errors.New("host: host is associated with clusters and cannot be deleted")
@@ -62,4 +65,5 @@ const (
 	ErrCodeDockerAPIURLInvalid    = 2006
 	ErrCodeK8sAPIURLInvalid       = 2007
 	ErrCodeK8sCredentialsRequired = 2008
+	ErrCodeHostIPDuplicate        = 2009
 )

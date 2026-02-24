@@ -161,7 +161,7 @@ func TestProperty_AgentRegistrationIPMatching(t *testing.T) {
 
 			// Register agent with matching IP
 			// 使用匹配的 IP 注册 Agent
-			updatedHost, err := svc.UpdateAgentStatus(ctx, ipAddress, agentID, version, nil)
+			updatedHost, err := svc.UpdateAgentStatus(ctx, ipAddress, agentID, version, nil, "")
 			if err != nil {
 				t.Logf("Failed to update agent status: %v", err)
 				return false
@@ -225,7 +225,7 @@ func TestProperty_AgentRegistrationIPMatching(t *testing.T) {
 
 			// Try to register agent with different IP
 			// 尝试使用不同的 IP 注册 Agent
-			_, err = svc.UpdateAgentStatus(ctx, agentIP, agentID, version, nil)
+			_, err = svc.UpdateAgentStatus(ctx, agentIP, agentID, version, nil, "")
 
 			// Should fail with ErrHostNotFound
 			// 应该返回 ErrHostNotFound 错误
@@ -280,7 +280,7 @@ func TestProperty_HeartbeatDataPersistence(t *testing.T) {
 
 			// Register agent
 			// 注册 Agent
-			_, err = svc.UpdateAgentStatus(ctx, ipAddress, agentID, "1.0.0", nil)
+			_, err = svc.UpdateAgentStatus(ctx, ipAddress, agentID, "1.0.0", nil, "")
 			if err != nil {
 				t.Logf("Failed to register agent: %v", err)
 				return false
@@ -812,8 +812,8 @@ func containsSubstring(s, substr string) bool {
 func TestIsOnlineWithSince(t *testing.T) {
 	timeout := 30 * time.Second
 	now := time.Now()
-	recent := now.Add(-5 * time.Second)   // within timeout
-	old := now.Add(-60 * time.Second)    // outside timeout
+	recent := now.Add(-5 * time.Second)        // within timeout
+	old := now.Add(-60 * time.Second)          // outside timeout
 	processStart := now.Add(-10 * time.Second) // e.g. platform started 10s ago
 
 	// LastHeartbeat before processStart -> offline even if within timeout window from "now"

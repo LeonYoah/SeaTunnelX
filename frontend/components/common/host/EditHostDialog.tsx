@@ -58,7 +58,6 @@ export function EditHostDialog({
         name: host.name,
         description: host.description || '',
         ip_address: host.ip_address,
-        ssh_port: host.ssh_port,
         docker_api_url: host.docker_api_url,
         docker_tls_enabled: host.docker_tls_enabled,
         k8s_api_url: host.k8s_api_url,
@@ -203,18 +202,6 @@ export function EditHostDialog({
                     setFormData({...formData, ip_address: e.target.value})
                   }
                   placeholder='192.168.1.100'
-                />
-              </div>
-              <div className='space-y-2'>
-                <Label htmlFor='edit-ssh_port'>{t('host.sshPort')}</Label>
-                <Input
-                  id='edit-ssh_port'
-                  type='number'
-                  value={formData.ssh_port || 22}
-                  onChange={(e) =>
-                    setFormData({...formData, ssh_port: parseInt(e.target.value) || 22})
-                  }
-                  placeholder='22'
                 />
               </div>
             </>

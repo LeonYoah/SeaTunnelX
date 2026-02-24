@@ -53,7 +53,7 @@ const stepNames: Record<string, { en: string; zh: string }> = {
   configure_cluster: { en: 'Configure Cluster', zh: '配置集群' },
   configure_checkpoint: { en: 'Configure Checkpoint', zh: '配置检查点' },
   configure_jvm: { en: 'Configure JVM', zh: '配置 JVM' },
-  install_plugins: { en: 'Install Plugins', zh: '安装插件' },
+  install_plugins: { en: 'Install Connectors', zh: '安装连接器' },
   register_cluster: { en: 'Register Cluster', zh: '注册集群' },
   complete: { en: 'Complete', zh: '完成' },
 };

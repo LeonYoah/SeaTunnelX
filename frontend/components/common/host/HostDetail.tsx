@@ -210,10 +210,6 @@ export function HostDetail({open, onOpenChange, host, onEdit}: HostDetailProps) 
                   <span className='text-muted-foreground'>{t('host.ipAddress')}:</span>
                   <span>{host.ip_address || '-'}</span>
                 </div>
-                <div className='flex justify-between'>
-                  <span className='text-muted-foreground'>{t('host.sshPort')}:</span>
-                  <span>{host.ssh_port || 22}</span>
-                </div>
                 {host.agent_version && (
                   <div className='flex justify-between'>
                     <span className='text-muted-foreground'>{t('host.agentVersion')}:</span>

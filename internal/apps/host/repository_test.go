@@ -156,6 +156,67 @@ func TestProperty_HostNameUniqueness(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+// TestCreateRejectsDuplicateIP tests that creating hosts with duplicate IP is rejected.
+func TestCreateRejectsDuplicateIP(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	ctx := context.Background()
+
+	host1 := &Host{
+		Name:      "host-1",
+		HostType:  HostTypeBareMetal,
+		IPAddress: "10.10.10.10",
+	}
+	if err := repo.Create(ctx, host1); err != nil {
+		t.Fatalf("create first host failed: %v", err)
+	}
+
+	host2 := &Host{
+		Name:      "host-2",
+		HostType:  HostTypeBareMetal,
+		IPAddress: "10.10.10.10",
+	}
+	err := repo.Create(ctx, host2)
+	if !errors.Is(err, ErrHostIPDuplicate) {
+		t.Fatalf("expected ErrHostIPDuplicate, got: %v", err)
+	}
+}
+
+// TestUpdateRejectsDuplicateIP tests that updating host IP to an existing one is rejected.
+func TestUpdateRejectsDuplicateIP(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	ctx := context.Background()
+
+	host1 := &Host{
+		Name:      "host-1",
+		HostType:  HostTypeBareMetal,
+		IPAddress: "10.10.10.11",
+	}
+	if err := repo.Create(ctx, host1); err != nil {
+		t.Fatalf("create first host failed: %v", err)
+	}
+
+	host2 := &Host{
+		Name:      "host-2",
+		HostType:  HostTypeBareMetal,
+		IPAddress: "10.10.10.12",
+	}
+	if err := repo.Create(ctx, host2); err != nil {
+		t.Fatalf("create second host failed: %v", err)
+	}
+
+	host2.IPAddress = host1.IPAddress
+	err := repo.Update(ctx, host2)
+	if !errors.Is(err, ErrHostIPDuplicate) {
+		t.Fatalf("expected ErrHostIPDuplicate, got: %v", err)
+	}
+}
+
 // **Feature: seatunnel-agent, Property 2: IP Address Format Validation**
 // **Validates: Requirements 3.1**
 // For any host creation request with an IP address, the system SHALL validate
