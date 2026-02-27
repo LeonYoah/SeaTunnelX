@@ -4,8 +4,19 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$BASE_DIR/runtime"
 AUTO_INIT="${OBSERVABILITY_AUTO_INIT:-true}"
+PROFILE_ENV_FILE="${OBSERVABILITY_PROFILE_ENV_FILE:-$RUNTIME_DIR/observability.env}"
 
 mkdir -p "$RUNTIME_DIR/alertmanager/logs" "$RUNTIME_DIR/prometheus/logs" "$RUNTIME_DIR/grafana/logs"
+
+# Load persisted observability profile before generating configs (if any).
+# 在生成配置前加载持久化 profile（如存在），用于重启后保持远程模式。
+if [[ -f "$PROFILE_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROFILE_ENV_FILE"
+  set +a
+  echo "loaded observability profile: $PROFILE_ENV_FILE"
+fi
 
 for bin in \
   "$BASE_DIR/alertmanager/alertmanager" \

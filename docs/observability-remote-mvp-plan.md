@@ -180,6 +180,13 @@
   5) 通过向 Alertmanager `POST /api/v2/alerts` 注入测试告警，验证告警成功转发并落库到  
      `GET /api/v1/monitoring/remote-alerts`（总数从 2 增至 3，命中 `AMForwardTest`）。
 
+- 2026-02-27 / Step-10（配置固化，避免重启回退）  
+  新增 `deps/set-observability-remote-mode.sh`，并增强 `deps/start-observability.sh`：  
+  - 写入并持久化 `deps/runtime/observability.env`；  
+  - 启动脚本自动加载该 profile；  
+  - `deps/init-observability-defaults.sh` 支持 `PROMETHEUS_USE_HTTP_SD=true` 生成 HTTP SD 抓取配置；  
+  - 解决“重启三件套后配置被默认静态模式覆盖”的问题。
+
 ### 当前严格 MVP 剩余项（下一步）
 
 - [x] 在真实外部三件套环境完成一轮端到端联调记录（不是仅本地接口可用）；

@@ -8,6 +8,9 @@ SEATUNNEL_METRICS_TARGETS="${SEATUNNEL_METRICS_TARGETS:-127.0.0.1:8081}"
 SEATUNNEL_CLUSTER_LABEL="${SEATUNNEL_CLUSTER_LABEL:-seatunnel-5801}"
 SEATUNNEL_SERVICE_LABEL="${SEATUNNEL_SERVICE_LABEL:-seatunnel-engine}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
+PROMETHEUS_USE_HTTP_SD="${PROMETHEUS_USE_HTTP_SD:-false}"
+PROMETHEUS_HTTP_SD_URL="${PROMETHEUS_HTTP_SD_URL:-http://127.0.0.1:8000/api/v1/monitoring/prometheus/discovery}"
+PROMETHEUS_HTTP_SD_REFRESH_INTERVAL="${PROMETHEUS_HTTP_SD_REFRESH_INTERVAL:-30s}"
 GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:3000}"
 GRAFANA_URL="${GRAFANA_URL%/}"
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}"
@@ -85,17 +88,29 @@ mkdir -p \
   echo
   echo "  - job_name: 'seatunnel_engine_http'"
   echo "    metrics_path: /metrics"
-  echo "    static_configs:"
-  echo "      - targets:"
-  IFS=',' read -ra TARGETS <<< "$SEATUNNEL_METRICS_TARGETS"
-  for target in "${TARGETS[@]}"; do
-    target_trimmed="$(echo "$target" | xargs)"
-    [[ -z "$target_trimmed" ]] && continue
-    echo "          - '$target_trimmed'"
-  done
-  echo "        labels:"
-  echo "          cluster: '$SEATUNNEL_CLUSTER_LABEL'"
-  echo "          service: '$SEATUNNEL_SERVICE_LABEL'"
+  if [[ "$PROMETHEUS_USE_HTTP_SD" == "true" || "$PROMETHEUS_USE_HTTP_SD" == "1" ]]; then
+    echo "    scheme: http"
+    echo "    http_sd_configs:"
+    echo "      - url: '$PROMETHEUS_HTTP_SD_URL'"
+    echo "        refresh_interval: $PROMETHEUS_HTTP_SD_REFRESH_INTERVAL"
+    # Backward compatibility for existing rules/panels still using label 'cluster'.
+    # 向后兼容：为仍使用 cluster 标签的规则/面板补齐映射。
+    echo "    relabel_configs:"
+    echo "      - source_labels: [cluster_name]"
+    echo "        target_label: cluster"
+  else
+    echo "    static_configs:"
+    echo "      - targets:"
+    IFS=',' read -ra TARGETS <<< "$SEATUNNEL_METRICS_TARGETS"
+    for target in "${TARGETS[@]}"; do
+      target_trimmed="$(echo "$target" | xargs)"
+      [[ -z "$target_trimmed" ]] && continue
+      echo "          - '$target_trimmed'"
+    done
+    echo "        labels:"
+    echo "          cluster: '$SEATUNNEL_CLUSTER_LABEL'"
+    echo "          service: '$SEATUNNEL_SERVICE_LABEL'"
+  fi
 } > "$RUNTIME_DIR/prometheus/prometheus.yml"
 
 # cleanup legacy generated file to avoid duplicated alert names
@@ -1661,7 +1676,13 @@ zh_file.write_text(json.dumps(dashboard_zh, ensure_ascii=False, indent=2) + "\n"
 PY
 
 echo "Default observability config generated:"
-echo "  - target metrics: $SEATUNNEL_METRICS_TARGETS"
-echo "  - cluster label : $SEATUNNEL_CLUSTER_LABEL"
+if [[ "$PROMETHEUS_USE_HTTP_SD" == "true" || "$PROMETHEUS_USE_HTTP_SD" == "1" ]]; then
+  echo "  - prometheus mode : http_sd"
+  echo "  - http_sd url     : $PROMETHEUS_HTTP_SD_URL"
+else
+  echo "  - prometheus mode : static_targets"
+  echo "  - target metrics  : $SEATUNNEL_METRICS_TARGETS"
+  echo "  - cluster label   : $SEATUNNEL_CLUSTER_LABEL"
+fi
 echo "  - prometheus   : $PROMETHEUS_URL"
 echo "  - grafana      : $GRAFANA_URL"

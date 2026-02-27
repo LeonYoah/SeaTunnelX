@@ -157,10 +157,25 @@ SEATUNNELX_PASSWORD=admin \
 
 ## 9. deps 三件套联调参考（2026-02-27 实测）
 
-如果三件套已部署在 `deps` 目录（默认端口 `9090/9093/3000`），推荐按以下方式快速切到远程模式：
+如果三件套已部署在 `deps` 目录（默认端口 `9090/9093/3000`），推荐直接使用内置脚本切到远程模式：
+
+```bash
+./deps/set-observability-remote-mode.sh http://127.0.0.1:8000
+```
+
+脚本会完成：
+
+- 写入持久化 profile：`deps/runtime/observability.env`
+- 重新生成 `prometheus.yml`（切换为 `http_sd_configs`）
+- 重新生成 `alertmanager.yml`（追加 webhook receiver）
+- best-effort 热重载 Prometheus / Alertmanager
+
+> 从现在开始，执行 `deps/start-observability.sh` 时会自动加载该 profile，避免重启后被默认静态配置覆盖。
+
+如需手工检查，关键点如下：
 
 1. **Prometheus**
-   - 将 `seatunnel_engine_http` job 改为 `http_sd_configs`
+   - `seatunnel_engine_http` job 使用 `http_sd_configs`
    - URL 指向：
      `http://127.0.0.1:8000/api/v1/monitoring/prometheus/discovery`
    - 执行 reload：`POST http://127.0.0.1:9090/-/reload`
