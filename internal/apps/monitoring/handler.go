@@ -303,6 +303,98 @@ func (h *Handler) AlertmanagerWebhook(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{Data: result})
 }
 
+// ListRemoteAlerts handles GET /api/v1/monitoring/remote-alerts.
+// ListRemoteAlerts 处理远程告警记录查询接口。
+func (h *Handler) ListRemoteAlerts(c *gin.Context) {
+	if !config.Config.Observability.Enabled {
+		c.JSON(http.StatusServiceUnavailable, Response{ErrorMsg: "observability is disabled"})
+		return
+	}
+
+	filter := &RemoteAlertFilter{}
+	if clusterID := strings.TrimSpace(c.Query("cluster_id")); clusterID != "" {
+		filter.ClusterID = clusterID
+	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		filter.Status = strings.ToLower(status)
+	}
+	if startTimeStr := strings.TrimSpace(c.Query("start_time")); startTimeStr != "" {
+		startTime, err := time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid start_time, expected RFC3339"})
+			return
+		}
+		filter.StartTime = &startTime
+	}
+	if endTimeStr := strings.TrimSpace(c.Query("end_time")); endTimeStr != "" {
+		endTime, err := time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid end_time, expected RFC3339"})
+			return
+		}
+		filter.EndTime = &endTime
+	}
+	if filter.StartTime != nil && filter.EndTime != nil && filter.StartTime.After(*filter.EndTime) {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "start_time must be earlier than end_time"})
+		return
+	}
+	if pageStr := strings.TrimSpace(c.Query("page")); pageStr != "" {
+		page, err := strconv.Atoi(pageStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid page"})
+			return
+		}
+		filter.Page = page
+	}
+	if pageSizeStr := strings.TrimSpace(c.Query("page_size")); pageSizeStr != "" {
+		pageSize, err := strconv.Atoi(pageSizeStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid page_size"})
+			return
+		}
+		filter.PageSize = pageSize
+	}
+
+	data, err := h.service.ListRemoteAlerts(c.Request.Context(), filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to list remote alerts: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// GetClustersHealth handles GET /api/v1/clusters/health.
+// GetClustersHealth 处理集群健康摘要查询接口。
+func (h *Handler) GetClustersHealth(c *gin.Context) {
+	if !config.Config.Observability.Enabled {
+		c.JSON(http.StatusServiceUnavailable, Response{ErrorMsg: "observability is disabled"})
+		return
+	}
+
+	data, err := h.service.GetClustersHealth(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to get clusters health: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// GetPlatformHealth handles GET /api/v1/monitoring/platform-health.
+// GetPlatformHealth 处理平台健康摘要查询接口。
+func (h *Handler) GetPlatformHealth(c *gin.Context) {
+	if !config.Config.Observability.Enabled {
+		c.JSON(http.StatusServiceUnavailable, Response{ErrorMsg: "observability is disabled"})
+		return
+	}
+
+	data, err := h.service.GetPlatformHealth(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to get platform health: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
 // ListNotificationChannels handles GET /api/v1/monitoring/notification-channels
 // ListNotificationChannels 处理 GET /api/v1/monitoring/notification-channels
 func (h *Handler) ListNotificationChannels(c *gin.Context) {

@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 )
 
 // BuildPrometheusSDTargets builds Prometheus HTTP SD target groups from managed clusters.
@@ -237,4 +239,187 @@ func buildFallbackFingerprint(labels map[string]string, startsAt time.Time, gene
 	raw := mustMarshalJSON(labels) + "|" + startsAt.UTC().Format(time.RFC3339Nano) + "|" + strings.TrimSpace(generatorURL)
 	sum := sha1.Sum([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// ListRemoteAlerts returns remote alert records with paging filters.
+// ListRemoteAlerts 返回远程告警记录（支持分页过滤）。
+func (s *Service) ListRemoteAlerts(ctx context.Context, filter *RemoteAlertFilter) (*RemoteAlertListData, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("monitoring repository is not configured")
+	}
+	if filter == nil {
+		filter = &RemoteAlertFilter{}
+	}
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	if filter.PageSize <= 0 {
+		filter.PageSize = 20
+	}
+	if filter.PageSize > 200 {
+		filter.PageSize = 200
+	}
+	filter.ClusterID = strings.TrimSpace(filter.ClusterID)
+	filter.Status = strings.ToLower(strings.TrimSpace(filter.Status))
+
+	rows, total, err := s.repo.ListRemoteAlerts(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]*RemoteAlertItem, 0, len(rows))
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		items = append(items, &RemoteAlertItem{
+			ID:             row.ID,
+			Fingerprint:    row.Fingerprint,
+			Status:         row.Status,
+			Receiver:       row.Receiver,
+			AlertName:      row.AlertName,
+			Severity:       row.Severity,
+			ClusterID:      row.ClusterID,
+			ClusterName:    row.ClusterName,
+			Env:            row.Env,
+			Summary:        row.Summary,
+			Description:    row.Description,
+			StartsAt:       row.StartsAt,
+			EndsAt:         row.EndsAt,
+			ResolvedAt:     row.ResolvedAt,
+			LastReceivedAt: row.LastReceivedAt,
+			CreatedAt:      row.CreatedAt,
+			UpdatedAt:      row.UpdatedAt,
+		})
+	}
+
+	return &RemoteAlertListData{
+		GeneratedAt: time.Now().UTC(),
+		Page:        filter.Page,
+		PageSize:    filter.PageSize,
+		Total:       total,
+		Alerts:      items,
+	}, nil
+}
+
+// GetClustersHealth returns cluster-level health summary for monitoring center.
+// GetClustersHealth 返回监控中心集群级健康摘要。
+func (s *Service) GetClustersHealth(ctx context.Context) (*ClusterHealthData, error) {
+	if s.clusterService == nil {
+		return nil, fmt.Errorf("cluster service is not configured")
+	}
+
+	clusters, _, err := s.clusterService.List(ctx, &cluster.ClusterFilter{Page: 1, PageSize: 1000})
+	if err != nil {
+		return nil, err
+	}
+
+	clusterIDs := make([]string, 0, len(clusters))
+	for _, c := range clusters {
+		if c == nil {
+			continue
+		}
+		clusterIDs = append(clusterIDs, strconv.FormatUint(uint64(c.ID), 10))
+	}
+
+	statsMap := make(map[string]*RemoteAlertClusterStat)
+	if s.repo != nil {
+		statsMap, err = s.repo.GetRemoteAlertClusterStats(ctx, clusterIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	items := make([]*ClusterHealthItem, 0, len(clusters))
+	for _, c := range clusters {
+		if c == nil {
+			continue
+		}
+		status, statusErr := s.clusterService.GetStatus(ctx, c.ID)
+		item := &ClusterHealthItem{
+			ClusterID:    c.ID,
+			ClusterName:  strings.TrimSpace(c.Name),
+			HealthStatus: "unknown",
+		}
+
+		if statusErr == nil && status != nil {
+			item.Status = string(status.Status)
+			item.HealthStatus = strings.ToLower(strings.TrimSpace(string(status.HealthStatus)))
+			item.TotalNodes = status.TotalNodes
+			item.OnlineNodes = status.OnlineNodes
+			item.OfflineNodes = status.OfflineNodes
+		}
+
+		clusterID := strconv.FormatUint(uint64(c.ID), 10)
+		if stat := statsMap[clusterID]; stat != nil {
+			item.ActiveAlerts = stat.ActiveCount
+			item.CriticalAlerts = stat.CriticalCount
+		}
+
+		switch {
+		case item.CriticalAlerts > 0:
+			item.HealthStatus = "unhealthy"
+		case item.ActiveAlerts > 0 && item.HealthStatus != "unhealthy":
+			item.HealthStatus = "degraded"
+		case item.HealthStatus == "":
+			item.HealthStatus = "unknown"
+		}
+		items = append(items, item)
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ClusterID < items[j].ClusterID
+	})
+	return &ClusterHealthData{
+		GeneratedAt: time.Now().UTC(),
+		Total:       len(items),
+		Clusters:    items,
+	}, nil
+}
+
+// GetPlatformHealth returns platform-level health summary.
+// GetPlatformHealth 返回平台级健康摘要。
+func (s *Service) GetPlatformHealth(ctx context.Context) (*PlatformHealthData, error) {
+	clusterHealth, err := s.GetClustersHealth(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PlatformHealthData{
+		GeneratedAt:   time.Now().UTC(),
+		HealthStatus:  "unknown",
+		TotalClusters: clusterHealth.Total,
+	}
+
+	for _, item := range clusterHealth.Clusters {
+		if item == nil {
+			continue
+		}
+		result.ActiveAlerts += item.ActiveAlerts
+		result.CriticalAlerts += item.CriticalAlerts
+
+		switch strings.ToLower(strings.TrimSpace(item.HealthStatus)) {
+		case "healthy":
+			result.HealthyClusters++
+		case "degraded":
+			result.DegradedClusters++
+		case "unhealthy":
+			result.UnhealthyClusters++
+		default:
+			result.UnknownClusters++
+		}
+	}
+
+	switch {
+	case result.UnhealthyClusters > 0:
+		result.HealthStatus = "unhealthy"
+	case result.DegradedClusters > 0:
+		result.HealthStatus = "degraded"
+	case result.TotalClusters > 0 && result.HealthyClusters == result.TotalClusters:
+		result.HealthStatus = "healthy"
+	default:
+		result.HealthStatus = "unknown"
+	}
+
+	return result, nil
 }

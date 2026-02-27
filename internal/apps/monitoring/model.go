@@ -440,3 +440,82 @@ type AlertmanagerWebhookResult struct {
 	Stored   int      `json:"stored"`
 	Errors   []string `json:"errors,omitempty"`
 }
+
+// RemoteAlertFilter represents query filters for remote alert records.
+// RemoteAlertFilter 表示远程告警记录查询过滤条件。
+type RemoteAlertFilter struct {
+	ClusterID string     `json:"cluster_id"`
+	Status    string     `json:"status"`
+	StartTime *time.Time `json:"start_time"`
+	EndTime   *time.Time `json:"end_time"`
+	Page      int        `json:"page"`
+	PageSize  int        `json:"page_size"`
+}
+
+// RemoteAlertItem represents one remote alert record returned to frontend.
+// RemoteAlertItem 表示返回给前端的单条远程告警记录。
+type RemoteAlertItem struct {
+	ID             uint       `json:"id"`
+	Fingerprint    string     `json:"fingerprint"`
+	Status         string     `json:"status"`
+	Receiver       string     `json:"receiver"`
+	AlertName      string     `json:"alert_name"`
+	Severity       string     `json:"severity"`
+	ClusterID      string     `json:"cluster_id"`
+	ClusterName    string     `json:"cluster_name"`
+	Env            string     `json:"env"`
+	Summary        string     `json:"summary"`
+	Description    string     `json:"description"`
+	StartsAt       int64      `json:"starts_at"`
+	EndsAt         int64      `json:"ends_at"`
+	ResolvedAt     *time.Time `json:"resolved_at"`
+	LastReceivedAt time.Time  `json:"last_received_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// RemoteAlertListData represents remote alert list response payload.
+// RemoteAlertListData 表示远程告警列表响应数据。
+type RemoteAlertListData struct {
+	GeneratedAt time.Time          `json:"generated_at"`
+	Page        int                `json:"page"`
+	PageSize    int                `json:"page_size"`
+	Total       int64              `json:"total"`
+	Alerts      []*RemoteAlertItem `json:"alerts"`
+}
+
+// ClusterHealthItem represents one cluster health summary for monitoring center.
+// ClusterHealthItem 表示监控中心中的单集群健康摘要。
+type ClusterHealthItem struct {
+	ClusterID      uint   `json:"cluster_id"`
+	ClusterName    string `json:"cluster_name"`
+	Status         string `json:"status"`
+	HealthStatus   string `json:"health_status"`
+	TotalNodes     int    `json:"total_nodes"`
+	OnlineNodes    int    `json:"online_nodes"`
+	OfflineNodes   int    `json:"offline_nodes"`
+	ActiveAlerts   int64  `json:"active_alerts"`
+	CriticalAlerts int64  `json:"critical_alerts"`
+}
+
+// ClusterHealthData represents all clusters health payload.
+// ClusterHealthData 表示全部集群健康响应数据。
+type ClusterHealthData struct {
+	GeneratedAt time.Time            `json:"generated_at"`
+	Total       int                  `json:"total"`
+	Clusters    []*ClusterHealthItem `json:"clusters"`
+}
+
+// PlatformHealthData represents platform-level health summary.
+// PlatformHealthData 表示平台级健康汇总。
+type PlatformHealthData struct {
+	GeneratedAt       time.Time `json:"generated_at"`
+	HealthStatus      string    `json:"health_status"`
+	TotalClusters     int       `json:"total_clusters"`
+	HealthyClusters   int       `json:"healthy_clusters"`
+	DegradedClusters  int       `json:"degraded_clusters"`
+	UnhealthyClusters int       `json:"unhealthy_clusters"`
+	UnknownClusters   int       `json:"unknown_clusters"`
+	ActiveAlerts      int64     `json:"active_alerts"`
+	CriticalAlerts    int64     `json:"critical_alerts"`
+}

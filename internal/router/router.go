@@ -344,16 +344,22 @@ func Serve() {
 				monitoringRouter.GET("/overview", monitoringHandler.GetOverview)
 				monitoringRouter.GET("/clusters/:id/overview", monitoringHandler.GetClusterOverview)
 				monitoringRouter.GET("/alerts", monitoringHandler.ListAlerts)
+				monitoringRouter.GET("/remote-alerts", monitoringHandler.ListRemoteAlerts)
 				monitoringRouter.POST("/alerts/:eventId/ack", monitoringHandler.AcknowledgeAlert)
 				monitoringRouter.POST("/alerts/:eventId/silence", monitoringHandler.SilenceAlert)
 				monitoringRouter.GET("/clusters/:id/rules", monitoringHandler.ListClusterRules)
 				monitoringRouter.PUT("/clusters/:id/rules/:ruleId", monitoringHandler.UpdateClusterRule)
 				monitoringRouter.GET("/integration/status", monitoringHandler.GetIntegrationStatus)
+				monitoringRouter.GET("/platform-health", monitoringHandler.GetPlatformHealth)
 				monitoringRouter.GET("/notification-channels", monitoringHandler.ListNotificationChannels)
 				monitoringRouter.POST("/notification-channels", monitoringHandler.CreateNotificationChannel)
 				monitoringRouter.PUT("/notification-channels/:id", monitoringHandler.UpdateNotificationChannel)
 				monitoringRouter.DELETE("/notification-channels/:id", monitoringHandler.DeleteNotificationChannel)
 			}
+
+			// Platform cluster health summary (powered by monitoring remote integration).
+			// 平台集群健康摘要（由监控远程集成能力提供）。
+			clusterRouter.GET("/health", monitoringHandler.GetClustersHealth)
 
 			// Grafana 代理是高频请求路径，使用轻量会话校验降低每请求数据库开销。
 			monitoringGrafanaProxyRouter := apiV1Router.Group("/monitoring/proxy/grafana")

@@ -20,6 +20,7 @@ package monitoring
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
@@ -54,6 +55,14 @@ type AlertEventSource struct {
 	CreatedAt   time.Time                `json:"created_at"`
 	Hostname    string                   `json:"hostname"`
 	IP          string                   `json:"ip"`
+}
+
+// RemoteAlertClusterStat represents aggregated remote alert counters per cluster.
+// RemoteAlertClusterStat 表示按集群聚合的远程告警计数。
+type RemoteAlertClusterStat struct {
+	ClusterID     string `json:"cluster_id"`
+	ActiveCount   int64  `json:"active_count"`
+	CriticalCount int64  `json:"critical_count"`
 }
 
 // Repository provides data access for monitoring center.
@@ -301,4 +310,72 @@ func (r *Repository) UpsertRemoteAlert(ctx context.Context, record *RemoteAlertR
 			}),
 		}).
 		Create(record).Error
+}
+
+// ListRemoteAlerts returns remote alert records with pagination and filters.
+// ListRemoteAlerts 返回远程告警记录列表（支持分页与过滤）。
+func (r *Repository) ListRemoteAlerts(ctx context.Context, filter *RemoteAlertFilter) ([]*RemoteAlertRecord, int64, error) {
+	if filter == nil {
+		filter = &RemoteAlertFilter{}
+	}
+
+	query := r.db.WithContext(ctx).Model(&RemoteAlertRecord{})
+	if filter.ClusterID != "" {
+		query = query.Where("cluster_id = ?", filter.ClusterID)
+	}
+	if filter.Status != "" {
+		query = query.Where("LOWER(status) = ?", strings.ToLower(filter.Status))
+	}
+	if filter.StartTime != nil {
+		query = query.Where("starts_at >= ?", filter.StartTime.Unix())
+	}
+	if filter.EndTime != nil {
+		query = query.Where("starts_at <= ?", filter.EndTime.Unix())
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if filter.Page > 0 && filter.PageSize > 0 {
+		offset := (filter.Page - 1) * filter.PageSize
+		query = query.Offset(offset).Limit(filter.PageSize)
+	}
+
+	var rows []*RemoteAlertRecord
+	if err := query.Order("starts_at DESC").Order("id DESC").Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// GetRemoteAlertClusterStats returns active/critical remote alert counters grouped by cluster_id.
+// GetRemoteAlertClusterStats 返回按 cluster_id 聚合的远程告警活动/严重数。
+func (r *Repository) GetRemoteAlertClusterStats(ctx context.Context, clusterIDs []string) (map[string]*RemoteAlertClusterStat, error) {
+	result := make(map[string]*RemoteAlertClusterStat)
+	if len(clusterIDs) == 0 {
+		return result, nil
+	}
+
+	query := r.db.WithContext(ctx).Table((&RemoteAlertRecord{}).TableName()).
+		Select(
+			"cluster_id, "+
+				"SUM(CASE WHEN LOWER(status) <> 'resolved' THEN 1 ELSE 0 END) AS active_count, "+
+				"SUM(CASE WHEN LOWER(status) <> 'resolved' AND LOWER(severity) = 'critical' THEN 1 ELSE 0 END) AS critical_count",
+		).
+		Where("cluster_id IN ?", clusterIDs).
+		Group("cluster_id")
+
+	var rows []*RemoteAlertClusterStat
+	if err := query.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		result[row.ClusterID] = row
+	}
+	return result, nil
 }
