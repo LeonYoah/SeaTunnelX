@@ -155,6 +155,37 @@ SEATUNNELX_PASSWORD=admin \
 
 ---
 
+## 9. deps 三件套联调参考（2026-02-27 实测）
+
+如果三件套已部署在 `deps` 目录（默认端口 `9090/9093/3000`），推荐按以下方式快速切到远程模式：
+
+1. **Prometheus**
+   - 将 `seatunnel_engine_http` job 改为 `http_sd_configs`
+   - URL 指向：
+     `http://127.0.0.1:8000/api/v1/monitoring/prometheus/discovery`
+   - 执行 reload：`POST http://127.0.0.1:9090/-/reload`
+
+2. **Alertmanager**
+   - 在 receiver 增加 webhook：
+     `http://127.0.0.1:8000/api/v1/monitoring/alertmanager/webhook`
+   - 热重载（SIGHUP）或重启 Alertmanager
+
+3. **验证**
+   - 执行：
+     ```bash
+     SEATUNNELX_USERNAME=admin \
+     SEATUNNELX_PASSWORD=<password> \
+     ./scripts/observability-remote-smoke.sh https://cpa.120501.xyz
+     ```
+   - 结果应覆盖并通过：
+     - `prometheus/discovery`
+     - `alertmanager/webhook`
+     - `remote-alerts`
+     - `clusters/health`
+     - `platform-health`
+
+---
+
 ## 7. 监控中心 UI（MVP）能力说明
 
 当前监控中心（以 Grafana 为主）对应 MVP 已支持：
