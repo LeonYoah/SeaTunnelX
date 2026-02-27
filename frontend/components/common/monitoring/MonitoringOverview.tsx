@@ -1,10 +1,18 @@
 'use client';
 
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useTranslations} from 'next-intl';
 import {useTheme} from 'next-themes';
+import {ExternalLink, Loader2, RefreshCw} from 'lucide-react';
+import {toast} from 'sonner';
+import services from '@/lib/services';
+import type {
+  ClusterHealthItem,
+  PlatformHealthData,
+} from '@/lib/services/monitoring';
 import {useLocale} from '@/lib/i18n';
 import {Button} from '@/components/ui/button';
+import {Badge} from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -13,7 +21,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
-import {ExternalLink, Loader2, RefreshCw} from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 type TimeRange = 'now-1h' | 'now-6h' | 'now-24h' | 'now-7d';
 type RefreshInterval = 'off' | '15s' | '30s' | '1m';
@@ -55,6 +70,22 @@ function buildGrafanaProxyDashboardURL(
   return `${path}?${search.toString()}&kiosk`;
 }
 
+function resolveHealthBadgeVariant(
+  status: string,
+): 'default' | 'secondary' | 'outline' | 'destructive' {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === 'unhealthy') {
+    return 'destructive';
+  }
+  if (normalized === 'degraded') {
+    return 'secondary';
+  }
+  if (normalized === 'healthy') {
+    return 'default';
+  }
+  return 'outline';
+}
+
 export function MonitoringOverview() {
   const t = useTranslations('monitoringCenter');
   const {locale} = useLocale();
@@ -68,6 +99,10 @@ export function MonitoringOverview() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [loadTimeoutMs, setLoadTimeoutMs] = useState(DEFAULT_LOAD_TIMEOUT_MS);
   const [iframeHeight, setIframeHeight] = useState(900);
+  const [platformHealth, setPlatformHealth] =
+    useState<PlatformHealthData | null>(null);
+  const [clusterHealth, setClusterHealth] = useState<ClusterHealthItem[]>([]);
+  const [healthLoading, setHealthLoading] = useState<boolean>(true);
   const frameContainerRef = useRef<HTMLDivElement | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const grafanaTheme: GrafanaTheme =
@@ -79,6 +114,38 @@ export function MonitoringOverview() {
       timeoutRef.current = null;
     }
   };
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const [platformResult, clustersResult] = await Promise.all([
+        services.monitoring.getPlatformHealthSafe(),
+        services.monitoring.getClustersHealthSafe(),
+      ]);
+
+      if (platformResult.success && platformResult.data) {
+        setPlatformHealth(platformResult.data);
+      } else {
+        setPlatformHealth(null);
+      }
+
+      if (clustersResult.success && clustersResult.data) {
+        setClusterHealth(clustersResult.data.clusters || []);
+      } else {
+        setClusterHealth([]);
+      }
+
+      if (!platformResult.success && !clustersResult.success) {
+        toast.error(
+          platformResult.error ||
+            clustersResult.error ||
+            t('platformHealth.loadError'),
+        );
+      }
+    } finally {
+      setHealthLoading(false);
+    }
+  }, [t]);
 
   const dashboardURL = useMemo(
     () =>
@@ -100,6 +167,27 @@ export function MonitoringOverview() {
       ),
     [locale, timeRange, refreshInterval, grafanaTheme],
   );
+
+  const resolveHealthLabel = useCallback(
+    (status: string) => {
+      const normalized = status.trim().toLowerCase();
+      if (normalized === 'healthy') {
+        return t('healthStatuses.healthy');
+      }
+      if (normalized === 'degraded') {
+        return t('healthStatuses.degraded');
+      }
+      if (normalized === 'unhealthy') {
+        return t('healthStatuses.unhealthy');
+      }
+      return t('healthStatuses.unknown');
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    loadHealth();
+  }, [loadHealth]);
 
   useEffect(() => {
     if (typeof navigator === 'undefined') {
@@ -151,7 +239,10 @@ export function MonitoringOverview() {
 
         // Keep one smooth scroll context by making iframe fill the remaining viewport.
         // 让 iframe 填充剩余视口高度，避免外层与内层双重滚动错位。
-        const next = Math.max(720, Math.floor(window.innerHeight - rect.top - 12));
+        const next = Math.max(
+          720,
+          Math.floor(window.innerHeight - rect.top - 12),
+        );
         setIframeHeight((prev) => (Math.abs(prev - next) > 2 ? next : prev));
       });
     };
@@ -181,28 +272,160 @@ export function MonitoringOverview() {
   return (
     <div className='space-y-4'>
       <Card>
+        <CardHeader className='space-y-2'>
+          <div className='flex items-center justify-between'>
+            <CardTitle>{t('platformHealth.title')}</CardTitle>
+            <Button variant='outline' onClick={loadHealth}>
+              <RefreshCw className='mr-2 h-4 w-4' />
+              {t('refresh')}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          {healthLoading ? (
+            <div className='text-sm text-muted-foreground'>{t('loading')}</div>
+          ) : platformHealth ? (
+            <>
+              <div className='grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8'>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('totalClusters')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.total_clusters}
+                  </div>
+                </div>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('healthyClusters')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.healthy_clusters}
+                  </div>
+                </div>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('degradedClusters')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.degraded_clusters}
+                  </div>
+                </div>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('unhealthyClusters')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.unhealthy_clusters}
+                  </div>
+                </div>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('activeAlerts')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.active_alerts}
+                  </div>
+                </div>
+                <div className='rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('criticalAlerts')}
+                  </div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {platformHealth.critical_alerts}
+                  </div>
+                </div>
+                <div className='col-span-2 rounded-md border p-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    {t('healthStatus')}
+                  </div>
+                  <div className='mt-1'>
+                    <Badge
+                      variant={resolveHealthBadgeVariant(
+                        platformHealth.health_status,
+                      )}
+                    >
+                      {resolveHealthLabel(platformHealth.health_status)}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div className='overflow-x-auto'>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('clusterName')}</TableHead>
+                      <TableHead>{t('healthStatus')}</TableHead>
+                      <TableHead>{t('nodes')}</TableHead>
+                      <TableHead>{t('activeAlerts')}</TableHead>
+                      <TableHead>{t('criticalAlerts')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {!clusterHealth.length ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={5}
+                          className='text-center text-muted-foreground'
+                        >
+                          {t('noClusters')}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      clusterHealth.map((cluster) => (
+                        <TableRow key={cluster.cluster_id}>
+                          <TableCell>{cluster.cluster_name}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={resolveHealthBadgeVariant(
+                                cluster.health_status,
+                              )}
+                            >
+                              {resolveHealthLabel(cluster.health_status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{`${cluster.online_nodes}/${cluster.total_nodes}`}</TableCell>
+                          <TableCell>{cluster.active_alerts}</TableCell>
+                          <TableCell>{cluster.critical_alerts}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          ) : (
+            <div className='text-sm text-muted-foreground'>
+              {t('platformHealth.unavailable')}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className='space-y-3'>
-          <div className='flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3'>
+          <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
             <CardTitle>{t('grafana.title')}</CardTitle>
-            <div className='flex items-center gap-2 flex-wrap'>
+            <div className='flex flex-wrap items-center gap-2'>
               <Button
                 variant='outline'
-                onClick={() => setIframeKey((v) => v + 1)}
+                onClick={() => setIframeKey((value) => value + 1)}
                 className='shrink-0'
               >
-                <RefreshCw className='h-4 w-4 mr-2' />
+                <RefreshCw className='mr-2 h-4 w-4' />
                 {t('grafana.reload')}
               </Button>
               <Button asChild variant='outline' className='shrink-0'>
                 <a href={dashboardURL} target='_blank' rel='noreferrer'>
-                  <ExternalLink className='h-4 w-4 mr-2' />
+                  <ExternalLink className='mr-2 h-4 w-4' />
                   {t('grafana.open')}
                 </a>
               </Button>
             </div>
           </div>
 
-          <div className='flex flex-col md:flex-row gap-2 md:items-center'>
+          <div className='flex flex-col gap-2 md:flex-row md:items-center'>
             <div className='w-full md:w-56'>
               <Select
                 value={timeRange}
@@ -256,7 +479,7 @@ export function MonitoringOverview() {
         <CardContent className='p-0'>
           <div
             ref={frameContainerRef}
-            className='relative border-t bg-muted/20 overflow-hidden'
+            className='relative overflow-hidden border-t bg-muted/20'
             style={{height: `${iframeHeight}px`}}
           >
             {!loaded && !loadFailed ? (
@@ -269,13 +492,13 @@ export function MonitoringOverview() {
             ) : null}
 
             {loadFailed ? (
-              <div className='absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm px-6 text-center'>
+              <div className='absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 px-6 text-center backdrop-blur-sm'>
                 <div className='text-sm text-muted-foreground'>
                   {t('grafana.loadFailed')}
                 </div>
                 <Button
                   variant='outline'
-                  onClick={() => setIframeKey((v) => v + 1)}
+                  onClick={() => setIframeKey((value) => value + 1)}
                 >
                   {t('grafana.retry')}
                 </Button>
@@ -286,7 +509,7 @@ export function MonitoringOverview() {
               key={iframeKey}
               title='Seatunnel Grafana Dashboard'
               src={embedURL}
-              className='w-full h-full border-0 rounded-b-xl'
+              className='h-full w-full rounded-b-xl border-0'
               sandbox='allow-scripts allow-same-origin allow-forms allow-popups allow-downloads'
               referrerPolicy='strict-origin-when-cross-origin'
               loading='eager'
@@ -301,7 +524,7 @@ export function MonitoringOverview() {
               }}
             />
 
-            <div className='pointer-events-none absolute top-0 left-0 right-0 h-12 bg-background/95' />
+            <div className='pointer-events-none absolute left-0 right-0 top-0 h-12 bg-background/95' />
             <div className='pointer-events-none absolute bottom-0 left-0 right-0 h-2 bg-background/95' />
           </div>
         </CardContent>

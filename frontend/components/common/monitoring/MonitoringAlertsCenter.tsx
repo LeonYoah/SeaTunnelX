@@ -5,12 +5,7 @@ import {useTranslations} from 'next-intl';
 import {toast} from 'sonner';
 import {RefreshCw} from 'lucide-react';
 import services from '@/lib/services';
-import type {ClusterInfo} from '@/lib/services/cluster';
-import type {
-  AlertEvent,
-  AlertStats,
-  AlertStatus,
-} from '@/lib/services/monitoring';
+import type {RemoteAlertEvent} from '@/lib/services/monitoring';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
@@ -30,6 +25,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+type ClusterOption = {
+  id: string;
+  name: string;
+};
+
 function formatDateTime(value?: string | null): string {
   if (!value) {
     return '-';
@@ -41,15 +41,25 @@ function formatDateTime(value?: string | null): string {
   return parsed.toLocaleString();
 }
 
-function resolveBadgeVariant(status: AlertStatus):
-  | 'default'
-  | 'secondary'
-  | 'outline'
-  | 'destructive' {
-  if (status === 'firing') {
+function formatUnixSeconds(value?: number): string {
+  if (!value || value <= 0) {
+    return '-';
+  }
+  return formatDateTime(new Date(value * 1000).toISOString());
+}
+
+function normalizeStatus(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function resolveBadgeVariant(
+  status: string,
+): 'default' | 'secondary' | 'outline' | 'destructive' {
+  const normalized = normalizeStatus(status);
+  if (normalized === 'firing') {
     return 'destructive';
   }
-  if (status === 'acknowledged') {
+  if (normalized === 'resolved') {
     return 'secondary';
   }
   return 'outline';
@@ -58,39 +68,38 @@ function resolveBadgeVariant(status: AlertStatus):
 export function MonitoringAlertsCenter() {
   const t = useTranslations('monitoringCenter');
 
-  const [clusterOptions, setClusterOptions] = useState<ClusterInfo[]>([]);
+  const [clusterOptions, setClusterOptions] = useState<ClusterOption[]>([]);
   const [clusterFilter, setClusterFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
-  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
-  const [stats, setStats] = useState<AlertStats | null>(null);
+  const [alerts, setAlerts] = useState<RemoteAlertEvent[]>([]);
+  const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
-  const [actingEventId, setActingEventId] = useState<number | null>(null);
-
-  const statusLabelMap = useMemo(
-    () => ({
-      firing: t('alertStatuses.firing'),
-      acknowledged: t('alertStatuses.acknowledged'),
-      silenced: t('alertStatuses.silenced'),
-    }),
-    [t],
-  );
-
-  const severityLabelMap = useMemo(
-    () => ({
-      warning: t('alertSeverity.warning'),
-      critical: t('alertSeverity.critical'),
-    }),
-    [t],
-  );
 
   const loadClusters = useCallback(async () => {
+    const healthResult = await services.monitoring.getClustersHealthSafe();
+    if (healthResult.success && healthResult.data) {
+      const options = (healthResult.data.clusters || [])
+        .map((cluster) => ({
+          id: String(cluster.cluster_id),
+          name: cluster.cluster_name || `Cluster-${cluster.cluster_id}`,
+        }))
+        .sort((a, b) => Number.parseInt(a.id, 10) - Number.parseInt(b.id, 10));
+      setClusterOptions(options);
+      return;
+    }
+
     try {
       const data = await services.cluster.getClusters({
         current: 1,
         size: 200,
       });
-      setClusterOptions(data.clusters || []);
+      setClusterOptions(
+        (data.clusters || []).map((cluster) => ({
+          id: String(cluster.id),
+          name: cluster.name,
+        })),
+      );
     } catch {
       setClusterOptions([]);
     }
@@ -99,10 +108,9 @@ export function MonitoringAlertsCenter() {
   const loadAlerts = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await services.monitoring.getAlertsSafe({
-        cluster_id:
-          clusterFilter === 'all' ? undefined : Number.parseInt(clusterFilter, 10),
-        status: statusFilter === 'all' ? undefined : (statusFilter as AlertStatus),
+      const result = await services.monitoring.getRemoteAlertsSafe({
+        cluster_id: clusterFilter === 'all' ? undefined : clusterFilter,
+        status: statusFilter === 'all' ? undefined : statusFilter,
         page: 1,
         page_size: 200,
       });
@@ -110,12 +118,12 @@ export function MonitoringAlertsCenter() {
       if (!result.success || !result.data) {
         toast.error(result.error || t('alerts.loadError'));
         setAlerts([]);
-        setStats(null);
+        setTotal(0);
         return;
       }
 
       setAlerts(result.data.alerts || []);
-      setStats(result.data.stats || null);
+      setTotal(result.data.total || 0);
     } finally {
       setLoading(false);
     }
@@ -129,54 +137,63 @@ export function MonitoringAlertsCenter() {
     loadAlerts();
   }, [loadAlerts]);
 
-  const handleAcknowledge = async (alert: AlertEvent) => {
-    setActingEventId(alert.event_id);
-    try {
-      const result = await services.monitoring.acknowledgeAlertSafe(alert.event_id, {});
-      if (!result.success) {
-        toast.error(result.error || t('alerts.ackError'));
-        return;
-      }
-      toast.success(t('alerts.ackSuccess'));
-      await loadAlerts();
-    } finally {
-      setActingEventId(null);
-    }
-  };
+  const alertStats = useMemo(
+    () =>
+      alerts.reduce(
+        (acc, alert) => {
+          const status = normalizeStatus(alert.status || '');
+          if (status === 'firing') {
+            acc.firing += 1;
+            return acc;
+          }
+          if (status === 'resolved') {
+            acc.resolved += 1;
+            return acc;
+          }
+          acc.others += 1;
+          return acc;
+        },
+        {
+          firing: 0,
+          resolved: 0,
+          others: 0,
+        },
+      ),
+    [alerts],
+  );
 
-  const handleSilence = async (alert: AlertEvent) => {
-    setActingEventId(alert.event_id);
-    try {
-      const result = await services.monitoring.silenceAlertSafe(alert.event_id, {
-        duration_minutes: 30,
-      });
-      if (!result.success) {
-        toast.error(result.error || t('alerts.silenceError'));
-        return;
+  const resolveStatusLabel = useCallback(
+    (status: string) => {
+      const normalized = normalizeStatus(status);
+      if (normalized === 'firing') {
+        return t('alerts.statusFiring');
       }
-      toast.success(t('alerts.silenceSuccess'));
-      await loadAlerts();
-    } finally {
-      setActingEventId(null);
-    }
-  };
+      if (normalized === 'resolved') {
+        return t('alerts.statusResolved');
+      }
+      return status || '-';
+    },
+    [t],
+  );
 
   return (
     <div className='space-y-4'>
       <Card>
         <CardHeader>
           <CardTitle>{t('alerts.title')}</CardTitle>
-          <div className='flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between'>
-            <div className='flex flex-col md:flex-row gap-2'>
+          <div className='flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between'>
+            <div className='flex flex-col gap-2 md:flex-row'>
               <div className='w-full md:w-56'>
                 <Select value={clusterFilter} onValueChange={setClusterFilter}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('alerts.clusterFilter')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='all'>{t('alerts.allClusters')}</SelectItem>
+                    <SelectItem value='all'>
+                      {t('alerts.allClusters')}
+                    </SelectItem>
                     {clusterOptions.map((cluster) => (
-                      <SelectItem key={cluster.id} value={String(cluster.id)}>
+                      <SelectItem key={cluster.id} value={cluster.id}>
                         {cluster.name}
                       </SelectItem>
                     ))}
@@ -191,12 +208,11 @@ export function MonitoringAlertsCenter() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value='all'>{t('alerts.allStatus')}</SelectItem>
-                    <SelectItem value='firing'>{statusLabelMap.firing}</SelectItem>
-                    <SelectItem value='acknowledged'>
-                      {statusLabelMap.acknowledged}
+                    <SelectItem value='firing'>
+                      {t('alerts.statusFiring')}
                     </SelectItem>
-                    <SelectItem value='silenced'>
-                      {statusLabelMap.silenced}
+                    <SelectItem value='resolved'>
+                      {t('alerts.statusResolved')}
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -204,15 +220,14 @@ export function MonitoringAlertsCenter() {
             </div>
 
             <div className='flex items-center gap-2'>
-              {stats ? (
-                <>
-                  <Badge variant='destructive'>{`${statusLabelMap.firing}: ${stats.firing}`}</Badge>
-                  <Badge variant='secondary'>{`${statusLabelMap.acknowledged}: ${stats.acknowledged}`}</Badge>
-                  <Badge variant='outline'>{`${statusLabelMap.silenced}: ${stats.silenced}`}</Badge>
-                </>
+              <Badge variant='outline'>{`${t('alerts.totalCount')}: ${total}`}</Badge>
+              <Badge variant='destructive'>{`${t('alerts.firingCount')}: ${alertStats.firing}`}</Badge>
+              <Badge variant='secondary'>{`${t('alerts.resolvedCount')}: ${alertStats.resolved}`}</Badge>
+              {alertStats.others > 0 ? (
+                <Badge variant='outline'>{`${t('alerts.otherCount')}: ${alertStats.others}`}</Badge>
               ) : null}
               <Button variant='outline' onClick={loadAlerts}>
-                <RefreshCw className='h-4 w-4 mr-2' />
+                <RefreshCw className='mr-2 h-4 w-4' />
                 {t('refresh')}
               </Button>
             </div>
@@ -224,69 +239,55 @@ export function MonitoringAlertsCenter() {
             <TableHeader>
               <TableRow>
                 <TableHead>{t('alerts.cluster')}</TableHead>
-                <TableHead>{t('alerts.eventType')}</TableHead>
+                <TableHead>{t('alerts.alertName')}</TableHead>
                 <TableHead>{t('alerts.severity')}</TableHead>
                 <TableHead>{t('alerts.status')}</TableHead>
-                <TableHead>{t('alerts.host')}</TableHead>
-                <TableHead>{t('alerts.process')}</TableHead>
+                <TableHead>{t('alerts.summary')}</TableHead>
                 <TableHead>{t('alerts.eventTime')}</TableHead>
-                <TableHead>{t('actions')}</TableHead>
+                <TableHead>{t('alerts.lastReceivedAt')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className='text-center text-muted-foreground'>
+                  <TableCell
+                    colSpan={7}
+                    className='text-center text-muted-foreground'
+                  >
                     {t('loading')}
                   </TableCell>
                 </TableRow>
               ) : !alerts.length ? (
                 <TableRow>
-                  <TableCell colSpan={8} className='text-center text-muted-foreground'>
+                  <TableCell
+                    colSpan={7}
+                    className='text-center text-muted-foreground'
+                  >
                     {t('alerts.noAlerts')}
                   </TableCell>
                 </TableRow>
               ) : (
                 alerts.map((alert) => (
-                  <TableRow key={alert.event_id}>
-                    <TableCell>{alert.cluster_name}</TableCell>
-                    <TableCell>{alert.event_type}</TableCell>
+                  <TableRow key={`${alert.id}-${alert.fingerprint}`}>
                     <TableCell>
-                      {severityLabelMap[alert.severity] || alert.severity}
+                      {alert.cluster_name || alert.cluster_id || '-'}
                     </TableCell>
+                    <TableCell>{alert.alert_name || '-'}</TableCell>
+                    <TableCell>{alert.severity || '-'}</TableCell>
                     <TableCell>
                       <Badge variant={resolveBadgeVariant(alert.status)}>
-                        {statusLabelMap[alert.status] || alert.status}
+                        {resolveStatusLabel(alert.status || '')}
                       </Badge>
                     </TableCell>
-                    <TableCell>{`${alert.hostname} (${alert.ip})`}</TableCell>
-                    <TableCell>{`${alert.process_name} (${alert.pid})`}</TableCell>
-                    <TableCell>{formatDateTime(alert.created_at)}</TableCell>
+                    <TableCell
+                      className='max-w-[360px] truncate'
+                      title={alert.summary || alert.description || ''}
+                    >
+                      {alert.summary || alert.description || '-'}
+                    </TableCell>
+                    <TableCell>{formatUnixSeconds(alert.starts_at)}</TableCell>
                     <TableCell>
-                      <div className='flex flex-wrap gap-2'>
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          onClick={() => handleAcknowledge(alert)}
-                          disabled={
-                            alert.status !== 'firing' ||
-                            actingEventId === alert.event_id
-                          }
-                        >
-                          {t('alerts.ack')}
-                        </Button>
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          onClick={() => handleSilence(alert)}
-                          disabled={
-                            alert.status !== 'firing' ||
-                            actingEventId === alert.event_id
-                          }
-                        >
-                          {t('alerts.silence30m')}
-                        </Button>
-                      </div>
+                      {formatDateTime(alert.last_received_at)}
                     </TableCell>
                   </TableRow>
                 ))

@@ -3,7 +3,8 @@
  * 监控中心服务
  */
 
-import { BaseService } from '../core/base.service';
+import apiClient from '../core/api-client';
+import {BaseService} from '../core/base.service';
 import type {
   AcknowledgeAlertRequest,
   AlertActionResult,
@@ -11,11 +12,15 @@ import type {
   AlertListData,
   AlertRule,
   AlertRuleListData,
+  ClusterHealthData,
   ClusterMonitoringOverviewData,
   IntegrationStatusData,
   MonitoringOverviewData,
   NotificationChannel,
   NotificationChannelListData,
+  PlatformHealthData,
+  RemoteAlertFilterParams,
+  RemoteAlertListData,
   SilenceAlertRequest,
   UpsertNotificationChannelRequest,
   UpdateAlertRuleRequest,
@@ -36,8 +41,12 @@ export class MonitoringService extends BaseService {
    * Get monitoring overview for one cluster.
    * 获取单集群监控总览。
    */
-  static async getClusterOverview(clusterId: number): Promise<ClusterMonitoringOverviewData> {
-    return this.get<ClusterMonitoringOverviewData>(`/clusters/${clusterId}/overview`);
+  static async getClusterOverview(
+    clusterId: number,
+  ): Promise<ClusterMonitoringOverviewData> {
+    return this.get<ClusterMonitoringOverviewData>(
+      `/clusters/${clusterId}/overview`,
+    );
   }
 
   /**
@@ -45,22 +54,34 @@ export class MonitoringService extends BaseService {
    * 获取监控中心告警列表。
    */
   static async getAlerts(params?: AlertFilterParams): Promise<AlertListData> {
-    return this.get<AlertListData>('/alerts', params as Record<string, unknown> | undefined);
+    return this.get<AlertListData>(
+      '/alerts',
+      params as Record<string, unknown> | undefined,
+    );
   }
 
   /**
    * Acknowledge one alert event.
    * 确认一条告警事件。
    */
-  static async acknowledgeAlert(eventId: number, payload?: AcknowledgeAlertRequest): Promise<AlertActionResult> {
-    return this.post<AlertActionResult>(`/alerts/${eventId}/ack`, payload || {});
+  static async acknowledgeAlert(
+    eventId: number,
+    payload?: AcknowledgeAlertRequest,
+  ): Promise<AlertActionResult> {
+    return this.post<AlertActionResult>(
+      `/alerts/${eventId}/ack`,
+      payload || {},
+    );
   }
 
   /**
    * Silence one alert event.
    * 静默一条告警事件。
    */
-  static async silenceAlert(eventId: number, payload: SilenceAlertRequest): Promise<AlertActionResult> {
+  static async silenceAlert(
+    eventId: number,
+    payload: SilenceAlertRequest,
+  ): Promise<AlertActionResult> {
     return this.post<AlertActionResult>(`/alerts/${eventId}/silence`, payload);
   }
 
@@ -76,8 +97,15 @@ export class MonitoringService extends BaseService {
    * Update one alert rule.
    * 更新一条告警规则。
    */
-  static async updateClusterRule(clusterId: number, ruleId: number, payload: UpdateAlertRuleRequest): Promise<AlertRule> {
-    return this.put<AlertRule>(`/clusters/${clusterId}/rules/${ruleId}`, payload);
+  static async updateClusterRule(
+    clusterId: number,
+    ruleId: number,
+    payload: UpdateAlertRuleRequest,
+  ): Promise<AlertRule> {
+    return this.put<AlertRule>(
+      `/clusters/${clusterId}/rules/${ruleId}`,
+      payload,
+    );
   }
 
   /**
@@ -86,6 +114,42 @@ export class MonitoringService extends BaseService {
    */
   static async getIntegrationStatus(): Promise<IntegrationStatusData> {
     return this.get<IntegrationStatusData>('/integration/status');
+  }
+
+  /**
+   * List remote alerts ingested from Alertmanager webhook.
+   * 查询 Alertmanager webhook 入库后的远程告警。
+   */
+  static async getRemoteAlerts(
+    params?: RemoteAlertFilterParams,
+  ): Promise<RemoteAlertListData> {
+    return this.get<RemoteAlertListData>(
+      '/remote-alerts',
+      params as Record<string, unknown> | undefined,
+    );
+  }
+
+  /**
+   * Get platform-level health summary.
+   * 获取平台级健康摘要。
+   */
+  static async getPlatformHealth(): Promise<PlatformHealthData> {
+    return this.get<PlatformHealthData>('/platform-health');
+  }
+
+  /**
+   * Get cluster-level health summary.
+   * 获取集群级健康摘要。
+   */
+  static async getClustersHealth(): Promise<ClusterHealthData> {
+    const response = await apiClient.get<{
+      error_msg: string;
+      data: ClusterHealthData;
+    }>('/clusters/health');
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    return response.data.data;
   }
 
   /**
@@ -100,7 +164,9 @@ export class MonitoringService extends BaseService {
    * Create notification channel.
    * 创建通知渠道。
    */
-  static async createNotificationChannel(payload: UpsertNotificationChannelRequest): Promise<NotificationChannel> {
+  static async createNotificationChannel(
+    payload: UpsertNotificationChannelRequest,
+  ): Promise<NotificationChannel> {
     return this.post<NotificationChannel>('/notification-channels', payload);
   }
 
@@ -108,16 +174,22 @@ export class MonitoringService extends BaseService {
    * Update notification channel.
    * 更新通知渠道。
    */
-  static async updateNotificationChannel(id: number, payload: UpsertNotificationChannelRequest): Promise<NotificationChannel> {
-    return this.put<NotificationChannel>(`/notification-channels/${id}`, payload);
+  static async updateNotificationChannel(
+    id: number,
+    payload: UpsertNotificationChannelRequest,
+  ): Promise<NotificationChannel> {
+    return this.put<NotificationChannel>(
+      `/notification-channels/${id}`,
+      payload,
+    );
   }
 
   /**
    * Delete notification channel.
    * 删除通知渠道。
    */
-  static async deleteNotificationChannel(id: number): Promise<{ id: number }> {
-    return this.delete<{ id: number }>(`/notification-channels/${id}`);
+  static async deleteNotificationChannel(id: number): Promise<{id: number}> {
+    return this.delete<{id: number}>(`/notification-channels/${id}`);
   }
 
   // ==================== Safe Methods 安全方法 ====================
@@ -129,11 +201,14 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.getOverview();
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get monitoring overview',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get monitoring overview',
       };
     }
   }
@@ -145,11 +220,14 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.getClusterOverview(clusterId);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get cluster monitoring overview',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get cluster monitoring overview',
       };
     }
   }
@@ -161,7 +239,7 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.getAlerts(params);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
@@ -170,34 +248,44 @@ export class MonitoringService extends BaseService {
     }
   }
 
-  static async acknowledgeAlertSafe(eventId: number, payload?: AcknowledgeAlertRequest): Promise<{
+  static async acknowledgeAlertSafe(
+    eventId: number,
+    payload?: AcknowledgeAlertRequest,
+  ): Promise<{
     success: boolean;
     data?: AlertActionResult;
     error?: string;
   }> {
     try {
       const data = await this.acknowledgeAlert(eventId, payload);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to acknowledge alert',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to acknowledge alert',
       };
     }
   }
 
-  static async silenceAlertSafe(eventId: number, payload: SilenceAlertRequest): Promise<{
+  static async silenceAlertSafe(
+    eventId: number,
+    payload: SilenceAlertRequest,
+  ): Promise<{
     success: boolean;
     data?: AlertActionResult;
     error?: string;
   }> {
     try {
       const data = await this.silenceAlert(eventId, payload);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to silence alert',
+        error:
+          error instanceof Error ? error.message : 'Failed to silence alert',
       };
     }
   }
@@ -209,11 +297,14 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.getClusterRules(clusterId);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get cluster rules',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get cluster rules',
       };
     }
   }
@@ -229,11 +320,14 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.updateClusterRule(clusterId, ruleId, payload);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to update cluster rule',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to update cluster rule',
       };
     }
   }
@@ -245,11 +339,71 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.getIntegrationStatus();
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get integration status',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get integration status',
+      };
+    }
+  }
+
+  static async getRemoteAlertsSafe(params?: RemoteAlertFilterParams): Promise<{
+    success: boolean;
+    data?: RemoteAlertListData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getRemoteAlerts(params);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get remote alerts',
+      };
+    }
+  }
+
+  static async getPlatformHealthSafe(): Promise<{
+    success: boolean;
+    data?: PlatformHealthData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getPlatformHealth();
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get platform health',
+      };
+    }
+  }
+
+  static async getClustersHealthSafe(): Promise<{
+    success: boolean;
+    data?: ClusterHealthData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getClustersHealth();
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to get clusters health',
       };
     }
   }
@@ -261,27 +415,35 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.listNotificationChannels();
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to list notification channels',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to list notification channels',
       };
     }
   }
 
-  static async createNotificationChannelSafe(payload: UpsertNotificationChannelRequest): Promise<{
+  static async createNotificationChannelSafe(
+    payload: UpsertNotificationChannelRequest,
+  ): Promise<{
     success: boolean;
     data?: NotificationChannel;
     error?: string;
   }> {
     try {
       const data = await this.createNotificationChannel(payload);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create notification channel',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to create notification channel',
       };
     }
   }
@@ -296,27 +458,33 @@ export class MonitoringService extends BaseService {
   }> {
     try {
       const data = await this.updateNotificationChannel(id, payload);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to update notification channel',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to update notification channel',
       };
     }
   }
 
   static async deleteNotificationChannelSafe(id: number): Promise<{
     success: boolean;
-    data?: { id: number };
+    data?: {id: number};
     error?: string;
   }> {
     try {
       const data = await this.deleteNotificationChannel(id);
-      return { success: true, data };
+      return {success: true, data};
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete notification channel',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to delete notification channel',
       };
     }
   }

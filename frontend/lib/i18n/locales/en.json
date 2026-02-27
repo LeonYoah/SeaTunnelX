@@ -1332,7 +1332,16 @@
       "ackSuccess": "Alert acknowledged",
       "ackError": "Failed to acknowledge alert",
       "silenceSuccess": "Alert silenced",
-      "silenceError": "Failed to silence alert"
+      "silenceError": "Failed to silence alert",
+      "alertName": "Alert Name",
+      "summary": "Summary",
+      "lastReceivedAt": "Last Received",
+      "statusFiring": "Firing",
+      "statusResolved": "Resolved",
+      "totalCount": "Total",
+      "firingCount": "Firing",
+      "resolvedCount": "Resolved",
+      "otherCount": "Others"
     },
     "rules": {
       "entry": "Alert Rules",
@@ -1398,7 +1407,8 @@
     "healthStatuses": {
       "healthy": "Healthy",
       "unhealthy": "Unhealthy",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "degraded": "Degraded"
     },
     "events": {
       "started": "Started",
@@ -1437,7 +1447,15 @@
       "rules": "Rules",
       "integrations": "Notifications"
     },
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "degradedClusters": "Degraded Clusters",
+    "unhealthyClusters": "Unhealthy Clusters",
+    "criticalAlerts": "Critical Alerts",
+    "platformHealth": {
+      "title": "Platform Health Summary",
+      "loadError": "Failed to load platform health summary",
+      "unavailable": "Platform health is unavailable"
+    }
   },
   "discovery": {
     "title": "Auto-Discover Cluster Nodes",

@@ -1332,7 +1332,16 @@
       "ackSuccess": "告警已确认",
       "ackError": "确认告警失败",
       "silenceSuccess": "告警已静默",
-      "silenceError": "静默告警失败"
+      "silenceError": "静默告警失败",
+      "alertName": "告警名称",
+      "summary": "摘要",
+      "lastReceivedAt": "最近接收",
+      "statusFiring": "触发中",
+      "statusResolved": "已恢复",
+      "totalCount": "总数",
+      "firingCount": "触发中",
+      "resolvedCount": "已恢复",
+      "otherCount": "其他"
     },
     "rules": {
       "entry": "告警规则",
@@ -1398,7 +1407,8 @@
     "healthStatuses": {
       "healthy": "健康",
       "unhealthy": "异常",
-      "unknown": "未知"
+      "unknown": "未知",
+      "degraded": "降级"
     },
     "events": {
       "started": "已启动",
@@ -1437,7 +1447,15 @@
       "rules": "告警规则",
       "integrations": "通知渠道"
     },
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "degradedClusters": "降级集群",
+    "unhealthyClusters": "异常集群",
+    "criticalAlerts": "严重告警",
+    "platformHealth": {
+      "title": "平台健康摘要",
+      "loadError": "加载平台健康摘要失败",
+      "unavailable": "暂无平台健康数据"
+    }
   },
   "discovery": {
     "title": "自动发现集群节点",

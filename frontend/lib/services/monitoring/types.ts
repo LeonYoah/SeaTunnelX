@@ -3,7 +3,7 @@
  * 监控中心类型定义
  */
 
-import type { MonitorConfig, ProcessEvent } from '@/lib/services/monitor';
+import type {MonitorConfig, ProcessEvent} from '@/lib/services/monitor';
 
 export interface EventStats {
   started: number;
@@ -158,6 +158,75 @@ export interface AlertActionResult {
   latest_action_note?: string;
 }
 
+export type RemoteAlertStatus = 'firing' | 'resolved' | string;
+
+export interface RemoteAlertEvent {
+  id: number;
+  fingerprint: string;
+  status: RemoteAlertStatus;
+  receiver: string;
+  alert_name: string;
+  severity: string;
+  cluster_id: string;
+  cluster_name: string;
+  env: string;
+  summary: string;
+  description: string;
+  starts_at: number;
+  ends_at: number;
+  resolved_at?: string | null;
+  last_received_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RemoteAlertListData {
+  generated_at: string;
+  page: number;
+  page_size: number;
+  total: number;
+  alerts: RemoteAlertEvent[];
+}
+
+export interface RemoteAlertFilterParams {
+  cluster_id?: string;
+  status?: string;
+  start_time?: string;
+  end_time?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ClusterHealthItem {
+  cluster_id: number;
+  cluster_name: string;
+  status: string;
+  health_status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown' | string;
+  total_nodes: number;
+  online_nodes: number;
+  offline_nodes: number;
+  active_alerts: number;
+  critical_alerts: number;
+}
+
+export interface ClusterHealthData {
+  generated_at: string;
+  total: number;
+  clusters: ClusterHealthItem[];
+}
+
+export interface PlatformHealthData {
+  generated_at: string;
+  health_status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown' | string;
+  total_clusters: number;
+  healthy_clusters: number;
+  degraded_clusters: number;
+  unhealthy_clusters: number;
+  unknown_clusters: number;
+  active_alerts: number;
+  critical_alerts: number;
+}
+
 export interface AlertRule {
   id: number;
   cluster_id: number;
@@ -200,7 +269,12 @@ export interface IntegrationStatusData {
   components: IntegrationComponentStatus[];
 }
 
-export type NotificationChannelType = 'webhook' | 'email' | 'wecom' | 'dingtalk' | 'feishu';
+export type NotificationChannelType =
+  | 'webhook'
+  | 'email'
+  | 'wecom'
+  | 'dingtalk'
+  | 'feishu';
 
 export interface NotificationChannel {
   id: number;
