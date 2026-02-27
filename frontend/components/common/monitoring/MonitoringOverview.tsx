@@ -391,13 +391,22 @@ export function MonitoringOverview() {
                           <TableCell>{cluster.active_alerts}</TableCell>
                           <TableCell>{cluster.critical_alerts}</TableCell>
                           <TableCell>
-                            <Button asChild size='sm' variant='outline'>
-                              <Link
-                                href={`/monitoring/clusters/${cluster.cluster_id}`}
-                              >
-                                {t('viewDetails')}
-                              </Link>
-                            </Button>
+                            <div className='flex items-center gap-2'>
+                              <Button asChild size='sm' variant='outline'>
+                                <Link
+                                  href={`/monitoring/clusters/${cluster.cluster_id}`}
+                                >
+                                  {t('viewDetails')}
+                                </Link>
+                              </Button>
+                              <Button asChild size='sm' variant='outline'>
+                                <Link
+                                  href={`/monitoring?tab=alerts&cluster_id=${cluster.cluster_id}`}
+                                >
+                                  {t('tabs.alerts')}
+                                </Link>
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
