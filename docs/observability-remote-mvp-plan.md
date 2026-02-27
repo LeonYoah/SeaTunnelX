@@ -160,6 +160,14 @@
   - `observability.enabled=false`：discovery/webhook 均 `HTTP 404`；  
   两条路径回归通过。
 
+- 2026-02-27 / Step-8（外部环境预检查）  
+  对线上域名 `https://cpa.120501.xyz` 做只读探测：  
+  - `GET /api/v1/health` -> `HTTP 200`  
+  - `GET /api/v1/monitoring/prometheus/discovery` -> `HTTP 404`  
+  - `POST /api/v1/monitoring/alertmanager/webhook` -> `HTTP 404`  
+  结论：当前外部环境未暴露默认远程集成路径（常见原因：`observability.enabled=false` 或 path 改写），  
+  因此“真实外部三件套端到端联调”仍待环境侧开关与路径确认后继续。
+
 ### 当前严格 MVP 剩余项（下一步）
 
 - [ ] 在真实外部三件套环境完成一轮端到端联调记录（不是仅本地接口可用）；

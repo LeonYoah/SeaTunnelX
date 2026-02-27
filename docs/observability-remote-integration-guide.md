@@ -135,6 +135,26 @@ SEATUNNELX_PASSWORD=admin \
 
 ---
 
+## 8. 常见问题（MVP）
+
+### Q1：`/api/v1/monitoring/prometheus/discovery` 返回 404
+
+优先检查：
+
+1. `observability.enabled` 是否为 `true`；
+2. 是否修改了 `observability.prometheus.http_sd_path`；
+3. 反向代理是否把 `/api/v1/...` 路径改写掉。
+
+### Q2：`/api/v1/monitoring/alertmanager/webhook` 返回 404
+
+优先检查：
+
+1. `observability.enabled` 是否为 `true`；
+2. 是否修改了 `observability.alertmanager.webhook_path`；
+3. Alertmanager 回调 URL 是否与 SeaTunnelX 暴露路径一致。
+
+---
+
 ## 7. 监控中心 UI（MVP）能力说明
 
 当前监控中心（以 Grafana 为主）对应 MVP 已支持：
