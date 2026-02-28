@@ -2,11 +2,17 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_DIR="$BASE_DIR/runtime"
+PROM_DIR="$BASE_DIR/prometheus"
+ALERT_DIR="$BASE_DIR/alertmanager"
+GRAFANA_DIR="$BASE_DIR/grafana"
 
 for svc in alertmanager prometheus grafana; do
-  pidfile="$RUNTIME_DIR/$svc/$svc.pid"
-  [[ "$svc" == "grafana" ]] && pidfile="$RUNTIME_DIR/grafana/grafana.pid"
+  case "$svc" in
+    alertmanager) pidfile="$ALERT_DIR/alertmanager.pid" ;;
+    prometheus)   pidfile="$PROM_DIR/prometheus.pid" ;;
+    grafana)      pidfile="$GRAFANA_DIR/grafana.pid" ;;
+    *)            continue ;;
+  esac
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -21,4 +27,4 @@ done
 
 echo
 echo "Ports:"
-ss -lntp | grep -E ':9090|:9093|:3000' || true
+ss -lntp 2>/dev/null | grep -E ':9090|:9093|:3000' || true

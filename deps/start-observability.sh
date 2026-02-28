@@ -2,31 +2,38 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_DIR="$BASE_DIR/runtime"
-AUTO_INIT="${OBSERVABILITY_AUTO_INIT:-true}"
+PROM_DIR="$BASE_DIR/prometheus"
+ALERT_DIR="$BASE_DIR/alertmanager"
+GRAFANA_DIR="$BASE_DIR/grafana"
 
-mkdir -p "$RUNTIME_DIR/alertmanager/logs" "$RUNTIME_DIR/prometheus/logs" "$RUNTIME_DIR/grafana/logs"
+mkdir -p "$ALERT_DIR/logs" "$PROM_DIR/logs" "$GRAFANA_DIR/logs"
 
 for bin in \
-  "$BASE_DIR/alertmanager/alertmanager" \
-  "$BASE_DIR/prometheus/prometheus" \
-  "$BASE_DIR/grafana/bin/grafana"; do
+  "$ALERT_DIR/alertmanager" \
+  "$PROM_DIR/prometheus" \
+  "$GRAFANA_DIR/bin/grafana"; do
   if [[ ! -x "$bin" ]]; then
     echo "required binary not found or not executable: $bin"
+    echo "run ./install-observability.sh first"
     exit 1
   fi
 done
 
-# Generate/update default configs before each start (can be disabled by OBSERVABILITY_AUTO_INIT=false)
-if [[ "$AUTO_INIT" == "true" || "$AUTO_INIT" == "1" ]]; then
-  "$BASE_DIR/init-observability-defaults.sh"
-fi
+for cfg in \
+  "$PROM_DIR/prometheus.yml" \
+  "$ALERT_DIR/alertmanager.yml" \
+  "$GRAFANA_DIR/conf/grafana.ini"; do
+  if [[ ! -f "$cfg" ]]; then
+    echo "config not found: $cfg"
+    echo "run ./init-observability-defaults.sh first"
+    exit 1
+  fi
+done
 
-# Safe stop old ones if running
 for pidfile in \
-  "$RUNTIME_DIR/alertmanager/alertmanager.pid" \
-  "$RUNTIME_DIR/prometheus/prometheus.pid" \
-  "$RUNTIME_DIR/grafana/grafana.pid"; do
+  "$ALERT_DIR/alertmanager.pid" \
+  "$PROM_DIR/prometheus.pid" \
+  "$GRAFANA_DIR/grafana.pid"; do
   if [[ -f "$pidfile" ]]; then
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     if [[ -n "${pid}" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -37,23 +44,24 @@ for pidfile in \
   fi
 done
 
-setsid sh -c "exec $BASE_DIR/alertmanager/alertmanager --config.file=$RUNTIME_DIR/alertmanager/alertmanager.yml --storage.path=$RUNTIME_DIR/alertmanager/data --web.listen-address=:9093 >> $RUNTIME_DIR/alertmanager/logs/alertmanager.log 2>&1" < /dev/null &
-echo $! > "$RUNTIME_DIR/alertmanager/alertmanager.pid"
+setsid sh -c "exec $ALERT_DIR/alertmanager --config.file=$ALERT_DIR/alertmanager.yml --storage.path=$ALERT_DIR/data --web.listen-address=:9093 >> $ALERT_DIR/logs/alertmanager.log 2>&1" < /dev/null &
+echo $! > "$ALERT_DIR/alertmanager.pid"
 
-setsid sh -c "exec $BASE_DIR/prometheus/prometheus --config.file=$RUNTIME_DIR/prometheus/prometheus.yml --storage.tsdb.path=$RUNTIME_DIR/prometheus/data --web.listen-address=:9090 --web.enable-lifecycle >> $RUNTIME_DIR/prometheus/logs/prometheus.log 2>&1" < /dev/null &
-echo $! > "$RUNTIME_DIR/prometheus/prometheus.pid"
+setsid sh -c "exec $PROM_DIR/prometheus --config.file=$PROM_DIR/prometheus.yml --storage.tsdb.path=$PROM_DIR/data --web.listen-address=:9090 --web.enable-lifecycle >> $PROM_DIR/logs/prometheus.log 2>&1" < /dev/null &
+echo $! > "$PROM_DIR/prometheus.pid"
 
-setsid sh -c "exec $BASE_DIR/grafana/bin/grafana server --homepath=$BASE_DIR/grafana --config=$RUNTIME_DIR/grafana/grafana.ini >> $RUNTIME_DIR/grafana/logs/grafana.log 2>&1" < /dev/null &
-echo $! > "$RUNTIME_DIR/grafana/grafana.pid"
+setsid sh -c "exec $GRAFANA_DIR/bin/grafana server --homepath=$GRAFANA_DIR --config=$GRAFANA_DIR/conf/grafana.ini >> $GRAFANA_DIR/logs/grafana.log 2>&1" < /dev/null &
+echo $! > "$GRAFANA_DIR/grafana.pid"
 
 sleep 2
 
 echo "Started services:"
 for svc in alertmanager prometheus grafana; do
-  pidfile="$RUNTIME_DIR/$svc/$svc.pid"
-  if [[ "$svc" == "grafana" ]]; then
-    pidfile="$RUNTIME_DIR/grafana/grafana.pid"
-  fi
+  case "$svc" in
+    alertmanager) pidfile="$ALERT_DIR/alertmanager.pid" ;;
+    prometheus)   pidfile="$PROM_DIR/prometheus.pid" ;;
+    grafana)      pidfile="$GRAFANA_DIR/grafana.pid" ;;
+  esac
   pid="$(cat "$pidfile")"
   echo "  - $svc pid=$pid"
 done

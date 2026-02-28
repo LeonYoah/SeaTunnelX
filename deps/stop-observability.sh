@@ -2,7 +2,9 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUNTIME_DIR="$BASE_DIR/runtime"
+PROM_DIR="$BASE_DIR/prometheus"
+ALERT_DIR="$BASE_DIR/alertmanager"
+GRAFANA_DIR="$BASE_DIR/grafana"
 
 stop_one() {
   local name="$1"
@@ -26,6 +28,6 @@ stop_one() {
   rm -f "$pidfile"
 }
 
-stop_one "grafana" "$RUNTIME_DIR/grafana/grafana.pid"
-stop_one "prometheus" "$RUNTIME_DIR/prometheus/prometheus.pid"
-stop_one "alertmanager" "$RUNTIME_DIR/alertmanager/alertmanager.pid"
+stop_one "grafana" "$GRAFANA_DIR/grafana.pid"
+stop_one "prometheus" "$PROM_DIR/prometheus.pid"
+stop_one "alertmanager" "$ALERT_DIR/alertmanager.pid"
