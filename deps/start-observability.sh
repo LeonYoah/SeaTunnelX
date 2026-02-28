@@ -2,9 +2,13 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROM_DIR="$BASE_DIR/prometheus"
-ALERT_DIR="$BASE_DIR/alertmanager"
-GRAFANA_DIR="$BASE_DIR/grafana"
+PROM_DIR="$(ls -d "$BASE_DIR"/prometheus-* 2>/dev/null | head -1)"
+ALERT_DIR="$(ls -d "$BASE_DIR"/alertmanager-* 2>/dev/null | head -1)"
+GRAFANA_DIR="$(ls -d "$BASE_DIR"/grafana-* 2>/dev/null | head -1)"
+if [[ -z "$PROM_DIR" || -z "$ALERT_DIR" || -z "$GRAFANA_DIR" ]]; then
+  echo "Observability components not installed. Run ./install-observability.sh first."
+  exit 1
+fi
 
 mkdir -p "$ALERT_DIR/logs" "$PROM_DIR/logs" "$GRAFANA_DIR/logs"
 

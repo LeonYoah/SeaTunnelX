@@ -8,7 +8,7 @@ set -euo pipefail
 #
 # 行为约定：
 # - 优先使用离线包（deps/downloads 下的三个 tar.gz），缺失则走在线下载。
-# - 在线下载时优先通过 edgeone 代理，失败再回退到官方地址。
+# - 在线下载：Prometheus/Alertmanager 优先走 GitHub 代理，Grafana 直接连官方源（代理不支持）。
 #
 # 安装后需手动执行：
 #   ./init-observability-defaults.sh   # 生成配置
@@ -57,6 +57,7 @@ log() {
   echo "[install-observability] $*"
 }
 
+# 用于 GitHub 源：优先代理，失败回退官方
 download_with_proxy() {
   local url="$1"
   local out="$2"
@@ -65,13 +66,22 @@ download_with_proxy() {
 
   log "Downloading (proxy first): $proxy_url"
   if curl -fSL "$proxy_url" -o "$out"; then
-    log "Downloaded via proxy: $proxy_url"
+    log "Downloaded via proxy"
     return 0
   fi
 
   log "Proxy failed, falling back to origin: $url"
   curl -fSL "$url" -o "$out"
-  log "Downloaded from origin: $url"
+  log "Downloaded from origin"
+}
+
+# 直接下载（Grafana 等非 GitHub 源，代理不支持）
+download_direct() {
+  local url="$1"
+  local out="$2"
+  log "Downloading: $url"
+  curl -fSL "$url" -o "$out"
+  log "Downloaded: $url"
 }
 
 have_offline_bundles() {
@@ -123,18 +133,19 @@ main() {
     log "Offline archives not complete, starting online download..."
     download_with_proxy "$PROM_URL" "$DOWNLOAD_DIR/$PROM_ARCHIVE"
     download_with_proxy "$ALERT_URL" "$DOWNLOAD_DIR/$ALERT_ARCHIVE"
-    download_with_proxy "$GRAFANA_URL" "$DOWNLOAD_DIR/$GRAFANA_ARCHIVE"
+    download_direct "$GRAFANA_URL" "$DOWNLOAD_DIR/$GRAFANA_ARCHIVE"
   fi
 
-  # 安装三件套到 deps 下固定目录
-  install_component_from_tar "$PROM_ARCHIVE" "prometheus" "prometheus-${PROMETHEUS_VERSION}.${PROM_OSARCH}"
-  install_component_from_tar "$ALERT_ARCHIVE" "alertmanager" "alertmanager-${ALERTMANAGER_VERSION}.${ALERT_OSARCH}"
-  install_component_from_tar "$GRAFANA_ARCHIVE" "grafana" "grafana-${GRAFANA_VERSION}.${GRAFANA_OSARCH}"
+  # 安装到带版本号的目录
+  install_component_from_tar "$PROM_ARCHIVE" "prometheus-${PROMETHEUS_VERSION}" "prometheus-${PROMETHEUS_VERSION}.${PROM_OSARCH}"
+  install_component_from_tar "$ALERT_ARCHIVE" "alertmanager-${ALERTMANAGER_VERSION}" "alertmanager-${ALERTMANAGER_VERSION}.${ALERT_OSARCH}"
+  # Grafana 解压目录名为 grafana-X.Y.Z（不含 .linux-amd64）
+  install_component_from_tar "$GRAFANA_ARCHIVE" "grafana-${GRAFANA_VERSION}" "grafana-${GRAFANA_VERSION}"
 
   log "Binaries installed under:"
-  log "  - $BASE_DIR/prometheus"
-  log "  - $BASE_DIR/alertmanager"
-  log "  - $BASE_DIR/grafana"
+  log "  - $BASE_DIR/prometheus-${PROMETHEUS_VERSION}"
+  log "  - $BASE_DIR/alertmanager-${ALERTMANAGER_VERSION}"
+  log "  - $BASE_DIR/grafana-${GRAFANA_VERSION}"
   log ""
   log "Next steps:"
   log "  ./init-observability-defaults.sh   # 生成配置"

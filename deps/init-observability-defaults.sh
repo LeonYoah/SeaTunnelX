@@ -3,14 +3,17 @@ set -euo pipefail
 
 #
 # 根据 deps/*_config 模板生成 Prometheus / Alertmanager / Grafana 配置。
-# 配置与数据直接写入解压目录（prometheus/、alertmanager/、grafana/），
-# 不单独创建 runtime 目录。
+# 配置与数据写入带版本号的解压目录（prometheus-X.Y.Z、alertmanager-X.Y.Z、grafana-X.Y.Z）。
 #
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROM_DIR="$BASE_DIR/prometheus"
-ALERT_DIR="$BASE_DIR/alertmanager"
-GRAFANA_DIR="$BASE_DIR/grafana"
+PROM_DIR="$(ls -d "$BASE_DIR"/prometheus-* 2>/dev/null | head -1)"
+ALERT_DIR="$(ls -d "$BASE_DIR"/alertmanager-* 2>/dev/null | head -1)"
+GRAFANA_DIR="$(ls -d "$BASE_DIR"/grafana-* 2>/dev/null | head -1)"
+if [[ -z "$PROM_DIR" || -z "$ALERT_DIR" || -z "$GRAFANA_DIR" ]]; then
+  echo "Observability components not installed. Run ./install-observability.sh first."
+  exit 1
+fi
 
 # Prometheus URL 仅用于 Grafana datasource
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
