@@ -32,7 +32,7 @@ import (
 
 	pb "github.com/seatunnel/seatunnelX/agent"
 	"github.com/seatunnel/seatunnelX/agent/internal/config"
-	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -139,19 +139,19 @@ type CommandHandler func(ctx context.Context, cmd *pb.CommandRequest) (*pb.Comma
 // Client is the gRPC client for Agent to communicate with Control Plane
 // Client 是 Agent 与 Control Plane 通信的 gRPC 客户端
 type Client struct {
-	config          *config.Config        // Agent 配置
-	conn            *grpc.ClientConn      // gRPC 连接
-	client          pb.AgentServiceClient // gRPC 客户端
-	agentID         string                // Agent ID
-	backoff         *ExponentialBackoff   // 指数退避
-	mu              sync.RWMutex          // 读写锁
-	connected       bool                  // 连接状态
-	stopCh          chan struct{}         // 停止信号通道
-	heartbeatTicker *time.Ticker          // 心跳定时器
-	heartbeatMu     sync.Mutex            // 心跳锁
-	lastHeartbeat   time.Time             // 最后心跳时间
+	config          *config.Config                                                  // Agent 配置
+	conn            *grpc.ClientConn                                                // gRPC 连接
+	client          pb.AgentServiceClient                                           // gRPC 客户端
+	agentID         string                                                          // Agent ID
+	backoff         *ExponentialBackoff                                             // 指数退避
+	mu              sync.RWMutex                                                    // 读写锁
+	connected       bool                                                            // 连接状态
+	stopCh          chan struct{}                                                   // 停止信号通道
+	heartbeatTicker *time.Ticker                                                    // 心跳定时器
+	heartbeatMu     sync.Mutex                                                      // 心跳锁
+	lastHeartbeat   time.Time                                                       // 最后心跳时间
 	cmdStream       grpc.BidiStreamingClient[pb.CommandResponse, pb.CommandRequest] // 命令流
-	cmdStreamMu     sync.Mutex            // 命令流锁
+	cmdStreamMu     sync.Mutex                                                      // 命令流锁
 }
 
 // NewClient creates a new gRPC client
@@ -359,7 +359,7 @@ func (c *Client) Reconnect(ctx context.Context) error {
 
 		// Log reconnection attempt
 		// 记录重连尝试
-		agentlogger.Warnf("Reconnection attempt %d failed: %v, next retry in %v",
+		logger.WarnF(ctx, "Reconnection attempt %d failed: %v, next retry in %v",
 			c.backoff.Attempt(), err, c.backoff.NextBackoff())
 	}
 }
@@ -464,7 +464,7 @@ func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration, get
 				if err != nil {
 					// Log error
 					// 记录错误
-					agentlogger.Errorf("Heartbeat failed: %v", err)
+					logger.ErrorF(ctx, "Heartbeat failed: %v", err)
 				}
 			}
 		}
@@ -532,7 +532,7 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 		return fmt.Errorf("failed to send init message: %w", err)
 	}
 
-	agentlogger.Infof("Command stream established successfully for agent %s / 命令流建立成功，Agent: %s", agentID, agentID)
+	logger.InfoF(ctx, "Command stream established successfully for agent %s / 命令流建立成功，Agent: %s", agentID, agentID)
 
 	// Start goroutine to receive commands and send responses
 	// 启动 goroutine 接收指令并发送响应
@@ -580,7 +580,7 @@ func (c *Client) StartCommandStream(ctx context.Context, handler CommandHandler)
 			// Send response back to Control Plane
 			// 将响应发送回 Control Plane
 			if sendErr := stream.Send(resp); sendErr != nil {
-				agentlogger.Errorf("Failed to send command response: %v", sendErr)
+				logger.ErrorF(ctx, "Failed to send command response: %v", sendErr)
 			}
 		}(cmd)
 	}

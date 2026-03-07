@@ -27,6 +27,7 @@
 package discovery
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -34,7 +35,7 @@ import (
 	"strconv"
 	"strings"
 
-	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 )
 
 // SeaTunnelMainClass is the main class name for SeaTunnel Server
@@ -78,6 +79,7 @@ func (s *ProcessScanner) ScanProcesses() ([]*DiscoveredProcess, error) {
 // scanProcessesUnix scans processes on Unix/Linux
 // scanProcessesUnix 在 Unix/Linux 上扫描进程
 func (s *ProcessScanner) scanProcessesUnix() ([]*DiscoveredProcess, error) {
+	ctx := context.Background()
 	var processes []*DiscoveredProcess
 
 	// Use ps command to get all Java processes containing SeaTunnel main class
@@ -87,7 +89,7 @@ func (s *ProcessScanner) scanProcessesUnix() ([]*DiscoveredProcess, error) {
 	if err != nil {
 		// No processes found is not an error / 未找到进程不是错误
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			agentlogger.Infof("[ProcessScanner] No SeaTunnel processes found / 未找到 SeaTunnel 进程")
+			logger.InfoF(ctx, "[ProcessScanner] No SeaTunnel processes found / 未找到 SeaTunnel 进程")
 			return processes, nil
 		}
 		return nil, fmt.Errorf("failed to scan processes: %w / 扫描进程失败：%w", err, err)
@@ -103,7 +105,7 @@ func (s *ProcessScanner) scanProcessesUnix() ([]*DiscoveredProcess, error) {
 
 		proc, err := s.parseUnixProcessLine(line)
 		if err != nil {
-			agentlogger.Warnf("[ProcessScanner] Warning: failed to parse process line: %v", err)
+			logger.WarnF(ctx, "[ProcessScanner] Warning: failed to parse process line: %v", err)
 			continue
 		}
 
@@ -121,7 +123,7 @@ func (s *ProcessScanner) scanProcessesUnix() ([]*DiscoveredProcess, error) {
 			}
 
 			processes = append(processes, proc)
-			agentlogger.Infof("[ProcessScanner] Found: PID=%d, Role=%s, InstallDir=%s, Version=%s, HazelcastPort=%d, APIPort=%d",
+			logger.InfoF(ctx, "[ProcessScanner] Found: PID=%d, Role=%s, InstallDir=%s, Version=%s, HazelcastPort=%d, APIPort=%d",
 				proc.PID, proc.Role, proc.InstallDir, proc.Version, proc.HazelcastPort, proc.APIPort)
 		}
 	}

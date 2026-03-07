@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 var (
-	rootLogger *zap.SugaredLogger
+	rootLogger *zap.Logger
 	initOnce   sync.Once
 	initErr    error
 )
@@ -21,6 +22,7 @@ var (
 // Init 初始化 Agent 日志：
 // - 同时输出到控制台和日志文件
 // - 日志文件路径使用 cfg.Log.File（默认 /var/log/seatunnelx-agent/agent.log）
+// API 与 internal/logger 一致：DebugF/InfoF/WarnF/ErrorF(ctx, format, args...)
 func Init(cfg *config.Config) error {
 	initOnce.Do(func() {
 		if cfg == nil {
@@ -56,11 +58,10 @@ func Init(cfg *config.Config) error {
 			level,
 		)
 
-		z := zap.New(core,
+		rootLogger = zap.New(core,
 			zap.AddCaller(),
 			zap.AddCallerSkip(1),
 		)
-		rootLogger = z.Sugar()
 	})
 
 	return initErr
@@ -115,26 +116,44 @@ func parseLevel(level string) zapcore.Level {
 // L 返回底层 *zap.SugaredLogger，便于在复杂场景下直接使用
 func L() *zap.SugaredLogger {
 	if rootLogger == nil {
-		// 后备一个简易 logger，避免 nil 崩溃
 		z, _ := zap.NewDevelopment()
 		return z.Sugar()
 	}
-	return rootLogger
+	return rootLogger.Sugar()
 }
 
-func Debugf(format string, args ...interface{}) {
-	L().Debugf(format, args...)
+// DebugF 与 internal/logger 一致：首参为 context，用于后续扩展（如 trace）
+func DebugF(ctx context.Context, format string, args ...interface{}) {
+	if rootLogger == nil {
+		L().Debugf(format, args...)
+		return
+	}
+	rootLogger.Debug(fmt.Sprintf(format, args...))
 }
 
-func Infof(format string, args ...interface{}) {
-	L().Infof(format, args...)
+// InfoF 与 internal/logger 一致
+func InfoF(ctx context.Context, format string, args ...interface{}) {
+	if rootLogger == nil {
+		L().Infof(format, args...)
+		return
+	}
+	rootLogger.Info(fmt.Sprintf(format, args...))
 }
 
-func Warnf(format string, args ...interface{}) {
-	L().Warnf(format, args...)
+// WarnF 与 internal/logger 一致
+func WarnF(ctx context.Context, format string, args ...interface{}) {
+	if rootLogger == nil {
+		L().Warnf(format, args...)
+		return
+	}
+	rootLogger.Warn(fmt.Sprintf(format, args...))
 }
 
-func Errorf(format string, args ...interface{}) {
-	L().Errorf(format, args...)
+// ErrorF 与 internal/logger 一致
+func ErrorF(ctx context.Context, format string, args ...interface{}) {
+	if rootLogger == nil {
+		L().Errorf(format, args...)
+		return
+	}
+	rootLogger.Error(fmt.Sprintf(format, args...))
 }
-

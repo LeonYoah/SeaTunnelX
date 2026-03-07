@@ -34,7 +34,7 @@ import (
 	"syscall"
 	"time"
 
-	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 	"github.com/seatunnel/seatunnelX/agent/internal/process"
 )
 
@@ -174,7 +174,7 @@ func (m *ProcessMonitor) Start(ctx context.Context) error {
 	m.running = true
 	m.mu.Unlock()
 
-	agentlogger.Infof("[ProcessMonitor] Starting with interval: %v / 启动，间隔：%v", m.monitorInterval, m.monitorInterval)
+	logger.InfoF(ctx, "[ProcessMonitor] Starting with interval: %v / 启动，间隔：%v", m.monitorInterval, m.monitorInterval)
 
 	go m.monitorLoop()
 
@@ -196,7 +196,8 @@ func (m *ProcessMonitor) Stop() error {
 	}
 	m.running = false
 
-	agentlogger.Infof("[ProcessMonitor] Stopped / 已停止")
+	ctx := context.Background()
+	logger.InfoF(ctx, "[ProcessMonitor] Stopped / 已停止")
 	return nil
 }
 
@@ -221,6 +222,10 @@ func (m *ProcessMonitor) monitorLoop() {
 // Requirements 3.1, 3.6: Check process status, detect consecutive failures
 // 需求 3.1, 3.6：检查进程状态，检测连续失败
 func (m *ProcessMonitor) checkAllProcesses() {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -236,7 +241,7 @@ func (m *ProcessMonitor) checkAllProcesses() {
 			// Only trigger if we have start params (meaning we can restart it)
 			// 只有在有启动参数时才触发（意味着我们可以重启它）
 			if proc.StartParams != nil {
-				agentlogger.Infof("[ProcessMonitor] Process %s has PID=0, triggering auto-start / 进程 %s 的 PID=0，触发自动启动",
+				logger.InfoF(ctx, "[ProcessMonitor] Process %s has PID=0, triggering auto-start / 进程 %s 的 PID=0，触发自动启动",
 					name, name)
 				proc.Restarting = true // Mark as restarting to prevent duplicate triggers / 标记为正在重启以防止重复触发
 
@@ -260,7 +265,7 @@ func (m *ProcessMonitor) checkAllProcesses() {
 		} else {
 			// Process is not running / 进程未运行
 			proc.ConsecutiveFails++
-			agentlogger.Warnf("[ProcessMonitor] Process %s (PID: %d) not alive, consecutive fails: %d / 进程 %s（PID：%d）不存活，连续失败：%d",
+			logger.WarnF(ctx, "[ProcessMonitor] Process %s (PID: %d) not alive, consecutive fails: %d / 进程 %s（PID：%d）不存活，连续失败：%d",
 				name, proc.PID, proc.ConsecutiveFails, name, proc.PID, proc.ConsecutiveFails)
 
 			// Check if threshold reached / 检查是否达到阈值
@@ -333,7 +338,8 @@ func (m *ProcessMonitor) TrackProcessWithEvent(name string, pid int, installDir,
 	}
 
 	m.trackedProcesses[name] = proc
-	agentlogger.Infof("[ProcessMonitor] Tracking process: %s (PID: %d) / 跟踪进程：%s（PID：%d）", name, pid, name, pid)
+	ctx := context.Background()
+	logger.InfoF(ctx, "[ProcessMonitor] Tracking process: %s (PID: %d) / 跟踪进程：%s（PID：%d）", name, pid, name, pid)
 
 	// Generate started event only if requested / 仅在需要时生成启动事件
 	if sendEvent {
@@ -369,7 +375,8 @@ func (m *ProcessMonitor) UntrackProcess(name string) {
 		m.notifyEvent(event)
 
 		delete(m.trackedProcesses, name)
-		agentlogger.Infof("[ProcessMonitor] Untracked process: %s / 取消跟踪进程：%s", name, name)
+		ctx := context.Background()
+		logger.InfoF(ctx, "[ProcessMonitor] Untracked process: %s / 取消跟踪进程：%s", name, name)
 	}
 }
 
@@ -383,7 +390,8 @@ func (m *ProcessMonitor) UntrackProcessSilent(name string) {
 
 	if _, exists := m.trackedProcesses[name]; exists {
 		delete(m.trackedProcesses, name)
-		agentlogger.Infof("[ProcessMonitor] Silently untracked process (still running): %s / 静默取消跟踪进程（仍在运行）：%s", name, name)
+		ctx := context.Background()
+		logger.InfoF(ctx, "[ProcessMonitor] Silently untracked process (still running): %s / 静默取消跟踪进程（仍在运行）：%s", name, name)
 	}
 }
 
@@ -402,7 +410,8 @@ func (m *ProcessMonitor) UpdateProcessPID(name string, newPID int) {
 			proc.Status = StatusStopped
 		}
 		proc.Restarting = false // Clear restarting flag / 清除重启标记
-		agentlogger.Infof("[ProcessMonitor] Updated process PID: %s -> %d / 更新进程 PID：%s -> %d", name, newPID, name, newPID)
+		ctx := context.Background()
+		logger.InfoF(ctx, "[ProcessMonitor] Updated process PID: %s -> %d / 更新进程 PID：%s -> %d", name, newPID, name, newPID)
 	}
 }
 

@@ -27,10 +27,11 @@
 package discovery
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
-	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 )
 
 // ProcessDiscovery provides on-demand SeaTunnel process discovery
@@ -55,10 +56,11 @@ func NewProcessDiscovery() *ProcessDiscovery {
 // Returns simplified process info: PID, role, install_dir
 // 返回简化的进程信息：PID、角色、安装目录
 func (d *ProcessDiscovery) DiscoverProcesses() ([]*DiscoveredProcess, error) {
+	ctx := context.Background()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	agentlogger.Infof("[ProcessDiscovery] Scanning for SeaTunnel processes... / 正在扫描 SeaTunnel 进程...")
+	logger.InfoF(ctx, "[ProcessDiscovery] Scanning for SeaTunnel processes... / 正在扫描 SeaTunnel 进程...")
 
 	processes, err := d.scanner.ScanProcesses()
 	if err != nil {
@@ -66,9 +68,9 @@ func (d *ProcessDiscovery) DiscoverProcesses() ([]*DiscoveredProcess, error) {
 	}
 
 	if len(processes) == 0 {
-		agentlogger.Infof("[ProcessDiscovery] No SeaTunnel processes found / 未找到 SeaTunnel 进程")
+		logger.InfoF(ctx, "[ProcessDiscovery] No SeaTunnel processes found / 未找到 SeaTunnel 进程")
 	} else {
-		agentlogger.Infof("[ProcessDiscovery] Found %d process(es) / 发现 %d 个进程", len(processes), len(processes))
+		logger.InfoF(ctx, "[ProcessDiscovery] Found %d process(es) / 发现 %d 个进程", len(processes), len(processes))
 	}
 
 	return processes, nil
@@ -121,12 +123,12 @@ func (d *ProcessDiscovery) DiscoverProcessByRole(role string) ([]*DiscoveredProc
 // In the new simplified flow, clusters are created manually by user
 // 在新的简化流程中，集群由用户手动创建
 type DiscoveredCluster struct {
-	Name           string                 `json:"name"`
-	InstallDir     string                 `json:"install_dir"`
-	Version        string                 `json:"version"`
-	DeploymentMode string                 `json:"deployment_mode"`
-	Nodes          []*DiscoveredNode      `json:"nodes"`
-	Config         map[string]any         `json:"config"`
+	Name           string            `json:"name"`
+	InstallDir     string            `json:"install_dir"`
+	Version        string            `json:"version"`
+	DeploymentMode string            `json:"deployment_mode"`
+	Nodes          []*DiscoveredNode `json:"nodes"`
+	Config         map[string]any    `json:"config"`
 }
 
 // DiscoveredNode is kept for backward compatibility
@@ -159,8 +161,9 @@ func NewClusterDiscovery() *ClusterDiscovery {
 // Returns empty cluster list - clusters should be created manually now
 // 返回空的集群列表 - 现在集群应该手动创建
 func (d *ClusterDiscovery) DiscoverNow() ([]*DiscoveredCluster, error) {
-	agentlogger.Warnf("[ClusterDiscovery] DiscoverNow is deprecated. Use ProcessDiscovery.DiscoverProcesses instead.")
-	agentlogger.Warnf("[ClusterDiscovery] DiscoverNow 已弃用。请使用 ProcessDiscovery.DiscoverProcesses。")
+	ctx := context.Background()
+	logger.WarnF(ctx, "[ClusterDiscovery] DiscoverNow is deprecated. Use ProcessDiscovery.DiscoverProcesses instead.")
+	logger.WarnF(ctx, "[ClusterDiscovery] DiscoverNow 已弃用。请使用 ProcessDiscovery.DiscoverProcesses。")
 	return nil, nil
 }
 

@@ -42,7 +42,7 @@ import (
 	"syscall"
 	"time"
 
-	agentlogger "github.com/seatunnel/seatunnelX/agent/internal/logger"
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 )
 
 // Common errors for process management
@@ -764,7 +764,7 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 	}
 
 	if len(pids) == 0 {
-		agentlogger.Infof("No SeaTunnel process found for role '%s' / 未找到角色 '%s' 的 SeaTunnel 进程", role, role)
+		logger.InfoF(ctx, "No SeaTunnel process found for role '%s' / 未找到角色 '%s' 的 SeaTunnel 进程", role, role)
 		// Update tracked process status / 更新跟踪的进程状态
 		if value, ok := m.processes.Load(name); ok {
 			proc := value.(*ManagedProcess)
@@ -779,7 +779,7 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 	// Send SIGTERM to all found processes / 向所有找到的进程发送 SIGTERM
 	for _, pid := range pids {
 		if err := sendSignal(pid, syscall.SIGTERM); err == nil {
-			agentlogger.Infof("Sent SIGTERM to process %d / 向进程 %d 发送 SIGTERM", pid, pid)
+			logger.InfoF(ctx, "Sent SIGTERM to process %d / 向进程 %d 发送 SIGTERM", pid, pid)
 		}
 	}
 
@@ -803,7 +803,7 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 	for _, pid := range pids {
 		if isProcessAlive(pid) {
 			_ = sendSignal(pid, syscall.SIGKILL)
-			agentlogger.Warnf("Sent SIGKILL to process %d / 向进程 %d 发送 SIGKILL", pid, pid)
+			logger.WarnF(ctx, "Sent SIGKILL to process %d / 向进程 %d 发送 SIGKILL", pid, pid)
 		}
 	}
 
@@ -817,7 +817,7 @@ func (m *ProcessManager) StopProcess(ctx context.Context, name string, params *S
 		m.notifyEvent(name, EventStopped, proc)
 	}
 
-	agentlogger.Infof("Stopped %d SeaTunnel process(es) for role '%s' / 停止了 %d 个角色 '%s' 的 SeaTunnel 进程", len(pids), role, len(pids), role)
+	logger.InfoF(ctx, "Stopped %d SeaTunnel process(es) for role '%s' / 停止了 %d 个角色 '%s' 的 SeaTunnel 进程", len(pids), role, len(pids), role)
 	return nil
 }
 
