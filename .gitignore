@@ -31,6 +31,8 @@ frontend/.env
 Thumbs.db
 data/
 lib/
+!frontend/lib/
+!frontend/lib/**
 
 # build
 /build/

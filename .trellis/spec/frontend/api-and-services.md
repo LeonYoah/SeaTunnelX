@@ -37,6 +37,7 @@ export interface ApiError {
   - 每个领域一个 service 类（如 `ClusterService`、`HostService`）。
   - 方法对应后端接口（如 `list(params)`、`getById(id)`、`create(body)`）。
   - 返回类型为 `data` 的类型（如 `ClusterInfo`、`PaginatedResponse<ClusterInfo>`）；不向调用方暴露原始 `ApiResponse`。
+  - 若后端来自 Go / GORM 等实现，**不要假定数组字段一定是 `[]`**；对于会被 UI 直接 `.map()` / `.filter()` 的字段，优先在 service 或 session 恢复边界统一做 normalize，把 `null` 兜底成 `[]`。
 - **使用**：组件或 hooks 从 `lib/services/<domain>` 导入 service，调用静态方法；错误用 try/catch 捕获，消息在 UI 中展示（toast 或行内错误状态）。
 
 ---
@@ -68,3 +69,4 @@ export interface ApiError {
 - 假定成功时一定存在 `data`；拦截器只透传响应，BaseService 假定为 `ApiResponse<T>` 并返回 `data` — 需保证后端 2xx 时始终返回 `data`。
 - 基于会话的认证忘记 `withCredentials: true`；客户端与请求拦截器中已配置。
 - 在调用处定义包含 `error_msg` 的响应类型；应把成功视为 `T`，错误视为抛出的 `Error`。
+- 直接信任后端数组字段永远不是 `null`；尤其是 Go 的 nil slice 可能在 JSON 中变成 `null`，会让 UI 在 `.map()` / `.filter()` / `.length` 处崩溃。对这类字段要在边界统一 normalize。
