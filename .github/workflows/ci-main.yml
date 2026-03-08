@@ -64,7 +64,7 @@ jobs:
           cd frontend
           pnpm run test -- --passWithNoTests
 
-      - name: Build frontend
+      - name: Build standalone frontend
         run: |
           cd frontend
-          pnpm run build
+          pnpm run pack:standalone
