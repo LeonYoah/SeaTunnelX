@@ -18,16 +18,50 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
+print_help() {
+  cat <<'EOF'
+SeaTunnelX 重启脚本
+
+用法:
+  ./scripts/restart.sh [选项]
+
+选项:
+  --no-build       不构建，直接重启（需已有可用产物）
+  --frontend-dev   前端改用 pnpm run dev 启动（跳过前端 build）
+  --no-frontend    仅重启后端
+  --stop-frontend  仅停止前端 PM2 进程并退出
+  -h, --help       显示本帮助
+
+环境变量:
+  PM2_API                        后端 PM2 进程名，默认 seatunnelx-api
+  PM2_UI                         前端 PM2 进程名，默认 seatunnelx-ui
+  CONFIG_PATH                    后端配置文件路径，默认 ./config.yaml
+  APP_EXTERNAL_URL               写入 config.yaml 的 app.external_url，默认 http://127.0.0.1:8000
+  FRONTEND_PORT                  前端端口，默认 80
+  NEXT_PUBLIC_BACKEND_BASE_URL   前端访问后端的基础地址，默认 http://127.0.0.1:8000
+EOF
+}
+
 NO_BUILD=false
 NO_FRONTEND=false
 STOP_FRONTEND=false
 FRONTEND_DEV=false
 for arg in "$@"; do
   case "$arg" in
+    -h|--help)
+      print_help
+      exit 0
+      ;;
     --no-build) NO_BUILD=true ;;
     --frontend-dev) FRONTEND_DEV=true ;;
     --no-frontend) NO_FRONTEND=true ;;
     --stop-frontend) STOP_FRONTEND=true ;;
+    *)
+      echo "未知参数: $arg"
+      echo
+      print_help
+      exit 1
+      ;;
   esac
 done
 
@@ -39,7 +73,8 @@ FRONTEND_PORT="${FRONTEND_PORT:-80}"
 NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-http://127.0.0.1:8000}"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 FRONTEND_STANDALONE_DIR="$FRONTEND_DIR/dist-standalone"
-FRONTEND_ENTRY="$FRONTEND_STANDALONE_DIR/server.js"
+FRONTEND_ENTRY=""
+FRONTEND_RUNTIME_DIR="$FRONTEND_STANDALONE_DIR"
 
 require_cmd() {
   local cmd="$1"
@@ -51,16 +86,10 @@ require_cmd() {
 
 pm2_name_count() {
   local name="$1"
-  pm2 jlist 2>/dev/null | python3 -c '
-import json,sys
-name = sys.argv[1]
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print(0)
-    raise SystemExit(0)
-print(sum(1 for p in data if p.get("name") == name))
-' "$name"
+  pm2 pid "$name" 2>/dev/null | awk '
+    /^[[:space:]]*[0-9]+[[:space:]]*$/ && $1 != "0" { count++ }
+    END { print count + 0 }
+  '
 }
 
 pm2_delete_if_exists() {
@@ -78,57 +107,79 @@ pm2_delete_if_exists() {
 ensure_config_external_url() {
   local config_path="$1"
   local external_url="$2"
+  local temp_path=""
 
   if [[ ! -f "$config_path" ]]; then
     echo "未找到配置文件 $config_path，跳过 external_url 同步."
     return 0
   fi
 
-  python3 - "$config_path" "$external_url" <<'PY'
-from pathlib import Path
-import sys
+  temp_path="$(mktemp)"
+  awk -v external_url="$external_url" '
+    function indent_len(line, matched) {
+      match(line, /^[[:space:]]*/)
+      return RLENGTH
+    }
+    function leading_indent(line) {
+      match(line, /^[[:space:]]*/)
+      return substr(line, 1, RLENGTH)
+    }
+    function ltrim(line) {
+      sub(/^[[:space:]]+/, "", line)
+      return line
+    }
+    BEGIN {
+      app_found = 0
+      external_updated = 0
+      app_indent = ""
+      app_indent_len = -1
+    }
+    {
+      line = $0
+      trimmed = ltrim(line)
 
-config_path = Path(sys.argv[1])
-external_url = sys.argv[2]
-lines = config_path.read_text(encoding="utf-8").splitlines()
+      if (!app_found && line ~ /^[[:space:]]*app:[[:space:]]*$/) {
+        app_found = 1
+        app_indent = leading_indent(line)
+        app_indent_len = indent_len(line)
+        print line
+        next
+      }
 
-app_start = None
-app_indent = ""
-for index, line in enumerate(lines):
-    stripped = line.strip()
-    if stripped.startswith("app:"):
-        app_start = index
-        app_indent = line[: len(line) - len(line.lstrip())]
-        break
+      if (app_found && !external_updated) {
+        current_indent_len = indent_len(line)
 
-if app_start is None:
-    raise SystemExit(0)
+        if (trimmed ~ /^external_url:[[:space:]]*/) {
+          print app_indent "  external_url: \"" external_url "\""
+          external_updated = 1
+          next
+        }
 
-insert_at = app_start + 1
-found = False
-for index in range(app_start + 1, len(lines)):
-    line = lines[index]
-    stripped = line.strip()
-    indent = line[: len(line) - len(line.lstrip())]
-    if stripped and not stripped.startswith("#") and len(indent) <= len(app_indent):
-      break
-    if stripped.startswith("external_url:"):
-      lines[index] = f'{app_indent}  external_url: "{external_url}"'
-      found = True
-      break
-    insert_at = index + 1
+        if (trimmed != "" && trimmed !~ /^#/ && current_indent_len <= app_indent_len) {
+          print app_indent "  external_url: \"" external_url "\""
+          external_updated = 1
+        }
+      }
 
-if not found:
-    lines.insert(insert_at, f'{app_indent}  external_url: "{external_url}"')
-
-content = "\n".join(lines) + "\n"
-config_path.write_text(content, encoding="utf-8")
-PY
+      print line
+    }
+    END {
+      if (app_found && !external_updated) {
+        print app_indent "  external_url: \"" external_url "\""
+      }
+    }
+  ' "$config_path" > "$temp_path"
+  mv "$temp_path" "$config_path"
 
   echo "      已同步 app.external_url = $external_url"
 }
 
 prepare_frontend_standalone() {
+  local next_standalone_dir="$FRONTEND_DIR/.next/standalone"
+  local next_standalone_entry=""
+  local entry_relative_path=""
+  local runtime_relative_dir=""
+
   if [[ ! -f "$FRONTEND_DIR/package.json" ]]; then
     echo "未找到 frontend/package.json，跳过前端"
     return 1
@@ -141,20 +192,36 @@ prepare_frontend_standalone() {
     pnpm run build
   fi
 
-  if [[ ! -f "$FRONTEND_DIR/.next/standalone/server.js" ]]; then
-    echo "未找到 .next/standalone/server.js，请确认 next.config.ts 已配置 output: 'standalone'"
+  if [[ -f "$next_standalone_dir/server.js" ]]; then
+    next_standalone_entry="$next_standalone_dir/server.js"
+  else
+    next_standalone_entry="$(find "$next_standalone_dir" -maxdepth 3 -type f -name 'server.js' | sort | head -n 1)"
+  fi
+
+  if [[ -z "$next_standalone_entry" || ! -f "$next_standalone_entry" ]]; then
+    echo "未找到 .next/standalone 下的 server.js，请确认 next.config.ts 已配置 output: 'standalone'"
     return 1
   fi
 
-  echo "      组装 standalone 运行目录..."
+  entry_relative_path="${next_standalone_entry#"$next_standalone_dir"/}"
+  runtime_relative_dir="$(dirname "$entry_relative_path")"
+
+  echo "      组装 standalone 运行目录 (entry: $entry_relative_path)..."
   rm -rf "$FRONTEND_STANDALONE_DIR"
-  mkdir -p "$FRONTEND_STANDALONE_DIR/.next"
+  mkdir -p "$FRONTEND_STANDALONE_DIR"
   cp -a "$FRONTEND_DIR/.next/standalone/." "$FRONTEND_STANDALONE_DIR/"
+  FRONTEND_ENTRY="$FRONTEND_STANDALONE_DIR/$entry_relative_path"
+  if [[ "$runtime_relative_dir" == "." ]]; then
+    FRONTEND_RUNTIME_DIR="$FRONTEND_STANDALONE_DIR"
+  else
+    FRONTEND_RUNTIME_DIR="$FRONTEND_STANDALONE_DIR/$runtime_relative_dir"
+  fi
   if [[ -d "$FRONTEND_DIR/.next/static" ]]; then
-    cp -a "$FRONTEND_DIR/.next/static" "$FRONTEND_STANDALONE_DIR/.next/static"
+    mkdir -p "$FRONTEND_RUNTIME_DIR/.next"
+    cp -a "$FRONTEND_DIR/.next/static" "$FRONTEND_RUNTIME_DIR/.next/static"
   fi
   if [[ -d "$FRONTEND_DIR/public" ]]; then
-    cp -a "$FRONTEND_DIR/public" "$FRONTEND_STANDALONE_DIR/public"
+    cp -a "$FRONTEND_DIR/public" "$FRONTEND_RUNTIME_DIR/public"
   fi
   cd "$PROJECT_ROOT"
 
@@ -181,7 +248,6 @@ start_frontend_dev() {
 require_cmd go
 require_cmd pm2
 require_cmd pnpm
-require_cmd python3
 
 if [[ ! -f go.mod ]]; then
   echo "未在项目根找到 go.mod，请于项目根目录执行: ./scripts/restart.sh"
@@ -246,7 +312,7 @@ else
     if prepare_frontend_standalone; then
       pm2_delete_if_exists "$PM2_UI"
       HOSTNAME="0.0.0.0" PORT="$FRONTEND_PORT" NEXT_PUBLIC_BACKEND_BASE_URL="$NEXT_PUBLIC_BACKEND_BASE_URL" \
-        pm2 start "$FRONTEND_ENTRY" --name "$PM2_UI" --cwd "$FRONTEND_STANDALONE_DIR" --update-env
+        pm2 start "$FRONTEND_ENTRY" --name "$PM2_UI" --cwd "$FRONTEND_RUNTIME_DIR" --update-env
       echo "      前端已启动 (http://127.0.0.1:$FRONTEND_PORT)."
     else
       echo "      前端启动已跳过."

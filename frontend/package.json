@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "build:standalone": "next build",
-    "pack:standalone": "pnpm build:standalone && rm -rf dist-standalone && mkdir -p dist-standalone/.next && cp -r .next/standalone/. dist-standalone/ && cp -r .next/static dist-standalone/.next/static && cp -r public dist-standalone/public",
+    "pack:standalone": "pnpm build:standalone && node scripts/pack-standalone.mjs",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",

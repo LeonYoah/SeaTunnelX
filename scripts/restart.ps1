@@ -28,6 +28,10 @@ $AppExternalUrl = if ($env:APP_EXTERNAL_URL) { $env:APP_EXTERNAL_URL } else { "h
 $PM2_UI = "seatunnelx-ui"
 $FrontendPort = if ($env:FRONTEND_PORT) { $env:FRONTEND_PORT } else { "80" }
 $BackendBaseUrl = if ($env:NEXT_PUBLIC_BACKEND_BASE_URL) { $env:NEXT_PUBLIC_BACKEND_BASE_URL } else { "http://127.0.0.1:8000" }
+$FrontendDir = Join-Path $ProjectRoot "frontend"
+$FrontendStandaloneDir = Join-Path $FrontendDir "dist-standalone"
+$script:FrontendEntry = $null
+$script:FrontendRuntimeDir = $FrontendStandaloneDir
 
 function Sync-AppExternalUrl {
     param(
@@ -94,6 +98,95 @@ function Sync-AppExternalUrl {
     Write-Host "      已同步 app.external_url = $ExternalUrl" -ForegroundColor Gray
 }
 
+function Resolve-StandaloneServerEntry {
+    param(
+        [string]$StandaloneRoot
+    )
+
+    $rootEntry = Join-Path $StandaloneRoot "server.js"
+    if (Test-Path $rootEntry) {
+        return $rootEntry
+    }
+
+    $nestedEntry = Get-ChildItem -Path $StandaloneRoot -Filter "server.js" -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object FullName |
+        Select-Object -First 1
+
+    if ($null -ne $nestedEntry) {
+        return $nestedEntry.FullName
+    }
+
+    return $null
+}
+
+function Prepare-FrontendStandalone {
+    param(
+        [switch]$SkipBuild
+    )
+
+    if (-not (Test-Path (Join-Path $FrontendDir "package.json"))) {
+        Write-Host "      未找到 frontend/package.json，跳过前端." -ForegroundColor Yellow
+        return $false
+    }
+
+    Set-Location $FrontendDir
+
+    if (-not $SkipBuild) {
+        Write-Host "      构建前端（next build）..." -ForegroundColor Gray
+        pnpm run build
+        if ($LASTEXITCODE -ne 0) {
+            Set-Location $ProjectRoot
+            return $false
+        }
+    }
+
+    $nextStandaloneDir = Join-Path $FrontendDir ".next\standalone"
+    $nextStandaloneEntry = Resolve-StandaloneServerEntry -StandaloneRoot $nextStandaloneDir
+    if (-not $nextStandaloneEntry -or -not (Test-Path $nextStandaloneEntry)) {
+        Write-Host "      未找到 .next/standalone 下的 server.js，请确认 next.config.ts 已配置 output: 'standalone'" -ForegroundColor Yellow
+        Set-Location $ProjectRoot
+        return $false
+    }
+
+    $entryRelativePath = [System.IO.Path]::GetRelativePath($nextStandaloneDir, $nextStandaloneEntry)
+    $runtimeRelativeDir = Split-Path -Path $entryRelativePath -Parent
+
+    Write-Host "      组装 standalone 运行目录 (entry: $entryRelativePath) ..." -ForegroundColor Gray
+    if (Test-Path $FrontendStandaloneDir) {
+        Remove-Item $FrontendStandaloneDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $FrontendStandaloneDir | Out-Null
+    Copy-Item (Join-Path $nextStandaloneDir "*") $FrontendStandaloneDir -Recurse -Force
+
+    $script:FrontendEntry = Join-Path $FrontendStandaloneDir $entryRelativePath
+    if ([string]::IsNullOrWhiteSpace($runtimeRelativeDir) -or $runtimeRelativeDir -eq ".") {
+        $script:FrontendRuntimeDir = $FrontendStandaloneDir
+    } else {
+        $script:FrontendRuntimeDir = Join-Path $FrontendStandaloneDir $runtimeRelativeDir
+    }
+
+    $staticDir = Join-Path $FrontendDir ".next\static"
+    if (Test-Path $staticDir) {
+        $targetNextDir = Join-Path $script:FrontendRuntimeDir ".next"
+        New-Item -ItemType Directory -Force -Path $targetNextDir | Out-Null
+        Copy-Item $staticDir (Join-Path $targetNextDir "static") -Recurse -Force
+    }
+
+    $publicDir = Join-Path $FrontendDir "public"
+    if (Test-Path $publicDir) {
+        Copy-Item $publicDir (Join-Path $script:FrontendRuntimeDir "public") -Recurse -Force
+    }
+
+    Set-Location $ProjectRoot
+
+    if (-not (Test-Path $script:FrontendEntry)) {
+        Write-Host "      standalone 产物不完整: $script:FrontendEntry 不存在" -ForegroundColor Yellow
+        return $false
+    }
+
+    return $true
+}
+
 Sync-AppExternalUrl -Path $ConfigPath -ExternalUrl $AppExternalUrl
 
 if ($StopFrontend) {
@@ -152,11 +245,10 @@ Write-Host "      已启动 (API 默认 http://localhost:8000，日志见 config
 
 if (-not $NoFrontend) {
     $step++; Write-Host "[$step/$total] 前端 ..." -ForegroundColor Cyan
-    $frontendDir = Join-Path $ProjectRoot "frontend"
-    if (-not (Test-Path (Join-Path $frontendDir "package.json"))) {
+    if (-not (Test-Path (Join-Path $FrontendDir "package.json"))) {
         Write-Host "      未找到 frontend/package.json，跳过前端." -ForegroundColor Yellow
     } else {
-        Set-Location $frontendDir
+        Set-Location $FrontendDir
         if ($FrontendDev) {
             $env:HOSTNAME = "0.0.0.0"
             $env:PORT = "$FrontendPort"
@@ -168,18 +260,19 @@ if (-not $NoFrontend) {
             Set-Location $ProjectRoot
             Write-Host "      前端开发模式已启动 (PM2: $PM2_UI，端口 $FrontendPort)." -ForegroundColor Green
         } else {
-            if (-not $NoBuild) {
-                pnpm run build
-                if ($LASTEXITCODE -ne 0) { Set-Location $ProjectRoot; exit $LASTEXITCODE }
-            }
-            $env:PORT = "$FrontendPort"
-            $env:NEXT_PUBLIC_BACKEND_BASE_URL = $BackendBaseUrl
-            pm2 delete $PM2_UI 2>$null
-            pm2 start "pnpm start -- -p $FrontendPort" --name $PM2_UI --update-env
-            if ($LASTEXITCODE -ne 0) { Set-Location $ProjectRoot; exit $LASTEXITCODE }
-            pm2 status
             Set-Location $ProjectRoot
-            Write-Host "      前端已启动 (PM2: $PM2_UI，端口 $FrontendPort)." -ForegroundColor Green
+            if (Prepare-FrontendStandalone -SkipBuild:$NoBuild) {
+                $env:HOSTNAME = "0.0.0.0"
+                $env:PORT = "$FrontendPort"
+                $env:NEXT_PUBLIC_BACKEND_BASE_URL = $BackendBaseUrl
+                pm2 delete $PM2_UI 2>$null
+                pm2 start $script:FrontendEntry --name $PM2_UI --cwd $script:FrontendRuntimeDir --update-env
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                pm2 status
+                Write-Host "      前端 standalone 已启动 (PM2: $PM2_UI，端口 $FrontendPort)." -ForegroundColor Green
+            } else {
+                Write-Host "      前端启动已跳过." -ForegroundColor Yellow
+            }
         }
     }
 } else {
