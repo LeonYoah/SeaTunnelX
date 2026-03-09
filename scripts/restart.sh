@@ -119,6 +119,41 @@ pm2_delete_if_exists() {
   fi
 }
 
+port_listener_pids() {
+  local port="$1"
+  ss -ltnp 2>/dev/null | awk -v port=":$port" '
+    $4 ~ port"$" {
+      while (match($0, /pid=[0-9]+/)) {
+        pid = substr($0, RSTART + 4, RLENGTH - 4)
+        print pid
+        $0 = substr($0, RSTART + RLENGTH)
+      }
+    }
+  ' | sort -u
+}
+
+kill_port_listeners_if_exists() {
+  local port="$1"
+  local pids=""
+  pids="$(port_listener_pids "$port" || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+
+  echo "      检测到端口 $port 已被占用，清理旧进程: $(echo "$pids" | xargs)"
+  while read -r pid; do
+    [[ -z "$pid" ]] && continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done <<< "$pids"
+  sleep 1
+  while read -r pid; do
+    [[ -z "$pid" ]] && continue
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done <<< "$pids"
+}
+
 ensure_config_external_url() {
   local config_path="$1"
   local external_url="$2"
@@ -254,6 +289,7 @@ start_frontend_dev() {
   fi
 
   pm2_delete_if_exists "$PM2_UI"
+  kill_port_listeners_if_exists "$FRONTEND_PORT"
   HOSTNAME="0.0.0.0" PORT="$FRONTEND_PORT" NEXT_PUBLIC_BACKEND_BASE_URL="$NEXT_PUBLIC_BACKEND_BASE_URL" \
     pm2 start pnpm --name "$PM2_UI" --cwd "$FRONTEND_DIR" --update-env -- exec next dev --turbopack --hostname 0.0.0.0 --port "$FRONTEND_PORT"
   echo "      前端开发模式已启动 (http://127.0.0.1:$FRONTEND_PORT, command: pnpm run dev)."
@@ -326,6 +362,7 @@ else
     echo "[$step/$total] 启动前端 standalone (PM2: $PM2_UI) ..."
     if prepare_frontend_standalone; then
       pm2_delete_if_exists "$PM2_UI"
+      kill_port_listeners_if_exists "$FRONTEND_PORT"
       HOSTNAME="0.0.0.0" PORT="$FRONTEND_PORT" NEXT_PUBLIC_BACKEND_BASE_URL="$NEXT_PUBLIC_BACKEND_BASE_URL" \
         pm2 start "$FRONTEND_ENTRY" --name "$PM2_UI" --cwd "$FRONTEND_RUNTIME_DIR" --update-env
       echo "      前端已启动 (http://127.0.0.1:$FRONTEND_PORT)."
