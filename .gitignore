@@ -48,3 +48,15 @@ main
 # agent binary
 agent/seatunnelx-agent
 agent/seatunnelx-agent.exe
+
+# local runtime artifacts
+app.pid
+frontend-next.pid
+frontend/dist-standalone/
+seatunnelx
+
+# downloaded observability dependencies
+deps/grafana-12.3.3/
+deps/downloads/
+deps/alertmanager-0.31.1/
+deps/prometheus-3.9.1/
