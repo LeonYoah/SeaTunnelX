@@ -656,7 +656,11 @@
         "installComplete": "安装完成",
         "installFailed": "安装失败"
       }
-    }
+    },
+    "masterWorkerNodeConfig": "Master/Worker 节点配置",
+    "hazelcastMasterPort": "Hazelcast Master 端口",
+    "workerPortRequired": "Hazelcast Worker 端口是必填项",
+    "hazelcastWorkerPort": "Hazelcast Worker 端口"
   },
   "audit": {
     "commandsTitle": "命令记录",

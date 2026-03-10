@@ -44,9 +44,12 @@ import {
   PrecheckCheckItem,
   PrecheckResult,
   buildNodeJVMOverride,
+  getClusterPortDefaultsForRole,
+  getClusterJVMConfig,
   getClusterJVMValueForRole,
   getNodeJVMOverrideValue,
 } from '@/lib/services/cluster/types';
+import {buildResolvedClusterConfigFromConfigs} from './nodeConfigDefaults';
 
 interface EditNodeDialogProps {
   open: boolean;
@@ -54,6 +57,7 @@ interface EditNodeDialogProps {
   node: NodeInfo | null;
   deploymentMode: DeploymentMode;
   clusterConfig?: ClusterConfig;
+  clusterInstallDir?: string;
   onSuccess: () => void;
 }
 
@@ -70,53 +74,110 @@ function getRoleTranslationKey(role: string): 'master' | 'worker' | 'masterWorke
   return 'undefined';
 }
 
+function getPrimaryPortLabelKey(
+  role: NodeRole,
+): 'hazelcastMasterPort' | 'hazelcastWorkerPort' {
+  return role === NodeRole.WORKER ? 'hazelcastWorkerPort' : 'hazelcastMasterPort';
+}
+
+function getPrimaryPortRequiredMessageKey(
+  role: NodeRole,
+): 'cluster.hazelcastPortRequired' | 'cluster.workerPortRequired' {
+  return role === NodeRole.WORKER ? 'cluster.workerPortRequired' : 'cluster.hazelcastPortRequired';
+}
+
+function resolveNodeInstallDir(node: NodeInfo, clusterInstallDir?: string): string {
+  if (node.install_dir?.trim()) {
+    return node.install_dir.trim();
+  }
+  if (clusterInstallDir?.trim()) {
+    return clusterInstallDir.trim();
+  }
+  return '/opt/seatunnel';
+}
+
 export function EditNodeDialog({
   open,
   onOpenChange,
   node,
   deploymentMode,
   clusterConfig,
+  clusterInstallDir,
   onSuccess,
 }: EditNodeDialogProps) {
   const t = useTranslations();
   const [loading, setLoading] = useState(false);
   const [precheckLoading, setPrecheckLoading] = useState(false);
   const [precheckResult, setPrecheckResult] = useState<PrecheckResult | null>(null);
+  const [resolvedClusterConfig, setResolvedClusterConfig] = useState<ClusterConfig | undefined>(
+    clusterConfig,
+  );
 
   const [installDir, setInstallDir] = useState('');
   const [hazelcastPort, setHazelcastPort] = useState(0);
   const [apiPort, setApiPort] = useState(0);
-  const [workerPort, setWorkerPort] = useState(0);
   const [jvmOverrideEnabled, setJvmOverrideEnabled] = useState(false);
   const [jvmHeapSize, setJvmHeapSize] = useState(0);
 
   useEffect(() => {
-    if (!node) {
+    if (!node || !open) {
       return;
     }
-    setInstallDir(node.install_dir || '/opt/seatunnel');
-    setHazelcastPort(
-      node.hazelcast_port ||
-        (node.role === NodeRole.WORKER
-          ? DefaultPorts.WORKER_HAZELCAST
-          : DefaultPorts.MASTER_HAZELCAST),
-    );
-    setApiPort(node.api_port || 0);
-    setWorkerPort(node.worker_port || DefaultPorts.WORKER_HAZELCAST);
+    let cancelled = false;
 
-    const currentOverride = getNodeJVMOverrideValue(node.role, node.overrides);
-    const inheritedValue = getClusterJVMValueForRole(node.role, clusterConfig);
-    setJvmOverrideEnabled(currentOverride !== undefined);
-    setJvmHeapSize(currentOverride ?? inheritedValue ?? 0);
-    setPrecheckResult(null);
-  }, [node, clusterConfig]);
+    const initialize = async () => {
+      let effectiveClusterConfig = clusterConfig;
+      if (!getClusterJVMConfig(clusterConfig)) {
+        const configsResult = await services.config.getClusterConfigsSafe(node.cluster_id);
+        if (configsResult.success && configsResult.data) {
+          effectiveClusterConfig = buildResolvedClusterConfigFromConfigs(
+            clusterConfig,
+            deploymentMode,
+            configsResult.data,
+          );
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      const clusterPortDefaults = getClusterPortDefaultsForRole(node.role, effectiveClusterConfig);
+      setResolvedClusterConfig(effectiveClusterConfig);
+      setInstallDir(resolveNodeInstallDir(node, clusterInstallDir));
+      setHazelcastPort(
+        node.hazelcast_port ||
+          clusterPortDefaults.hazelcastPort ||
+          (node.role === NodeRole.WORKER
+            ? DefaultPorts.WORKER_HAZELCAST
+            : DefaultPorts.MASTER_HAZELCAST),
+      );
+      setApiPort(
+        node.role === NodeRole.WORKER
+          ? 0
+          : node.api_port || clusterPortDefaults.apiPort || DefaultPorts.MASTER_API,
+      );
+
+      const currentOverride = getNodeJVMOverrideValue(node.role, node.overrides);
+      const inheritedValue = getClusterJVMValueForRole(node.role, effectiveClusterConfig);
+      setJvmOverrideEnabled(currentOverride !== undefined);
+      setJvmHeapSize(currentOverride ?? inheritedValue ?? 0);
+      setPrecheckResult(null);
+    };
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [node, open, clusterConfig, clusterInstallDir, deploymentMode]);
 
   const handlePrecheck = async () => {
     if (!node) {
       return;
     }
     if (!hazelcastPort || hazelcastPort <= 0) {
-      toast.error(t('cluster.hazelcastPortRequired'));
+      toast.error(t(getPrimaryPortRequiredMessageKey(node.role)));
       return;
     }
 
@@ -126,13 +187,9 @@ export function EditNodeDialog({
       const result = await services.cluster.precheckNodeSafe(node.cluster_id, {
         host_id: node.host_id,
         role: node.role,
-        install_dir: installDir.trim() || '/opt/seatunnel',
+        install_dir: installDir.trim() || resolveNodeInstallDir(node, clusterInstallDir),
         hazelcast_port: hazelcastPort,
         api_port: node.role === NodeRole.WORKER ? undefined : apiPort || undefined,
-        worker_port:
-          deploymentMode === DeploymentMode.HYBRID && node.role === NodeRole.MASTER_WORKER
-            ? workerPort || undefined
-            : undefined,
       });
 
       if (result.success && result.data) {
@@ -159,7 +216,7 @@ export function EditNodeDialog({
       return;
     }
     if (!hazelcastPort || hazelcastPort <= 0) {
-      toast.error(t('cluster.hazelcastPortRequired'));
+      toast.error(t(getPrimaryPortRequiredMessageKey(node.role)));
       return;
     }
     if (jvmOverrideEnabled && (!jvmHeapSize || jvmHeapSize <= 0)) {
@@ -173,10 +230,6 @@ export function EditNodeDialog({
         install_dir: installDir.trim(),
         hazelcast_port: hazelcastPort,
         api_port: node.role === NodeRole.WORKER ? undefined : apiPort || undefined,
-        worker_port:
-          deploymentMode === DeploymentMode.HYBRID && node.role === NodeRole.MASTER_WORKER
-            ? workerPort || undefined
-            : undefined,
         overrides: jvmOverrideEnabled
           ? buildNodeJVMOverride(node.role, jvmHeapSize)
           : {},
@@ -209,7 +262,7 @@ export function EditNodeDialog({
     return null;
   }
 
-  const clusterDefaultHeap = getClusterJVMValueForRole(node.role, clusterConfig);
+  const clusterDefaultHeap = getClusterJVMValueForRole(node.role, resolvedClusterConfig);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -264,7 +317,8 @@ export function EditNodeDialog({
             <div className='grid gap-4 md:grid-cols-3'>
               <div className='space-y-1'>
                 <Label className='text-xs'>
-                  {t('cluster.hazelcastPort')} <span className='text-destructive'>*</span>
+                  {t(`cluster.${getPrimaryPortLabelKey(node.role)}`)}{' '}
+                  <span className='text-destructive'>*</span>
                 </Label>
                 <Input
                   type='number'
@@ -282,19 +336,6 @@ export function EditNodeDialog({
                     type='number'
                     value={apiPort || ''}
                     onChange={(e) => setApiPort(parseInt(e.target.value, 10) || 0)}
-                  />
-                </div>
-              )}
-
-              {node.role === NodeRole.MASTER_WORKER && (
-                <div className='space-y-1'>
-                  <Label className='text-xs'>
-                    {t('cluster.workerPort')} <span className='text-muted-foreground'>({t('common.optional')})</span>
-                  </Label>
-                  <Input
-                    type='number'
-                    value={workerPort || ''}
-                    onChange={(e) => setWorkerPort(parseInt(e.target.value, 10) || 0)}
                   />
                 </div>
               )}

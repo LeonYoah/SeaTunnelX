@@ -656,7 +656,11 @@
         "installComplete": "Installation complete",
         "installFailed": "Installation failed"
       }
-    }
+    },
+    "masterWorkerNodeConfig": "Master/Worker Node Config",
+    "hazelcastMasterPort": "Hazelcast Master Port",
+    "workerPortRequired": "Hazelcast Worker port is required",
+    "hazelcastWorkerPort": "Hazelcast Worker Port"
   },
   "audit": {
     "commandsTitle": "Command Logs",

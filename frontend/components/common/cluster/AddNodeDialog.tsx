@@ -50,12 +50,16 @@ import {
   ClusterConfig,
   DefaultPorts,
   DeploymentMode,
+  NodeInfo,
   NodeRole,
   PrecheckCheckItem,
   PrecheckResult,
   buildNodeJVMOverride,
+  getClusterPortDefaultsForRole,
+  getClusterJVMConfig,
   getClusterJVMValueForRole,
 } from '@/lib/services/cluster/types';
+import {buildResolvedClusterConfigFromConfigs} from './nodeConfigDefaults';
 
 interface AddNodeDialogProps {
   open: boolean;
@@ -63,6 +67,8 @@ interface AddNodeDialogProps {
   clusterId: number;
   deploymentMode: DeploymentMode;
   clusterConfig?: ClusterConfig;
+  clusterInstallDir?: string;
+  existingNodes?: NodeInfo[];
   onSuccess: () => void;
 }
 
@@ -82,7 +88,7 @@ interface RolePrecheckResult {
 const FALLBACK_JVM_HEAP: Record<NodeRole, number> = {
   [NodeRole.MASTER]: 2,
   [NodeRole.WORKER]: 2,
-  [NodeRole.MASTER_WORKER]: 3,
+  [NodeRole.MASTER_WORKER]: 2,
 };
 
 function getRoleTranslationKey(role: NodeRole): 'master' | 'worker' | 'masterWorker' {
@@ -95,15 +101,75 @@ function getRoleTranslationKey(role: NodeRole): 'master' | 'worker' | 'masterWor
   return 'masterWorker';
 }
 
-function buildDefaultRoleForm(role: NodeRole, clusterConfig?: ClusterConfig): RoleFormState {
+function getRoleConfigTitleKey(
+  role: NodeRole,
+): 'masterNodeConfig' | 'workerNodeConfig' | 'masterWorkerNodeConfig' {
+  if (role === NodeRole.MASTER) {
+    return 'masterNodeConfig';
+  }
+  if (role === NodeRole.WORKER) {
+    return 'workerNodeConfig';
+  }
+  return 'masterWorkerNodeConfig';
+}
+
+function getPrimaryPortLabelKey(
+  role: NodeRole,
+): 'hazelcastMasterPort' | 'hazelcastWorkerPort' {
+  return role === NodeRole.WORKER ? 'hazelcastWorkerPort' : 'hazelcastMasterPort';
+}
+
+function getPrimaryPortRequiredMessageKey(
+  role: NodeRole,
+): 'cluster.hazelcastPortRequired' | 'cluster.workerPortRequired' {
+  return role === NodeRole.WORKER ? 'cluster.workerPortRequired' : 'cluster.hazelcastPortRequired';
+}
+
+function resolveDefaultInstallDir(
+  clusterInstallDir?: string,
+  existingNodes?: NodeInfo[],
+): string {
+  if (clusterInstallDir?.trim()) {
+    return clusterInstallDir.trim();
+  }
+  const existingInstallDir = existingNodes?.find((node) => node.install_dir?.trim())?.install_dir;
+  if (existingInstallDir?.trim()) {
+    return existingInstallDir.trim();
+  }
+  return '/opt/seatunnel';
+}
+
+function getValidPortOrUndefined(value?: number): number | undefined {
+  return value && value > 0 ? value : undefined;
+}
+
+function buildDefaultRoleForm(
+  role: NodeRole,
+  clusterConfig?: ClusterConfig,
+  existingNodes?: NodeInfo[],
+): RoleFormState {
+  const clusterPortDefaults = getClusterPortDefaultsForRole(role, clusterConfig);
+  const existingRoleNode = existingNodes?.find((node) => node.role === role);
+
   return {
     hazelcastPort:
-      role === NodeRole.WORKER
+      clusterPortDefaults.hazelcastPort ??
+      getValidPortOrUndefined(existingRoleNode?.hazelcast_port) ??
+      (role === NodeRole.WORKER
         ? DefaultPorts.WORKER_HAZELCAST
-        : DefaultPorts.MASTER_HAZELCAST,
-    apiPort: role === NodeRole.WORKER ? 0 : DefaultPorts.MASTER_API,
+        : DefaultPorts.MASTER_HAZELCAST),
+    apiPort:
+      role === NodeRole.WORKER
+        ? 0
+        : clusterPortDefaults.apiPort ??
+          getValidPortOrUndefined(existingRoleNode?.api_port) ??
+          DefaultPorts.MASTER_API,
     workerPort:
-      role === NodeRole.MASTER_WORKER ? DefaultPorts.WORKER_HAZELCAST : 0,
+      role === NodeRole.MASTER_WORKER
+        ? clusterPortDefaults.workerPort ??
+          getValidPortOrUndefined(existingRoleNode?.worker_port) ??
+          DefaultPorts.WORKER_HAZELCAST
+        : 0,
     jvmOverrideEnabled: false,
     jvmHeapSize:
       getClusterJVMValueForRole(role, clusterConfig) ?? FALLBACK_JVM_HEAP[role],
@@ -116,10 +182,19 @@ export function AddNodeDialog({
   clusterId,
   deploymentMode,
   clusterConfig,
+  clusterInstallDir,
+  existingNodes = [],
   onSuccess,
 }: AddNodeDialogProps) {
   const t = useTranslations();
   const isHybrid = deploymentMode === DeploymentMode.HYBRID;
+  const [resolvedClusterConfig, setResolvedClusterConfig] = useState<ClusterConfig | undefined>(
+    clusterConfig,
+  );
+  const defaultInstallDir = useMemo(
+    () => resolveDefaultInstallDir(clusterInstallDir, existingNodes),
+    [clusterInstallDir, existingNodes],
+  );
 
   const [loading, setLoading] = useState(false);
   const [loadingHosts, setLoadingHosts] = useState(false);
@@ -127,7 +202,7 @@ export function AddNodeDialog({
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
   const [hostId, setHostId] = useState('');
-  const [installDir, setInstallDir] = useState('/opt/seatunnel');
+  const [installDir, setInstallDir] = useState(defaultInstallDir);
   const [selectedMaster, setSelectedMaster] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState(false);
   const [availableHosts, setAvailableHosts] = useState<HostInfo[]>([]);
@@ -136,13 +211,13 @@ export function AddNodeDialog({
   const [precheckResults, setPrecheckResults] = useState<RolePrecheckResult[]>([]);
 
   const [hybridForm, setHybridForm] = useState<RoleFormState>(
-    buildDefaultRoleForm(NodeRole.MASTER_WORKER, clusterConfig),
+    buildDefaultRoleForm(NodeRole.MASTER_WORKER, clusterConfig, existingNodes),
   );
   const [masterForm, setMasterForm] = useState<RoleFormState>(
-    buildDefaultRoleForm(NodeRole.MASTER, clusterConfig),
+    buildDefaultRoleForm(NodeRole.MASTER, clusterConfig, existingNodes),
   );
   const [workerForm, setWorkerForm] = useState<RoleFormState>(
-    buildDefaultRoleForm(NodeRole.WORKER, clusterConfig),
+    buildDefaultRoleForm(NodeRole.WORKER, clusterConfig, existingNodes),
   );
 
   const selectedRoles = useMemo(() => {
@@ -155,27 +230,56 @@ export function AddNodeDialog({
     ];
   }, [isHybrid, selectedMaster, selectedWorker]);
 
-  const resetForm = () => {
+  const resetForm = (effectiveClusterConfig?: ClusterConfig) => {
     setHostId('');
-    setInstallDir('/opt/seatunnel');
+    setInstallDir(defaultInstallDir);
     setSelectedMaster(false);
     setSelectedWorker(false);
     setPrecheckResults([]);
     setDiscoveredProcesses([]);
     setSelectedProcess('');
-    setHybridForm(buildDefaultRoleForm(NodeRole.MASTER_WORKER, clusterConfig));
-    setMasterForm(buildDefaultRoleForm(NodeRole.MASTER, clusterConfig));
-    setWorkerForm(buildDefaultRoleForm(NodeRole.WORKER, clusterConfig));
+    setHybridForm(
+      buildDefaultRoleForm(NodeRole.MASTER_WORKER, effectiveClusterConfig, existingNodes),
+    );
+    setMasterForm(buildDefaultRoleForm(NodeRole.MASTER, effectiveClusterConfig, existingNodes));
+    setWorkerForm(buildDefaultRoleForm(NodeRole.WORKER, effectiveClusterConfig, existingNodes));
   };
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    resetForm();
-    void loadAvailableHosts();
+    let cancelled = false;
+
+    const initialize = async () => {
+      let effectiveClusterConfig = clusterConfig;
+      if (!getClusterJVMConfig(clusterConfig)) {
+        const configsResult = await services.config.getClusterConfigsSafe(clusterId);
+        if (configsResult.success && configsResult.data) {
+          effectiveClusterConfig = buildResolvedClusterConfigFromConfigs(
+            clusterConfig,
+            deploymentMode,
+            configsResult.data,
+          );
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      setResolvedClusterConfig(effectiveClusterConfig);
+      resetForm(effectiveClusterConfig);
+      await loadAvailableHosts();
+    };
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, clusterConfig, deploymentMode]);
+  }, [open, clusterId, clusterConfig, deploymentMode, defaultInstallDir, existingNodes]);
 
   const loadAvailableHosts = async () => {
     setLoadingHosts(true);
@@ -286,7 +390,7 @@ export function AddNodeDialog({
     for (const role of selectedRoles) {
       const form = getRoleForm(role);
       if (!form.hazelcastPort || form.hazelcastPort <= 0) {
-        toast.error(t('cluster.hazelcastPortRequired'));
+        toast.error(t(getPrimaryPortRequiredMessageKey(role)));
         return false;
       }
       if (form.jvmOverrideEnabled && (!form.jvmHeapSize || form.jvmHeapSize <= 0)) {
@@ -304,8 +408,6 @@ export function AddNodeDialog({
         role,
         hazelcast_port: form.hazelcastPort,
         api_port: role === NodeRole.WORKER ? undefined : form.apiPort || undefined,
-        worker_port:
-          role === NodeRole.MASTER_WORKER ? form.workerPort || undefined : undefined,
         overrides: form.jvmOverrideEnabled
           ? buildNodeJVMOverride(role, form.jvmHeapSize)
           : undefined,
@@ -402,12 +504,12 @@ export function AddNodeDialog({
   const renderRoleConfig = (role: NodeRole) => {
     const form = getRoleForm(role);
     const roleLabel = t(`cluster.roles.${getRoleTranslationKey(role)}`);
-    const defaultHeap = getClusterJVMValueForRole(role, clusterConfig);
+    const defaultHeap = getClusterJVMValueForRole(role, resolvedClusterConfig);
 
     return (
       <div key={role} className='rounded-lg border p-4 space-y-4'>
         <div className='space-y-1'>
-          <h4 className='font-medium'>{t(`cluster.${getRoleTranslationKey(role)}NodeConfig`)}</h4>
+          <h4 className='font-medium'>{t(`cluster.${getRoleConfigTitleKey(role)}`)}</h4>
           <p className='text-xs text-muted-foreground'>
             {role === NodeRole.MASTER_WORKER
               ? t('cluster.hybridRoleFixedDescription')
@@ -418,7 +520,8 @@ export function AddNodeDialog({
         <div className='grid gap-4 md:grid-cols-3'>
           <div className='space-y-1'>
             <Label className='text-xs'>
-              {t('cluster.hazelcastPort')} <span className='text-destructive'>*</span>
+              {t(`cluster.${getPrimaryPortLabelKey(role)}`)}{' '}
+              <span className='text-destructive'>*</span>
             </Label>
             <Input
               type='number'
@@ -442,23 +545,6 @@ export function AddNodeDialog({
                 onChange={(e) =>
                   updateRoleForm(role, {
                     apiPort: parseInt(e.target.value, 10) || 0,
-                  })
-                }
-              />
-            </div>
-          )}
-
-          {role === NodeRole.MASTER_WORKER && (
-            <div className='space-y-1'>
-              <Label className='text-xs'>
-                {t('cluster.workerPort')} <span className='text-muted-foreground'>({t('common.optional')})</span>
-              </Label>
-              <Input
-                type='number'
-                value={form.workerPort || ''}
-                onChange={(e) =>
-                  updateRoleForm(role, {
-                    workerPort: parseInt(e.target.value, 10) || 0,
                   })
                 }
               />

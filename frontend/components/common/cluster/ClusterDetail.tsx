@@ -1349,6 +1349,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         clusterId={clusterId}
         deploymentMode={cluster.deployment_mode}
         clusterConfig={cluster.config}
+        clusterInstallDir={cluster.install_dir}
+        existingNodes={nodes}
         onSuccess={handleNodeAdded}
       />
 
@@ -1359,6 +1361,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         node={nodeToEdit}
         deploymentMode={cluster.deployment_mode}
         clusterConfig={cluster.config}
+        clusterInstallDir={cluster.install_dir}
         onSuccess={handleNodeEdited}
       />
 

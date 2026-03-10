@@ -128,6 +128,16 @@ export interface ClusterJVMConfig {
 }
 
 /**
+ * Cluster port defaults
+ * 集群端口默认值
+ */
+export interface ClusterPortConfig {
+  master_hazelcast_port?: number;
+  master_api_port?: number;
+  worker_port?: number;
+}
+
+/**
  * Node-level JVM overrides
  * 节点级 JVM overrides
  */
@@ -449,6 +459,14 @@ function toNumberOrUndefined(value: unknown): number | undefined {
   return undefined;
 }
 
+function toPositivePortOrUndefined(value: unknown): number | undefined {
+  const parsed = toNumberOrUndefined(value);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  return parsed > 0 ? parsed : undefined;
+}
+
 /**
  * Get cluster-level JVM defaults from generic cluster config
  * 从通用 cluster config 中提取集群 JVM 默认值
@@ -474,6 +492,76 @@ export function getClusterJVMConfig(
     return undefined;
   }
   return result;
+}
+
+/**
+ * Get cluster-level port defaults from generic cluster config
+ * 从通用 cluster config 中提取集群端口默认值
+ */
+export function getClusterPortConfig(
+  config?: ClusterConfig | null,
+): ClusterPortConfig | undefined {
+  const nestedPorts =
+    config?.ports && typeof config.ports === 'object'
+      ? (config.ports as Record<string, unknown>)
+      : undefined;
+  const fallbackRoot =
+    config && typeof config === 'object' ? (config as Record<string, unknown>) : undefined;
+  const ports = nestedPorts ?? fallbackRoot;
+
+  if (!ports) {
+    return undefined;
+  }
+
+  const result: ClusterPortConfig = {
+    master_hazelcast_port: toPositivePortOrUndefined(ports.master_hazelcast_port),
+    master_api_port: toPositivePortOrUndefined(ports.master_api_port),
+    worker_port: toPositivePortOrUndefined(ports.worker_port),
+  };
+
+  if (
+    result.master_hazelcast_port === undefined &&
+    result.master_api_port === undefined &&
+    result.worker_port === undefined
+  ) {
+    return undefined;
+  }
+
+  return result;
+}
+
+/**
+ * Read cluster default ports for a role
+ * 读取某角色的集群默认端口值
+ */
+export function getClusterPortDefaultsForRole(
+  role: NodeRole,
+  config?: ClusterConfig | null,
+): {
+  hazelcastPort?: number;
+  apiPort?: number;
+  workerPort?: number;
+} {
+  const ports = getClusterPortConfig(config);
+
+  if (role === NodeRole.WORKER) {
+    return {
+      hazelcastPort: ports?.worker_port,
+    };
+  }
+
+  if (role === NodeRole.MASTER_WORKER) {
+    return {
+      hazelcastPort: ports?.master_hazelcast_port,
+      apiPort: ports?.master_api_port,
+      workerPort: ports?.worker_port,
+    };
+  }
+
+  return {
+    hazelcastPort: ports?.master_hazelcast_port,
+    apiPort: ports?.master_api_port,
+  };
 }
 
 /**
