@@ -396,6 +396,9 @@ python3 ./.trellis/scripts/add_session.py    # Record session
 python3 ./.trellis/scripts/task.py list      # List tasks
 python3 ./.trellis/scripts/task.py create "<title>" # Create task
 
+# Project build commands
+(cd frontend && pnpm run pack:standalone)    # Build deployable frontend artifact (dist-standalone/)
+
 # Slash commands
 /trellis:finish-work          # Pre-commit checklist
 /trellis:break-loop           # Post-debug analysis

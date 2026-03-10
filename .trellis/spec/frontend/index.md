@@ -25,6 +25,9 @@
 - 遵循代码库中的**实际约定**（参见 `frontend/` 与 `agent.md`）。
 - 新页面放在 `app/(main)/...` 下；新领域 UI 放在 `components/common/<domain>/`。
 - 仅通过 `lib/services` 调用后端；使用统一的响应类型与错误处理。
+- 需要生成**可部署前端产物**时，统一使用 `cd frontend && pnpm run pack:standalone`。
+  - 原因：项目的 Docker / CI / PM2 发布链路依赖 `dist-standalone/` 产物，而不只是 `.next` 构建结果。
+  - `pnpm build` 仅用于 Next.js 原始构建排查；**不要**把它当作本项目默认的前端交付构建命令。
 
 ---
 
