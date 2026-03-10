@@ -63,7 +63,6 @@ export function MonitorConfigPanel({ clusterId, clusterName }: MonitorConfigPane
       const data = await getMonitorConfig(clusterId);
       setConfig(data);
       setFormData({
-        auto_monitor: data.auto_monitor,
         auto_restart: data.auto_restart,
         monitor_interval: data.monitor_interval,
         restart_delay: data.restart_delay,
@@ -94,7 +93,14 @@ export function MonitorConfigPanel({ clusterId, clusterName }: MonitorConfigPane
   const handleSave = async () => {
     try {
       setSaving(true);
-      const updated = await updateMonitorConfig(clusterId, formData);
+      const updated = await updateMonitorConfig(clusterId, {
+        auto_restart: formData.auto_restart,
+        monitor_interval: formData.monitor_interval,
+        restart_delay: formData.restart_delay,
+        max_restarts: formData.max_restarts,
+        time_window: formData.time_window,
+        cooldown_period: formData.cooldown_period,
+      });
       setConfig(updated);
       setHasChanges(false);
       toast.success(t('monitor.saveSuccess'));
@@ -110,7 +116,6 @@ export function MonitorConfigPanel({ clusterId, clusterName }: MonitorConfigPane
   const handleReset = () => {
     if (config) {
       setFormData({
-        auto_monitor: config.auto_monitor,
         auto_restart: config.auto_restart,
         monitor_interval: config.monitor_interval,
         restart_delay: config.restart_delay,
@@ -158,7 +163,7 @@ export function MonitorConfigPanel({ clusterId, clusterName }: MonitorConfigPane
       <CardContent className="space-y-6">
         {/* Main switches / 主开关 */}
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="flex items-start justify-between rounded-lg border p-4">
             <div className="space-y-0.5">
               <Label className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
@@ -166,10 +171,9 @@ export function MonitorConfigPanel({ clusterId, clusterName }: MonitorConfigPane
               </Label>
               <p className="text-sm text-muted-foreground">{t('monitor.autoMonitorDesc')}</p>
             </div>
-            <Switch
-              checked={formData.auto_monitor}
-              onCheckedChange={(checked) => handleChange('auto_monitor', checked)}
-            />
+            <Badge variant="default" className="shrink-0">
+              {t('monitor.alwaysOn')}
+            </Badge>
           </div>
           <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="space-y-0.5">

@@ -1165,6 +1165,7 @@
       "deleteConfirm": "Are you sure you want to delete user {username}? This action cannot be undone.",
       "username": "Username",
       "nickname": "Nickname",
+      "email": "Email",
       "password": "Password",
       "passwordPlaceholder": "Leave empty to keep current password",
       "isAdmin": "Administrator",
@@ -1181,6 +1182,7 @@
         "passwordRequired": "Please enter password",
         "passwordTooShort": "Password must be at least 6 characters",
         "usernameTooShort": "Username must be at least 3 characters",
+        "invalidEmail": "Please enter a valid email address",
         "usernameExists": "Username already exists",
         "cannotDeleteSelf": "Cannot delete current logged in user"
       }
@@ -1215,7 +1217,8 @@
     "saveError": "Failed to save monitor configuration",
     "lastSync": "Last Sync",
     "autoMonitor": "Auto Monitor",
-    "autoMonitorDesc": "Automatically monitor SeaTunnel process status",
+    "autoMonitorDesc": "Continuously monitor node and process health while recording runtime events. This is always on and cannot be disabled.",
+    "alwaysOn": "Always On",
     "autoRestart": "Auto Restart",
     "autoRestartDesc": "Automatically restart crashed processes",
     "monitorInterval": "Monitor Interval",
@@ -1249,7 +1252,12 @@
       "crashed": "Crashed",
       "restarted": "Restarted",
       "restartFailed": "Restart Failed",
-      "restartLimitReached": "Restart Limit Reached"
+      "restartLimitReached": "Restart Limit Reached",
+      "clusterRestartRequested": "Restart Requested",
+      "nodeRestartRequested": "Node Restart Requested",
+      "nodeStopRequested": "Node Stop Requested",
+      "nodeOffline": "Node Offline",
+      "nodeRecovered": "Node Recovered"
     }
   },
   "monitoringCenter": {
@@ -1319,20 +1327,20 @@
       "clusterFilter": "Filter by cluster",
       "statusFilter": "Filter by status",
       "sourceFilter": "Filter by source",
-      "lifecycleStatusFilter": "Filter by lifecycle",
-      "handlingStatusFilter": "Filter by handling",
+      "lifecycleStatusFilter": "Filter by alert state",
+      "handlingStatusFilter": "Filter by handling progress",
       "allClusters": "All Clusters",
       "allStatus": "All Status",
       "allSources": "All Sources",
-      "allLifecycle": "All Lifecycle",
-      "allHandling": "All Handling",
+      "allLifecycle": "All alert states",
+      "allHandling": "All handling progress",
       "cluster": "Cluster",
       "sourceType": "Source",
       "eventType": "Event Type",
       "severity": "Severity",
-      "status": "Status",
-      "lifecycleStatus": "Lifecycle",
-      "handlingStatus": "Handling",
+      "status": "Current State",
+      "lifecycleStatus": "Current State",
+      "handlingStatus": "Handling Progress",
       "host": "Host",
       "process": "Process",
       "eventTime": "Event Time",
@@ -1376,7 +1384,33 @@
         "pending": "Pending",
         "acknowledged": "Acknowledged",
         "silenced": "Silenced"
-      }
+      },
+      "stateHintTitle": "How to read the states",
+      "stateHint": "“Firing / Resolved” describes whether the alert itself is still active. “Pending / Acknowledged / Silenced” describes human handling progress. Acknowledged does not mean resolved.",
+      "allStatuses": "All statuses",
+      "firstFiredAt": "First Fired",
+      "lastChangedAt": "Last Changed",
+      "closedCount": "Closed",
+      "close": "Close",
+      "closeError": "Failed to close alert",
+      "closeSuccess": "Alert closed",
+      "statuses": {
+        "firing": "Firing",
+        "resolved": "Resolved",
+        "closed": "Closed"
+      },
+      "markers": {
+        "acknowledged": "Acknowledged",
+        "silencedUntil": "Silenced until {time}",
+        "latestNote": "Note: {note}"
+      },
+      "actionHints": {
+        "silenceReady": "Temporarily mute this still-firing alert for 30 minutes.",
+        "silenceUnavailable": "Only firing alerts that are not already silenced can be silenced.",
+        "closeReady": "Manually close this incident and stop follow-up notifications for the same incident.",
+        "closeClosed": "This alert has already been manually closed."
+      },
+      "manualClose": "Manual Close"
     },
     "rules": {
       "entry": "Alert Rules",
@@ -1566,8 +1600,12 @@
           "description": "Detect crash-loop behavior after restart limits are exceeded."
         },
         "cluster_restart_requested": {
-          "name": "Cluster restart requested",
-          "description": "Fire when a user triggers a cluster restart from the control plane, useful for delivery validation and change awareness."
+          "name": "Restart requested",
+          "description": "Fire when a user triggers a cluster restart or node restart from the control plane, useful for delivery validation and change awareness."
+        },
+        "node_stop_requested": {
+          "name": "Node stop requested",
+          "description": "Fire immediately when a user manually stops one node from the control plane so operators can track explicit stop actions."
         },
         "cpu_usage_high": {
           "name": "CPU usage high",
@@ -1587,7 +1625,19 @@
         },
         "split_brain_risk": {
           "name": "Split-brain risk",
-          "description": "Reserve a template slot for future consensus / role-divergence metrics."
+          "description": "Use Hazelcast cluster-safety metrics to detect unsafe-cluster or split-brain risk."
+        },
+        "job_thread_pool_queue_backlog_high": {
+          "name": "Job thread pool queue backlog high",
+          "description": "Alert when the SeaTunnel job execution queue keeps piling up before latency and starvation spread."
+        },
+        "job_thread_pool_rejection_high": {
+          "name": "Job thread pool rejections detected",
+          "description": "Alert when the job thread pool starts rejecting work instead of queuing or executing it."
+        },
+        "deadlocked_threads_detected": {
+          "name": "Deadlocked threads detected",
+          "description": "Detect JVM deadlocks that can stall task scheduling, execution, and recovery."
         }
       },
       "editTitle": "Edit Policy",
@@ -1740,7 +1790,12 @@
       "crashed": "Crashed",
       "restarted": "Restarted",
       "restartFailed": "Restart Failed",
-      "restartLimitReached": "Restart Limit Reached"
+      "restartLimitReached": "Restart Limit Reached",
+      "clusterRestartRequested": "Restart Requested",
+      "nodeRestartRequested": "Node Restart Requested",
+      "nodeStopRequested": "Node Stop Requested",
+      "nodeOffline": "Node Offline",
+      "nodeRecovered": "Node Recovered"
     },
     "grafana": {
       "title": "SeaTunnel Monitoring Dashboard",
@@ -1847,6 +1902,7 @@
       "clusterRequired": "Please select a cluster",
       "templateRequired": "Please select a template",
       "promqlRequired": "Please enter a PromQL expression",
+      "receiverRequired": "Select at least one notification recipient, or keep recipients configured on the current email channel",
       "concreteClusterRequired": "This template must be bound to a specific cluster",
       "concreteClusterHint": "Runtime event policies must target a concrete cluster instead of all clusters.",
       "createSuccess": "Alert policy created successfully",
@@ -1868,15 +1924,22 @@
         "severity": "Severity",
         "cooldown": "Minimum Alert Interval",
         "enabled": "Enabled",
+        "receivers": "Recipients",
         "methods": "Notification Methods",
         "emailChannel": "Email Config",
         "webhookChannel": "Webhook Config",
-        "recovery": "Recovery Notification"
+        "recovery": "Recovery Notification",
+        "triggerCondition": "Trigger Condition",
+        "operator": "Operator",
+        "threshold": "Threshold",
+        "window": "Window",
+        "promqlPreview": "PromQL Preview"
       },
       "placeholders": {
         "name": "For example: Cluster restart notification",
         "description": "Add extra notes so operators understand the alert intent quickly.",
-        "promql": "For example: sum(rate(seatunnel_job_failed_total[5m])) > 0"
+        "promql": "For example: sum(rate(seatunnel_job_failed_total[5m])) > 0",
+        "threshold": "For example: 0.8 (means 80%)"
       },
       "staticConfig": "Static Config",
       "staticConfigDesc": "Start from platform-health or metric templates.",
@@ -1887,13 +1950,17 @@
         "platformHealth": "Platform Health",
         "prometheusMetrics": "Prometheus Metrics"
       },
+      "receiverHint": "Recipients come from system users. Administrators with valid email addresses are selected by default.",
+      "receiverEmpty": "No notifiable users yet. Configure a valid email address for users in User Management first.",
+      "receiverResetDefault": "Restore default admins",
+      "receiverAdmin": "Admin",
       "methods": {
         "email": "Email",
         "selectEmail": "Select email config",
         "noEmailConfig": "No email config yet, click to create one",
         "webhook": "Webhook",
         "selectWebhook": "Select webhook config",
-        "noWebhookConfig": "No webhook config yet"
+        "noWebhookConfig": "No webhook config yet, click to create one"
       },
       "minutes": "min",
       "allClusters": "All Clusters",
@@ -1901,7 +1968,7 @@
       "channel": {
         "manageEmail": "Email Config",
         "dialogTitle": "Email Notification Config",
-        "dialogSubtitle": "Configure SMTP and test email delivery. Policies will reuse these email channels directly.",
+        "dialogSubtitle": "Configure SMTP delivery for alert emails. Recipients are selected in alert policies, while test send can target one temporary user.",
         "savedConfigs": "Saved Email Configs",
         "empty": "No email config yet",
         "createTitle": "Create Email Config",
@@ -1920,7 +1987,7 @@
         "columns": {
           "name": "Name",
           "from": "From",
-          "recipients": "Recipients"
+          "recipients": "Fallback recipients"
         },
         "fields": {
           "name": "Name",
@@ -1932,13 +1999,124 @@
           "username": "Username",
           "password": "Password",
           "from": "From Address",
-          "recipients": "Recipients",
-          "description": "Description"
+          "recipients": "Legacy fallback recipients",
+          "description": "Description",
+          "testRecipient": "Temporary test recipient",
+          "fromName": "Sender Name"
         },
         "placeholders": {
           "recipients": "Separate multiple recipients with commas, semicolons, or new lines"
+        },
+        "currentUser": "Current user",
+        "testReceiverRequired": "Select a test recipient or keep legacy fallback recipients on this email channel",
+        "testReceiverCurrentUserMissingEmail": "The current signed-in account does not have a valid email yet. Add one before sending a test email",
+        "testRecipientPlaceholder": "Choose a temporary recipient for test send",
+        "testRecipientNone": "Do not pick a recipient yet",
+        "testRecipientLegacyFallback": "Legacy fallback recipients",
+        "testRecipientHint": "This only affects test send. Real alert recipients are selected in the policy editor.",
+        "testRecipientHintSelected": "Test send will be delivered to {value}",
+        "testRecipientHintCurrentUserMissing": "The current signed-in account \"{value}\" does not have a valid email yet. Add one before sending a test email.",
+        "legacyRecipientsConfigured": "This email channel still has {count} legacy fallback recipient(s) configured for compatibility.",
+        "legacyRecipientsEmpty": "No legacy fallback recipients are configured. Alert policies should choose recipients directly.",
+        "clearLegacyRecipients": "Clear legacy fallback recipients",
+        "lastTest": {
+          "idle": "No test has been sent in this session yet",
+          "success": "Test send succeeded",
+          "failed": "Test send failed",
+          "receiver": "Receiver: {value}",
+          "sentAt": "Sent at: {value}"
+        },
+        "new": "New Channel",
+        "searchPlaceholder": "Search channels...",
+        "searchEmpty": "No channel matches your search",
+        "updatedAt": "Updated at: {value}",
+        "statusEnabled": "Enabled",
+        "statusDraft": "Draft",
+        "connectionTest": "Test Connection",
+        "connectionTestSuccess": "SMTP connection test succeeded",
+        "connectionTestError": "SMTP connection test failed",
+        "delete": "Delete Channel",
+        "cancel": "Cancel",
+        "saveDraft": "Save Draft",
+        "saveAndEnable": "Save & Enable",
+        "deleteConfirm": "Delete this email channel?",
+        "deleteSuccess": "Email channel deleted successfully",
+        "deleteError": "Failed to delete email channel",
+        "sections": {
+          "basic": "Basic Information",
+          "connection": "Connection Settings",
+          "sender": "Sender Settings",
+          "delivery": "Alert Delivery"
+        },
+        "connectionLastTest": {
+          "idle": "Connection has not been tested in this session yet",
+          "success": "Connection test succeeded",
+          "failed": "Connection test failed",
+          "checkedAt": "Checked at: {value}"
+        },
+        "statusOutdated": "Current form has changed since the last test result",
+        "unsavedChangesConfirm": "You have unsaved email channel changes. Discard them?"
+      },
+      "webhook": {
+        "manage": "Webhook Config",
+        "dialogTitle": "Webhook Notification Config",
+        "dialogSubtitle": "Configure outbound webhook / IM channels for unified alerts. The downstream system decides the final recipients; this channel only delivers the alert payload.",
+        "savedConfigs": "Saved Webhook Configs",
+        "new": "New Config",
+        "searchPlaceholder": "Search configs...",
+        "empty": "No webhook config yet",
+        "searchEmpty": "No matching webhook config",
+        "createTitle": "Create Webhook Config",
+        "editTitle": "Edit Webhook Config",
+        "statusEnabled": "Enabled",
+        "statusDraft": "Disabled",
+        "updatedAt": "Updated at: {value}",
+        "test": "Send Test",
+        "testSuccess": "Webhook test sent successfully",
+        "testError": "Failed to send webhook test",
+        "nameRequired": "Please enter a webhook config name",
+        "endpointRequired": "Please enter the webhook endpoint",
+        "createSuccess": "Webhook config created successfully",
+        "updateSuccess": "Webhook config saved successfully",
+        "createError": "Failed to create webhook config",
+        "updateError": "Failed to save webhook config",
+        "delete": "Delete Config",
+        "cancel": "Cancel",
+        "saveDraft": "Save Draft",
+        "saveAndEnable": "Save & Enable",
+        "deleteConfirm": "Delete the current webhook config?",
+        "deleteSuccess": "Webhook config deleted",
+        "deleteError": "Failed to delete webhook config",
+        "statusOutdated": "The form has changed. The test result above may be outdated.",
+        "unsavedChangesConfirm": "This webhook config has unsaved changes. Discard them?",
+        "secretHint": "Optional. Fill it when the downstream system requires a shared secret or signature key.",
+        "sections": {
+          "basic": "Basic Info",
+          "connection": "Delivery Config"
+        },
+        "fields": {
+          "name": "Name",
+          "description": "Description",
+          "endpoint": "Webhook Endpoint",
+          "secret": "Secret"
+        },
+        "placeholders": {
+          "secret": "Optional shared secret or signature key"
+        },
+        "lastTest": {
+          "idle": "No test send has been executed in this session",
+          "success": "Test sent successfully",
+          "failed": "Test send failed",
+          "sentAt": "Sent at: {value}",
+          "statusCode": "Response status code: {value}"
         }
-      }
+      },
+      "conditionThresholdRequired": "Please enter a trigger threshold",
+      "conditionWindowInvalid": "Window must be between 0 and 10080 minutes",
+      "conditionHint": "Keep the template defaults or override the operator, threshold, and evaluation window.",
+      "customPromqlLegacy": "Legacy Custom PromQL",
+      "customPromqlLegacyDesc": "New policies no longer expose custom PromQL. This editor is kept only for existing legacy policies.",
+      "metricsUnavailableHint": "Prometheus metric templates are currently unavailable: {reason}"
     }
   },
   "discovery": {

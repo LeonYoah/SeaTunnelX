@@ -177,7 +177,7 @@ func (s *Service) DeleteNotificationRoute(ctx context.Context, id uint) error {
 
 // TestNotificationChannel performs one test send against a notification channel.
 // TestNotificationChannel 对指定通知渠道执行一次测试发送。
-func (s *Service) TestNotificationChannel(ctx context.Context, id uint) (*NotificationChannelTestResult, error) {
+func (s *Service) TestNotificationChannel(ctx context.Context, id uint, req *NotificationChannelTestRequest) (*NotificationChannelTestResult, error) {
 	if s.repo == nil {
 		return nil, fmt.Errorf("monitoring repository is not configured")
 	}
@@ -208,7 +208,12 @@ func (s *Service) TestNotificationChannel(ctx context.Context, id uint) (*Notifi
 		return nil, err
 	}
 
-	attempt, sendErr := sendTestNotification(ctx, channel)
+	recipients, receiver, err := s.resolveNotificationChannelTestRecipients(ctx, channel, req)
+	if err != nil {
+		return nil, err
+	}
+
+	attempt, sendErr := sendTestNotification(ctx, channel, recipients)
 	if attempt != nil {
 		delivery.RequestPayload = attempt.RequestPayload
 		delivery.ResponseStatusCode = attempt.StatusCode
@@ -225,6 +230,7 @@ func (s *Service) TestNotificationChannel(ctx context.Context, id uint) (*Notifi
 			ChannelID:    channel.ID,
 			DeliveryID:   delivery.ID,
 			Status:       delivery.Status,
+			Receiver:     receiver,
 			SentAt:       delivery.SentAt,
 			LastError:    delivery.LastError,
 			StatusCode:   delivery.ResponseStatusCode,
@@ -240,10 +246,85 @@ func (s *Service) TestNotificationChannel(ctx context.Context, id uint) (*Notifi
 		ChannelID:    channel.ID,
 		DeliveryID:   delivery.ID,
 		Status:       delivery.Status,
+		Receiver:     receiver,
 		SentAt:       delivery.SentAt,
 		StatusCode:   delivery.ResponseStatusCode,
 		ResponseBody: delivery.ResponseBodyExcerpt,
 	}, nil
+}
+
+// TestNotificationChannelDraft performs one test send against an unsaved notification channel draft.
+// TestNotificationChannelDraft 对未保存的通知渠道草稿执行一次测试发送。
+func (s *Service) TestNotificationChannelDraft(ctx context.Context, req *NotificationChannelDraftTestRequest) (*NotificationChannelTestResult, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("monitoring repository is not configured")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("empty request")
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	channel, err := buildNotificationChannelFromUpsertRequest(req.Channel)
+	if err != nil {
+		return nil, err
+	}
+	recipients, receiver, err := s.resolveNotificationChannelTestRecipients(ctx, channel, &NotificationChannelTestRequest{
+		ReceiverUserID: req.ReceiverUserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	attempt, sendErr := sendTestNotification(ctx, channel, recipients)
+	result := &NotificationChannelTestResult{
+		ChannelID: 0,
+		Receiver:  receiver,
+	}
+	if attempt != nil {
+		result.SentAt = attempt.SentAt
+		result.StatusCode = attempt.StatusCode
+		result.ResponseBody = attempt.ResponseBody
+	}
+	if sendErr != nil {
+		result.Status = string(NotificationDeliveryStatusFailed)
+		result.LastError = sendErr.Error()
+		return result, nil
+	}
+	result.Status = string(NotificationDeliveryStatusSent)
+	return result, nil
+}
+
+// TestNotificationChannelConnection validates and probes one draft notification channel connection.
+// TestNotificationChannelConnection 校验并测试一份通知渠道草稿配置的连接可用性。
+func (s *Service) TestNotificationChannelConnection(ctx context.Context, req *UpsertNotificationChannelRequest) (*NotificationChannelConnectionTestResult, error) {
+	if req == nil {
+		return nil, fmt.Errorf("empty request")
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	if req.Type != NotificationChannelTypeEmail || req.Config == nil || req.Config.Email == nil {
+		return nil, fmt.Errorf("only email channel connection test is supported")
+	}
+
+	result := &NotificationChannelConnectionTestResult{}
+	checkedAt := time.Now().UTC()
+	result.CheckedAt = &checkedAt
+
+	emailConfig := req.Config.Email.Normalize()
+	if err := emailConfig.Validate(); err != nil {
+		return nil, err
+	}
+	if err := testSMTPConnection(ctx, emailConfig); err != nil {
+		result.Status = string(NotificationDeliveryStatusFailed)
+		result.LastError = err.Error()
+		return result, nil
+	}
+
+	result.Status = string(NotificationDeliveryStatusSent)
+	return result, nil
 }
 
 func toNotificationRouteDTO(route *NotificationRoute) *NotificationRouteDTO {
@@ -267,15 +348,15 @@ func toNotificationRouteDTO(route *NotificationRoute) *NotificationRouteDTO {
 	}
 }
 
-func sendTestNotification(ctx context.Context, channel *NotificationChannel) (*notificationSendAttempt, error) {
-	payload, err := buildTestPayload(channel)
+func sendTestNotification(ctx context.Context, channel *NotificationChannel, recipients []string) (*notificationSendAttempt, error) {
+	payload, err := buildTestPayload(channel, recipients)
 	if err != nil {
 		return nil, err
 	}
 	return sendNotification(ctx, channel, payload)
 }
 
-func buildTestPayload(channel *NotificationChannel) (interface{}, error) {
+func buildTestPayload(channel *NotificationChannel, recipients []string) (interface{}, error) {
 	if channel == nil {
 		return nil, fmt.Errorf("notification channel not found")
 	}
@@ -308,6 +389,7 @@ func buildTestPayload(channel *NotificationChannel) (interface{}, error) {
 		return &emailNotificationPayload{
 			Subject: "SeaTunnelX notification test",
 			Text:    fmt.Sprintf("[SeaTunnelX] %s", message),
+			To:      recipients,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported channel type")

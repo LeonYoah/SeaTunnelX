@@ -291,6 +291,178 @@ func TestEvaluateNodeHealthAlerts_emitsAndResolvesNodeOfflineEpisode(t *testing.
 	}
 }
 
+func TestEvaluateNodeHealthAlerts_repeatsNodeOfflineReminderAfterCooldown(t *testing.T) {
+	database, cleanup := setupMonitoringNodeOfflineTestDB(t)
+	t.Cleanup(cleanup)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	clusterRepo := clusterapp.NewRepository(database)
+	hostProvider := &stubNodeOfflineHostProvider{
+		hosts: map[uint]*clusterapp.HostInfo{
+			5: {
+				ID:            5,
+				Name:          "host-5",
+				IPAddress:     "10.0.0.5",
+				AgentID:       "agent-5",
+				AgentStatus:   "installed",
+				LastHeartbeat: ptrTime(now),
+			},
+		},
+	}
+	clusterService := clusterapp.NewService(clusterRepo, hostProvider, &clusterapp.ServiceConfig{
+		HeartbeatTimeout: 30 * time.Second,
+	})
+
+	monitorRepo := monitor.NewRepository(database)
+	monitorService := monitor.NewService(monitorRepo)
+	repo := NewRepository(database)
+	service := NewService(clusterService, monitorService, repo)
+	monitorService.SetOnEventRecorded(service.DispatchAlertPolicyEvent)
+
+	testCluster := &clusterapp.Cluster{
+		Name:           "node-offline-reminder-test",
+		Description:    "test cluster",
+		DeploymentMode: clusterapp.DeploymentModeHybrid,
+		Version:        "2.3.11",
+		Status:         clusterapp.ClusterStatusRunning,
+		InstallDir:     "/opt/seatunnel",
+		CreatedBy:      1,
+	}
+	if err := database.WithContext(ctx).Create(testCluster).Error; err != nil {
+		t.Fatalf("failed to create cluster: %v", err)
+	}
+
+	node := &clusterapp.ClusterNode{
+		ClusterID:     testCluster.ID,
+		HostID:        5,
+		Role:          clusterapp.NodeRoleMasterWorker,
+		InstallDir:    "/opt/seatunnel",
+		HazelcastPort: 5801,
+		WorkerPort:    5802,
+		Status:        clusterapp.NodeStatusStopped,
+		ProcessPID:    0,
+	}
+	if err := database.WithContext(ctx).Create(node).Error; err != nil {
+		t.Fatalf("failed to create cluster node: %v", err)
+	}
+
+	stoppedSince := now.Add(-25 * time.Second)
+	if err := database.WithContext(ctx).
+		Model(&clusterapp.ClusterNode{}).
+		Where("id = ?", node.ID).
+		Update("updated_at", stoppedSince).
+		Error; err != nil {
+		t.Fatalf("failed to backdate node updated_at: %v", err)
+	}
+
+	if err := monitorRepo.CreateConfig(ctx, &monitor.MonitorConfig{
+		ClusterID:       testCluster.ID,
+		AutoMonitor:     true,
+		AutoRestart:     false,
+		MonitorInterval: 5,
+		RestartDelay:    10,
+		MaxRestarts:     3,
+		TimeWindow:      300,
+		CooldownPeriod:  1800,
+		ConfigVersion:   1,
+	}); err != nil {
+		t.Fatalf("failed to create monitor config: %v", err)
+	}
+
+	var hitCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		hitCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	channel := &NotificationChannel{
+		Name:     "node-offline-repeat-webhook",
+		Type:     NotificationChannelTypeWebhook,
+		Enabled:  true,
+		Endpoint: server.URL,
+	}
+	if err := repo.CreateNotificationChannel(ctx, channel); err != nil {
+		t.Fatalf("failed to create notification channel: %v", err)
+	}
+
+	cooldown := 1
+	if _, err := service.CreateAlertPolicy(ctx, &UpsertAlertPolicyRequest{
+		Name:                   "Node offline repeated reminder",
+		PolicyType:             AlertPolicyBuilderKindPlatformHealth,
+		TemplateKey:            AlertRuleKeyNodeOffline,
+		ClusterID:              strconv.FormatUint(uint64(testCluster.ID), 10),
+		Severity:               AlertSeverityCritical,
+		CooldownMinutes:        &cooldown,
+		NotificationChannelIDs: []uint{channel.ID},
+	}); err != nil {
+		t.Fatalf("failed to create alert policy: %v", err)
+	}
+
+	if err := service.EvaluateNodeHealthAlerts(ctx); err != nil {
+		t.Fatalf("first EvaluateNodeHealthAlerts returned error: %v", err)
+	}
+	if !waitForCondition(2*time.Second, func() bool {
+		return hitCount.Load() == 1
+	}) {
+		t.Fatalf("expected initial notification delivery, got %d", hitCount.Load())
+	}
+
+	offlineEvent, err := monitorService.GetLatestNodeEventByTypes(ctx, node.ID, []monitor.ProcessEventType{monitor.EventTypeNodeOffline})
+	if err != nil {
+		t.Fatalf("failed to load node_offline event: %v", err)
+	}
+	if offlineEvent == nil {
+		t.Fatal("expected node_offline event to exist")
+	}
+
+	delivery, err := repo.GetNotificationDeliveryByDedupKey(
+		ctx,
+		buildLocalAlertSourceKey(offlineEvent.ID),
+		channel.ID,
+		string(NotificationDeliveryEventTypeFiring),
+	)
+	if err != nil {
+		t.Fatalf("failed to load notification delivery: %v", err)
+	}
+	if delivery == nil || delivery.SentAt == nil {
+		t.Fatalf("expected sent delivery record, got %+v", delivery)
+	}
+
+	expiredSentAt := delivery.SentAt.UTC().Add(-2 * time.Minute)
+	if err := database.WithContext(ctx).
+		Model(&NotificationDelivery{}).
+		Where("id = ?", delivery.ID).
+		Update("sent_at", expiredSentAt).
+		Error; err != nil {
+		t.Fatalf("failed to backdate delivery sent_at: %v", err)
+	}
+
+	if err := service.EvaluateNodeHealthAlerts(ctx); err != nil {
+		t.Fatalf("second EvaluateNodeHealthAlerts returned error: %v", err)
+	}
+	if !waitForCondition(2*time.Second, func() bool {
+		return hitCount.Load() == 2
+	}) {
+		t.Fatalf("expected repeated reminder delivery after cooldown, got %d", hitCount.Load())
+	}
+
+	var offlineCount int64
+	if err := database.WithContext(ctx).
+		Model(&monitor.ProcessEvent{}).
+		Where("node_id = ? AND event_type = ?", node.ID, monitor.EventTypeNodeOffline).
+		Count(&offlineCount).Error; err != nil {
+		t.Fatalf("failed to count node_offline events: %v", err)
+	}
+	if offlineCount != 1 {
+		t.Fatalf("expected still one node_offline event, got %d", offlineCount)
+	}
+}
+
 func TestEvaluateNodeHealthAlerts_suppressesColdStartHostOfflineUntilStartupWindowElapses(t *testing.T) {
 	database, cleanup := setupMonitoringNodeOfflineTestDB(t)
 	t.Cleanup(cleanup)

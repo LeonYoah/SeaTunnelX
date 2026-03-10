@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -53,10 +54,12 @@ func setupMonitoringNotificationTestDB(t *testing.T) (*gorm.DB, func()) {
 
 	if err := database.AutoMigrate(
 		&AlertState{},
+		&AlertPolicy{},
 		&NotificationChannel{},
 		&NotificationRoute{},
 		&NotificationDelivery{},
 		&RemoteAlertRecord{},
+		&auth.User{},
 	); err != nil {
 		os.RemoveAll(tempDir)
 		t.Fatalf("failed to migrate monitoring notification tables: %v", err)
@@ -330,6 +333,173 @@ func TestService_HandleAlertmanagerWebhook_skipsMutedAcknowledgedRemoteAlert(t *
 	}
 	if deliveryCount != 0 {
 		t.Fatalf("expected no delivery rows for muted alert, got %d", deliveryCount)
+	}
+}
+
+func TestService_HandleAlertmanagerWebhook_dispatchesManagedMetricPolicyFiringAndResolved(t *testing.T) {
+	database, cleanup := setupMonitoringNotificationTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(database)
+	service := NewService(nil, nil, repo)
+	ctx := context.Background()
+
+	var hitCount atomic.Int32
+	var lastBody atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		lastBody.Store(string(body))
+		hitCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	user := &auth.User{
+		Username: "admin",
+		Nickname: "管理员",
+		Email:    "admin@example.com",
+		IsActive: true,
+		IsAdmin:  true,
+	}
+	if err := database.Create(user).Error; err != nil {
+		t.Fatalf("failed to create notification recipient user: %v", err)
+	}
+
+	channel := &NotificationChannel{
+		Name:     "managed-webhook",
+		Type:     NotificationChannelTypeWebhook,
+		Enabled:  true,
+		Endpoint: server.URL,
+	}
+	if err := repo.CreateNotificationChannel(ctx, channel); err != nil {
+		t.Fatalf("failed to create notification channel: %v", err)
+	}
+
+	channelIDsJSON, err := marshalAlertPolicyChannelIDs([]uint{channel.ID})
+	if err != nil {
+		t.Fatalf("failed to marshal channel ids: %v", err)
+	}
+	receiverUserIDsJSON, err := marshalAlertPolicyReceiverUserIDs([]uint64{user.ID})
+	if err != nil {
+		t.Fatalf("failed to marshal receiver user ids: %v", err)
+	}
+
+	policy := &AlertPolicy{
+		Name:                       "内存 0.5",
+		Description:                "堆内存持续过高",
+		PolicyType:                 AlertPolicyBuilderKindMetricsTemplate,
+		TemplateKey:                "memory_usage_high",
+		ClusterID:                  "6",
+		Severity:                   AlertSeverityCritical,
+		Enabled:                    true,
+		CooldownMinutes:            10,
+		SendRecovery:               true,
+		NotificationChannelIDsJSON: channelIDsJSON,
+		ReceiverUserIDsJSON:        receiverUserIDsJSON,
+	}
+	if err := database.Create(policy).Error; err != nil {
+		t.Fatalf("failed to create managed alert policy: %v", err)
+	}
+
+	startsAt := time.Date(2026, 3, 10, 1, 0, 0, 0, time.UTC)
+	firingPayload := &AlertmanagerWebhookPayload{
+		Receiver: "seatunnelx-webhook",
+		Status:   "firing",
+		CommonLabels: map[string]string{
+			"alertname":    sanitizeManagedPrometheusAlertName(policy.ID),
+			"managed_by":   "seatunnelx",
+			"policy_id":    policyIDLabel(policy),
+			"policy_name":  "内存 0.5",
+			"severity":     "critical",
+			"cluster_id":   "6",
+			"cluster_name": "t3",
+			"instance":     "38.55.133.202:5801",
+		},
+		CommonAnnotations: map[string]string{
+			"summary":       "t3 / 38.55.133.202:5801 触发指标告警：内存 0.5（内存异常）",
+			"description":   "堆内存持续过高；当前值：0.732100；持续 1 分钟，条件：> 0.05。",
+			"current_value": "0.732100",
+			"condition":     "持续 1 分钟，条件：> 0.05",
+		},
+		Alerts: []*WebhookAlert{{
+			Status:       "firing",
+			Fingerprint:  "managed-fp-1",
+			StartsAt:     startsAt,
+			GeneratorURL: "http://127.0.0.1:9090/graph?g0.expr=memory",
+		}},
+	}
+
+	result, err := service.HandleAlertmanagerWebhook(ctx, firingPayload)
+	if err != nil {
+		t.Fatalf("HandleAlertmanagerWebhook firing returned error: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no firing processing errors, got %v", result.Errors)
+	}
+	if got := hitCount.Load(); got != 1 {
+		t.Fatalf("expected firing webhook to be delivered once, got %d", got)
+	}
+
+	sourceKey := buildRemoteAlertSourceKey("managed-fp-1", startsAt.Unix())
+	firingDelivery, err := repo.GetNotificationDeliveryByDedupKey(ctx, sourceKey, channel.ID, string(NotificationDeliveryEventTypeFiring))
+	if err != nil {
+		t.Fatalf("failed to load firing delivery: %v", err)
+	}
+	if firingDelivery == nil {
+		t.Fatal("expected firing delivery to be created")
+	}
+	if firingDelivery.Status != string(NotificationDeliveryStatusSent) {
+		t.Fatalf("expected firing delivery status sent, got %s", firingDelivery.Status)
+	}
+	if firingDelivery.PolicyID != policy.ID {
+		t.Fatalf("expected policy id %d, got %d", policy.ID, firingDelivery.PolicyID)
+	}
+
+	body, _ := lastBody.Load().(string)
+	if !strings.Contains(body, "内存 0.5") || !strings.Contains(body, "告警") {
+		t.Fatalf("expected managed firing payload to contain chinese alert content, got %s", body)
+	}
+
+	resolvedPayload := &AlertmanagerWebhookPayload{
+		Receiver:          firingPayload.Receiver,
+		Status:            "resolved",
+		CommonLabels:      firingPayload.CommonLabels,
+		CommonAnnotations: firingPayload.CommonAnnotations,
+		Alerts: []*WebhookAlert{{
+			Status:       "resolved",
+			Fingerprint:  "managed-fp-1",
+			StartsAt:     startsAt,
+			EndsAt:       startsAt.Add(2 * time.Minute),
+			GeneratorURL: firingPayload.Alerts[0].GeneratorURL,
+		}},
+	}
+
+	result, err = service.HandleAlertmanagerWebhook(ctx, resolvedPayload)
+	if err != nil {
+		t.Fatalf("HandleAlertmanagerWebhook resolved returned error: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no resolved processing errors, got %v", result.Errors)
+	}
+	if got := hitCount.Load(); got != 2 {
+		t.Fatalf("expected resolved webhook to be delivered once, got %d", got)
+	}
+
+	resolvedDelivery, err := repo.GetNotificationDeliveryByDedupKey(ctx, sourceKey, channel.ID, string(NotificationDeliveryEventTypeResolved))
+	if err != nil {
+		t.Fatalf("failed to load resolved delivery: %v", err)
+	}
+	if resolvedDelivery == nil {
+		t.Fatal("expected resolved delivery to be created")
+	}
+	if resolvedDelivery.Status != string(NotificationDeliveryStatusSent) {
+		t.Fatalf("expected resolved delivery status sent, got %s", resolvedDelivery.Status)
+	}
+
+	body, _ = lastBody.Load().(string)
+	if !strings.Contains(body, "已恢复") && !strings.Contains(body, "恢复") {
+		t.Fatalf("expected managed resolved payload to contain chinese recovery content, got %s", body)
 	}
 }
 

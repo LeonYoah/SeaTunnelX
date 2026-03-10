@@ -18,6 +18,8 @@
 package monitoring
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +27,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// TestNotificationChannelDraft handles POST /api/v1/monitoring/notification-channels/test
+// TestNotificationChannelDraft 处理未保存通知渠道草稿测试发送接口。
+func (h *Handler) TestNotificationChannelDraft(c *gin.Context) {
+	var req NotificationChannelDraftTestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid request body: " + err.Error()})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.TestNotificationChannelDraft(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(getNotificationChannelTestStatusCode(err), Response{ErrorMsg: "Failed to test notification channel: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
 
 // TestNotificationChannel handles POST /api/v1/monitoring/notification-channels/:id/test
 // TestNotificationChannel 处理通知渠道测试发送接口。
@@ -35,12 +58,52 @@ func (h *Handler) TestNotificationChannel(c *gin.Context) {
 		return
 	}
 
-	data, err := h.service.TestNotificationChannel(c.Request.Context(), uint(channelID))
+	var req NotificationChannelTestRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid request body: " + err.Error()})
+		return
+	}
+
+	data, err := h.service.TestNotificationChannel(c.Request.Context(), uint(channelID), &req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to test notification channel: " + err.Error()})
+		c.JSON(getNotificationChannelTestStatusCode(err), Response{ErrorMsg: "Failed to test notification channel: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// TestNotificationChannelConnection handles POST /api/v1/monitoring/notification-channels/test-connection
+// TestNotificationChannelConnection 处理通知渠道连接测试接口。
+func (h *Handler) TestNotificationChannelConnection(c *gin.Context) {
+	var req UpsertNotificationChannelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid request body: " + err.Error()})
+		return
+	}
+	if err := req.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.TestNotificationChannelConnection(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to test notification channel connection: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+func getNotificationChannelTestStatusCode(err error) int {
+	switch {
+	case err == nil:
+		return http.StatusOK
+	case errors.Is(err, ErrAlertPolicyReceiverUserNotFound),
+		errors.Is(err, ErrAlertPolicyReceiverUserInactive),
+		errors.Is(err, ErrAlertPolicyReceiverUserEmailMissing):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // ListNotificationDeliveries handles GET /api/v1/monitoring/notification-deliveries

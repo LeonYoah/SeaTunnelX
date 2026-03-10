@@ -72,6 +72,8 @@ export interface BasicUserInfo {
   username: string;
   /** 昵称 */
   nickname: string;
+  /** 邮箱 */
+  email?: string;
   /** 信任等级 */
   trust_level: TrustLevel;
   /** 头像URL */

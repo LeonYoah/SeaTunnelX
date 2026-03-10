@@ -62,7 +62,12 @@ export type ProcessEventType =
   | 'crashed'
   | 'restarted'
   | 'restart_failed'
-  | 'restart_limit_reached';
+  | 'restart_limit_reached'
+  | 'cluster_restart_requested'
+  | 'node_restart_requested'
+  | 'node_stop_requested'
+  | 'node_offline'
+  | 'node_recovered';
 
 // ProcessEvent represents a process lifecycle event.
 // ProcessEvent 表示进程生命周期事件。
@@ -141,12 +146,24 @@ export async function listProcessEvents(
   filter?: ProcessEventFilter
 ): Promise<ProcessEventListResponse> {
   const params = new URLSearchParams();
-  if (filter?.event_type) params.append('event_type', filter.event_type);
-  if (filter?.node_id) params.append('node_id', String(filter.node_id));
-  if (filter?.start_time) params.append('start_time', filter.start_time);
-  if (filter?.end_time) params.append('end_time', filter.end_time);
-  if (filter?.page) params.append('page', String(filter.page));
-  if (filter?.page_size) params.append('page_size', String(filter.page_size));
+  if (filter?.event_type) {
+    params.append('event_type', filter.event_type);
+  }
+  if (filter?.node_id) {
+    params.append('node_id', String(filter.node_id));
+  }
+  if (filter?.start_time) {
+    params.append('start_time', filter.start_time);
+  }
+  if (filter?.end_time) {
+    params.append('end_time', filter.end_time);
+  }
+  if (filter?.page) {
+    params.append('page', String(filter.page));
+  }
+  if (filter?.page_size) {
+    params.append('page_size', String(filter.page_size));
+  }
 
   const queryString = params.toString();
   const url = `/clusters/${clusterId}/events${queryString ? `?${queryString}` : ''}`;

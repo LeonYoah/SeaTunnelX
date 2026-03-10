@@ -90,3 +90,50 @@ func TestResolveRemoteIngestCapability(t *testing.T) {
 		t.Fatalf("unexpected reason: %s", reason)
 	}
 }
+
+func TestBuildVisibleAlertPolicyTemplateSummaries_filtersUnavailableMetricTemplates(t *testing.T) {
+	templates := buildVisibleAlertPolicyTemplateSummaries([]*AlertPolicyCapabilityDTO{
+		{Key: AlertPolicyCapabilityKeyPlatformHealth, Status: AlertPolicyCapabilityStatusAvailable},
+		{Key: AlertPolicyCapabilityKeyMetricsTemplates, Status: AlertPolicyCapabilityStatusUnavailable},
+	})
+
+	for _, template := range templates {
+		if template == nil {
+			continue
+		}
+		if template.SourceKind == string(AlertPolicyBuilderKindMetricsTemplate) {
+			t.Fatalf("expected unavailable metric template to be filtered, got %+v", template)
+		}
+	}
+}
+
+func TestBuildVisibleAlertPolicyTemplateSummaries_includesTelemetryTemplatesWhenMetricsAvailable(t *testing.T) {
+	templates := buildVisibleAlertPolicyTemplateSummaries([]*AlertPolicyCapabilityDTO{
+		{Key: AlertPolicyCapabilityKeyPlatformHealth, Status: AlertPolicyCapabilityStatusAvailable},
+		{Key: AlertPolicyCapabilityKeyMetricsTemplates, Status: AlertPolicyCapabilityStatusAvailable},
+	})
+
+	found := map[string]bool{}
+	for _, template := range templates {
+		if template == nil {
+			continue
+		}
+		found[template.Key] = true
+	}
+
+	expectedKeys := []string{
+		"cpu_usage_high",
+		"memory_usage_high",
+		"fd_usage_high",
+		"failed_jobs_high",
+		"job_thread_pool_queue_backlog_high",
+		"job_thread_pool_rejection_high",
+		"deadlocked_threads_detected",
+		"split_brain_risk",
+	}
+	for _, key := range expectedKeys {
+		if !found[key] {
+			t.Fatalf("expected template %s to be visible", key)
+		}
+	}
+}

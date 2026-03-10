@@ -97,7 +97,7 @@ func (s *Service) CreateAlertPolicy(ctx context.Context, req *UpsertAlertPolicyR
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateAlertPolicyScopes(ctx, req.ClusterID, req.NotificationChannelIDs); err != nil {
+	if err := s.validateAlertPolicyScopes(ctx, req.ClusterID, req.NotificationChannelIDs, req.ReceiverUserIDs); err != nil {
 		return nil, err
 	}
 	legacyRuleKey := resolveAlertPolicyLegacyRuleKey(req.PolicyType, template, req.LegacyRuleKey)
@@ -113,6 +113,10 @@ func (s *Service) CreateAlertPolicy(ctx context.Context, req *UpsertAlertPolicyR
 	if err != nil {
 		return nil, err
 	}
+	receiverUserIDsJSON, err := marshalAlertPolicyReceiverUserIDs(req.ReceiverUserIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	policy := &AlertPolicy{
 		Name:                       strings.TrimSpace(req.Name),
@@ -123,11 +127,12 @@ func (s *Service) CreateAlertPolicy(ctx context.Context, req *UpsertAlertPolicyR
 		ClusterID:                  normalizeAlertPolicyClusterID(req.ClusterID),
 		Severity:                   normalizeAlertPolicySeverity(req.Severity),
 		Enabled:                    req.Enabled == nil || *req.Enabled,
-		CooldownMinutes:            derefInt(req.CooldownMinutes),
+		CooldownMinutes:            resolveAlertPolicyCooldownMinutes(req.CooldownMinutes),
 		SendRecovery:               req.SendRecovery == nil || *req.SendRecovery,
 		PromQL:                     strings.TrimSpace(req.PromQL),
 		ConditionsJSON:             conditionsJSON,
 		NotificationChannelIDsJSON: channelIDsJSON,
+		ReceiverUserIDsJSON:        receiverUserIDsJSON,
 		LastExecutionStatus:        AlertPolicyExecutionStatusIdle,
 	}
 
@@ -141,7 +146,10 @@ func (s *Service) CreateAlertPolicy(ctx context.Context, req *UpsertAlertPolicyR
 		if err := txRepo.SaveAlertPolicy(ctx, policy); err != nil {
 			return err
 		}
-		return s.syncAlertPolicyLegacyBridge(ctx, txRepo, policy)
+		if err := s.syncAlertPolicyLegacyBridge(ctx, txRepo, policy); err != nil {
+			return err
+		}
+		return s.syncManagedAlertingArtifactsWithRepo(ctx, txRepo)
 	}); err != nil {
 		return nil, err
 	}
@@ -164,7 +172,7 @@ func (s *Service) UpdateAlertPolicy(ctx context.Context, id uint, req *UpsertAle
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateAlertPolicyScopes(ctx, req.ClusterID, req.NotificationChannelIDs); err != nil {
+	if err := s.validateAlertPolicyScopes(ctx, req.ClusterID, req.NotificationChannelIDs, req.ReceiverUserIDs); err != nil {
 		return nil, err
 	}
 	legacyRuleKey := resolveAlertPolicyLegacyRuleKey(req.PolicyType, template, req.LegacyRuleKey)
@@ -177,6 +185,10 @@ func (s *Service) UpdateAlertPolicy(ctx context.Context, id uint, req *UpsertAle
 		return nil, err
 	}
 	channelIDsJSON, err := marshalAlertPolicyChannelIDs(req.NotificationChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	receiverUserIDsJSON, err := marshalAlertPolicyReceiverUserIDs(req.ReceiverUserIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +219,7 @@ func (s *Service) UpdateAlertPolicy(ctx context.Context, id uint, req *UpsertAle
 		policy.PromQL = strings.TrimSpace(req.PromQL)
 		policy.ConditionsJSON = conditionsJSON
 		policy.NotificationChannelIDsJSON = channelIDsJSON
+		policy.ReceiverUserIDsJSON = receiverUserIDsJSON
 		if req.Enabled != nil {
 			policy.Enabled = *req.Enabled
 		}
@@ -231,6 +244,9 @@ func (s *Service) UpdateAlertPolicy(ctx context.Context, id uint, req *UpsertAle
 			}
 		}
 		if err := s.syncAlertPolicyLegacyBridge(ctx, txRepo, policy); err != nil {
+			return err
+		}
+		if err := s.syncManagedAlertingArtifactsWithRepo(ctx, txRepo); err != nil {
 			return err
 		}
 
@@ -271,11 +287,14 @@ func (s *Service) DeleteAlertPolicy(ctx context.Context, id uint) error {
 			}
 		}
 
-		return txRepo.DeleteAlertPolicy(ctx, id)
+		if err := txRepo.DeleteAlertPolicy(ctx, id); err != nil {
+			return err
+		}
+		return s.syncManagedAlertingArtifactsWithRepo(ctx, txRepo)
 	})
 }
 
-func (s *Service) validateAlertPolicyScopes(ctx context.Context, clusterID string, channelIDs []uint) error {
+func (s *Service) validateAlertPolicyScopes(ctx context.Context, clusterID string, channelIDs []uint, receiverUserIDs []uint64) error {
 	normalizedClusterID := normalizeAlertPolicyClusterID(clusterID)
 	if normalizedClusterID != "" && normalizedClusterID != "all" {
 		parsedClusterID, err := strconv.ParseUint(normalizedClusterID, 10, 32)
@@ -294,6 +313,9 @@ func (s *Service) validateAlertPolicyScopes(ctx context.Context, clusterID strin
 			}
 			return err
 		}
+	}
+	if err := s.validateAlertPolicyReceiverUsers(ctx, receiverUserIDs); err != nil {
+		return err
 	}
 	return nil
 }
@@ -385,6 +407,13 @@ func normalizeAlertPolicySeverity(severity AlertSeverity) AlertSeverity {
 	}
 }
 
+func resolveAlertPolicyCooldownMinutes(value *int) int {
+	if value == nil {
+		return defaultAlertReminderIntervalMinutes
+	}
+	return *value
+}
+
 func normalizeAlertPolicyExecutionStatus(status AlertPolicyExecutionStatus) AlertPolicyExecutionStatus {
 	switch status {
 	case AlertPolicyExecutionStatusMatched,
@@ -468,6 +497,25 @@ func unmarshalAlertPolicyChannelIDs(raw string) []uint {
 	return normalizeAlertPolicyChannelIDs(channelIDs)
 }
 
+func marshalAlertPolicyReceiverUserIDs(userIDs []uint64) (string, error) {
+	payload, err := json.Marshal(normalizeReceiverUserIDs(userIDs))
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+func unmarshalAlertPolicyReceiverUserIDs(raw string) []uint64 {
+	if strings.TrimSpace(raw) == "" {
+		return []uint64{}
+	}
+	var userIDs []uint64
+	if err := json.Unmarshal([]byte(raw), &userIDs); err != nil {
+		return []uint64{}
+	}
+	return normalizeReceiverUserIDs(userIDs)
+}
+
 func toAlertPolicyDTO(policy *AlertPolicy) *AlertPolicyDTO {
 	if policy == nil {
 		return nil
@@ -487,6 +535,7 @@ func toAlertPolicyDTO(policy *AlertPolicy) *AlertPolicyDTO {
 		PromQL:                 policy.PromQL,
 		Conditions:             unmarshalAlertPolicyConditions(policy.ConditionsJSON),
 		NotificationChannelIDs: unmarshalAlertPolicyChannelIDs(policy.NotificationChannelIDsJSON),
+		ReceiverUserIDs:        unmarshalAlertPolicyReceiverUserIDs(policy.ReceiverUserIDsJSON),
 		MatchCount:             policy.MatchCount,
 		DeliveryCount:          policy.DeliveryCount,
 		LastMatchedAt:          toUTCTimePointer(policy.LastMatchedAt),
@@ -515,7 +564,7 @@ func resolveAlertPolicyTemplate(policyType AlertPolicyBuilderKind, templateKey s
 	}
 
 	normalizedTemplateKey := strings.TrimSpace(templateKey)
-	for _, template := range defaultAlertPolicyTemplateSummaries() {
+	for _, template := range allAlertPolicyTemplateSummaries() {
 		if template == nil || template.Key != normalizedTemplateKey {
 			continue
 		}

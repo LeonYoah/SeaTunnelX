@@ -29,6 +29,8 @@ export interface EventStats {
   restarted: number;
   restart_failed: number;
   restart_limit_reached: number;
+  node_offline?: number;
+  node_recovered?: number;
 }
 
 export interface MonitoringOverviewStats {
@@ -149,14 +151,17 @@ export interface AlertListData {
 
 export type AlertSourceType = 'local_process_event' | 'remote_alertmanager';
 export type AlertLifecycleStatus = 'firing' | 'resolved';
-export type AlertHandlingStatus = 'pending' | 'acknowledged' | 'silenced';
+export type AlertDisplayStatus = 'firing' | 'resolved' | 'closed';
+export type AlertHandlingStatus =
+  | 'pending'
+  | 'acknowledged'
+  | 'silenced'
+  | 'closed';
 
 export interface AlertInstanceStats {
   firing: number;
   resolved: number;
-  pending: number;
-  acknowledged: number;
-  silenced: number;
+  closed: number;
 }
 
 export interface AlertInstanceSourceRef {
@@ -179,6 +184,7 @@ export interface AlertInstance {
   rule_key: string;
   summary: string;
   description: string;
+  status: AlertDisplayStatus;
   lifecycle_status: AlertLifecycleStatus;
   handling_status: AlertHandlingStatus;
   created_at: string;
@@ -189,6 +195,8 @@ export interface AlertInstance {
   acknowledged_at?: string | null;
   silenced_by?: string;
   silenced_until?: string | null;
+  closed_by?: string;
+  closed_at?: string | null;
   latest_note?: string;
   source_ref?: AlertInstanceSourceRef | null;
 }
@@ -206,6 +214,7 @@ export interface AlertInstanceFilterParams {
   source_type?: AlertSourceType;
   cluster_id?: string;
   severity?: AlertSeverity;
+  status?: AlertDisplayStatus;
   lifecycle_status?: AlertLifecycleStatus;
   handling_status?: AlertHandlingStatus;
   start_time?: string;
@@ -216,11 +225,14 @@ export interface AlertInstanceFilterParams {
 
 export interface AlertInstanceActionResult {
   alert_id: string;
+  status?: AlertDisplayStatus;
   handling_status: AlertHandlingStatus;
   acknowledged_by?: string;
   acknowledged_at?: string | null;
   silenced_by?: string;
   silenced_until?: string | null;
+  closed_by?: string;
+  closed_at?: string | null;
   latest_note?: string;
 }
 
@@ -406,7 +418,21 @@ export interface AlertPolicyTemplateSummary {
   source_kind: string;
   capability_key: string;
   legacy_rule_key?: string;
+  metric_source?: string;
+  required_signals?: string[];
+  suggested_promql?: string;
+  default_operator?: string;
+  default_threshold?: string;
+  default_window_minutes?: number;
   recommended: boolean;
+}
+
+export interface NotificationRecipientUser {
+  id: number;
+  username: string;
+  nickname: string;
+  email: string;
+  is_admin: boolean;
 }
 
 export interface AlertPolicyCenterBootstrapData {
@@ -416,6 +442,8 @@ export interface AlertPolicyCenterBootstrapData {
   builders: AlertPolicyBuilderOption[];
   templates: AlertPolicyTemplateSummary[];
   components: IntegrationComponentStatus[];
+  notifiable_users: NotificationRecipientUser[];
+  default_receiver_user_ids: number[];
 }
 
 export interface AlertPolicyCondition {
@@ -440,6 +468,7 @@ export interface AlertPolicy {
   promql?: string;
   conditions: AlertPolicyCondition[];
   notification_channel_ids: number[];
+  receiver_user_ids: number[];
   match_count: number;
   delivery_count: number;
   last_matched_at?: string | null;
@@ -470,6 +499,7 @@ export interface UpsertAlertPolicyRequest {
   promql?: string;
   conditions?: AlertPolicyCondition[];
   notification_channel_ids?: number[];
+  receiver_user_ids?: number[];
 }
 
 export type NotificationChannelType =
@@ -489,6 +519,7 @@ export interface NotificationChannelEmailConfig {
   username?: string;
   password?: string;
   from: string;
+  from_name?: string;
   recipients: string[];
 }
 
@@ -529,10 +560,32 @@ export interface NotificationChannelTestResult {
   channel_id: number;
   delivery_id: number;
   status: string;
+  receiver?: string;
   sent_at?: string | null;
   last_error?: string;
   status_code?: number;
   response_body?: string;
+}
+
+export interface NotificationChannelTestRequest {
+  receiver_user_id?: number;
+}
+
+export interface NotificationChannelDraftTestRequest {
+  channel: UpsertNotificationChannelRequest;
+  receiver_user_id?: number;
+}
+
+export interface NotificationChannelConnectionTestResult {
+  status: string;
+  checked_at?: string | null;
+  last_error?: string;
+}
+
+export interface NotifiableUserListData {
+  generated_at: string;
+  users: NotificationRecipientUser[];
+  default_receiver_user_ids: number[];
 }
 
 export interface NotificationRoute {

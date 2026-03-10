@@ -26,6 +26,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -568,7 +569,10 @@ func (s *Service) GetIntegrationStatus(ctx context.Context) (*IntegrationStatusD
 	}
 
 	targets, err := s.collectManagedMetricsTargets(ctx, true)
-	metricsComponent := &IntegrationComponentStatus{Name: "seatunnel_metrics"}
+	metricsComponent := &IntegrationComponentStatus{
+		Name: "seatunnel_metrics",
+		URL:  joinURL(obsCfg.Prometheus.URL, "/targets"),
+	}
 	if err != nil {
 		metricsComponent.Healthy = false
 		metricsComponent.Error = err.Error()
@@ -627,12 +631,28 @@ type managedMetricsTarget struct {
 	ProbeError  string
 }
 
+type prometheusActiveTargetsResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ActiveTargets []*prometheusActiveTarget `json:"activeTargets"`
+	} `json:"data"`
+}
+
+type prometheusActiveTarget struct {
+	ScrapeURL        string            `json:"scrapeUrl"`
+	Health           string            `json:"health"`
+	LastError        string            `json:"lastError"`
+	Labels           map[string]string `json:"labels"`
+	DiscoveredLabels map[string]string `json:"discoveredLabels"`
+}
+
 func (s *Service) collectManagedMetricsTargets(ctx context.Context, doProbe bool) ([]*managedMetricsTarget, error) {
 	clusters, _, err := s.clusterService.List(ctx, &cluster.ClusterFilter{Page: 1, PageSize: 1000})
 	if err != nil {
 		return nil, err
 	}
 
+	metricsPath := ensureLeadingSlash(config.Config.Observability.SeatunnelMetric.Path)
 	results := make([]*managedMetricsTarget, 0, 16)
 	seen := make(map[string]struct{})
 
@@ -666,8 +686,11 @@ func (s *Service) collectManagedMetricsTargets(ctx context.Context, doProbe bool
 				ClusterName: strings.TrimSpace(c.Name),
 				Env:         resolveClusterEnvLabel(c),
 				Target:      target,
+				ProbeURL:    "http://" + target + metricsPath,
 			}
-			// 探活逻辑已下沉到 Prometheus 侧，这里不再进行 HTTP 探测。
+			// 目标健康探测由 Prometheus 负责；控制面仅读取 Prometheus 视角的抓取结果。
+			// Prometheus is the source of truth for target health; the control plane
+			// only reads Prometheus scrape status here.
 			results = append(results, item)
 		}
 	}
@@ -678,7 +701,163 @@ func (s *Service) collectManagedMetricsTargets(ctx context.Context, doProbe bool
 		}
 		return results[i].Target < results[j].Target
 	})
+	if doProbe && len(results) > 0 {
+		if err := s.decorateManagedMetricsTargetsFromPrometheus(ctx, results); err != nil {
+			return nil, err
+		}
+	}
 	return results, nil
+}
+
+func (s *Service) decorateManagedMetricsTargetsFromPrometheus(ctx context.Context, targets []*managedMetricsTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	activeTargets, err := s.listPrometheusActiveTargets(ctx)
+	if err != nil {
+		return err
+	}
+
+	metricsPath := ensureLeadingSlash(config.Config.Observability.SeatunnelMetric.Path)
+	activeByAddress := make(map[string]*prometheusActiveTarget, len(activeTargets))
+	for _, target := range activeTargets {
+		if target == nil {
+			continue
+		}
+
+		jobName := strings.TrimSpace(firstNonEmpty(
+			target.Labels["job"],
+			target.DiscoveredLabels["job"],
+		))
+		discoveredPath := ensureLeadingSlash(firstNonEmpty(
+			target.DiscoveredLabels["__metrics_path__"],
+			target.Labels["__metrics_path__"],
+		))
+		clusterIDLabel := strings.TrimSpace(firstNonEmpty(
+			target.Labels["cluster_id"],
+			target.DiscoveredLabels["cluster_id"],
+		))
+		if jobName != "seatunnel_engine_http" &&
+			(clusterIDLabel == "" || discoveredPath != metricsPath) {
+			continue
+		}
+
+		for _, address := range candidatePrometheusTargetAddresses(target) {
+			if current, exists := activeByAddress[address]; exists && strings.EqualFold(current.Health, "up") {
+				continue
+			}
+			activeByAddress[address] = target
+		}
+	}
+
+	if len(activeByAddress) == 0 {
+		return fmt.Errorf("Prometheus has not discovered any managed SeaTunnel metrics targets yet")
+	}
+
+	for _, target := range targets {
+		if target == nil {
+			continue
+		}
+
+		activeTarget, exists := activeByAddress[target.Target]
+		if !exists {
+			target.Healthy = false
+			target.StatusCode = 0
+			target.ProbeError = "Prometheus has not discovered this managed target yet"
+			continue
+		}
+
+		if strings.TrimSpace(activeTarget.ScrapeURL) != "" {
+			target.ProbeURL = strings.TrimSpace(activeTarget.ScrapeURL)
+		}
+		target.Healthy = strings.EqualFold(strings.TrimSpace(activeTarget.Health), "up")
+		if target.Healthy {
+			target.StatusCode = http.StatusOK
+			target.ProbeError = ""
+			continue
+		}
+		target.StatusCode = http.StatusServiceUnavailable
+		target.ProbeError = strings.TrimSpace(firstNonEmpty(
+			activeTarget.LastError,
+			"Prometheus reports the target as down",
+		))
+	}
+	return nil
+}
+
+func (s *Service) listPrometheusActiveTargets(ctx context.Context) ([]*prometheusActiveTarget, error) {
+	apiURL := joinURL(config.Config.Observability.Prometheus.URL, "/api/v1/targets?state=active")
+	if apiURL == "" {
+		return nil, fmt.Errorf("prometheus url is empty")
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		message := strings.TrimSpace(string(payload))
+		if message == "" {
+			message = fmt.Sprintf("http status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("prometheus targets api is not ready: %s", message)
+	}
+
+	var payload prometheusActiveTargetsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(payload.Status), "success") {
+		return nil, fmt.Errorf("prometheus targets api returned status %q", strings.TrimSpace(payload.Status))
+	}
+	return payload.Data.ActiveTargets, nil
+}
+
+func candidatePrometheusTargetAddresses(target *prometheusActiveTarget) []string {
+	if target == nil {
+		return nil
+	}
+
+	candidates := []string{
+		strings.TrimSpace(target.Labels["instance"]),
+		strings.TrimSpace(target.DiscoveredLabels["__address__"]),
+		extractAddressFromScrapeURL(target.ScrapeURL),
+	}
+	result := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
+}
+
+func extractAddressFromScrapeURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := neturl.Parse(trimmed)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Host)
 }
 
 func (s *Service) probeMetricsEndpoint(ctx context.Context, target string) (probeURL string, statusCode int, healthy bool, probeErr string) {
@@ -807,33 +986,9 @@ func (s *Service) CreateNotificationChannel(ctx context.Context, req *UpsertNoti
 	if s.repo == nil {
 		return nil, fmt.Errorf("monitoring repository is not configured")
 	}
-	if err := req.Validate(); err != nil {
+	channel, err := buildNotificationChannelFromUpsertRequest(req)
+	if err != nil {
 		return nil, err
-	}
-
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-
-	channel := &NotificationChannel{
-		Name:        strings.TrimSpace(req.Name),
-		Type:        req.Type,
-		Enabled:     enabled,
-		Description: strings.TrimSpace(req.Description),
-	}
-	if channel.Type == NotificationChannelTypeEmail {
-		configJSON, err := marshalNotificationChannelConfig(channel.Type, req.Config)
-		if err != nil {
-			return nil, err
-		}
-		channel.ConfigJSON = configJSON
-		channel.Endpoint = deriveNotificationChannelEndpoint(channel.Type, req.Endpoint, req.Config)
-		channel.Secret = ""
-	} else {
-		channel.Endpoint = strings.TrimSpace(req.Endpoint)
-		channel.Secret = strings.TrimSpace(req.Secret)
-		channel.ConfigJSON = ""
 	}
 
 	if err := s.repo.CreateNotificationChannel(ctx, channel); err != nil {
@@ -851,34 +1006,23 @@ func (s *Service) UpdateNotificationChannel(ctx context.Context, id uint, req *U
 	if id == 0 {
 		return nil, fmt.Errorf("invalid channel id")
 	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
 
 	channel, err := s.repo.GetNotificationChannelByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	channel.Name = strings.TrimSpace(req.Name)
-	channel.Type = req.Type
-	channel.Description = strings.TrimSpace(req.Description)
-	if channel.Type == NotificationChannelTypeEmail {
-		configJSON, err := marshalNotificationChannelConfig(channel.Type, req.Config)
-		if err != nil {
-			return nil, err
-		}
-		channel.ConfigJSON = configJSON
-		channel.Endpoint = deriveNotificationChannelEndpoint(channel.Type, req.Endpoint, req.Config)
-		channel.Secret = ""
-	} else {
-		channel.Endpoint = strings.TrimSpace(req.Endpoint)
-		channel.Secret = strings.TrimSpace(req.Secret)
-		channel.ConfigJSON = ""
+	nextChannel, err := buildNotificationChannelFromUpsertRequest(req)
+	if err != nil {
+		return nil, err
 	}
-	if req.Enabled != nil {
-		channel.Enabled = *req.Enabled
-	}
+	channel.Name = nextChannel.Name
+	channel.Type = nextChannel.Type
+	channel.Enabled = nextChannel.Enabled
+	channel.Description = nextChannel.Description
+	channel.ConfigJSON = nextChannel.ConfigJSON
+	channel.Endpoint = nextChannel.Endpoint
+	channel.Secret = nextChannel.Secret
 
 	if err := s.repo.SaveNotificationChannel(ctx, channel); err != nil {
 		return nil, err
@@ -974,7 +1118,7 @@ func (s *Service) EvaluateNodeHealthAlerts(ctx context.Context) error {
 				if s.shouldSuppressNodeOfflineDuringStartup(now, reason) {
 					continue
 				}
-				if err := s.recordNodeOfflineEpisode(ctx, item.ID, node, reason, observedSince, graceWindow); err != nil {
+				if err := s.recordNodeOfflineEpisode(ctx, item.ID, strings.TrimSpace(item.Name), node, reason, observedSince, graceWindow); err != nil {
 					evalErrs = append(evalErrs, err)
 				}
 			case !offline:
@@ -1078,6 +1222,7 @@ func nodeRuntimeOfflineGrace(cfg *monitor.MonitorConfig) time.Duration {
 func (s *Service) recordNodeOfflineEpisode(
 	ctx context.Context,
 	clusterID uint,
+	clusterName string,
 	node *cluster.NodeInfo,
 	reason string,
 	observedSince time.Time,
@@ -1092,7 +1237,7 @@ func (s *Service) recordNodeOfflineEpisode(
 		return err
 	}
 	if active {
-		return nil
+		return s.DispatchActiveNodeOfflineReminder(ctx, clusterID, strings.TrimSpace(clusterName), node.ID)
 	}
 
 	details, err := json.Marshal(map[string]string{
@@ -1240,6 +1385,8 @@ func alertableProcessEventTypes() []monitor.ProcessEventType {
 		monitor.EventTypeRestartFailed,
 		monitor.EventTypeRestartLimitReached,
 		monitor.EventTypeClusterRestartRequested,
+		monitor.EventTypeNodeRestartRequested,
+		monitor.EventTypeNodeStopRequested,
 		monitor.EventTypeNodeOffline,
 	}
 }
@@ -1263,6 +1410,10 @@ func eventTypeToRuleKey(eventType monitor.ProcessEventType) string {
 		return AlertRuleKeyProcessRestartLimitReached
 	case monitor.EventTypeClusterRestartRequested:
 		return AlertRuleKeyClusterRestartRequested
+	case monitor.EventTypeNodeRestartRequested:
+		return AlertRuleKeyClusterRestartRequested
+	case monitor.EventTypeNodeStopRequested:
+		return AlertRuleKeyNodeStopRequested
 	case monitor.EventTypeNodeOffline:
 		return AlertRuleKeyNodeOffline
 	default:
@@ -1415,8 +1566,18 @@ func defaultClusterRules(clusterID uint) []*AlertRule {
 		{
 			ClusterID:     clusterID,
 			RuleKey:       AlertRuleKeyClusterRestartRequested,
-			RuleName:      "集群重启事件通知",
-			Description:   "当通过控制面发起集群重启时触发通知，用于邮件联动与演示验证",
+			RuleName:      "重启事件通知",
+			Description:   "当通过控制面发起集群或节点重启时触发通知，用于邮件联动与变更确认",
+			Severity:      AlertSeverityWarning,
+			Enabled:       true,
+			Threshold:     1,
+			WindowSeconds: 60,
+		},
+		{
+			ClusterID:     clusterID,
+			RuleKey:       AlertRuleKeyNodeStopRequested,
+			RuleName:      "节点停止事件通知",
+			Description:   "当通过控制面手动停止某个节点时立即记录并触发通知",
 			Severity:      AlertSeverityWarning,
 			Enabled:       true,
 			Threshold:     1,

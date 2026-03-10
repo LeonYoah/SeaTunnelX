@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/glebarez/sqlite"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 	clusterapp "github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
 	"gorm.io/gorm"
@@ -49,11 +50,13 @@ func setupMonitoringAlertPolicyTestDB(t *testing.T) (*gorm.DB, func()) {
 	}
 
 	if err := database.AutoMigrate(
+		&auth.User{},
 		&clusterapp.Cluster{},
 		&clusterapp.ClusterNode{},
 		&monitor.ProcessEvent{},
 		&AlertRule{},
 		&AlertPolicy{},
+		&AlertState{},
 		&NotificationChannel{},
 		&NotificationDelivery{},
 	); err != nil {
@@ -157,6 +160,94 @@ func TestNormalizeAlertPolicyChannelIDs(t *testing.T) {
 		if ids[idx] != value {
 			t.Fatalf("expected ids[%d]=%d, got %d", idx, value, ids[idx])
 		}
+	}
+}
+
+func TestNormalizeReceiverUserIDs(t *testing.T) {
+	ids := normalizeReceiverUserIDs([]uint64{5, 2, 5, 0, 3})
+	expected := []uint64{2, 3, 5}
+	if len(ids) != len(expected) {
+		t.Fatalf("expected %d ids, got %d", len(expected), len(ids))
+	}
+	for idx, value := range expected {
+		if ids[idx] != value {
+			t.Fatalf("expected ids[%d]=%d, got %d", idx, value, ids[idx])
+		}
+	}
+}
+
+func TestCreateAlertPolicy_persistsReceiverUserIDs(t *testing.T) {
+	service, repo, cluster, ctx := setupMonitoringAlertPolicyService(t)
+
+	adminUser := &auth.User{
+		Username: "admin-alert",
+		Nickname: "Admin Alert",
+		Email:    "admin-alert@example.com",
+		IsActive: true,
+		IsAdmin:  true,
+	}
+	if err := adminUser.SetPassword("admin123", auth.DefaultBcryptCost); err != nil {
+		t.Fatalf("failed to set password: %v", err)
+	}
+	if err := service.repo.db.WithContext(ctx).Create(adminUser).Error; err != nil {
+		t.Fatalf("failed to create admin user: %v", err)
+	}
+
+	clusterID := "all"
+	if cluster != nil {
+		clusterID = strconv.FormatUint(uint64(cluster.ID), 10)
+	}
+
+	created, err := service.CreateAlertPolicy(ctx, &UpsertAlertPolicyRequest{
+		Name:            "Node offline notify admins",
+		PolicyType:      AlertPolicyBuilderKindPlatformHealth,
+		TemplateKey:     AlertRuleKeyNodeOffline,
+		ClusterID:       clusterID,
+		Severity:        AlertSeverityCritical,
+		ReceiverUserIDs: []uint64{adminUser.ID},
+	})
+	if err != nil {
+		t.Fatalf("expected create success, got %v", err)
+	}
+	if len(created.ReceiverUserIDs) != 1 || created.ReceiverUserIDs[0] != adminUser.ID {
+		t.Fatalf("unexpected receiver user ids: %+v", created.ReceiverUserIDs)
+	}
+
+	stored, err := repo.GetAlertPolicyByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("failed to reload policy: %v", err)
+	}
+	if got := unmarshalAlertPolicyReceiverUserIDs(stored.ReceiverUserIDsJSON); len(got) != 1 || got[0] != adminUser.ID {
+		t.Fatalf("unexpected stored receiver user ids: %+v", got)
+	}
+}
+
+func TestGetAlertPolicyCenterBootstrap_returnsDefaultAdminRecipients(t *testing.T) {
+	service, _, _, ctx := setupMonitoringAlertPolicyService(t)
+
+	adminUser := &auth.User{
+		Username: "bootstrap-admin",
+		Nickname: "Bootstrap Admin",
+		Email:    "bootstrap-admin@example.com",
+		IsActive: true,
+		IsAdmin:  true,
+	}
+	if err := adminUser.SetPassword("admin123", auth.DefaultBcryptCost); err != nil {
+		t.Fatalf("failed to set password: %v", err)
+	}
+	if err := service.repo.db.WithContext(ctx).Create(adminUser).Error; err != nil {
+		t.Fatalf("failed to create admin user: %v", err)
+	}
+
+	bootstrap, err := service.GetAlertPolicyCenterBootstrap(ctx)
+	if err != nil {
+		t.Fatalf("GetAlertPolicyCenterBootstrap returned error: %v", err)
+	}
+	if len(bootstrap.NotifiableUsers) == 0 {
+		t.Fatal("expected notifiable users in bootstrap")
+	}
+	if len(bootstrap.DefaultReceiverUserIDs) == 0 || bootstrap.DefaultReceiverUserIDs[0] != adminUser.ID {
+		t.Fatalf("unexpected default receiver user ids: %+v", bootstrap.DefaultReceiverUserIDs)
 	}
 }
 
@@ -306,4 +397,59 @@ func TestDeleteAlertPolicy_restoresDefaultLegacyRuntimeRule(t *testing.T) {
 	if rule.Enabled != defaultRule.Enabled {
 		t.Fatalf("expected restored enabled %v, got %v", defaultRule.Enabled, rule.Enabled)
 	}
+}
+
+func TestResolveNotificationChannelTestRecipients(t *testing.T) {
+	service, _, _, ctx := setupMonitoringAlertPolicyService(t)
+
+	channel := &NotificationChannel{Type: NotificationChannelTypeEmail}
+	validUser := &auth.User{
+		Username: "notify-user",
+		Nickname: "Notify User",
+		Email:    "notify-user@example.com",
+		IsActive: true,
+	}
+	if err := validUser.SetPassword("notify123", auth.DefaultBcryptCost); err != nil {
+		t.Fatalf("failed to set valid user password: %v", err)
+	}
+	if err := service.repo.db.WithContext(ctx).Create(validUser).Error; err != nil {
+		t.Fatalf("failed to create valid user: %v", err)
+	}
+
+	t.Run("returns selected user email", func(t *testing.T) {
+		recipients, receiver, err := service.resolveNotificationChannelTestRecipients(ctx, channel, &NotificationChannelTestRequest{
+			ReceiverUserID: validUser.ID,
+		})
+		if err != nil {
+			t.Fatalf("expected success, got %v", err)
+		}
+		if len(recipients) != 1 || recipients[0] != validUser.Email {
+			t.Fatalf("unexpected recipients: %+v", recipients)
+		}
+		if receiver != validUser.Email {
+			t.Fatalf("expected receiver %q, got %q", validUser.Email, receiver)
+		}
+	})
+
+	t.Run("rejects user without valid email", func(t *testing.T) {
+		invalidUser := &auth.User{
+			Username: "notify-user-no-email",
+			Nickname: "Notify User Missing Email",
+			Email:    "",
+			IsActive: true,
+		}
+		if err := invalidUser.SetPassword("notify123", auth.DefaultBcryptCost); err != nil {
+			t.Fatalf("failed to set invalid user password: %v", err)
+		}
+		if err := service.repo.db.WithContext(ctx).Create(invalidUser).Error; err != nil {
+			t.Fatalf("failed to create invalid user: %v", err)
+		}
+
+		_, _, err := service.resolveNotificationChannelTestRecipients(ctx, channel, &NotificationChannelTestRequest{
+			ReceiverUserID: invalidUser.ID,
+		})
+		if err != ErrAlertPolicyReceiverUserEmailMissing {
+			t.Fatalf("expected ErrAlertPolicyReceiverUserEmailMissing, got %v", err)
+		}
+	})
 }

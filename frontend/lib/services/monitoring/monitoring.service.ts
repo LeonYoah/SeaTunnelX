@@ -40,10 +40,14 @@ import type {
   IntegrationStatusData,
   MonitoringOverviewData,
   NotificationChannel,
+  NotificationChannelConnectionTestResult,
+  NotificationChannelDraftTestRequest,
   NotificationChannelListData,
   NotificationDeliveryFilterParams,
   NotificationDeliveryListData,
   NotificationChannelTestResult,
+  NotificationChannelTestRequest,
+  NotifiableUserListData,
   NotificationRoute,
   NotificationRouteListData,
   PlatformHealthData,
@@ -62,6 +66,9 @@ function normalizeAlertPolicy(policy: AlertPolicy): AlertPolicy {
     conditions: Array.isArray(policy.conditions) ? policy.conditions : [],
     notification_channel_ids: Array.isArray(policy.notification_channel_ids)
       ? policy.notification_channel_ids
+      : [],
+    receiver_user_ids: Array.isArray(policy.receiver_user_ids)
+      ? policy.receiver_user_ids
       : [],
     match_count: Number.isFinite(policy.match_count) ? policy.match_count : 0,
     delivery_count: Number.isFinite(policy.delivery_count)
@@ -92,6 +99,12 @@ function normalizeAlertPolicyCenterBootstrapData(
     builders: Array.isArray(data.builders) ? data.builders : [],
     templates: Array.isArray(data.templates) ? data.templates : [],
     components: Array.isArray(data.components) ? data.components : [],
+    notifiable_users: Array.isArray(data.notifiable_users)
+      ? data.notifiable_users
+      : [],
+    default_receiver_user_ids: Array.isArray(data.default_receiver_user_ids)
+      ? data.default_receiver_user_ids
+      : [],
   };
 }
 
@@ -221,6 +234,20 @@ export class MonitoringService extends BaseService {
   }
 
   /**
+   * Close one resolved unified alert instance.
+   * 关闭一条已恢复的统一告警实例。
+   */
+  static async closeAlertInstance(
+    alertId: string,
+    payload?: AcknowledgeAlertRequest,
+  ): Promise<AlertInstanceActionResult> {
+    return this.post<AlertInstanceActionResult>(
+      `/alert-instances/${encodeURIComponent(alertId)}/close`,
+      payload || {},
+    );
+  }
+
+  /**
    * List alert rules for one cluster.
    * 获取集群告警规则列表。
    */
@@ -260,6 +287,21 @@ export class MonitoringService extends BaseService {
       '/alert-policies/bootstrap',
     );
     return normalizeAlertPolicyCenterBootstrapData(data);
+  }
+
+  /**
+   * List selectable notification recipient users.
+   * 获取可选通知接收用户列表。
+   */
+  static async listNotifiableUsers(): Promise<NotifiableUserListData> {
+    const data = await this.get<NotifiableUserListData>('/notifiable-users');
+    return {
+      ...data,
+      users: Array.isArray(data.users) ? data.users : [],
+      default_receiver_user_ids: Array.isArray(data.default_receiver_user_ids)
+        ? data.default_receiver_user_ids
+        : [],
+    };
   }
 
   /**
@@ -401,10 +443,37 @@ export class MonitoringService extends BaseService {
    */
   static async testNotificationChannel(
     id: number,
+    payload?: NotificationChannelTestRequest,
   ): Promise<NotificationChannelTestResult> {
     return this.post<NotificationChannelTestResult>(
       `/notification-channels/${id}/test`,
-      {},
+      payload || {},
+    );
+  }
+
+  /**
+   * Test one unsaved notification channel draft.
+   * 测试一个未保存的通知渠道草稿。
+   */
+  static async testNotificationChannelDraft(
+    payload: NotificationChannelDraftTestRequest,
+  ): Promise<NotificationChannelTestResult> {
+    return this.post<NotificationChannelTestResult>(
+      '/notification-channels/test',
+      payload,
+    );
+  }
+
+  /**
+   * Test email channel connection with current draft config.
+   * 使用当前草稿配置测试邮件渠道连接。
+   */
+  static async testNotificationChannelConnection(
+    payload: UpsertNotificationChannelRequest,
+  ): Promise<NotificationChannelConnectionTestResult> {
+    return this.post<NotificationChannelConnectionTestResult>(
+      '/notification-channels/test-connection',
+      payload,
     );
   }
 
@@ -617,6 +686,28 @@ export class MonitoringService extends BaseService {
           error instanceof Error
             ? error.message
             : 'Failed to silence alert instance',
+      };
+    }
+  }
+
+  static async closeAlertInstanceSafe(
+    alertId: string,
+    payload?: AcknowledgeAlertRequest,
+  ): Promise<{
+    success: boolean;
+    data?: AlertInstanceActionResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.closeAlertInstance(alertId, payload);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to close alert instance',
       };
     }
   }
@@ -942,13 +1033,16 @@ export class MonitoringService extends BaseService {
     }
   }
 
-  static async testNotificationChannelSafe(id: number): Promise<{
+  static async testNotificationChannelSafe(
+    id: number,
+    payload?: NotificationChannelTestRequest,
+  ): Promise<{
     success: boolean;
     data?: NotificationChannelTestResult;
     error?: string;
   }> {
     try {
-      const data = await this.testNotificationChannel(id);
+      const data = await this.testNotificationChannel(id, payload);
       return {success: true, data};
     } catch (error) {
       return {
@@ -957,6 +1051,48 @@ export class MonitoringService extends BaseService {
           error instanceof Error
             ? error.message
             : 'Failed to test notification channel',
+      };
+    }
+  }
+
+  static async testNotificationChannelDraftSafe(
+    payload: NotificationChannelDraftTestRequest,
+  ): Promise<{
+    success: boolean;
+    data?: NotificationChannelTestResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.testNotificationChannelDraft(payload);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to test notification channel draft',
+      };
+    }
+  }
+
+  static async testNotificationChannelConnectionSafe(
+    payload: UpsertNotificationChannelRequest,
+  ): Promise<{
+    success: boolean;
+    data?: NotificationChannelConnectionTestResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.testNotificationChannelConnection(payload);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to test notification channel connection',
       };
     }
   }

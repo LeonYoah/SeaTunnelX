@@ -273,6 +273,17 @@ func (h *Handler) GetAlertPolicyCenterBootstrap(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{Data: data})
 }
 
+// ListNotifiableUsers handles GET /api/v1/monitoring/notifiable-users.
+// ListNotifiableUsers 处理可通知用户列表接口。
+func (h *Handler) ListNotifiableUsers(c *gin.Context) {
+	data, err := h.service.ListNotifiableUsers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to list notifiable users: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
 // GetPrometheusDiscovery handles GET /api/v1/monitoring/prometheus/discovery.
 // GetPrometheusDiscovery 处理 Prometheus HTTP SD 接口。
 func (h *Handler) GetPrometheusDiscovery(c *gin.Context) {

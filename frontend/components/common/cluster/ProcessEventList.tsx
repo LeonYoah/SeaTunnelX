@@ -57,7 +57,6 @@ import {
 interface ProcessEventListProps {
   clusterId: number;
   nodeId?: number;
-  limit?: number;
 }
 
 // Event type badge config / 事件类型徽章配置
@@ -71,9 +70,14 @@ const eventTypeBadgeConfig: Record<
   restarted: { variant: 'default', icon: <RefreshCw className="h-3 w-3" />, label: 'monitor.events.restarted' },
   restart_failed: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" />, label: 'monitor.events.restartFailed' },
   restart_limit_reached: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" />, label: 'monitor.events.restartLimitReached' },
+  cluster_restart_requested: { variant: 'outline', icon: <RefreshCw className="h-3 w-3" />, label: 'monitor.events.clusterRestartRequested' },
+  node_restart_requested: { variant: 'outline', icon: <RefreshCw className="h-3 w-3" />, label: 'monitor.events.nodeRestartRequested' },
+  node_stop_requested: { variant: 'secondary', icon: <Square className="h-3 w-3" />, label: 'monitor.events.nodeStopRequested' },
+  node_offline: { variant: 'destructive', icon: <AlertTriangle className="h-3 w-3" />, label: 'monitor.events.nodeOffline' },
+  node_recovered: { variant: 'default', icon: <Activity className="h-3 w-3" />, label: 'monitor.events.nodeRecovered' },
 };
 
-export function ProcessEventList({ clusterId, nodeId, limit = 50 }: ProcessEventListProps) {
+export function ProcessEventList({ clusterId, nodeId }: ProcessEventListProps) {
   const t = useTranslations();
   const [events, setEvents] = useState<ProcessEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -158,6 +162,11 @@ export function ProcessEventList({ clusterId, nodeId, limit = 50 }: ProcessEvent
                 <SelectItem value="restarted">{t('monitor.events.restarted')}</SelectItem>
                 <SelectItem value="restart_failed">{t('monitor.events.restartFailed')}</SelectItem>
                 <SelectItem value="restart_limit_reached">{t('monitor.events.restartLimitReached')}</SelectItem>
+                <SelectItem value="cluster_restart_requested">{t('monitor.events.clusterRestartRequested')}</SelectItem>
+                <SelectItem value="node_restart_requested">{t('monitor.events.nodeRestartRequested')}</SelectItem>
+                <SelectItem value="node_stop_requested">{t('monitor.events.nodeStopRequested')}</SelectItem>
+                <SelectItem value="node_offline">{t('monitor.events.nodeOffline')}</SelectItem>
+                <SelectItem value="node_recovered">{t('monitor.events.nodeRecovered')}</SelectItem>
               </SelectContent>
             </Select>
             <Button variant="outline" size="icon" onClick={loadEvents} disabled={loading}>

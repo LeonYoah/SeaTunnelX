@@ -58,6 +58,7 @@ type AlertPolicy struct {
 	PromQL                     string                     `json:"promql" gorm:"type:text"`
 	ConditionsJSON             string                     `json:"conditions_json" gorm:"type:text"`
 	NotificationChannelIDsJSON string                     `json:"notification_channel_ids_json" gorm:"type:text"`
+	ReceiverUserIDsJSON        string                     `json:"receiver_user_ids_json" gorm:"type:text"`
 	MatchCount                 int                        `json:"match_count" gorm:"default:0"`
 	DeliveryCount              int                        `json:"delivery_count" gorm:"default:0"`
 	LastMatchedAt              *time.Time                 `json:"last_matched_at"`
@@ -108,6 +109,8 @@ type AlertState struct {
 	AcknowledgedAt *time.Time          `json:"acknowledged_at"`
 	SilencedBy     string              `json:"silenced_by" gorm:"size:100"`
 	SilencedUntil  *time.Time          `json:"silenced_until" gorm:"index"`
+	ClosedBy       string              `json:"closed_by" gorm:"size:100"`
+	ClosedAt       *time.Time          `json:"closed_at" gorm:"index"`
 	Note           string              `json:"note" gorm:"type:text"`
 	CreatedAt      time.Time           `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt      time.Time           `json:"updated_at" gorm:"autoUpdateTime"`

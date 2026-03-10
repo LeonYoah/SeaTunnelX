@@ -78,8 +78,16 @@ const (
 	EventTypeRestartLimitReached ProcessEventType = "restart_limit_reached"
 
 	// EventTypeClusterRestartRequested indicates a manual cluster restart request was issued.
-	// EventTypeClusterRestartRequested 表示触发了一次手动集群重启请求。
+	// EventTypeClusterRestartRequested 表示触发了一次手动重启请求（集群或节点）。
 	EventTypeClusterRestartRequested ProcessEventType = "cluster_restart_requested"
+
+	// EventTypeNodeRestartRequested indicates a manual node restart request was issued.
+	// EventTypeNodeRestartRequested 表示触发了一次手动节点重启请求。
+	EventTypeNodeRestartRequested ProcessEventType = "node_restart_requested"
+
+	// EventTypeNodeStopRequested indicates a manual node stop request was issued.
+	// EventTypeNodeStopRequested 表示触发了一次手动节点停止请求。
+	EventTypeNodeStopRequested ProcessEventType = "node_stop_requested"
 
 	// EventTypeNodeOffline indicates one managed node has remained unavailable beyond the grace window.
 	// EventTypeNodeOffline 表示某个受管节点在宽限窗口后仍处于不可用状态。

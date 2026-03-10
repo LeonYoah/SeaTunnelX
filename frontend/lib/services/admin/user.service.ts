@@ -24,6 +24,7 @@ export interface UserInfo {
   id: number;
   username: string;
   nickname: string;
+  email?: string;
   avatar_url?: string;
   is_active: boolean;
   is_admin: boolean;
@@ -57,6 +58,7 @@ export interface CreateUserRequest {
   username: string;
   password: string;
   nickname?: string;
+  email?: string;
   is_admin?: boolean;
 }
 
@@ -66,6 +68,7 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest {
   nickname?: string;
   password?: string;
+  email?: string;
   is_active?: boolean;
   is_admin?: boolean;
 }

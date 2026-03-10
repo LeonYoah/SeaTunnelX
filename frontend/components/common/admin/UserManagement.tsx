@@ -75,6 +75,10 @@ import type {
   UpdateUserRequest,
 } from '@/lib/services/admin/user.service';
 
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 /**
  * 用户管理组件
  */
@@ -98,6 +102,7 @@ export function UserManagement() {
     username: '',
     password: '',
     nickname: '',
+    email: '',
     is_admin: false,
   });
 
@@ -129,7 +134,13 @@ export function UserManagement() {
    * 打开创建对话框
    */
   const handleOpenCreate = () => {
-    setFormData({username: '', password: '', nickname: '', is_admin: false});
+    setFormData({
+      username: '',
+      password: '',
+      nickname: '',
+      email: '',
+      is_admin: false,
+    });
     setIsCreateDialogOpen(true);
   };
 
@@ -143,6 +154,7 @@ export function UserManagement() {
       username: user.username,
       password: '',
       nickname: user.nickname || '',
+      email: user.email || '',
       is_admin: user.is_admin,
     });
     setIsEditDialogOpen(true);
@@ -168,12 +180,17 @@ export function UserManagement() {
       toast.error(t('admin.userManagement.errors.passwordTooShort'));
       return;
     }
+    if (formData.email && !isValidEmail(formData.email)) {
+      toast.error(t('admin.userManagement.errors.invalidEmail'));
+      return;
+    }
 
     try {
       await services.adminUser.createUser({
         username: formData.username,
         password: formData.password,
         nickname: formData.nickname,
+        email: formData.email?.trim(),
         is_admin: formData.is_admin,
       });
       toast.success(t('admin.userManagement.createSuccess'));
@@ -188,11 +205,20 @@ export function UserManagement() {
    * 更新用户
    */
   const handleUpdate = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser) {
+      return;
+    }
 
     const updateData: UpdateUserRequest = {};
     if (formData.nickname !== selectedUser.nickname) {
       updateData.nickname = formData.nickname;
+    }
+    if ((formData.email || '') !== (selectedUser.email || '')) {
+      if (formData.email && !isValidEmail(formData.email)) {
+        toast.error(t('admin.userManagement.errors.invalidEmail'));
+        return;
+      }
+      updateData.email = formData.email?.trim() || '';
     }
     if (formData.password) {
       if (formData.password.length < 6) {
@@ -219,7 +245,9 @@ export function UserManagement() {
    * 删除用户
    */
   const handleDelete = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser) {
+      return;
+    }
 
     try {
       await services.adminUser.deleteUser(selectedUser.id);
@@ -296,6 +324,7 @@ export function UserManagement() {
               <TableHead>ID</TableHead>
               <TableHead>{t('admin.userManagement.username')}</TableHead>
               <TableHead>{t('admin.userManagement.nickname')}</TableHead>
+              <TableHead>{t('admin.userManagement.email')}</TableHead>
               <TableHead>{t('admin.userManagement.isAdmin')}</TableHead>
               <TableHead>{t('admin.userManagement.isActive')}</TableHead>
               <TableHead>{t('admin.userManagement.createdAt')}</TableHead>
@@ -305,14 +334,14 @@ export function UserManagement() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className='text-center py-8'>
+                <TableCell colSpan={8} className='text-center py-8'>
                   {t('common.loading')}
                 </TableCell>
               </TableRow>
             ) : users.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className='text-center py-8 text-muted-foreground'
                 >
                   {t('admin.userManagement.noUsers')}
@@ -324,6 +353,7 @@ export function UserManagement() {
                   <TableCell>{user.id}</TableCell>
                   <TableCell className='font-medium'>{user.username}</TableCell>
                   <TableCell>{user.nickname || '-'}</TableCell>
+                  <TableCell>{user.email || '-'}</TableCell>
                   <TableCell>
                     {user.is_admin ? (
                       <Badge variant='default'>
@@ -436,6 +466,17 @@ export function UserManagement() {
                 }
               />
             </div>
+            <div className='space-y-2'>
+              <Label htmlFor='email'>{t('admin.userManagement.email')}</Label>
+              <Input
+                id='email'
+                type='email'
+                value={formData.email || ''}
+                onChange={(e) =>
+                  setFormData({...formData, email: e.target.value})
+                }
+              />
+            </div>
             <div className='flex items-center space-x-2'>
               <Switch
                 id='is_admin'
@@ -497,6 +538,19 @@ export function UserManagement() {
                 value={formData.nickname}
                 onChange={(e) =>
                   setFormData({...formData, nickname: e.target.value})
+                }
+              />
+            </div>
+            <div className='space-y-2'>
+              <Label htmlFor='edit-email'>
+                {t('admin.userManagement.email')}
+              </Label>
+              <Input
+                id='edit-email'
+                type='email'
+                value={formData.email || ''}
+                onChange={(e) =>
+                  setFormData({...formData, email: e.target.value})
                 }
               />
             </div>

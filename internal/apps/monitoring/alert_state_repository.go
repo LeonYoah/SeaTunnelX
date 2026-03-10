@@ -78,6 +78,8 @@ func (r *Repository) SaveAlertState(ctx context.Context, state *AlertState) erro
 			"acknowledged_at": state.AcknowledgedAt,
 			"silenced_by":     state.SilencedBy,
 			"silenced_until":  state.SilencedUntil,
+			"closed_by":       state.ClosedBy,
+			"closed_at":       state.ClosedAt,
 			"note":            state.Note,
 			"updated_at":      time.Now().UTC(),
 		}).

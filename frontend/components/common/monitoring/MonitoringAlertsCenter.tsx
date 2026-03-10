@@ -20,20 +20,20 @@
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {useSearchParams} from 'next/navigation';
 import {useTranslations} from 'next-intl';
-import {toast} from 'sonner';
 import {RefreshCw} from 'lucide-react';
+import {toast} from 'sonner';
 import services from '@/lib/services';
 import type {
-  AlertHandlingStatus,
+  AlertDisplayStatus,
   AlertInstance,
   AlertInstanceStats,
-  AlertLifecycleStatus,
+  AlertSeverity,
   AlertSourceType,
 } from '@/lib/services/monitoring';
-import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
-import {Input} from '@/components/ui/input';
+import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
+import {Input} from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -58,9 +58,7 @@ type ClusterOption = {
 const EMPTY_STATS: AlertInstanceStats = {
   firing: 0,
   resolved: 0,
-  pending: 0,
-  acknowledged: 0,
-  silenced: 0,
+  closed: 0,
 };
 
 function formatDateTime(value?: string | null): string {
@@ -98,22 +96,34 @@ function resolveSeverityVariant(
   return 'outline';
 }
 
-function resolveLifecycleVariant(
-  status: AlertLifecycleStatus,
+function resolveStatusVariant(
+  status: AlertDisplayStatus,
 ): 'default' | 'secondary' | 'outline' | 'destructive' {
-  return status === 'firing' ? 'destructive' : 'secondary';
+  switch (status) {
+    case 'firing':
+      return 'destructive';
+    case 'resolved':
+      return 'secondary';
+    case 'closed':
+      return 'outline';
+    default:
+      return 'outline';
+  }
 }
 
-function resolveHandlingVariant(
-  status: AlertHandlingStatus,
-): 'default' | 'secondary' | 'outline' | 'destructive' {
-  if (status === 'silenced') {
-    return 'outline';
+function isSilenceActive(value?: string | null): boolean {
+  if (!value) {
+    return false;
   }
-  if (status === 'acknowledged') {
-    return 'secondary';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
   }
-  return 'default';
+  return parsed.getTime() > Date.now();
+}
+
+function resolveLastChangedAt(alert: AlertInstance): string | null {
+  return alert.closed_at || alert.resolved_at || alert.last_seen_at || null;
 }
 
 export function MonitoringAlertsCenter() {
@@ -123,8 +133,7 @@ export function MonitoringAlertsCenter() {
   const [clusterOptions, setClusterOptions] = useState<ClusterOption[]>([]);
   const [clusterFilter, setClusterFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
-  const [lifecycleFilter, setLifecycleFilter] = useState<string>('all');
-  const [handlingFilter, setHandlingFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [startTimeFilter, setStartTimeFilter] = useState<string>('');
   const [endTimeFilter, setEndTimeFilter] = useState<string>('');
   const [page, setPage] = useState<number>(1);
@@ -157,7 +166,7 @@ export function MonitoringAlertsCenter() {
     try {
       const data = await services.cluster.getClusters({
         current: 1,
-        size: 200,
+        size: 100,
       });
       setClusterOptions(
         (data.clusters || []).map((cluster) => ({
@@ -179,14 +188,10 @@ export function MonitoringAlertsCenter() {
           sourceFilter === 'all'
             ? undefined
             : (sourceFilter as AlertSourceType),
-        lifecycle_status:
-          lifecycleFilter === 'all'
+        status:
+          statusFilter === 'all'
             ? undefined
-            : (lifecycleFilter as AlertLifecycleStatus),
-        handling_status:
-          handlingFilter === 'all'
-            ? undefined
-            : (handlingFilter as AlertHandlingStatus),
+            : (statusFilter as AlertDisplayStatus),
         start_time: toRFC3339(startTimeFilter),
         end_time: toRFC3339(endTimeFilter),
         page,
@@ -204,21 +209,17 @@ export function MonitoringAlertsCenter() {
       setAlerts(result.data.alerts || []);
       setStats(result.data.stats || EMPTY_STATS);
       setTotal(result.data.total || 0);
-      if (result.data.page && result.data.page !== page) {
-        setPage(result.data.page);
-      }
     } finally {
       setLoading(false);
     }
   }, [
     clusterFilter,
-    sourceFilter,
-    lifecycleFilter,
-    handlingFilter,
-    startTimeFilter,
     endTimeFilter,
     page,
     pageSizeNumber,
+    sourceFilter,
+    startTimeFilter,
+    statusFilter,
     t,
   ]);
 
@@ -252,32 +253,24 @@ export function MonitoringAlertsCenter() {
     [t],
   );
 
-  const resolveLifecycleLabel = useCallback(
-    (status: AlertLifecycleStatus) => {
+  const resolveStatusLabel = useCallback(
+    (status: AlertDisplayStatus) => {
       if (status === 'resolved') {
-        return t('alerts.lifecycleStatuses.resolved');
+        return t('alerts.statuses.resolved');
       }
-      return t('alerts.lifecycleStatuses.firing');
-    },
-    [t],
-  );
-
-  const resolveHandlingLabel = useCallback(
-    (status: AlertHandlingStatus) => {
-      if (status === 'acknowledged') {
-        return t('alerts.handlingStatuses.acknowledged');
+      if (status === 'closed') {
+        return t('alerts.statuses.closed');
       }
-      if (status === 'silenced') {
-        return t('alerts.handlingStatuses.silenced');
-      }
-      return t('alerts.handlingStatuses.pending');
+      return t('alerts.statuses.firing');
     },
     [t],
   );
 
   const resolveSeverityLabel = useCallback(
-    (severity: string) => {
-      const normalized = severity.trim().toLowerCase();
+    (severity: AlertSeverity | string) => {
+      const normalized = String(severity || '')
+        .trim()
+        .toLowerCase();
       if (normalized === 'critical') {
         return t('alertSeverity.critical');
       }
@@ -294,24 +287,7 @@ export function MonitoringAlertsCenter() {
       return 1;
     }
     return Math.max(1, Math.ceil(total / pageSizeNumber));
-  }, [total, pageSizeNumber]);
-
-  const handleAcknowledge = async (alert: AlertInstance) => {
-    setActingAlertId(alert.alert_id);
-    try {
-      const result = await services.monitoring.acknowledgeAlertInstanceSafe(
-        alert.alert_id,
-      );
-      if (!result.success) {
-        toast.error(result.error || t('alerts.ackError'));
-        return;
-      }
-      toast.success(t('alerts.ackSuccess'));
-      await loadAlerts();
-    } finally {
-      setActingAlertId(null);
-    }
-  };
+  }, [pageSizeNumber, total]);
 
   const handleSilence = async (alert: AlertInstance) => {
     setActingAlertId(alert.alert_id);
@@ -331,162 +307,166 @@ export function MonitoringAlertsCenter() {
     }
   };
 
+  const handleClose = async (alert: AlertInstance) => {
+    setActingAlertId(alert.alert_id);
+    try {
+      const result = await services.monitoring.closeAlertInstanceSafe(
+        alert.alert_id,
+      );
+      if (!result.success) {
+        toast.error(result.error || t('alerts.closeError'));
+        return;
+      }
+      toast.success(t('alerts.closeSuccess'));
+      await loadAlerts();
+    } finally {
+      setActingAlertId(null);
+    }
+  };
+
+  const renderMarkers = (alert: AlertInstance) => {
+    const silenceActive = isSilenceActive(alert.silenced_until);
+    const hasAcknowledged = Boolean(alert.acknowledged_at);
+    const hasNote = Boolean(alert.latest_note?.trim());
+
+    if (!silenceActive && !hasAcknowledged && !hasNote) {
+      return null;
+    }
+
+    return (
+      <div className='mt-2 flex flex-wrap gap-2'>
+        {hasAcknowledged ? (
+          <Badge variant='secondary'>{t('alerts.markers.acknowledged')}</Badge>
+        ) : null}
+        {silenceActive ? (
+          <Badge variant='outline'>
+            {t('alerts.markers.silencedUntil', {
+              time: formatDateTime(alert.silenced_until),
+            })}
+          </Badge>
+        ) : null}
+        {hasNote ? (
+          <Badge variant='outline'>
+            {t('alerts.markers.latestNote', {note: alert.latest_note || ''})}
+          </Badge>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <div className='space-y-4'>
       <Card>
-        <CardHeader>
+        <CardHeader className='space-y-4'>
           <CardTitle>{t('alerts.title')}</CardTitle>
-          <div className='flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between'>
-            <div className='flex flex-col gap-2 md:flex-row md:flex-wrap'>
-              <div className='w-full md:w-56'>
-                <Select
-                  value={clusterFilter}
-                  onValueChange={(value) => {
-                    setClusterFilter(value);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('alerts.clusterFilter')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>
-                      {t('alerts.allClusters')}
-                    </SelectItem>
-                    {clusterOptions.map((cluster) => (
-                      <SelectItem key={cluster.id} value={cluster.id}>
-                        {cluster.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className='w-full md:w-56'>
-                <Select
-                  value={sourceFilter}
-                  onValueChange={(value) => {
-                    setSourceFilter(value);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('alerts.sourceFilter')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>{t('alerts.allSources')}</SelectItem>
-                    <SelectItem value='local_process_event'>
-                      {t('alerts.sourceTypes.local_process_event')}
-                    </SelectItem>
-                    <SelectItem value='remote_alertmanager'>
-                      {t('alerts.sourceTypes.remote_alertmanager')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className='w-full md:w-56'>
-                <Select
-                  value={lifecycleFilter}
-                  onValueChange={(value) => {
-                    setLifecycleFilter(value);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={t('alerts.lifecycleStatusFilter')}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>{t('alerts.allLifecycle')}</SelectItem>
-                    <SelectItem value='firing'>
-                      {t('alerts.lifecycleStatuses.firing')}
-                    </SelectItem>
-                    <SelectItem value='resolved'>
-                      {t('alerts.lifecycleStatuses.resolved')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className='w-full md:w-56'>
-                <Select
-                  value={handlingFilter}
-                  onValueChange={(value) => {
-                    setHandlingFilter(value);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={t('alerts.handlingStatusFilter')}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>{t('alerts.allHandling')}</SelectItem>
-                    <SelectItem value='pending'>
-                      {t('alerts.handlingStatuses.pending')}
-                    </SelectItem>
-                    <SelectItem value='acknowledged'>
-                      {t('alerts.handlingStatuses.acknowledged')}
-                    </SelectItem>
-                    <SelectItem value='silenced'>
-                      {t('alerts.handlingStatuses.silenced')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className='w-full md:w-64'>
-                <Input
-                  type='datetime-local'
-                  value={startTimeFilter}
-                  onChange={(event) => {
-                    setStartTimeFilter(event.target.value);
-                    setPage(1);
-                  }}
-                  placeholder={t('alerts.startTime')}
-                />
-              </div>
-
-              <div className='w-full md:w-64'>
-                <Input
-                  type='datetime-local'
-                  value={endTimeFilter}
-                  onChange={(event) => {
-                    setEndTimeFilter(event.target.value);
-                    setPage(1);
-                  }}
-                  placeholder={t('alerts.endTime')}
-                />
-              </div>
-
-              <Button
-                variant='outline'
-                onClick={() => {
-                  setStartTimeFilter('');
-                  setEndTimeFilter('');
+          <div className='grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6'>
+            <div className='w-full'>
+              <Select
+                value={clusterFilter}
+                onValueChange={(value) => {
+                  setClusterFilter(value);
                   setPage(1);
                 }}
-                disabled={!startTimeFilter && !endTimeFilter}
               >
-                {t('alerts.clearTimeFilter')}
-              </Button>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('alerts.clusterFilter')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>{t('alerts.allClusters')}</SelectItem>
+                  {clusterOptions.map((cluster) => (
+                    <SelectItem key={cluster.id} value={cluster.id}>
+                      {cluster.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className='flex flex-wrap items-center gap-2'>
-              <Badge variant='outline'>{`${t('alerts.totalCount')}: ${total}`}</Badge>
-              <Badge variant='destructive'>{`${t('alerts.firingCount')}: ${stats.firing}`}</Badge>
-              <Badge variant='secondary'>{`${t('alerts.resolvedCount')}: ${stats.resolved}`}</Badge>
-              <Badge variant='default'>{`${t('alerts.pendingCount')}: ${stats.pending}`}</Badge>
-              <Badge variant='secondary'>{`${t('alerts.acknowledgedCount')}: ${stats.acknowledged}`}</Badge>
-              <Badge variant='outline'>{`${t('alerts.silencedCount')}: ${stats.silenced}`}</Badge>
-              <Button variant='outline' onClick={loadAlerts} disabled={loading}>
-                <RefreshCw className='mr-2 h-4 w-4' />
-                {t('refresh')}
-              </Button>
+            <div className='w-full'>
+              <Select
+                value={sourceFilter}
+                onValueChange={(value) => {
+                  setSourceFilter(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('alerts.sourceFilter')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>{t('alerts.allSources')}</SelectItem>
+                  <SelectItem value='local_process_event'>
+                    {t('alerts.sourceTypes.local_process_event')}
+                  </SelectItem>
+                  <SelectItem value='remote_alertmanager'>
+                    {t('alerts.sourceTypes.remote_alertmanager')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            <div className='w-full'>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  setStatusFilter(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('alerts.statusFilter')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>{t('alerts.allStatuses')}</SelectItem>
+                  <SelectItem value='firing'>
+                    {t('alerts.statuses.firing')}
+                  </SelectItem>
+                  <SelectItem value='resolved'>
+                    {t('alerts.statuses.resolved')}
+                  </SelectItem>
+                  <SelectItem value='closed'>
+                    {t('alerts.statuses.closed')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Input
+              type='datetime-local'
+              value={startTimeFilter}
+              onChange={(event) => {
+                setStartTimeFilter(event.target.value);
+                setPage(1);
+              }}
+              placeholder={t('alerts.startTime')}
+            />
+
+            <Input
+              type='datetime-local'
+              value={endTimeFilter}
+              onChange={(event) => {
+                setEndTimeFilter(event.target.value);
+                setPage(1);
+              }}
+              placeholder={t('alerts.endTime')}
+            />
+
+            <Button
+              variant='outline'
+              onClick={loadAlerts}
+              disabled={loading}
+              className='w-full xl:w-auto'
+            >
+              <RefreshCw className='mr-2 h-4 w-4' />
+              {t('refresh')}
+            </Button>
+          </div>
+
+          <div className='flex flex-wrap gap-2'>
+            <Badge variant='outline'>{`${t('alerts.totalCount')}: ${total}`}</Badge>
+            <Badge variant='destructive'>{`${t('alerts.firingCount')}: ${stats.firing}`}</Badge>
+            <Badge variant='secondary'>{`${t('alerts.resolvedCount')}: ${stats.resolved}`}</Badge>
+            <Badge variant='outline'>{`${t('alerts.closedCount')}: ${stats.closed}`}</Badge>
           </div>
         </CardHeader>
 
@@ -498,11 +478,10 @@ export function MonitoringAlertsCenter() {
                 <TableHead>{t('alerts.sourceType')}</TableHead>
                 <TableHead>{t('alerts.alertName')}</TableHead>
                 <TableHead>{t('alerts.severity')}</TableHead>
-                <TableHead>{t('alerts.lifecycleStatus')}</TableHead>
-                <TableHead>{t('alerts.handlingStatus')}</TableHead>
+                <TableHead>{t('alerts.status')}</TableHead>
                 <TableHead>{t('alerts.summary')}</TableHead>
-                <TableHead>{t('alerts.eventTime')}</TableHead>
-                <TableHead>{t('alerts.lastSeenAt')}</TableHead>
+                <TableHead>{t('alerts.firstFiredAt')}</TableHead>
+                <TableHead>{t('alerts.lastChangedAt')}</TableHead>
                 <TableHead>{t('actions')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -510,7 +489,7 @@ export function MonitoringAlertsCenter() {
               {loading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
+                    colSpan={9}
                     className='text-center text-muted-foreground'
                   >
                     {t('loading')}
@@ -519,7 +498,7 @@ export function MonitoringAlertsCenter() {
               ) : !alerts.length ? (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
+                    colSpan={9}
                     className='text-center text-muted-foreground'
                   >
                     {t('alerts.noAlerts')}
@@ -528,12 +507,16 @@ export function MonitoringAlertsCenter() {
               ) : (
                 alerts.map((alert) => {
                   const busy = actingAlertId === alert.alert_id;
-                  const canAcknowledge =
-                    alert.lifecycle_status === 'firing' &&
-                    alert.handling_status === 'pending';
+                  const silenceActive = isSilenceActive(alert.silenced_until);
                   const canSilence =
-                    alert.lifecycle_status === 'firing' &&
-                    alert.handling_status !== 'silenced';
+                    alert.status === 'firing' && !silenceActive;
+                  const canClose = alert.status !== 'closed';
+                  const silenceHint = canSilence
+                    ? t('alerts.actionHints.silenceReady')
+                    : t('alerts.actionHints.silenceUnavailable');
+                  const closeHint = canClose
+                    ? t('alerts.actionHints.closeReady')
+                    : t('alerts.actionHints.closeClosed');
 
                   return (
                     <TableRow key={alert.alert_id}>
@@ -548,51 +531,49 @@ export function MonitoringAlertsCenter() {
                       <TableCell>{alert.alert_name || '-'}</TableCell>
                       <TableCell>
                         <Badge variant={resolveSeverityVariant(alert.severity)}>
-                          {resolveSeverityLabel(String(alert.severity || ''))}
+                          {resolveSeverityLabel(alert.severity)}
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant={resolveLifecycleVariant(
-                            alert.lifecycle_status,
-                          )}
-                        >
-                          {resolveLifecycleLabel(alert.lifecycle_status)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={resolveHandlingVariant(alert.handling_status)}
-                        >
-                          {resolveHandlingLabel(alert.handling_status)}
+                        <Badge variant={resolveStatusVariant(alert.status)}>
+                          {resolveStatusLabel(alert.status)}
                         </Badge>
                       </TableCell>
                       <TableCell
-                        className='max-w-[320px] truncate'
+                        className='max-w-[360px] align-top'
                         title={alert.summary || alert.description || ''}
                       >
-                        {alert.summary || alert.description || '-'}
+                        <div className='line-clamp-2'>
+                          {alert.summary || alert.description || '-'}
+                        </div>
+                        {renderMarkers(alert)}
                       </TableCell>
                       <TableCell>{formatDateTime(alert.firing_at)}</TableCell>
-                      <TableCell>{formatDateTime(alert.last_seen_at)}</TableCell>
+                      <TableCell>
+                        {formatDateTime(resolveLastChangedAt(alert))}
+                      </TableCell>
                       <TableCell>
                         <div className='flex flex-wrap gap-2'>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            disabled={!canAcknowledge || busy}
-                            onClick={() => handleAcknowledge(alert)}
-                          >
-                            {t('alerts.ack')}
-                          </Button>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            disabled={!canSilence || busy}
-                            onClick={() => handleSilence(alert)}
-                          >
-                            {t('alerts.silence30m')}
-                          </Button>
+                          <span title={silenceHint}>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={!canSilence || busy}
+                              onClick={() => handleSilence(alert)}
+                            >
+                              {t('alerts.silence30m')}
+                            </Button>
+                          </span>
+                          <span title={closeHint}>
+                            <Button
+                              size='sm'
+                              variant='secondary'
+                              disabled={!canClose || busy}
+                              onClick={() => handleClose(alert)}
+                            >
+                              {t('alerts.manualClose')}
+                            </Button>
+                          </span>
                         </div>
                       </TableCell>
                     </TableRow>

@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,30 +318,71 @@ func Serve() {
 			// Monitoring center 监控中心
 			monitoringRepo := monitoringapp.NewRepository(db.DB(context.Background()))
 			monitoringService := monitoringapp.NewService(clusterService, monitorService, monitoringRepo)
+			if err := monitoringService.SyncManagedAlertingArtifacts(ctx); err != nil {
+				log.Printf("[Monitoring] sync managed alerting artifacts failed: %v", err)
+			}
 			monitorService.SetOnEventRecorded(monitoringService.DispatchAlertPolicyEvent)
 			monitoringService.StartNodeHealthEvaluator(ctx)
 			clusterHandler.SetOnOperationExecuted(func(ctx context.Context, event *cluster.OperationEvent) error {
-				if event == nil || event.Operation != cluster.OperationRestart {
+				if event == nil {
+					return nil
+				}
+				var processEventType monitor.ProcessEventType
+				switch {
+				case event.NodeID > 0 && event.Operation == cluster.OperationStop:
+					processEventType = monitor.EventTypeNodeStopRequested
+				case event.NodeID > 0 && event.Operation == cluster.OperationRestart:
+					processEventType = monitor.EventTypeNodeRestartRequested
+				case event.Operation == cluster.OperationRestart:
+					processEventType = monitor.EventTypeClusterRestartRequested
+				default:
 					return nil
 				}
 				details := map[string]string{
-					"trigger":  event.Trigger,
-					"operator": event.Operator,
-					"success":  fmt.Sprintf("%t", event.Success),
-					"message":  event.Message,
+					"trigger":   event.Trigger,
+					"operator":  event.Operator,
+					"success":   fmt.Sprintf("%t", event.Success),
+					"message":   event.Message,
+					"scope":     "cluster",
+					"operation": string(event.Operation),
 				}
 				if strings.TrimSpace(event.ClusterName) != "" {
 					details["cluster_name"] = strings.TrimSpace(event.ClusterName)
 				}
+				if event.NodeID > 0 {
+					details["scope"] = "node"
+					details["node_id"] = strconv.FormatUint(uint64(event.NodeID), 10)
+				}
+				if event.HostID > 0 {
+					details["host_id"] = strconv.FormatUint(uint64(event.HostID), 10)
+				}
+				if strings.TrimSpace(event.HostName) != "" {
+					details["host_name"] = strings.TrimSpace(event.HostName)
+				}
+				if strings.TrimSpace(event.HostIP) != "" {
+					details["host_ip"] = strings.TrimSpace(event.HostIP)
+				}
+				if strings.TrimSpace(event.Role) != "" {
+					details["role"] = strings.TrimSpace(event.Role)
+				}
 				detailsJSON, _ := json.Marshal(details)
 				processName := strings.TrimSpace(event.ClusterName)
+				if event.NodeID > 0 {
+					processName = strings.TrimSpace(event.HostName)
+				}
+				if processName == "" && event.NodeID > 0 {
+					processName = fmt.Sprintf("node %d", event.NodeID)
+				}
 				if processName == "" {
 					processName = "cluster restart"
 				}
 				return monitorService.RecordEvent(ctx, &monitor.ProcessEvent{
 					ClusterID:   event.ClusterID,
-					EventType:   monitor.EventTypeClusterRestartRequested,
+					NodeID:      event.NodeID,
+					HostID:      event.HostID,
+					EventType:   processEventType,
 					ProcessName: processName,
+					Role:        strings.TrimSpace(event.Role),
 					Details:     string(detailsJSON),
 				})
 			})
@@ -370,17 +412,21 @@ func Serve() {
 				monitoringRouter.GET("/remote-alerts", monitoringHandler.ListRemoteAlerts)
 				monitoringRouter.POST("/alert-instances/:id/ack", monitoringHandler.AcknowledgeAlertInstance)
 				monitoringRouter.POST("/alert-instances/:id/silence", monitoringHandler.SilenceAlertInstance)
+				monitoringRouter.POST("/alert-instances/:id/close", monitoringHandler.CloseAlertInstance)
 				monitoringRouter.POST("/alerts/:eventId/ack", monitoringHandler.AcknowledgeAlert)
 				monitoringRouter.POST("/alerts/:eventId/silence", monitoringHandler.SilenceAlert)
 				monitoringRouter.GET("/clusters/:id/rules", monitoringHandler.ListClusterRules)
 				monitoringRouter.PUT("/clusters/:id/rules/:ruleId", monitoringHandler.UpdateClusterRule)
 				monitoringRouter.GET("/integration/status", monitoringHandler.GetIntegrationStatus)
 				monitoringRouter.GET("/alert-policies/bootstrap", monitoringHandler.GetAlertPolicyCenterBootstrap)
+				monitoringRouter.GET("/notifiable-users", monitoringHandler.ListNotifiableUsers)
 				monitoringRouter.GET("/platform-health", monitoringHandler.GetPlatformHealth)
 				monitoringRouter.GET("/notification-channels", monitoringHandler.ListNotificationChannels)
 				monitoringRouter.POST("/notification-channels", monitoringHandler.CreateNotificationChannel)
 				monitoringRouter.PUT("/notification-channels/:id", monitoringHandler.UpdateNotificationChannel)
 				monitoringRouter.DELETE("/notification-channels/:id", monitoringHandler.DeleteNotificationChannel)
+				monitoringRouter.POST("/notification-channels/test", monitoringHandler.TestNotificationChannelDraft)
+				monitoringRouter.POST("/notification-channels/test-connection", monitoringHandler.TestNotificationChannelConnection)
 				monitoringRouter.POST("/notification-channels/:id/test", monitoringHandler.TestNotificationChannel)
 				monitoringRouter.GET("/notification-deliveries", monitoringHandler.ListNotificationDeliveries)
 				monitoringRouter.GET("/notification-routes", monitoringHandler.ListNotificationRoutes)
@@ -853,6 +899,9 @@ func initGRPCServer(ctx context.Context) (*grpcServer.Server, *agent.Manager) {
 	monitorService := monitor.NewService(monitorRepo)
 	monitoringRepo := monitoringapp.NewRepository(db.DB(ctx))
 	monitoringService := monitoringapp.NewService(clusterService, monitorService, monitoringRepo)
+	if err := monitoringService.SyncManagedAlertingArtifacts(ctx); err != nil {
+		log.Printf("[Monitoring] sync managed alerting artifacts failed: %v", err)
+	}
 	monitorService.SetOnEventRecorded(monitoringService.DispatchAlertPolicyEvent)
 	grpcServer.SetClusterNodeProvider(&grpcClusterNodeProviderAdapter{
 		clusterService: clusterService,

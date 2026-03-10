@@ -121,12 +121,22 @@ func (s *Service) HandleAlertmanagerWebhook(ctx context.Context, payload *Alertm
 		}
 
 		record := normalizeWebhookAlert(payload, alert, now)
+		previousRecord, err := s.repo.GetRemoteAlertByFingerprintAndStartsAt(ctx, record.Fingerprint, record.StartsAt)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("alert[%d] lookup failed: %v", idx, err))
+			continue
+		}
 		if err := s.repo.UpsertRemoteAlert(ctx, record); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("alert[%d] upsert failed: %v", idx, err))
 			continue
 		}
-		if err := s.deliverRemoteAlertNotifications(ctx, record); err != nil {
+		handled, err := s.deliverManagedRemoteAlertPolicyNotifications(ctx, record, previousRecord)
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("alert[%d] delivery failed: %v", idx, err))
+		} else if !handled {
+			if err := s.deliverRemoteAlertNotifications(ctx, record); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("alert[%d] delivery failed: %v", idx, err))
+			}
 		}
 		result.Stored++
 	}
@@ -171,7 +181,11 @@ func normalizeWebhookAlert(payload *AlertmanagerWebhookPayload, alert *WebhookAl
 		fingerprint = buildFallbackFingerprint(labels, startsAt, alert.GeneratorURL)
 	}
 
-	alertName := strings.TrimSpace(labels["alertname"])
+	alertName := strings.TrimSpace(firstNonEmpty(
+		labels["policy_name"],
+		annotations["policy_name"],
+		labels["alertname"],
+	))
 	if alertName == "" {
 		alertName = "unknown_alert"
 	}

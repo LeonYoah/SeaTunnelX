@@ -148,6 +148,10 @@ func (s *Service) GetOrCreateConfig(ctx context.Context, clusterID uint) (*Monit
 		config.CooldownPeriod = defaults.CooldownPeriod
 		needsUpdate = true
 	}
+	if !config.AutoMonitor {
+		config.AutoMonitor = true
+		needsUpdate = true
+	}
 
 	// Update database if defaults were applied / 如果应用了默认值则更新数据库
 	if needsUpdate {
@@ -181,9 +185,9 @@ func (s *Service) UpdateConfig(ctx context.Context, clusterID uint, req *UpdateM
 	}
 
 	// Apply updates / 应用更新
-	if req.AutoMonitor != nil {
-		config.AutoMonitor = *req.AutoMonitor
-	}
+	// AutoMonitor is always on for managed clusters.
+	// AutoMonitor 对受管集群始终保持开启。
+	config.AutoMonitor = true
 	if req.AutoRestart != nil {
 		config.AutoRestart = *req.AutoRestart
 	}

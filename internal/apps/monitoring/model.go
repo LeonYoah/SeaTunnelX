@@ -198,6 +198,22 @@ const (
 	AlertLifecycleStatusResolved AlertLifecycleStatus = "resolved"
 )
 
+// AlertDisplayStatus represents the user-facing alert state in alert center.
+// AlertDisplayStatus 表示告警中心面向用户展示的主状态。
+type AlertDisplayStatus string
+
+const (
+	// AlertDisplayStatusFiring indicates the problem still exists.
+	// AlertDisplayStatusFiring 表示问题仍然存在。
+	AlertDisplayStatusFiring AlertDisplayStatus = "firing"
+	// AlertDisplayStatusResolved indicates the problem has recovered.
+	// AlertDisplayStatusResolved 表示问题已经恢复。
+	AlertDisplayStatusResolved AlertDisplayStatus = "resolved"
+	// AlertDisplayStatusClosed indicates the alert incident is manually closed.
+	// AlertDisplayStatusClosed 表示该次告警事件已被人工关闭。
+	AlertDisplayStatusClosed AlertDisplayStatus = "closed"
+)
+
 // AlertHandlingStatus represents manual handling state over a unified alert.
 // AlertHandlingStatus 表示统一告警上的人工处理状态。
 type AlertHandlingStatus string
@@ -212,6 +228,9 @@ const (
 	// AlertHandlingStatusSilenced indicates alert is temporarily silenced.
 	// AlertHandlingStatusSilenced 表示告警已静默。
 	AlertHandlingStatusSilenced AlertHandlingStatus = "silenced"
+	// AlertHandlingStatusClosed indicates the alert incident is manually closed.
+	// AlertHandlingStatusClosed 表示告警事件已被人工关闭。
+	AlertHandlingStatusClosed AlertHandlingStatus = "closed"
 )
 
 const (
@@ -224,9 +243,12 @@ const (
 	// AlertRuleKeyProcessRestartLimitReached is the rule key for process restart limit reached events.
 	// AlertRuleKeyProcessRestartLimitReached 是达到重启上限规则键。
 	AlertRuleKeyProcessRestartLimitReached = "process_restart_limit_reached"
-	// AlertRuleKeyClusterRestartRequested is the rule key for manual cluster restart events.
-	// AlertRuleKeyClusterRestartRequested 表示手动集群重启事件的规则键。
+	// AlertRuleKeyClusterRestartRequested is the rule key for manual restart events.
+	// AlertRuleKeyClusterRestartRequested 表示手动重启事件（集群或节点）的规则键。
 	AlertRuleKeyClusterRestartRequested = "cluster_restart_requested"
+	// AlertRuleKeyNodeStopRequested is the rule key for manual node stop events.
+	// AlertRuleKeyNodeStopRequested 表示手动节点停止事件的规则键。
+	AlertRuleKeyNodeStopRequested = "node_stop_requested"
 	// AlertRuleKeyNodeOffline is the rule key for sustained node-unavailable episodes.
 	// AlertRuleKeyNodeOffline 表示节点持续不可用阶段的规则键。
 	AlertRuleKeyNodeOffline = "node_offline"
@@ -257,6 +279,7 @@ type AlertInstanceFilter struct {
 	SourceType      AlertSourceType      `json:"source_type"`
 	ClusterID       string               `json:"cluster_id"`
 	Severity        AlertSeverity        `json:"severity"`
+	Status          AlertDisplayStatus   `json:"status"`
 	LifecycleStatus AlertLifecycleStatus `json:"lifecycle_status"`
 	HandlingStatus  AlertHandlingStatus  `json:"handling_status"`
 	StartTime       *time.Time           `json:"start_time"`
@@ -268,11 +291,9 @@ type AlertInstanceFilter struct {
 // AlertInstanceStats summarizes unified alert counts.
 // AlertInstanceStats 汇总统一告警数量统计。
 type AlertInstanceStats struct {
-	Firing       int64 `json:"firing"`
-	Resolved     int64 `json:"resolved"`
-	Pending      int64 `json:"pending"`
-	Acknowledged int64 `json:"acknowledged"`
-	Silenced     int64 `json:"silenced"`
+	Firing   int64 `json:"firing"`
+	Resolved int64 `json:"resolved"`
+	Closed   int64 `json:"closed"`
 }
 
 // AlertInstance represents one normalized alert item for frontend.
@@ -287,6 +308,7 @@ type AlertInstance struct {
 	RuleKey         string                  `json:"rule_key"`
 	Summary         string                  `json:"summary"`
 	Description     string                  `json:"description"`
+	Status          AlertDisplayStatus      `json:"status"`
 	LifecycleStatus AlertLifecycleStatus    `json:"lifecycle_status"`
 	HandlingStatus  AlertHandlingStatus     `json:"handling_status"`
 	CreatedAt       time.Time               `json:"created_at"`
@@ -297,6 +319,8 @@ type AlertInstance struct {
 	AcknowledgedAt  *time.Time              `json:"acknowledged_at,omitempty"`
 	SilencedBy      string                  `json:"silenced_by,omitempty"`
 	SilencedUntil   *time.Time              `json:"silenced_until,omitempty"`
+	ClosedBy        string                  `json:"closed_by,omitempty"`
+	ClosedAt        *time.Time              `json:"closed_at,omitempty"`
 	LatestNote      string                  `json:"latest_note,omitempty"`
 	SourceRef       *AlertInstanceSourceRef `json:"source_ref,omitempty"`
 }
@@ -459,11 +483,14 @@ type AlertActionResult struct {
 // AlertInstanceActionResult 表示统一告警实例上的动作结果。
 type AlertInstanceActionResult struct {
 	AlertID        string              `json:"alert_id"`
+	Status         AlertDisplayStatus  `json:"status,omitempty"`
 	HandlingStatus AlertHandlingStatus `json:"handling_status"`
 	AcknowledgedBy string              `json:"acknowledged_by,omitempty"`
 	AcknowledgedAt *time.Time          `json:"acknowledged_at,omitempty"`
 	SilencedBy     string              `json:"silenced_by,omitempty"`
 	SilencedUntil  *time.Time          `json:"silenced_until,omitempty"`
+	ClosedBy       string              `json:"closed_by,omitempty"`
+	ClosedAt       *time.Time          `json:"closed_at,omitempty"`
 	LatestNote     string              `json:"latest_note,omitempty"`
 }
 
@@ -584,25 +611,43 @@ type AlertPolicyBuilderDTO struct {
 // AlertPolicyTemplateSummaryDTO represents one recommended policy template summary.
 // AlertPolicyTemplateSummaryDTO 表示一条推荐策略模板摘要。
 type AlertPolicyTemplateSummaryDTO struct {
-	Key           string `json:"key"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	Category      string `json:"category"`
-	SourceKind    string `json:"source_kind"`
-	CapabilityKey string `json:"capability_key"`
-	LegacyRuleKey string `json:"legacy_rule_key,omitempty"`
-	Recommended   bool   `json:"recommended"`
+	Key               string   `json:"key"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	Category          string   `json:"category"`
+	SourceKind        string   `json:"source_kind"`
+	CapabilityKey     string   `json:"capability_key"`
+	LegacyRuleKey     string   `json:"legacy_rule_key,omitempty"`
+	MetricSource      string   `json:"metric_source,omitempty"`
+	RequiredSignals   []string `json:"required_signals,omitempty"`
+	SuggestedPromQL   string   `json:"suggested_promql,omitempty"`
+	DefaultOperator   string   `json:"default_operator,omitempty"`
+	DefaultThreshold  string   `json:"default_threshold,omitempty"`
+	DefaultWindowMins int      `json:"default_window_minutes,omitempty"`
+	Recommended       bool     `json:"recommended"`
+}
+
+// NotificationRecipientUserDTO represents one selectable notification recipient user.
+// NotificationRecipientUserDTO 表示一条可选通知接收用户记录。
+type NotificationRecipientUserDTO struct {
+	ID       uint64 `json:"id"`
+	Username string `json:"username"`
+	Nickname string `json:"nickname"`
+	Email    string `json:"email"`
+	IsAdmin  bool   `json:"is_admin"`
 }
 
 // AlertPolicyCenterBootstrapData represents bootstrap payload for unified policy center.
 // AlertPolicyCenterBootstrapData 表示统一策略中心的初始化数据。
 type AlertPolicyCenterBootstrapData struct {
-	GeneratedAt    time.Time                        `json:"generated_at"`
-	CapabilityMode string                           `json:"capability_mode"`
-	Capabilities   []*AlertPolicyCapabilityDTO      `json:"capabilities"`
-	Builders       []*AlertPolicyBuilderDTO         `json:"builders"`
-	Templates      []*AlertPolicyTemplateSummaryDTO `json:"templates"`
-	Components     []*IntegrationComponentStatus    `json:"components"`
+	GeneratedAt            time.Time                        `json:"generated_at"`
+	CapabilityMode         string                           `json:"capability_mode"`
+	Capabilities           []*AlertPolicyCapabilityDTO      `json:"capabilities"`
+	Builders               []*AlertPolicyBuilderDTO         `json:"builders"`
+	Templates              []*AlertPolicyTemplateSummaryDTO `json:"templates"`
+	Components             []*IntegrationComponentStatus    `json:"components"`
+	NotifiableUsers        []*NotificationRecipientUserDTO  `json:"notifiable_users"`
+	DefaultReceiverUserIDs []uint64                         `json:"default_receiver_user_ids"`
 }
 
 // AlertPolicyConditionDTO represents one condition item in a persisted alert policy.
@@ -640,6 +685,7 @@ type NotificationChannelEmailConfig struct {
 	Username   string                    `json:"username,omitempty"`
 	Password   string                    `json:"password,omitempty"`
 	From       string                    `json:"from"`
+	FromName   string                    `json:"from_name,omitempty"`
 	Recipients []string                  `json:"recipients"`
 }
 
@@ -676,9 +722,6 @@ func (c *NotificationChannelEmailConfig) Validate() error {
 	if _, err := mail.ParseAddress(strings.TrimSpace(c.From)); err != nil {
 		return fmt.Errorf("invalid email from address")
 	}
-	if len(c.Recipients) == 0 {
-		return fmt.Errorf("at least one email recipient is required")
-	}
 	for _, recipient := range c.Recipients {
 		if strings.TrimSpace(recipient) == "" {
 			return fmt.Errorf("email recipient must not be empty")
@@ -709,6 +752,7 @@ func (c *NotificationChannelEmailConfig) Normalize() *NotificationChannelEmailCo
 	normalized.Username = strings.TrimSpace(normalized.Username)
 	normalized.Password = strings.TrimSpace(normalized.Password)
 	normalized.From = strings.TrimSpace(normalized.From)
+	normalized.FromName = strings.TrimSpace(normalized.FromName)
 	normalized.Recipients = normalizeEmailRecipients(normalized.Recipients)
 	return &normalized
 }
@@ -757,6 +801,7 @@ type AlertPolicyDTO struct {
 	PromQL                 string                     `json:"promql,omitempty"`
 	Conditions             []*AlertPolicyConditionDTO `json:"conditions"`
 	NotificationChannelIDs []uint                     `json:"notification_channel_ids"`
+	ReceiverUserIDs        []uint64                   `json:"receiver_user_ids"`
 	MatchCount             int                        `json:"match_count"`
 	DeliveryCount          int                        `json:"delivery_count"`
 	LastMatchedAt          *time.Time                 `json:"last_matched_at,omitempty"`
@@ -791,6 +836,7 @@ type UpsertAlertPolicyRequest struct {
 	PromQL                 string                     `json:"promql"`
 	Conditions             []*AlertPolicyConditionDTO `json:"conditions"`
 	NotificationChannelIDs []uint                     `json:"notification_channel_ids"`
+	ReceiverUserIDs        []uint64                   `json:"receiver_user_ids"`
 }
 
 // Validate validates alert policy request values.
@@ -841,7 +887,20 @@ func (r *UpsertAlertPolicyRequest) Validate() error {
 			return fmt.Errorf("condition window_minutes must be between 0 and 10080")
 		}
 	}
+	for _, receiverUserID := range r.ReceiverUserIDs {
+		if receiverUserID == 0 {
+			return fmt.Errorf("receiver_user_ids must not contain zero")
+		}
+	}
 	return nil
+}
+
+// NotifiableUserListData represents selectable notification recipient users.
+// NotifiableUserListData 表示可选通知接收用户列表数据。
+type NotifiableUserListData struct {
+	GeneratedAt            time.Time                       `json:"generated_at"`
+	Users                  []*NotificationRecipientUserDTO `json:"users"`
+	DefaultReceiverUserIDs []uint64                        `json:"default_receiver_user_ids"`
 }
 
 // NotificationChannelDTO is frontend DTO for notification channels.
@@ -873,10 +932,41 @@ type NotificationChannelTestResult struct {
 	ChannelID    uint       `json:"channel_id"`
 	DeliveryID   uint       `json:"delivery_id"`
 	Status       string     `json:"status"`
+	Receiver     string     `json:"receiver,omitempty"`
 	SentAt       *time.Time `json:"sent_at,omitempty"`
 	LastError    string     `json:"last_error,omitempty"`
 	StatusCode   int        `json:"status_code,omitempty"`
 	ResponseBody string     `json:"response_body,omitempty"`
+}
+
+// NotificationChannelConnectionTestResult represents one SMTP connection test result.
+// NotificationChannelConnectionTestResult 表示一次 SMTP 连接测试结果。
+type NotificationChannelConnectionTestResult struct {
+	Status    string     `json:"status"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+	LastError string     `json:"last_error,omitempty"`
+}
+
+// NotificationChannelTestRequest represents manual test-send options for one notification channel.
+// NotificationChannelTestRequest 表示通知渠道手动测试发送的请求参数。
+type NotificationChannelTestRequest struct {
+	ReceiverUserID uint64 `json:"receiver_user_id"`
+}
+
+// NotificationChannelDraftTestRequest represents manual test-send options for one unsaved notification channel draft.
+// NotificationChannelDraftTestRequest 表示未保存通知渠道草稿的手动测试发送请求参数。
+type NotificationChannelDraftTestRequest struct {
+	Channel        *UpsertNotificationChannelRequest `json:"channel"`
+	ReceiverUserID uint64                            `json:"receiver_user_id"`
+}
+
+// Validate checks whether the draft test request contains a valid channel payload.
+// Validate 校验草稿测试发送请求是否包含合法的渠道配置。
+func (r *NotificationChannelDraftTestRequest) Validate() error {
+	if r == nil || r.Channel == nil {
+		return fmt.Errorf("channel is required")
+	}
+	return r.Channel.Validate()
 }
 
 // NotificationDeliveryEventType represents delivery lifecycle event type.

@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
 )
 
 type fakeSMTPServer struct {
@@ -143,6 +145,7 @@ func TestSendEmailNotification_SMTPPlain(t *testing.T) {
 			Host:       host,
 			Port:       port,
 			From:       "alerts@example.com",
+			FromName:   "SeaTunnelX Alerts",
 			Recipients: []string{"ops@example.com"},
 		},
 	})
@@ -177,7 +180,145 @@ func TestSendEmailNotification_SMTPPlain(t *testing.T) {
 	if !strings.Contains(server.data, "Subject: ") || !strings.Contains(server.data, "SeaTunnelX restart alert") {
 		t.Fatalf("unexpected message subject: %s", server.data)
 	}
+	if !strings.Contains(server.data, "SeaTunnelX Alerts") {
+		t.Fatalf("unexpected from header: %s", server.data)
+	}
 	if !strings.Contains(server.data, "cluster restart requested") {
 		t.Fatalf("unexpected message body: %s", server.data)
+	}
+}
+
+func TestBuildSMTPMessage_includesHTMLAlternative(t *testing.T) {
+	config := &NotificationChannelEmailConfig{
+		Protocol: "smtp",
+		Security: NotificationEmailSecurityNone,
+		Host:     "smtp.example.com",
+		Port:     25,
+		From:     "alerts@example.com",
+		FromName: "SeaTunnelX Alerts",
+	}
+
+	message, err := buildSMTPMessage(config, &emailNotificationPayload{
+		Subject: "SeaTunnelX node alert",
+		Text:    "plain text body",
+		HTML:    "<html><body><strong>formatted body</strong></body></html>",
+		To:      []string{"ops@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("build smtp message: %v", err)
+	}
+
+	content := string(message)
+	if !strings.Contains(content, "multipart/alternative") {
+		t.Fatalf("expected multipart/alternative content type, got %s", content)
+	}
+	if !strings.Contains(content, "Content-Type: text/html; charset=UTF-8") {
+		t.Fatalf("expected html body part, got %s", content)
+	}
+	if !strings.Contains(content, "<strong>formatted body</strong>") {
+		t.Fatalf("expected html content in message, got %s", content)
+	}
+}
+
+func TestSMTPConnection_SMTPPlain(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	defer server.close()
+
+	host, portRaw, err := net.SplitHostPort(server.addr())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	var port int
+	if _, err := fmt.Sscanf(portRaw, "%d", &port); err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	if err := testSMTPConnection(context.Background(), &NotificationChannelEmailConfig{
+		Protocol: "smtp",
+		Security: NotificationEmailSecurityNone,
+		Host:     host,
+		Port:     port,
+		From:     "alerts@example.com",
+	}); err != nil {
+		t.Fatalf("test smtp connection: %v", err)
+	}
+}
+
+func TestService_TestNotificationChannelDraft_SMTPPlain(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	defer server.close()
+
+	host, portRaw, err := net.SplitHostPort(server.addr())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	var port int
+	if _, err := fmt.Sscanf(portRaw, "%d", &port); err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
+	database, cleanup := setupMonitoringNotificationTestDB(t)
+	defer cleanup()
+	if err := database.AutoMigrate(&auth.User{}); err != nil {
+		t.Fatalf("auto migrate auth user: %v", err)
+	}
+
+	repo := NewRepository(database)
+	service := NewService(nil, nil, repo)
+	ctx := context.Background()
+
+	user := &auth.User{
+		Username:  "alice",
+		Nickname:  "Alice",
+		Email:     "alice@example.com",
+		IsActive:  true,
+		IsAdmin:   false,
+		AvatarURL: "",
+	}
+	if err := user.Create(database); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	enabled := true
+	result, err := service.TestNotificationChannelDraft(ctx, &NotificationChannelDraftTestRequest{
+		Channel: &UpsertNotificationChannelRequest{
+			Name:    "draft-email",
+			Type:    NotificationChannelTypeEmail,
+			Enabled: &enabled,
+			Config: &NotificationChannelConfig{
+				Email: &NotificationChannelEmailConfig{
+					Protocol: "smtp",
+					Security: NotificationEmailSecurityNone,
+					Host:     host,
+					Port:     port,
+					From:     "alerts@example.com",
+				},
+			},
+		},
+		ReceiverUserID: user.ID,
+	})
+	if err != nil {
+		t.Fatalf("TestNotificationChannelDraft returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.ChannelID != 0 {
+		t.Fatalf("expected draft channel id 0, got %d", result.ChannelID)
+	}
+	if result.Status != string(NotificationDeliveryStatusSent) {
+		t.Fatalf("expected sent status, got %s", result.Status)
+	}
+	if result.Receiver != user.Email {
+		t.Fatalf("expected receiver %s, got %s", user.Email, result.Receiver)
+	}
+
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.recipients) != 1 || !strings.Contains(server.recipients[0], user.Email) {
+		t.Fatalf("unexpected recipients: %+v", server.recipients)
+	}
+	if !strings.Contains(server.data, "SeaTunnelX notification test") {
+		t.Fatalf("unexpected message data: %s", server.data)
 	}
 }

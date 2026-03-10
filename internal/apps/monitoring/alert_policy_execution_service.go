@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,91 @@ func (s *Service) DispatchAlertPolicyEvent(ctx context.Context, event *monitor.P
 			MatchCountDelta:     1,
 			DeliveryCountDelta:  summary.DeliveryCountDelta,
 			LastMatchedAt:       &matchedAt,
+			LastDeliveredAt:     summary.LastDeliveredAt,
+			LastExecutionStatus: summary.LastExecutionStatus,
+			LastExecutionError:  strings.TrimSpace(summary.LastExecutionError),
+		}
+		if err := s.repo.ApplyAlertPolicyExecutionState(ctx, policy.ID, stateUpdate); err != nil {
+			dispatchErrs = append(dispatchErrs, err)
+		}
+	}
+
+	return errors.Join(dispatchErrs...)
+}
+
+func (s *Service) dispatchLocalAlertPolicyReminder(
+	ctx context.Context,
+	sourceEvent *monitor.ProcessEvent,
+	clusterName string,
+	policy *AlertPolicy,
+	channelMap map[uint]*NotificationChannel,
+) (alertPolicyDispatchSummary, error) {
+	return s.dispatchLocalAlertPolicy(ctx, sourceEvent, clusterName, policy, channelMap)
+}
+
+func (s *Service) DispatchActiveNodeOfflineReminder(
+	ctx context.Context,
+	clusterID uint,
+	clusterName string,
+	nodeID uint,
+) error {
+	if s.repo == nil || s.monitorService == nil || clusterID == 0 || nodeID == 0 {
+		return nil
+	}
+
+	sourceEvent, err := s.monitorService.GetLatestNodeEventByTypes(ctx, nodeID, []monitor.ProcessEventType{
+		monitor.EventTypeNodeOffline,
+	})
+	if err != nil {
+		return err
+	}
+	if sourceEvent == nil {
+		return nil
+	}
+
+	policies, err := s.repo.ListEnabledAlertPoliciesByClusterAndLegacyRuleKey(
+		ctx,
+		strconv.FormatUint(uint64(clusterID), 10),
+		AlertRuleKeyNodeOffline,
+	)
+	if err != nil {
+		return err
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+
+	channels, err := s.repo.ListNotificationChannels(ctx)
+	if err != nil {
+		return err
+	}
+	channelMap := make(map[uint]*NotificationChannel, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		channelMap[channel.ID] = channel
+	}
+
+	var dispatchErrs []error
+	for _, policy := range policies {
+		if policy == nil {
+			continue
+		}
+
+		summary, err := s.dispatchLocalAlertPolicyReminder(
+			ctx,
+			sourceEvent,
+			clusterName,
+			policy,
+			channelMap,
+		)
+		if err != nil {
+			dispatchErrs = append(dispatchErrs, err)
+		}
+
+		stateUpdate := &AlertPolicyExecutionStateUpdate{
+			DeliveryCountDelta:  summary.DeliveryCountDelta,
 			LastDeliveredAt:     summary.LastDeliveredAt,
 			LastExecutionStatus: summary.LastExecutionStatus,
 			LastExecutionError:  strings.TrimSpace(summary.LastExecutionError),
@@ -409,6 +495,17 @@ func (s *Service) dispatchLocalAlertPolicyDelivery(
 	}
 
 	sourceKey = strings.TrimSpace(firstNonEmpty(sourceKey, buildLocalAlertSourceKey(sourceEvent.ID)))
+	alertState, err := s.repo.GetAlertStateBySourceKey(ctx, sourceKey)
+	if err != nil {
+		return nil, err
+	}
+	handlingStatus := resolveAlertHandlingStatus(alertState, time.Now().UTC())
+	if handlingStatus == AlertHandlingStatusClosed {
+		return nil, nil
+	}
+	if handlingStatus == AlertHandlingStatusSilenced && deliveryEventType == NotificationDeliveryEventTypeFiring {
+		return nil, nil
+	}
 	if requireFiringSent {
 		firingDelivery, err := s.repo.GetNotificationDeliveryByDedupKey(ctx, sourceKey, channel.ID, string(NotificationDeliveryEventTypeFiring))
 		if err != nil {
@@ -444,10 +541,12 @@ func (s *Service) dispatchLocalAlertPolicyDelivery(
 		}
 	} else {
 		if NotificationDeliveryStatus(strings.TrimSpace(delivery.Status)) == NotificationDeliveryStatusSent {
-			return &alertPolicyChannelDispatchResult{
-				LastDeliveredAt: toUTCTimePointer(delivery.SentAt),
-				Successful:      true,
-			}, nil
+			if !shouldResendLocalAlertPolicyDelivery(policy, delivery, deliveryEventType, timeNowUTC()) {
+				return &alertPolicyChannelDispatchResult{
+					LastDeliveredAt: toUTCTimePointer(delivery.SentAt),
+					Successful:      true,
+				}, nil
+			}
 		}
 		delivery.ClusterID = strconv.FormatUint(uint64(sourceEvent.ClusterID), 10)
 		delivery.ClusterName = strings.TrimSpace(clusterName)
@@ -467,7 +566,7 @@ func (s *Service) dispatchLocalAlertPolicyDelivery(
 		}
 	}
 
-	attempt, sendErr := sendLocalAlertPolicyNotification(ctx, channel, sourceEvent, recoveryEvent, clusterName, policy, deliveryEventType)
+	attempt, sendErr := s.sendLocalAlertPolicyNotification(ctx, channel, sourceEvent, recoveryEvent, clusterName, policy, deliveryEventType)
 	if attempt != nil {
 		delivery.RequestPayload = attempt.RequestPayload
 		delivery.ResponseStatusCode = attempt.StatusCode
@@ -497,7 +596,25 @@ func (s *Service) dispatchLocalAlertPolicyDelivery(
 	}, nil
 }
 
-func sendLocalAlertPolicyNotification(
+func shouldResendLocalAlertPolicyDelivery(
+	policy *AlertPolicy,
+	delivery *NotificationDelivery,
+	deliveryEventType NotificationDeliveryEventType,
+	now time.Time,
+) bool {
+	if policy == nil || delivery == nil {
+		return false
+	}
+	if deliveryEventType != NotificationDeliveryEventTypeFiring {
+		return false
+	}
+	if policy.CooldownMinutes <= 0 || delivery.SentAt == nil {
+		return false
+	}
+	return !now.Before(delivery.SentAt.UTC().Add(time.Duration(policy.CooldownMinutes) * time.Minute))
+}
+
+func (s *Service) sendLocalAlertPolicyNotification(
 	ctx context.Context,
 	channel *NotificationChannel,
 	sourceEvent *monitor.ProcessEvent,
@@ -506,7 +623,11 @@ func sendLocalAlertPolicyNotification(
 	policy *AlertPolicy,
 	deliveryEventType NotificationDeliveryEventType,
 ) (*notificationSendAttempt, error) {
-	payload, err := buildLocalAlertPolicyPayload(channel, sourceEvent, recoveryEvent, clusterName, policy, deliveryEventType)
+	recipients, err := s.resolveAlertPolicyReceiverEmails(ctx, policy)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := buildLocalAlertPolicyPayload(channel, sourceEvent, recoveryEvent, clusterName, policy, deliveryEventType, recipients)
 	if err != nil {
 		return nil, err
 	}
@@ -520,6 +641,7 @@ func buildLocalAlertPolicyPayload(
 	clusterName string,
 	policy *AlertPolicy,
 	deliveryEventType NotificationDeliveryEventType,
+	recipients []string,
 ) (interface{}, error) {
 	if channel == nil {
 		return nil, fmt.Errorf("notification channel not found")
@@ -588,6 +710,8 @@ func buildLocalAlertPolicyPayload(
 		return &emailNotificationPayload{
 			Subject: title,
 			Text:    message,
+			HTML:    buildLocalAlertPolicyMessageHTML(sourceEvent, recoveryEvent, clusterName, policy, deliveryEventType),
+			To:      recipients,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported channel type")
@@ -595,15 +719,26 @@ func buildLocalAlertPolicyPayload(
 }
 
 func buildLocalAlertPolicyMessageTitle(event *monitor.ProcessEvent, policy *AlertPolicy, deliveryEventType NotificationDeliveryEventType) string {
-	severity := strings.ToUpper(string(normalizeAlertPolicySeverity(policy.Severity)))
+	severityLevel := AlertSeverityWarning
+	policyName := ""
+	templateKey := ""
+	if policy != nil {
+		severityLevel = normalizeAlertPolicySeverity(policy.Severity)
+		policyName = policy.Name
+		templateKey = policy.TemplateKey
+	}
+	severity := strings.ToUpper(string(severityLevel))
 	if severity == "" {
 		severity = "INFO"
 	}
+	resourceName := strings.TrimSpace(firstNonEmpty(policyName, templateKey, string(event.EventType), "告警策略"))
+	if deliveryEventType == NotificationDeliveryEventTypeResolved {
+		return fmt.Sprintf("[SeaTunnelX][恢复][%s] %s", resolveAlertSeverityLabelZH(severity), resourceName)
+	}
 	return fmt.Sprintf(
-		"[SeaTunnelX][%s][%s] %s",
-		strings.ToUpper(string(deliveryEventType)),
-		severity,
-		strings.TrimSpace(firstNonEmpty(policy.Name, policy.TemplateKey, string(event.EventType), "alert policy")),
+		"[SeaTunnelX][告警][%s] %s",
+		resolveAlertSeverityLabelZH(severity),
+		resourceName,
 	)
 }
 
@@ -614,101 +749,334 @@ func buildLocalAlertPolicyMessageText(
 	policy *AlertPolicy,
 	deliveryEventType NotificationDeliveryEventType,
 ) string {
-	parts := []string{
-		buildLocalAlertPolicyMessageTitle(event, policy, deliveryEventType),
-		fmt.Sprintf("Cluster: %s (%d)", strings.TrimSpace(firstNonEmpty(clusterName, "unknown")), event.ClusterID),
-		fmt.Sprintf("Policy: %s (%d)", strings.TrimSpace(firstNonEmpty(policy.Name, "unknown")), policy.ID),
-		fmt.Sprintf("Event: %s", strings.TrimSpace(firstNonEmpty(string(event.EventType), "unknown"))),
-		fmt.Sprintf("FiredAt: %s", event.CreatedAt.UTC().Format(time.RFC3339)),
-	}
-	if deliveryEventType == NotificationDeliveryEventTypeResolved && recoveryEvent != nil {
-		parts = append(parts, fmt.Sprintf("ResolvedAt: %s", recoveryEvent.CreatedAt.UTC().Format(time.RFC3339)))
-	}
-	if event.EventType == monitor.EventTypeClusterRestartRequested {
-		details := parseLocalAlertPolicyDetails(event.Details)
-		if payload, ok := details.(map[string]interface{}); ok {
-			if operator := strings.TrimSpace(fmt.Sprintf("%v", payload["operator"])); operator != "" && operator != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Operator: %s", operator))
-			}
-			if trigger := strings.TrimSpace(fmt.Sprintf("%v", payload["trigger"])); trigger != "" && trigger != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Trigger: %s", trigger))
-			}
-			if success := strings.TrimSpace(fmt.Sprintf("%v", payload["success"])); success != "" && success != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Accepted: %s", success))
-			}
-			if message := strings.TrimSpace(fmt.Sprintf("%v", payload["message"])); message != "" && message != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Result: %s", message))
-			}
+	fields := buildLocalAlertPolicyMessageFields(event, recoveryEvent, clusterName, policy, deliveryEventType)
+	parts := []string{buildLocalAlertPolicyMessageTitle(event, policy, deliveryEventType)}
+	for _, field := range fields {
+		if strings.TrimSpace(field.Value) == "" {
+			continue
 		}
-		if description := strings.TrimSpace(policy.Description); description != "" {
-			parts = append(parts, fmt.Sprintf("PolicyDescription: %s", description))
-		}
-		if details := strings.TrimSpace(event.Details); details != "" {
-			parts = append(parts, fmt.Sprintf("EventDetails: %s", details))
-		}
-		return strings.Join(parts, "\n")
-	}
-	if event.EventType == monitor.EventTypeNodeOffline {
-		details := parseLocalAlertPolicyDetails(event.Details)
-		if payload, ok := details.(map[string]interface{}); ok {
-			if reason := strings.TrimSpace(fmt.Sprintf("%v", payload["reason"])); reason != "" && reason != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Reason: %s", reason))
-			}
-			if hostName := strings.TrimSpace(fmt.Sprintf("%v", payload["host_name"])); hostName != "" && hostName != "<nil>" {
-				parts = append(parts, fmt.Sprintf("Host: %s", hostName))
-			}
-			if hostIP := strings.TrimSpace(fmt.Sprintf("%v", payload["host_ip"])); hostIP != "" && hostIP != "<nil>" {
-				parts = append(parts, fmt.Sprintf("HostIP: %s", hostIP))
-			}
-			if status := strings.TrimSpace(fmt.Sprintf("%v", payload["node_status"])); status != "" && status != "<nil>" {
-				parts = append(parts, fmt.Sprintf("NodeStatus: %s", status))
-			}
-			if observedSince := strings.TrimSpace(fmt.Sprintf("%v", payload["observed_since"])); observedSince != "" && observedSince != "<nil>" {
-				parts = append(parts, fmt.Sprintf("ObservedSince: %s", observedSince))
-			}
-			if grace := strings.TrimSpace(fmt.Sprintf("%v", payload["grace_seconds"])); grace != "" && grace != "<nil>" {
-				parts = append(parts, fmt.Sprintf("GraceSeconds: %s", grace))
-			}
-		}
-		if deliveryEventType == NotificationDeliveryEventTypeResolved && recoveryEvent != nil {
-			recoveryDetails := parseLocalAlertPolicyDetails(recoveryEvent.Details)
-			if payload, ok := recoveryDetails.(map[string]interface{}); ok {
-				if recoveredAt := strings.TrimSpace(fmt.Sprintf("%v", payload["recovered_at"])); recoveredAt != "" && recoveredAt != "<nil>" {
-					parts = append(parts, fmt.Sprintf("RecoveredAt: %s", recoveredAt))
-				}
-				if recoveredStatus := strings.TrimSpace(fmt.Sprintf("%v", payload["node_status"])); recoveredStatus != "" && recoveredStatus != "<nil>" {
-					parts = append(parts, fmt.Sprintf("RecoveredNodeStatus: %s", recoveredStatus))
-				}
-			}
-		}
-		parts = append(parts,
-			fmt.Sprintf("Role: %s", strings.TrimSpace(firstNonEmpty(event.Role, "unknown"))),
-			fmt.Sprintf("NodeID: %d", event.NodeID),
-			fmt.Sprintf("HostID: %d", event.HostID),
-		)
-		if description := strings.TrimSpace(policy.Description); description != "" {
-			parts = append(parts, fmt.Sprintf("PolicyDescription: %s", description))
-		}
-		if details := strings.TrimSpace(event.Details); details != "" {
-			parts = append(parts, fmt.Sprintf("EventDetails: %s", details))
-		}
-		return strings.Join(parts, "\n")
-	}
-
-	parts = append(parts,
-		fmt.Sprintf("Process: %s", strings.TrimSpace(firstNonEmpty(event.ProcessName, "unknown"))),
-		fmt.Sprintf("PID: %d", event.PID),
-		fmt.Sprintf("Role: %s", strings.TrimSpace(firstNonEmpty(event.Role, "unknown"))),
-		fmt.Sprintf("NodeID: %d", event.NodeID),
-		fmt.Sprintf("HostID: %d", event.HostID),
-	)
-	if description := strings.TrimSpace(policy.Description); description != "" {
-		parts = append(parts, fmt.Sprintf("PolicyDescription: %s", description))
-	}
-	if details := strings.TrimSpace(event.Details); details != "" {
-		parts = append(parts, fmt.Sprintf("EventDetails: %s", details))
+		parts = append(parts, fmt.Sprintf("%s：%s", field.Label, field.Value))
 	}
 	return strings.Join(parts, "\n")
+}
+
+type localAlertMessageField struct {
+	Label     string
+	Value     string
+	Multiline bool
+}
+
+type localAlertMessageVisual struct {
+	BadgeText        string
+	Description      string
+	PanelDescription string
+	BannerBackground string
+	PanelBackground  string
+	PanelBorder      string
+}
+
+func buildLocalAlertPolicyMessageHTML(
+	event *monitor.ProcessEvent,
+	recoveryEvent *monitor.ProcessEvent,
+	clusterName string,
+	policy *AlertPolicy,
+	deliveryEventType NotificationDeliveryEventType,
+) string {
+	fields := buildLocalAlertPolicyMessageFields(event, recoveryEvent, clusterName, policy, deliveryEventType)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	title := buildLocalAlertPolicyMessageTitle(event, policy, deliveryEventType)
+	severityLevel := AlertSeverityWarning
+	if policy != nil {
+		severityLevel = normalizeAlertPolicySeverity(policy.Severity)
+	}
+	severity := strings.ToUpper(string(severityLevel))
+	if severity == "" {
+		severity = "INFO"
+	}
+	visual := resolveLocalAlertMessageVisual(deliveryEventType)
+
+	var builder strings.Builder
+	builder.WriteString("<!DOCTYPE html><html><body style=\"margin:0;padding:24px;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;\">")
+	builder.WriteString("<div style=\"max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;\">")
+	builder.WriteString("<div style=\"padding:20px 24px;background:")
+	builder.WriteString(html.EscapeString(visual.BannerBackground))
+	builder.WriteString(";color:#ffffff;\">")
+	builder.WriteString("<div style=\"font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.78;\">SeaTunnelX 告警通知</div>")
+	builder.WriteString("<div style=\"margin-top:8px;font-size:22px;font-weight:700;line-height:1.35;\">")
+	builder.WriteString(html.EscapeString(title))
+	builder.WriteString("</div>")
+	builder.WriteString("<div style=\"margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;\">")
+	builder.WriteString("<span style=\"display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,0.18);font-size:12px;font-weight:700;letter-spacing:0.02em;\">")
+	builder.WriteString(html.EscapeString(visual.BadgeText))
+	builder.WriteString("</span>")
+	builder.WriteString("<span style=\"font-size:13px;opacity:0.92;\">级别：")
+	builder.WriteString(html.EscapeString(resolveAlertSeverityLabelZH(severity)))
+	builder.WriteString("</span></div>")
+	builder.WriteString("<div style=\"margin-top:10px;font-size:13px;line-height:1.7;opacity:0.92;\">")
+	builder.WriteString(html.EscapeString(visual.Description))
+	builder.WriteString("</div></div>")
+	builder.WriteString("<div style=\"padding:24px;\">")
+	builder.WriteString("<div style=\"margin-bottom:16px;padding:14px 16px;border-radius:12px;background:")
+	builder.WriteString(html.EscapeString(visual.PanelBackground))
+	builder.WriteString(";border:1px solid ")
+	builder.WriteString(html.EscapeString(visual.PanelBorder))
+	builder.WriteString(";font-size:13px;line-height:1.7;color:#0f172a;\">")
+	builder.WriteString(html.EscapeString(visual.PanelDescription))
+	builder.WriteString("</div>")
+	builder.WriteString("<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">")
+	for _, field := range fields {
+		if strings.TrimSpace(field.Value) == "" {
+			continue
+		}
+		builder.WriteString("<tr>")
+		builder.WriteString("<td style=\"width:180px;padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:13px;font-weight:600;color:#334155;vertical-align:top;\">")
+		builder.WriteString(html.EscapeString(field.Label))
+		builder.WriteString("</td>")
+		builder.WriteString("<td style=\"padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;line-height:1.65;color:#0f172a;vertical-align:top;\">")
+		if field.Multiline {
+			builder.WriteString("<pre style=\"margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#0f172a;\">")
+			builder.WriteString(html.EscapeString(field.Value))
+			builder.WriteString("</pre>")
+		} else {
+			builder.WriteString(strings.ReplaceAll(html.EscapeString(field.Value), "\n", "<br/>"))
+		}
+		builder.WriteString("</td></tr>")
+	}
+	builder.WriteString("</table>")
+	builder.WriteString("</div></div></body></html>")
+	return builder.String()
+}
+
+func buildLocalAlertPolicyMessageFields(
+	event *monitor.ProcessEvent,
+	recoveryEvent *monitor.ProcessEvent,
+	clusterName string,
+	policy *AlertPolicy,
+	deliveryEventType NotificationDeliveryEventType,
+) []localAlertMessageField {
+	if event == nil {
+		return []localAlertMessageField{}
+	}
+
+	policyName := "unknown"
+	policyID := uint(0)
+	if policy != nil {
+		policyName = strings.TrimSpace(firstNonEmpty(policy.Name, "unknown"))
+		policyID = policy.ID
+	}
+
+	fields := []localAlertMessageField{
+		{Label: "状态", Value: resolveLocalAlertDeliveryStateLabel(deliveryEventType)},
+		{Label: "集群", Value: fmt.Sprintf("%s (%d)", strings.TrimSpace(firstNonEmpty(clusterName, "unknown")), event.ClusterID)},
+		{Label: "策略", Value: fmt.Sprintf("%s (%d)", policyName, policyID)},
+		{Label: "触发事件", Value: strings.TrimSpace(firstNonEmpty(string(event.EventType), "unknown"))},
+		{Label: "触发时间", Value: formatAlertNotificationTime(event.CreatedAt)},
+	}
+	if deliveryEventType == NotificationDeliveryEventTypeResolved && recoveryEvent != nil {
+		fields = append(fields, localAlertMessageField{Label: "恢复事件", Value: strings.TrimSpace(firstNonEmpty(string(recoveryEvent.EventType), "unknown"))})
+		fields = append(fields, localAlertMessageField{Label: "恢复时间", Value: formatAlertNotificationTime(recoveryEvent.CreatedAt)})
+	}
+
+	details := localAlertPolicyDetailsMap(event.Details)
+	appendField := func(label string, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		fields = append(fields, localAlertMessageField{Label: label, Value: value})
+	}
+	appendMultilineField := func(label string, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		fields = append(fields, localAlertMessageField{Label: label, Value: value, Multiline: true})
+	}
+
+	switch event.EventType {
+	case monitor.EventTypeClusterRestartRequested, monitor.EventTypeNodeRestartRequested, monitor.EventTypeNodeStopRequested:
+		scope := normalizeOperationScope(localAlertPolicyDetailValue(details, "scope"))
+		if scope == "" {
+			if event.NodeID > 0 {
+				scope = "Node"
+			} else {
+				scope = "Cluster"
+			}
+		}
+		appendField("范围", scope)
+		operation := normalizeOperationName(localAlertPolicyDetailValue(details, "operation"))
+		if operation == "" {
+			if event.EventType == monitor.EventTypeNodeStopRequested {
+				operation = "Stop"
+			} else {
+				operation = "Restart"
+			}
+		}
+		appendField("操作", operation)
+		appendField("操作人", localAlertPolicyDetailValue(details, "operator"))
+		appendField("触发来源", localAlertPolicyDetailValue(details, "trigger"))
+		appendField("已受理", localAlertPolicyDetailValue(details, "success"))
+		appendField("执行结果", localAlertPolicyDetailValue(details, "message"))
+		appendField("主机", localAlertPolicyDetailValue(details, "host_name"))
+		appendField("主机 IP", localAlertPolicyDetailValue(details, "host_ip"))
+		appendField("角色", strings.TrimSpace(firstNonEmpty(localAlertPolicyDetailValue(details, "role"), event.Role, "unknown")))
+		if event.NodeID > 0 {
+			appendField("节点 ID", strconv.FormatUint(uint64(event.NodeID), 10))
+		}
+		if event.HostID > 0 {
+			appendField("主机 ID", strconv.FormatUint(uint64(event.HostID), 10))
+		}
+	case monitor.EventTypeNodeOffline:
+		appendField("原因", localAlertPolicyDetailValue(details, "reason"))
+		appendField("主机", localAlertPolicyDetailValue(details, "host_name"))
+		appendField("主机 IP", localAlertPolicyDetailValue(details, "host_ip"))
+		appendField("节点状态", localAlertPolicyDetailValue(details, "node_status"))
+		appendField("异常起始", localAlertPolicyDetailValue(details, "observed_since"))
+		appendField("宽限秒数", localAlertPolicyDetailValue(details, "grace_seconds"))
+		if deliveryEventType == NotificationDeliveryEventTypeResolved && recoveryEvent != nil {
+			recoveryDetails := localAlertPolicyDetailsMap(recoveryEvent.Details)
+			appendField("恢复检测时间", localAlertPolicyDetailValue(recoveryDetails, "recovered_at"))
+			appendField("恢复后节点状态", localAlertPolicyDetailValue(recoveryDetails, "node_status"))
+		}
+		appendField("角色", strings.TrimSpace(firstNonEmpty(event.Role, "unknown")))
+		if event.NodeID > 0 {
+			appendField("节点 ID", strconv.FormatUint(uint64(event.NodeID), 10))
+		}
+		if event.HostID > 0 {
+			appendField("主机 ID", strconv.FormatUint(uint64(event.HostID), 10))
+		}
+	default:
+		appendField("原因", localAlertPolicyDetailValue(details, "reason"))
+		appendField("进程", strings.TrimSpace(firstNonEmpty(event.ProcessName, "unknown")))
+		appendField("PID", strconv.Itoa(event.PID))
+		appendField("角色", strings.TrimSpace(firstNonEmpty(event.Role, "unknown")))
+		if event.NodeID > 0 {
+			appendField("节点 ID", strconv.FormatUint(uint64(event.NodeID), 10))
+		}
+		if event.HostID > 0 {
+			appendField("主机 ID", strconv.FormatUint(uint64(event.HostID), 10))
+		}
+		if prettyDetails := prettyLocalAlertPolicyDetails(event.Details); prettyDetails != "" {
+			appendMultilineField("详情", prettyDetails)
+		}
+	}
+
+	if policy != nil {
+		if description := strings.TrimSpace(policy.Description); description != "" {
+			appendField("策略说明", description)
+		}
+	}
+	return fields
+}
+
+func formatAlertNotificationTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+
+	utcValue := value.UTC()
+	localValue := utcValue.In(time.Local)
+	localLine := fmt.Sprintf(
+		"%s (server local)",
+		localValue.Format("2006-01-02 15:04:05 -07:00"),
+	)
+	utcLine := fmt.Sprintf("%s (UTC)", utcValue.Format(time.RFC3339))
+
+	// Always include UTC for cross-region consistency, and include server-local time
+	// to match what operators usually see on the deployment host.
+	// 始终保留 UTC 以便跨时区排障，同时补充服务器本地时间，减少运维侧阅读歧义。
+	return localLine + "\n" + utcLine
+}
+
+func resolveLocalAlertDeliveryStateLabel(deliveryEventType NotificationDeliveryEventType) string {
+	if deliveryEventType == NotificationDeliveryEventTypeResolved {
+		return "已恢复"
+	}
+	return "告警中"
+}
+
+func resolveLocalAlertMessageVisual(deliveryEventType NotificationDeliveryEventType) localAlertMessageVisual {
+	if deliveryEventType == NotificationDeliveryEventTypeResolved {
+		return localAlertMessageVisual{
+			BadgeText:        "已恢复",
+			Description:      "这是恢复通知，表示此前触发的告警条件已经解除，相关资源已回到健康状态。",
+			PanelDescription: "该告警已恢复。你可以把这封邮件作为审计记录保留；如果仍需排查根因，再继续后续处理。",
+			BannerBackground: "linear-gradient(135deg,#047857 0%,#16a34a 100%)",
+			PanelBackground:  "#ecfdf5",
+			PanelBorder:      "#86efac",
+		}
+	}
+	return localAlertMessageVisual{
+		BadgeText:        "告警中",
+		Description:      "这是触发通知，表示当前告警条件仍然成立，可能需要运维立即关注。",
+		PanelDescription: "该告警当前仍在触发。如果此策略启用了恢复通知，SeaTunnelX 会在条件恢复后单独发送一封恢复邮件。",
+		BannerBackground: "linear-gradient(135deg,#991b1b 0%,#dc2626 100%)",
+		PanelBackground:  "#fef2f2",
+		PanelBorder:      "#fca5a5",
+	}
+}
+
+func localAlertPolicyDetailsMap(raw string) map[string]interface{} {
+	payload, ok := parseLocalAlertPolicyDetails(raw).(map[string]interface{})
+	if !ok {
+		return map[string]interface{}{}
+	}
+	return payload
+}
+
+func localAlertPolicyDetailValue(payload map[string]interface{}, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	value := strings.TrimSpace(fmt.Sprintf("%v", payload[key]))
+	if value == "" || value == "<nil>" {
+		return ""
+	}
+	return value
+}
+
+func normalizeOperationScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "node":
+		return "节点"
+	case "cluster":
+		return "集群"
+	default:
+		return ""
+	}
+}
+
+func normalizeOperationName(operation string) string {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case "start":
+		return "启动"
+	case "stop":
+		return "停止"
+	case "restart":
+		return "重启"
+	default:
+		return ""
+	}
+}
+
+func prettyLocalAlertPolicyDetails(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return trimmed
+	}
+	pretty, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return trimmed
+	}
+	return string(pretty)
 }
 
 func parseLocalRecoveredOfflineEventID(raw string) uint {

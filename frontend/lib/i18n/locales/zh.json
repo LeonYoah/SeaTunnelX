@@ -1165,6 +1165,7 @@
       "deleteConfirm": "确定要删除用户 {username} 吗？此操作不可撤销。",
       "username": "用户名",
       "nickname": "昵称",
+      "email": "邮箱",
       "password": "密码",
       "passwordPlaceholder": "留空则不修改密码",
       "isAdmin": "管理员",
@@ -1181,6 +1182,7 @@
         "passwordRequired": "请输入密码",
         "passwordTooShort": "密码长度不能少于6位",
         "usernameTooShort": "用户名长度不能少于3位",
+        "invalidEmail": "请输入有效的邮箱地址",
         "usernameExists": "用户名已存在",
         "cannotDeleteSelf": "不能删除当前登录用户"
       }
@@ -1215,7 +1217,8 @@
     "saveError": "保存监控配置失败",
     "lastSync": "最后同步",
     "autoMonitor": "自动监控",
-    "autoMonitorDesc": "自动监控 SeaTunnel 进程状态",
+    "autoMonitorDesc": "对节点与进程健康持续监测并记录事件，默认始终开启且不可关闭",
+    "alwaysOn": "始终开启",
     "autoRestart": "自动拉起",
     "autoRestartDesc": "自动重启崩溃的进程",
     "monitorInterval": "监控间隔",
@@ -1249,7 +1252,12 @@
       "crashed": "已崩溃",
       "restarted": "已重启",
       "restartFailed": "重启失败",
-      "restartLimitReached": "达到重启上限"
+      "restartLimitReached": "达到重启上限",
+      "clusterRestartRequested": "重启已发起",
+      "nodeRestartRequested": "节点重启已发起",
+      "nodeStopRequested": "节点停止已发起",
+      "nodeOffline": "节点离线",
+      "nodeRecovered": "节点已恢复"
     }
   },
   "monitoringCenter": {
@@ -1319,20 +1327,20 @@
       "clusterFilter": "按集群筛选",
       "statusFilter": "按状态筛选",
       "sourceFilter": "按来源筛选",
-      "lifecycleStatusFilter": "按生命周期筛选",
-      "handlingStatusFilter": "按处理状态筛选",
+      "lifecycleStatusFilter": "按告警状态筛选",
+      "handlingStatusFilter": "按处理进度筛选",
       "allClusters": "全部集群",
       "allStatus": "全部状态",
       "allSources": "全部来源",
-      "allLifecycle": "全部生命周期",
-      "allHandling": "全部处理状态",
+      "allLifecycle": "全部告警状态",
+      "allHandling": "全部处理进度",
       "cluster": "集群",
       "sourceType": "来源",
       "eventType": "事件类型",
       "severity": "严重级别",
-      "status": "状态",
-      "lifecycleStatus": "生命周期",
-      "handlingStatus": "处理状态",
+      "status": "当前状态",
+      "lifecycleStatus": "当前状态",
+      "handlingStatus": "处理进度",
       "host": "主机",
       "process": "进程",
       "eventTime": "事件时间",
@@ -1374,9 +1382,35 @@
       },
       "handlingStatuses": {
         "pending": "待处理",
-        "acknowledged": "已确认",
+        "acknowledged": "已接手",
         "silenced": "已静默"
-      }
+      },
+      "stateHintTitle": "状态说明",
+      "stateHint": "“触发中 / 已恢复”表示告警本身是否仍在持续；“待处理 / 已接手 / 已静默”表示人工处理进度。已接手不等于已恢复。",
+      "allStatuses": "全部状态",
+      "firstFiredAt": "首次触发",
+      "lastChangedAt": "最近变化",
+      "closedCount": "已关闭",
+      "close": "关闭",
+      "closeError": "关闭告警失败",
+      "closeSuccess": "告警已关闭",
+      "statuses": {
+        "firing": "触发中",
+        "resolved": "已恢复",
+        "closed": "已关闭"
+      },
+      "markers": {
+        "acknowledged": "已确认",
+        "silencedUntil": "已静默至 {time}",
+        "latestNote": "备注：{note}"
+      },
+      "actionHints": {
+        "silenceReady": "让这条仍在触发中的告警 30 分钟内不再打扰。",
+        "silenceUnavailable": "仅触发中的未静默告警可执行静默。",
+        "closeReady": "人工关闭后，这次事件后续将不再通知；后续新的独立事件仍可再次告警。",
+        "closeClosed": "这条告警已经人工关闭。"
+      },
+      "manualClose": "人工关闭"
     },
     "rules": {
       "entry": "告警规则",
@@ -1566,8 +1600,12 @@
           "description": "当受管运行时出现 crash-loop 并达到重启限制时触发。"
         },
         "cluster_restart_requested": {
-          "name": "集群重启请求",
-          "description": "当用户在控制面发起集群重启操作时触发，用于验证通知链路或提醒运维关注变更。"
+          "name": "重启请求",
+          "description": "当用户在控制面发起集群重启或节点重启操作时触发，用于验证通知链路或提醒运维关注变更。"
+        },
+        "node_stop_requested": {
+          "name": "节点停止请求",
+          "description": "当用户在控制面手动停止某个节点时立即触发，便于运维跟踪显式停机动作。"
         },
         "cpu_usage_high": {
           "name": "CPU 使用率高",
@@ -1587,7 +1625,19 @@
         },
         "split_brain_risk": {
           "name": "脑裂风险",
-          "description": "为未来的集群角色分裂 / 一致性指标预留模板槽位。"
+          "description": "通过 Hazelcast 集群安全指标发现集群不安全或脑裂风险。"
+        },
+        "job_thread_pool_queue_backlog_high": {
+          "name": "作业线程池队列积压过高",
+          "description": "当 SeaTunnel 作业执行队列持续堆积时告警，避免进一步演变为延迟抖动或任务饥饿。"
+        },
+        "job_thread_pool_rejection_high": {
+          "name": "作业线程池出现拒绝",
+          "description": "当作业线程池开始拒绝新任务，而不是排队或执行时触发告警。"
+        },
+        "deadlocked_threads_detected": {
+          "name": "检测到死锁线程",
+          "description": "检测 JVM 死锁问题，避免任务调度、执行与恢复流程被卡死。"
         }
       },
       "editTitle": "编辑策略",
@@ -1740,7 +1790,12 @@
       "crashed": "已崩溃",
       "restarted": "已重启",
       "restartFailed": "重启失败",
-      "restartLimitReached": "达到重启上限"
+      "restartLimitReached": "达到重启上限",
+      "clusterRestartRequested": "重启已发起",
+      "nodeRestartRequested": "节点重启已发起",
+      "nodeStopRequested": "节点停止已发起",
+      "nodeOffline": "节点离线",
+      "nodeRecovered": "节点已恢复"
     },
     "grafana": {
       "title": "SeaTunnel 监控看板",
@@ -1847,6 +1902,7 @@
       "clusterRequired": "请选择集群",
       "templateRequired": "请选择策略模板",
       "promqlRequired": "请输入 PromQL",
+      "receiverRequired": "请选择至少一个通知接收人，或为当前邮件通道保留收件人配置",
       "concreteClusterRequired": "当前模板必须绑定具体集群",
       "concreteClusterHint": "运行时事件类策略需要绑定具体集群，不能选择全部集群。",
       "createSuccess": "告警策略创建成功",
@@ -1868,15 +1924,22 @@
         "severity": "告警等级",
         "cooldown": "最小告警间隔",
         "enabled": "启用状态",
+        "receivers": "通知对象",
         "methods": "通知方式",
         "emailChannel": "邮件配置",
         "webhookChannel": "Webhook 配置",
-        "recovery": "恢复通知"
+        "recovery": "恢复通知",
+        "triggerCondition": "触发条件",
+        "operator": "比较符",
+        "threshold": "阈值",
+        "window": "持续时间",
+        "promqlPreview": "PromQL 预览"
       },
       "placeholders": {
         "name": "例如：集群重启通知",
         "description": "补充策略说明，方便运维团队识别告警含义。",
-        "promql": "例如：sum(rate(seatunnel_job_failed_total[5m])) > 0"
+        "promql": "例如：sum(rate(seatunnel_job_failed_total[5m])) > 0",
+        "threshold": "例如：0.8（表示 80%）"
       },
       "staticConfig": "静态配置",
       "staticConfigDesc": "选择平台健康或指标模板，快速生成策略。",
@@ -1887,13 +1950,17 @@
         "platformHealth": "平台健康",
         "prometheusMetrics": "Prometheus 指标"
       },
+      "receiverHint": "通知对象来自系统用户，默认预选已配置邮箱的管理员。",
+      "receiverEmpty": "暂无可选通知对象。请先在用户管理中为用户配置有效邮箱。",
+      "receiverResetDefault": "恢复默认管理员",
+      "receiverAdmin": "管理员",
       "methods": {
         "email": "邮件",
         "selectEmail": "选择邮件配置",
         "noEmailConfig": "暂无邮件配置，点击即可创建",
         "webhook": "Webhook",
         "selectWebhook": "选择 Webhook 配置",
-        "noWebhookConfig": "暂无 Webhook 配置"
+        "noWebhookConfig": "暂无 Webhook 配置，点击即可新建"
       },
       "minutes": "分钟",
       "allClusters": "全部集群",
@@ -1901,7 +1968,7 @@
       "channel": {
         "manageEmail": "邮件配置",
         "dialogTitle": "邮件通知配置",
-        "dialogSubtitle": "配置 SMTP 服务并测试邮件发送，策略中心会直接复用这里的邮件通道。",
+        "dialogSubtitle": "这里仅配置 SMTP 发信能力；真实收件人由告警策略选择，测试发送可临时指定一个通知对象。",
         "savedConfigs": "已保存邮件配置",
         "empty": "暂无邮件配置",
         "createTitle": "新增邮件配置",
@@ -1920,7 +1987,7 @@
         "columns": {
           "name": "名称",
           "from": "发件地址",
-          "recipients": "收件人"
+          "recipients": "回退收件人"
         },
         "fields": {
           "name": "名称",
@@ -1932,13 +1999,124 @@
           "username": "邮件服务器用户名",
           "password": "邮件服务器密码",
           "from": "发件地址",
-          "recipients": "告警对象",
-          "description": "描述"
+          "recipients": "兼容性回退收件人",
+          "description": "描述",
+          "testRecipient": "临时测试收件人",
+          "fromName": "发件人名称"
         },
         "placeholders": {
           "recipients": "多个收件人请用英文逗号、分号或换行分隔"
+        },
+        "currentUser": "当前登录",
+        "testReceiverRequired": "请先选择一个测试收件人，或保留当前邮件通道上的兼容性回退收件人",
+        "testReceiverCurrentUserMissingEmail": "当前登录账号没有可用邮箱，请先补充邮箱后再测试发送",
+        "testRecipientPlaceholder": "选择一个临时测试收件人",
+        "testRecipientNone": "暂不指定测试收件人",
+        "testRecipientLegacyFallback": "兼容性回退收件人",
+        "testRecipientHint": "这里只影响测试发送；真实告警收件人请在策略编辑器中选择。",
+        "testRecipientHintSelected": "本次测试邮件将发送到 {value}",
+        "testRecipientHintCurrentUserMissing": "当前登录账号“{value}”还没有可用邮箱，测试发送前请先补充邮箱。",
+        "legacyRecipientsConfigured": "当前邮件通道仍保留 {count} 个兼容性回退收件人配置。",
+        "legacyRecipientsEmpty": "当前没有配置兼容性回退收件人，建议直接在告警策略中选择通知对象。",
+        "clearLegacyRecipients": "清空兼容性回退收件人",
+        "lastTest": {
+          "idle": "本次会话中尚未执行测试发送",
+          "success": "测试发送成功",
+          "failed": "测试发送失败",
+          "receiver": "收件人：{value}",
+          "sentAt": "发送时间：{value}"
+        },
+        "new": "新建通道",
+        "searchPlaceholder": "搜索通道...",
+        "searchEmpty": "没有匹配当前搜索条件的通道",
+        "updatedAt": "更新时间：{value}",
+        "statusEnabled": "已启用",
+        "statusDraft": "草稿",
+        "connectionTest": "测试连接",
+        "connectionTestSuccess": "SMTP 连接测试成功",
+        "connectionTestError": "SMTP 连接测试失败",
+        "delete": "删除通道",
+        "cancel": "取消",
+        "saveDraft": "保存草稿",
+        "saveAndEnable": "保存并启用",
+        "deleteConfirm": "确认删除当前邮件通道吗？",
+        "deleteSuccess": "邮件通道删除成功",
+        "deleteError": "删除邮件通道失败",
+        "sections": {
+          "basic": "基本信息",
+          "connection": "连接配置",
+          "sender": "发信配置",
+          "delivery": "告警接收"
+        },
+        "connectionLastTest": {
+          "idle": "本次会话中尚未执行连接测试",
+          "success": "连接测试成功",
+          "failed": "连接测试失败",
+          "checkedAt": "检测时间：{value}"
+        },
+        "statusOutdated": "当前表单已发生变更，上面的测试结果可能已过期",
+        "unsavedChangesConfirm": "当前邮件通道存在未保存变更，确认放弃吗？"
+      },
+      "webhook": {
+        "manage": "Webhook 配置",
+        "dialogTitle": "Webhook 通知配置",
+        "dialogSubtitle": "配置统一告警的 Webhook / IM 出站通道。收件人由对端系统决定，这里只负责把告警发出去。",
+        "savedConfigs": "已保存的 Webhook 配置",
+        "new": "新建配置",
+        "searchPlaceholder": "搜索配置...",
+        "empty": "暂无 Webhook 配置",
+        "searchEmpty": "没有匹配到 Webhook 配置",
+        "createTitle": "新建 Webhook 配置",
+        "editTitle": "编辑 Webhook 配置",
+        "statusEnabled": "已启用",
+        "statusDraft": "未启用",
+        "updatedAt": "最近更新：{value}",
+        "test": "测试发送",
+        "testSuccess": "Webhook 测试发送成功",
+        "testError": "Webhook 测试发送失败",
+        "nameRequired": "请输入 Webhook 配置名称",
+        "endpointRequired": "请输入 Webhook Endpoint",
+        "createSuccess": "Webhook 配置创建成功",
+        "updateSuccess": "Webhook 配置保存成功",
+        "createError": "创建 Webhook 配置失败",
+        "updateError": "保存 Webhook 配置失败",
+        "delete": "删除配置",
+        "cancel": "取消",
+        "saveDraft": "保存草稿",
+        "saveAndEnable": "保存并启用",
+        "deleteConfirm": "确认删除当前 Webhook 配置吗？",
+        "deleteSuccess": "Webhook 配置删除成功",
+        "deleteError": "删除 Webhook 配置失败",
+        "statusOutdated": "当前表单已发生变更，上面的测试结果可能已过期",
+        "unsavedChangesConfirm": "当前 Webhook 配置存在未保存变更，确认放弃吗？",
+        "secretHint": "如对端需要签名或共享密钥，可填写；没有则可留空。",
+        "sections": {
+          "basic": "基本信息",
+          "connection": "推送配置"
+        },
+        "fields": {
+          "name": "名称",
+          "description": "描述",
+          "endpoint": "Webhook Endpoint",
+          "secret": "签名密钥"
+        },
+        "placeholders": {
+          "secret": "可选，用于签名或共享密钥"
+        },
+        "lastTest": {
+          "idle": "本次会话中尚未执行测试发送",
+          "success": "测试发送成功",
+          "failed": "测试发送失败",
+          "sentAt": "发送时间：{value}",
+          "statusCode": "响应状态码：{value}"
         }
-      }
+      },
+      "conditionThresholdRequired": "请输入触发阈值",
+      "conditionWindowInvalid": "持续时间必须在 0 到 10080 分钟之间",
+      "conditionHint": "可按模板默认值直接保存，也可以覆盖阈值、比较符和持续时间。",
+      "customPromqlLegacy": "历史自定义 PromQL",
+      "customPromqlLegacyDesc": "新策略不再提供自定义 PromQL，仅兼容查看和编辑已有历史策略。",
+      "metricsUnavailableHint": "Prometheus 指标模板当前不可用：{reason}"
     }
   },
   "discovery": {

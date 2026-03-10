@@ -145,6 +145,133 @@ func TestDispatchAlertPolicyEvent_sendsUnifiedPolicyNotification(t *testing.T) {
 	}
 }
 
+func TestResolveLocalAlertLifecycle_marksManualOperationEventsResolved(t *testing.T) {
+	service := &Service{}
+	createdAt := time.Date(2026, 3, 10, 9, 30, 0, 0, time.UTC)
+
+	for _, eventType := range []monitor.ProcessEventType{
+		monitor.EventTypeClusterRestartRequested,
+		monitor.EventTypeNodeRestartRequested,
+		monitor.EventTypeNodeStopRequested,
+	} {
+		status, resolvedAt, err := service.resolveLocalAlertLifecycle(context.Background(), &AlertEventSource{
+			EventType: eventType,
+			CreatedAt: createdAt,
+		})
+		if err != nil {
+			t.Fatalf("expected no error for %s, got %v", eventType, err)
+		}
+		if status != AlertLifecycleStatusResolved {
+			t.Fatalf("expected %s to resolve immediately, got %s", eventType, status)
+		}
+		if resolvedAt == nil || !resolvedAt.Equal(createdAt) {
+			t.Fatalf("expected resolved_at=%s for %s, got %+v", createdAt, eventType, resolvedAt)
+		}
+	}
+}
+
+func TestBuildLocalAlertPolicyMessage_formatsNodeStopEvent(t *testing.T) {
+	originalLocal := time.Local
+	time.Local = time.FixedZone("UTC+8", 8*3600)
+	t.Cleanup(func() {
+		time.Local = originalLocal
+	})
+
+	event := &monitor.ProcessEvent{
+		ClusterID:   6,
+		NodeID:      4,
+		HostID:      9,
+		EventType:   monitor.EventTypeNodeStopRequested,
+		ProcessName: "node 4",
+		Role:        "master/worker",
+		CreatedAt:   time.Date(2026, 3, 10, 9, 40, 0, 0, time.UTC),
+		Details:     `{"scope":"node","operation":"stop","operator":"alice","trigger":"manual_api","success":"true","message":"command accepted","host_name":"host-4","host_ip":"10.0.0.4","role":"master/worker"}`,
+	}
+	policy := &AlertPolicy{
+		ID:          11,
+		Name:        "节点停止通知",
+		Description: "记录节点被人工停止的运维动作",
+		Severity:    AlertSeverityWarning,
+	}
+
+	text := buildLocalAlertPolicyMessageText(event, nil, "t3", policy, NotificationDeliveryEventTypeFiring)
+	if !strings.Contains(text, "范围：节点") {
+		t.Fatalf("expected node scope in text, got %s", text)
+	}
+	if !strings.Contains(text, "操作：停止") {
+		t.Fatalf("expected stop operation in text, got %s", text)
+	}
+	if !strings.Contains(text, "主机：host-4") {
+		t.Fatalf("expected host information in text, got %s", text)
+	}
+	if !strings.Contains(text, "2026-03-10 17:40:00 +08:00 (server local)") {
+		t.Fatalf("expected server-local timestamp in text, got %s", text)
+	}
+	if !strings.Contains(text, "2026-03-10T09:40:00Z (UTC)") {
+		t.Fatalf("expected utc timestamp in text, got %s", text)
+	}
+	if strings.Contains(text, "EventDetails:") {
+		t.Fatalf("expected formatted fields without raw EventDetails dump, got %s", text)
+	}
+
+	html := buildLocalAlertPolicyMessageHTML(event, nil, "t3", policy, NotificationDeliveryEventTypeFiring)
+	if !strings.Contains(html, "<table") {
+		t.Fatalf("expected html table layout, got %s", html)
+	}
+	if !strings.Contains(html, "host-4") {
+		t.Fatalf("expected host information in html, got %s", html)
+	}
+	if !strings.Contains(html, "告警中") {
+		t.Fatalf("expected firing badge in html, got %s", html)
+	}
+}
+
+func TestBuildLocalAlertPolicyMessage_formatsResolvedNotificationDifferently(t *testing.T) {
+	event := &monitor.ProcessEvent{
+		ClusterID:   6,
+		NodeID:      4,
+		HostID:      9,
+		EventType:   monitor.EventTypeNodeOffline,
+		ProcessName: "seatunnel",
+		Role:        "master/worker",
+		CreatedAt:   time.Date(2026, 3, 10, 9, 40, 0, 0, time.UTC),
+		Details:     `{"reason":"process_stopped","host_name":"host-4","host_ip":"10.0.0.4","node_status":"stopped","observed_since":"2026-03-10T09:39:30Z","grace_seconds":"20"}`,
+	}
+	recoveryEvent := &monitor.ProcessEvent{
+		ClusterID: event.ClusterID,
+		NodeID:    event.NodeID,
+		HostID:    event.HostID,
+		EventType: monitor.EventTypeNodeRecovered,
+		CreatedAt: time.Date(2026, 3, 10, 9, 41, 0, 0, time.UTC),
+		Details:   `{"recovered_at":"2026-03-10T09:41:00Z","node_status":"running"}`,
+	}
+	policy := &AlertPolicy{
+		ID:       12,
+		Name:     "节点离线",
+		Severity: AlertSeverityCritical,
+	}
+
+	title := buildLocalAlertPolicyMessageTitle(event, policy, NotificationDeliveryEventTypeResolved)
+	if !strings.Contains(title, "[恢复]") {
+		t.Fatalf("expected recovered marker in title, got %s", title)
+	}
+	text := buildLocalAlertPolicyMessageText(event, recoveryEvent, "t3", policy, NotificationDeliveryEventTypeResolved)
+	if !strings.Contains(text, "状态：已恢复") {
+		t.Fatalf("expected recovered state in text, got %s", text)
+	}
+	if !strings.Contains(text, "恢复事件：node_recovered") {
+		t.Fatalf("expected recovery event in text, got %s", text)
+	}
+
+	html := buildLocalAlertPolicyMessageHTML(event, recoveryEvent, "t3", policy, NotificationDeliveryEventTypeResolved)
+	if !strings.Contains(html, "已恢复") {
+		t.Fatalf("expected recovered badge in html, got %s", html)
+	}
+	if !strings.Contains(html, "该告警已恢复") {
+		t.Fatalf("expected resolved summary in html, got %s", html)
+	}
+}
+
 func TestDispatchAlertPolicyEvent_deduplicatesSentDelivery(t *testing.T) {
 	service, repo, cluster, ctx := setupMonitoringAlertPolicyService(t)
 

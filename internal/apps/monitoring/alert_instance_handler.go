@@ -53,6 +53,16 @@ func (h *Handler) ListAlertInstances(c *gin.Context) {
 		}
 		filter.Severity = parsed
 	}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		parsed := AlertDisplayStatus(strings.ToLower(status))
+		if parsed != AlertDisplayStatusFiring &&
+			parsed != AlertDisplayStatusResolved &&
+			parsed != AlertDisplayStatusClosed {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid status"})
+			return
+		}
+		filter.Status = parsed
+	}
 	if lifecycleStatus := strings.TrimSpace(c.Query("lifecycle_status")); lifecycleStatus != "" {
 		parsed := AlertLifecycleStatus(strings.ToLower(lifecycleStatus))
 		if parsed != AlertLifecycleStatusFiring && parsed != AlertLifecycleStatusResolved {
@@ -65,7 +75,8 @@ func (h *Handler) ListAlertInstances(c *gin.Context) {
 		parsed := AlertHandlingStatus(strings.ToLower(handlingStatus))
 		if parsed != AlertHandlingStatusPending &&
 			parsed != AlertHandlingStatusAcknowledged &&
-			parsed != AlertHandlingStatusSilenced {
+			parsed != AlertHandlingStatusSilenced &&
+			parsed != AlertHandlingStatusClosed {
 			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid handling_status"})
 			return
 		}
@@ -138,7 +149,7 @@ func (h *Handler) AcknowledgeAlertInstance(c *gin.Context) {
 
 	data, err := h.service.AcknowledgeAlertInstance(c.Request.Context(), alertID, operator, req.Note)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to acknowledge alert instance: " + err.Error()})
+		c.JSON(getAlertInstanceStatusCode(err), Response{ErrorMsg: "Failed to acknowledge alert instance: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, Response{Data: data})
@@ -170,8 +181,50 @@ func (h *Handler) SilenceAlertInstance(c *gin.Context) {
 
 	data, err := h.service.SilenceAlertInstance(c.Request.Context(), alertID, operator, req.DurationMinutes, req.Note)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: "Failed to silence alert instance: " + err.Error()})
+		c.JSON(getAlertInstanceStatusCode(err), Response{ErrorMsg: "Failed to silence alert instance: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// CloseAlertInstance handles POST /api/v1/monitoring/alert-instances/:id/close.
+// CloseAlertInstance 处理统一告警实例关闭接口。
+func (h *Handler) CloseAlertInstance(c *gin.Context) {
+	alertID := strings.TrimSpace(c.Param("id"))
+	if alertID == "" {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid alert id"})
+		return
+	}
+
+	req := &AcknowledgeAlertRequest{}
+	if err := c.ShouldBindJSON(req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "invalid request body: " + err.Error()})
+		return
+	}
+
+	operator := "unknown"
+	if user := auth.GetUserFromContext(c); user != nil && user.Username != "" {
+		operator = user.Username
+	}
+
+	data, err := h.service.CloseAlertInstance(c.Request.Context(), alertID, operator, req.Note)
+	if err != nil {
+		c.JSON(getAlertInstanceStatusCode(err), Response{ErrorMsg: "Failed to close alert instance: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+func getAlertInstanceStatusCode(err error) int {
+	switch {
+	case errors.Is(err, ErrAlertInstanceInvalidID):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrAlertInstanceNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrAlertInstanceAlreadyClosed),
+		errors.Is(err, ErrAlertInstanceNotClosable):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }

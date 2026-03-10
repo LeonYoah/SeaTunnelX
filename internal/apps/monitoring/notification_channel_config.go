@@ -77,3 +77,39 @@ func deriveNotificationChannelEndpoint(channelType NotificationChannelType, endp
 	}
 	return fmt.Sprintf("%s:%d", config.Email.Host, config.Email.Port)
 }
+
+func buildNotificationChannelFromUpsertRequest(req *UpsertNotificationChannelRequest) (*NotificationChannel, error) {
+	if req == nil {
+		return nil, fmt.Errorf("notification channel request is required")
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	channel := &NotificationChannel{
+		Name:        strings.TrimSpace(req.Name),
+		Type:        req.Type,
+		Enabled:     enabled,
+		Description: strings.TrimSpace(req.Description),
+	}
+	if channel.Type == NotificationChannelTypeEmail {
+		configJSON, err := marshalNotificationChannelConfig(channel.Type, req.Config)
+		if err != nil {
+			return nil, err
+		}
+		channel.ConfigJSON = configJSON
+		channel.Endpoint = deriveNotificationChannelEndpoint(channel.Type, req.Endpoint, req.Config)
+		channel.Secret = ""
+		return channel, nil
+	}
+
+	channel.Endpoint = strings.TrimSpace(req.Endpoint)
+	channel.Secret = strings.TrimSpace(req.Secret)
+	channel.ConfigJSON = ""
+	return channel, nil
+}

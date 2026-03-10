@@ -21,6 +21,7 @@ package admin
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/seatunnel/seatunnelX/internal/apps/audit"
@@ -112,6 +113,7 @@ type CreateUserRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Password string `json:"password" binding:"required,min=6,max=100"`
 	Nickname string `json:"nickname" binding:"max=100"`
+	Email    string `json:"email" binding:"omitempty,max=255,email"`
 	IsAdmin  bool   `json:"is_admin"`
 }
 
@@ -145,7 +147,8 @@ func CreateUserHandler(c *gin.Context) {
 	// 创建用户
 	user := &auth.User{
 		Username: req.Username,
-		Nickname: req.Nickname,
+		Nickname: strings.TrimSpace(req.Nickname),
+		Email:    strings.TrimSpace(req.Email),
 		IsActive: true,
 		IsAdmin:  req.IsAdmin,
 	}
@@ -173,10 +176,11 @@ func CreateUserHandler(c *gin.Context) {
 
 // UpdateUserRequest 更新用户请求
 type UpdateUserRequest struct {
-	Nickname string `json:"nickname" binding:"max=100"`
-	Password string `json:"password" binding:"omitempty,min=6,max=100"`
-	IsActive *bool  `json:"is_active"`
-	IsAdmin  *bool  `json:"is_admin"`
+	Nickname string  `json:"nickname" binding:"max=100"`
+	Password string  `json:"password" binding:"omitempty,min=6,max=100"`
+	Email    *string `json:"email" binding:"omitempty,max=255,email"`
+	IsActive *bool   `json:"is_active"`
+	IsAdmin  *bool   `json:"is_admin"`
 }
 
 // UpdateUserResponse 更新用户响应
@@ -217,7 +221,10 @@ func UpdateUserHandler(c *gin.Context) {
 	// 更新字段
 	updates := make(map[string]interface{})
 	if req.Nickname != "" {
-		updates["nickname"] = req.Nickname
+		updates["nickname"] = strings.TrimSpace(req.Nickname)
+	}
+	if req.Email != nil {
+		updates["email"] = strings.TrimSpace(*req.Email)
 	}
 	if req.IsActive != nil {
 		updates["is_active"] = *req.IsActive

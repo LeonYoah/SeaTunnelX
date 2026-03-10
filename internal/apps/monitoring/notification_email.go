@@ -26,6 +26,7 @@ import (
 	"mime"
 	"mime/quotedprintable"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ import (
 type emailNotificationPayload struct {
 	Subject string   `json:"subject"`
 	Text    string   `json:"text"`
+	HTML    string   `json:"html,omitempty"`
 	To      []string `json:"to,omitempty"`
 }
 
@@ -94,6 +96,7 @@ func normalizeEmailNotificationPayload(payload interface{}, defaultRecipients []
 		cloned := *typed
 		cloned.Subject = strings.TrimSpace(cloned.Subject)
 		cloned.Text = strings.TrimSpace(cloned.Text)
+		cloned.HTML = strings.TrimSpace(cloned.HTML)
 		cloned.To = normalizeEmailRecipients(cloned.To)
 		if len(cloned.To) == 0 {
 			cloned.To = normalizeEmailRecipients(defaultRecipients)
@@ -101,8 +104,8 @@ func normalizeEmailNotificationPayload(payload interface{}, defaultRecipients []
 		if cloned.Subject == "" {
 			return nil, fmt.Errorf("email subject is required")
 		}
-		if cloned.Text == "" {
-			return nil, fmt.Errorf("email text is required")
+		if cloned.Text == "" && cloned.HTML == "" {
+			return nil, fmt.Errorf("email text or html is required")
 		}
 		if len(cloned.To) == 0 {
 			return nil, fmt.Errorf("email recipients are required")
@@ -120,27 +123,79 @@ func buildSMTPMessage(config *NotificationChannelEmailConfig, payload *emailNoti
 		return nil, fmt.Errorf("email config and payload are required")
 	}
 
-	var body bytes.Buffer
-	qp := quotedprintable.NewWriter(&body)
-	if _, err := qp.Write([]byte(payload.Text)); err != nil {
+	textBody, err := encodeQuotedPrintableBody(payload.Text)
+	if err != nil {
 		return nil, err
 	}
-	if err := qp.Close(); err != nil {
-		return nil, err
+
+	fromHeader := strings.TrimSpace(config.From)
+	if strings.TrimSpace(config.FromName) != "" {
+		fromHeader = (&mail.Address{
+			Name:    strings.TrimSpace(config.FromName),
+			Address: strings.TrimSpace(config.From),
+		}).String()
 	}
 
 	subject := mime.QEncoding.Encode("utf-8", strings.TrimSpace(payload.Subject))
 	headers := []string{
-		fmt.Sprintf("From: %s", strings.TrimSpace(config.From)),
+		fmt.Sprintf("From: %s", fromHeader),
 		fmt.Sprintf("To: %s", strings.Join(payload.To, ", ")),
 		fmt.Sprintf("Subject: %s", subject),
 		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=UTF-8",
-		"Content-Transfer-Encoding: quoted-printable",
+	}
+	if strings.TrimSpace(payload.HTML) == "" {
+		headers = append(headers,
+			"Content-Type: text/plain; charset=UTF-8",
+			"Content-Transfer-Encoding: quoted-printable",
+		)
+		message := strings.Join(headers, "\r\n") + "\r\n\r\n" + textBody
+		return []byte(message), nil
 	}
 
-	message := strings.Join(headers, "\r\n") + "\r\n\r\n" + body.String()
-	return []byte(message), nil
+	htmlBody, err := encodeQuotedPrintableBody(payload.HTML)
+	if err != nil {
+		return nil, err
+	}
+	boundary := fmt.Sprintf("=_SeaTunnelX_%d", time.Now().UTC().UnixNano())
+	headers = append(headers, fmt.Sprintf("Content-Type: multipart/alternative; boundary=%q", boundary))
+
+	var message strings.Builder
+	message.WriteString(strings.Join(headers, "\r\n"))
+	message.WriteString("\r\n\r\n")
+	message.WriteString("--" + boundary + "\r\n")
+	message.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	message.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+	message.WriteString(textBody)
+	message.WriteString("\r\n--" + boundary + "\r\n")
+	message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	message.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+	message.WriteString(htmlBody)
+	message.WriteString("\r\n--" + boundary + "--\r\n")
+	return []byte(message.String()), nil
+}
+
+func encodeQuotedPrintableBody(raw string) (string, error) {
+	var body bytes.Buffer
+	qp := quotedprintable.NewWriter(&body)
+	if _, err := qp.Write([]byte(raw)); err != nil {
+		return "", err
+	}
+	if err := qp.Close(); err != nil {
+		return "", err
+	}
+	return body.String(), nil
+}
+
+func testSMTPConnection(ctx context.Context, config *NotificationChannelEmailConfig) error {
+	if config == nil {
+		return fmt.Errorf("email config is required")
+	}
+	client, conn, err := openSMTPClient(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer closeSMTPClient(client, conn)
+	return authenticateSMTPClient(client, config)
 }
 
 func deliverSMTPMessage(ctx context.Context, config *NotificationChannelEmailConfig, recipients []string, message []byte) error {
@@ -150,71 +205,15 @@ func deliverSMTPMessage(ctx context.Context, config *NotificationChannelEmailCon
 	if len(recipients) == 0 {
 		return fmt.Errorf("email recipients are required")
 	}
-	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-
-	var (
-		client *smtp.Client
-		conn   net.Conn
-		err    error
-	)
-
-	switch config.Security {
-	case NotificationEmailSecuritySSL:
-		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
-			ServerName: strings.TrimSpace(config.Host),
-			MinVersion: tls.VersionTLS12,
-		})
-		if err != nil {
-			return err
-		}
-		client, err = smtp.NewClient(conn, strings.TrimSpace(config.Host))
-		if err != nil {
-			_ = conn.Close()
-			return err
-		}
-	default:
-		conn, err = dialer.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return err
-		}
-		client, err = smtp.NewClient(conn, strings.TrimSpace(config.Host))
-		if err != nil {
-			_ = conn.Close()
-			return err
-		}
-		if config.Security == NotificationEmailSecurityStartTLS {
-			ok, _ := client.Extension("STARTTLS")
-			if !ok {
-				_ = client.Close()
-				return fmt.Errorf("smtp server does not support STARTTLS")
-			}
-			if err := client.StartTLS(&tls.Config{
-				ServerName: strings.TrimSpace(config.Host),
-				MinVersion: tls.VersionTLS12,
-			}); err != nil {
-				_ = client.Close()
-				return err
-			}
-		}
+	client, conn, err := openSMTPClient(ctx, config)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		_ = client.Quit()
-		_ = client.Close()
-	}()
-	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+	defer closeSMTPClient(client, conn)
 
-	if strings.TrimSpace(config.Username) != "" {
-		ok, _ := client.Extension("AUTH")
-		if !ok {
-			return fmt.Errorf("smtp server does not support AUTH")
-		}
-		auth := smtp.PlainAuth("", strings.TrimSpace(config.Username), config.Password, strings.TrimSpace(config.Host))
-		if err := client.Auth(auth); err != nil {
-			return err
-		}
+	if err := authenticateSMTPClient(client, config); err != nil {
+		return err
 	}
-
 	if err := client.Mail(strings.TrimSpace(config.From)); err != nil {
 		return err
 	}
@@ -236,4 +235,82 @@ func deliverSMTPMessage(ctx context.Context, config *NotificationChannelEmailCon
 		return err
 	}
 	return nil
+}
+
+func openSMTPClient(ctx context.Context, config *NotificationChannelEmailConfig) (*smtp.Client, net.Conn, error) {
+	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	var (
+		client *smtp.Client
+		conn   net.Conn
+		err    error
+	)
+
+	switch config.Security {
+	case NotificationEmailSecuritySSL:
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{
+			ServerName: strings.TrimSpace(config.Host),
+			MinVersion: tls.VersionTLS12,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		client, err = smtp.NewClient(conn, strings.TrimSpace(config.Host))
+		if err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	default:
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return nil, nil, err
+		}
+		client, err = smtp.NewClient(conn, strings.TrimSpace(config.Host))
+		if err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+		if config.Security == NotificationEmailSecurityStartTLS {
+			ok, _ := client.Extension("STARTTLS")
+			if !ok {
+				_ = client.Close()
+				_ = conn.Close()
+				return nil, nil, fmt.Errorf("smtp server does not support STARTTLS")
+			}
+			if err := client.StartTLS(&tls.Config{
+				ServerName: strings.TrimSpace(config.Host),
+				MinVersion: tls.VersionTLS12,
+			}); err != nil {
+				_ = client.Close()
+				_ = conn.Close()
+				return nil, nil, err
+			}
+		}
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+	return client, conn, nil
+}
+
+func authenticateSMTPClient(client *smtp.Client, config *NotificationChannelEmailConfig) error {
+	if client == nil || config == nil || strings.TrimSpace(config.Username) == "" {
+		return nil
+	}
+	ok, _ := client.Extension("AUTH")
+	if !ok {
+		return fmt.Errorf("smtp server does not support AUTH")
+	}
+	auth := smtp.PlainAuth("", strings.TrimSpace(config.Username), config.Password, strings.TrimSpace(config.Host))
+	return client.Auth(auth)
+}
+
+func closeSMTPClient(client *smtp.Client, conn net.Conn) {
+	if client != nil {
+		_ = client.Quit()
+		_ = client.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
 }

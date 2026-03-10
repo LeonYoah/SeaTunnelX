@@ -46,6 +46,7 @@ type User struct {
 	Username     string    `json:"username" gorm:"size:255;unique;not null"`
 	PasswordHash string    `json:"-" gorm:"column:password_hash;size:255"` // 密码哈希，OAuth 用户可为空
 	Nickname     string    `json:"nickname" gorm:"size:255"`
+	Email        string    `json:"email" gorm:"size:255;index"`
 	AvatarURL    string    `json:"avatar_url" gorm:"column:avatar_url;size:255"` // 头像 URL
 	OAuthID      string    `json:"oauth_id" gorm:"size:255;index"`               // OAuth 提供商 ID，格式: provider:id
 	IsActive     bool      `json:"is_active" gorm:"default:true"`
@@ -149,6 +150,7 @@ type UserInfo struct {
 	ID          uint64    `json:"id"`
 	Username    string    `json:"username"`
 	Nickname    string    `json:"nickname"`
+	Email       string    `json:"email"`
 	AvatarURL   string    `json:"avatar_url"`
 	IsActive    bool      `json:"is_active"`
 	IsAdmin     bool      `json:"is_admin"`
@@ -162,6 +164,7 @@ func (u *User) ToUserInfo() *UserInfo {
 		ID:          u.ID,
 		Username:    u.Username,
 		Nickname:    u.Nickname,
+		Email:       u.Email,
 		AvatarURL:   u.AvatarURL,
 		IsActive:    u.IsActive,
 		IsAdmin:     u.IsAdmin,
