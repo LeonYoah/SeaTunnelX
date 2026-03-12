@@ -365,7 +365,7 @@ export function DiagnosticsErrorCenter({
         </Card>
       </div>
 
-      <Card className='min-h-[720px]'>
+      <Card className='min-h-[820px]'>
         <CardHeader>
           <CardTitle>{t('errors.detailTitle')}</CardTitle>
         </CardHeader>
@@ -464,7 +464,7 @@ export function DiagnosticsErrorCenter({
 
               <div className='space-y-3'>
                 <div className='text-sm font-medium'>{t('errors.evidenceTitle')}</div>
-                <ScrollArea className='h-[320px] rounded-lg border bg-muted/20'>
+                <ScrollArea className='h-[400px] rounded-lg border bg-muted/20'>
                   <pre className='whitespace-pre-wrap break-words p-4 text-xs leading-6 text-muted-foreground'>
                     {selectedEvent?.evidence || t('errors.noEvidence')}
                   </pre>

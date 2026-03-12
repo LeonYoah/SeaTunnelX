@@ -814,7 +814,7 @@ export function DiagnosticsTaskCenter({
   const renderTaskDetail = () => {
     if (loadingDetail && !taskDetail) {
       return (
-        <Card className='flex min-h-[1420px] flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:row-span-2 xl:h-[1420px] xl:max-h-[1420px] xl:self-start'>
+        <Card className='flex flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:self-start'>
           <CardContent className='space-y-4 py-6'>
             <Skeleton className='h-8 w-56' />
             <Skeleton className='h-28 w-full' />
@@ -827,7 +827,7 @@ export function DiagnosticsTaskCenter({
 
     if (!taskDetail) {
       return (
-        <Card className='flex min-h-[1420px] flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:row-span-2 xl:h-[1420px] xl:max-h-[1420px] xl:self-start'>
+        <Card className='flex flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:self-start'>
           <CardContent className='flex flex-1 items-center justify-center py-10 text-sm text-muted-foreground'>
             {t('tasks.selectTask')}
           </CardContent>
@@ -836,7 +836,7 @@ export function DiagnosticsTaskCenter({
     }
 
     return (
-      <Card className='flex min-h-[1420px] flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:row-span-2 xl:h-[1420px] xl:max-h-[1420px] xl:self-start'>
+      <Card className='flex flex-col overflow-hidden xl:col-start-2 xl:row-start-1 xl:self-start'>
         <CardHeader className='shrink-0 space-y-4 border-b xl:h-[332px]'>
           <div className='flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between'>
             <div className='space-y-3'>
@@ -1284,10 +1284,10 @@ export function DiagnosticsTaskCenter({
   };
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(340px,0.78fr)_minmax(0,1.22fr)] xl:grid-rows-[500px_580px] xl:items-stretch'>
+    <div className='grid gap-4 xl:grid-cols-[minmax(340px,0.78fr)_minmax(0,1.22fr)] xl:items-start'>
       <div className='space-y-4 xl:contents'>
-        <Card className='flex h-full flex-col overflow-hidden xl:col-start-1 xl:row-start-1'>
-          <CardHeader className='flex min-h-0 flex-1 flex-col space-y-3 overflow-y-auto'>
+        <Card className='flex flex-col overflow-hidden xl:col-start-1 xl:row-start-1 xl:self-start'>
+          <CardHeader className='space-y-3'>
             <div className='flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between'>
               <div>
                 <CardTitle>{t('tasks.title')}</CardTitle>
@@ -1304,6 +1304,17 @@ export function DiagnosticsTaskCenter({
                 <Button variant='outline' onClick={() => void loadTasks()}>
                   <RefreshCw className='mr-2 h-4 w-4' />
                   {commonT('refresh')}
+                </Button>
+                <Button
+                  onClick={() => void handleCreateTask()}
+                  disabled={creatingTask}
+                >
+                  {creatingTask ? (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  ) : (
+                    <Workflow className='mr-2 h-4 w-4' />
+                  )}
+                  {t('tasks.createTask')}
                 </Button>
               </div>
             </div>
@@ -1479,24 +1490,11 @@ export function DiagnosticsTaskCenter({
                 </div>
               </div>
 
-              <div className='mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                <div className='flex items-center gap-3'>
-                  <Switch checked={autoStart} onCheckedChange={setAutoStart} />
-                  <div className='text-sm text-muted-foreground'>
-                    {t('tasks.autoStart')}
-                  </div>
+              <div className='mt-4 flex items-center gap-3'>
+                <Switch checked={autoStart} onCheckedChange={setAutoStart} />
+                <div className='text-sm text-muted-foreground'>
+                  {t('tasks.autoStart')}
                 </div>
-                <Button
-                  onClick={() => void handleCreateTask()}
-                  disabled={creatingTask}
-                >
-                  {creatingTask ? (
-                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                  ) : (
-                    <Workflow className='mr-2 h-4 w-4' />
-                  )}
-                  {t('tasks.createTask')}
-                </Button>
               </div>
             </div>
           </CardHeader>

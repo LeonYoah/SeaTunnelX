@@ -792,9 +792,16 @@ func (a *Agent) handleCommand(ctx context.Context, cmd *pb.CommandRequest) (*pb.
 	resp, err := a.executor.Execute(ctx, cmd, reporter)
 	if err != nil {
 		logger.ErrorF(ctx, "Command %s failed: %v / 命令 %s 失败：%v", cmd.CommandId, err, cmd.CommandId, err)
+	} else if resp.Status == pb.CommandStatus_FAILED {
+		reason := resp.Error
+		if reason == "" {
+			reason = "unknown"
+		}
+		logger.WarnF(ctx, "Command %s (type: %s) completed: FAILED, reason: %s / 命令 %s（类型：%s）完成：失败，原因：%s",
+			cmd.CommandId, cmd.Type.String(), reason, cmd.CommandId, cmd.Type.String(), reason)
 	} else {
-		logger.InfoF(ctx, "Command %s completed with status: %s / 命令 %s 完成，状态：%s",
-			cmd.CommandId, resp.Status.String(), cmd.CommandId, resp.Status.String())
+		logger.InfoF(ctx, "Command %s (type: %s) completed: %s / 命令 %s（类型：%s）完成：%s",
+			cmd.CommandId, cmd.Type.String(), resp.Status.String(), cmd.CommandId, cmd.Type.String(), resp.Status.String())
 	}
 
 	return resp, err

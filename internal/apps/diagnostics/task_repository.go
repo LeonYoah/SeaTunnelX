@@ -20,6 +20,7 @@ package diagnostics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
@@ -71,6 +72,54 @@ func (r *Repository) UpdateDiagnosticTask(ctx context.Context, task *DiagnosticT
 		return ErrDiagnosticTaskNotFound
 	}
 	return nil
+}
+
+// GetLatestDiagnosticTaskByInspectionReportID returns the most recent diagnostic task
+// whose source_ref.inspection_report_id equals reportID, with steps and node executions preloaded.
+// Returns nil, nil when no such task exists.
+func (r *Repository) GetLatestDiagnosticTaskByInspectionReportID(ctx context.Context, reportID uint) (*DiagnosticTask, error) {
+	if r == nil || r.db == nil {
+		return nil, ErrDiagnosticsRepositoryUnavailable
+	}
+	if reportID == 0 {
+		return nil, nil
+	}
+	dialector := r.db.Dialector.Name()
+	var query *gorm.DB
+	switch dialector {
+	case "sqlite":
+		query = r.db.WithContext(ctx).Where(
+			"trigger_source = ? AND json_extract(source_ref, '$.inspection_report_id') = ?",
+			DiagnosticTaskSourceInspectionFinding, reportID,
+		)
+	case "mysql":
+		query = r.db.WithContext(ctx).Where(
+			"trigger_source = ? AND CAST(JSON_UNQUOTE(JSON_EXTRACT(source_ref, '$.inspection_report_id')) AS UNSIGNED) = ?",
+			DiagnosticTaskSourceInspectionFinding, reportID,
+		)
+	default:
+		query = r.db.WithContext(ctx).Where(
+			"trigger_source = ? AND (source_ref->>'inspection_report_id')::bigint = ?",
+			DiagnosticTaskSourceInspectionFinding, reportID,
+		)
+	}
+	var task DiagnosticTask
+	err := query.
+		Preload("Steps", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC")
+		}).
+		Preload("NodeExecutions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("host_id ASC, role ASC")
+		}).
+		Order("created_at DESC").
+		First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get latest diagnostic task by inspection_report_id: %w", err)
+	}
+	return &task, nil
 }
 
 // ListDiagnosticTasks queries diagnostics task summaries with filters and pagination.

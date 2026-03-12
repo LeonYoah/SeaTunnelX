@@ -745,11 +745,126 @@ func parseOptionalTime(raw string) (*time.Time, error) {
 
 func getDiagnosticsStatusCode(err error) int {
 	switch {
-	case errors.Is(err, ErrInvalidSeatunnelErrorRequest), errors.Is(err, ErrInvalidInspectionRequest), errors.Is(err, ErrInvalidDiagnosticTaskRequest):
+	case errors.Is(err, ErrInvalidSeatunnelErrorRequest), errors.Is(err, ErrInvalidInspectionRequest), errors.Is(err, ErrInvalidDiagnosticTaskRequest), errors.Is(err, ErrInvalidAutoPolicyRequest):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrSeatunnelErrorGroupNotFound), errors.Is(err, ErrInspectionReportNotFound), errors.Is(err, ErrInspectionFindingNotFound), errors.Is(err, ErrDiagnosticTaskNotFound), errors.Is(err, clusterapp.ErrClusterNotFound):
+	case errors.Is(err, ErrSeatunnelErrorGroupNotFound), errors.Is(err, ErrInspectionReportNotFound), errors.Is(err, ErrInspectionFindingNotFound), errors.Is(err, ErrDiagnosticTaskNotFound), errors.Is(err, clusterapp.ErrClusterNotFound), errors.Is(err, ErrAutoPolicyNotFound):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// ListBuiltinConditionTemplates handles GET /api/v1/diagnostics/auto-policies/templates.
+// ListBuiltinConditionTemplates 处理 GET /api/v1/diagnostics/auto-policies/templates。
+func (h *Handler) ListBuiltinConditionTemplates(c *gin.Context) {
+	templates := h.service.ListBuiltinConditionTemplates()
+	c.JSON(http.StatusOK, Response{Data: templates})
+}
+
+// ListAutoPolicies handles GET /api/v1/diagnostics/auto-policies.
+// ListAutoPolicies 处理 GET /api/v1/diagnostics/auto-policies。
+func (h *Handler) ListAutoPolicies(c *gin.Context) {
+	var clusterID *uint
+	if raw := strings.TrimSpace(c.Query("cluster_id")); raw != "" {
+		parsed, err := parseUintQueryValue(raw, "cluster_id")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+			return
+		}
+		clusterID = &parsed
+	}
+	page, err := parseOptionalInt(c.Query("page"), 1)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+	pageSize, err := parseOptionalInt(c.Query("page_size"), 20)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.ListAutoPolicies(c.Request.Context(), clusterID, page, pageSize)
+	if err != nil {
+		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// CreateAutoPolicy handles POST /api/v1/diagnostics/auto-policies.
+// CreateAutoPolicy 处理 POST /api/v1/diagnostics/auto-policies。
+func (h *Handler) CreateAutoPolicy(c *gin.Context) {
+	var req CreateInspectionAutoPolicyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.CreateAutoPolicy(
+		c.Request.Context(),
+		uint(auth.GetUserIDFromContext(c)),
+		&req,
+	)
+	if err != nil {
+		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, Response{Data: data})
+}
+
+// GetAutoPolicy handles GET /api/v1/diagnostics/auto-policies/:id.
+// GetAutoPolicy 处理 GET /api/v1/diagnostics/auto-policies/:id。
+func (h *Handler) GetAutoPolicy(c *gin.Context) {
+	policyID, err := parseUintQueryValue(c.Param("id"), "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.GetAutoPolicy(c.Request.Context(), policyID)
+	if err != nil {
+		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// UpdateAutoPolicy handles PUT /api/v1/diagnostics/auto-policies/:id.
+// UpdateAutoPolicy 处理 PUT /api/v1/diagnostics/auto-policies/:id。
+func (h *Handler) UpdateAutoPolicy(c *gin.Context) {
+	policyID, err := parseUintQueryValue(c.Param("id"), "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	var req UpdateInspectionAutoPolicyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	data, err := h.service.UpdateAutoPolicy(c.Request.Context(), policyID, &req)
+	if err != nil {
+		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: data})
+}
+
+// DeleteAutoPolicy handles DELETE /api/v1/diagnostics/auto-policies/:id.
+// DeleteAutoPolicy 处理 DELETE /api/v1/diagnostics/auto-policies/:id。
+func (h *Handler) DeleteAutoPolicy(c *gin.Context) {
+	policyID, err := parseUintQueryValue(c.Param("id"), "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+
+	if err := h.service.DeleteAutoPolicy(c.Request.Context(), policyID); err != nil {
+		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, Response{Data: nil})
 }

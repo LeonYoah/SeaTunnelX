@@ -18,6 +18,7 @@
 import {BaseService} from '../core/base.service';
 import type {
   CreateDiagnosticsTaskRequest,
+  CreateInspectionAutoPolicyRequest,
   DiagnosticsErrorEventListData,
   DiagnosticsErrorEventListParams,
   DiagnosticsErrorGroupDetailData,
@@ -31,9 +32,13 @@ import type {
   DiagnosticsTaskListParams,
   DiagnosticsTaskLogListData,
   DiagnosticsTaskLogQuery,
+  InspectionAutoPolicy,
+  InspectionAutoPolicyListData,
+  InspectionConditionTemplate,
   StartDiagnosticsInspectionRequest,
   DiagnosticsWorkspaceBootstrapData,
   DiagnosticsWorkspaceBootstrapParams,
+  UpdateInspectionAutoPolicyRequest,
 } from './types';
 
 function normalizeDiagnosticsTask(task: DiagnosticsTask): DiagnosticsTask {
@@ -483,5 +488,195 @@ export class DiagnosticsService extends BaseService {
    */
   static getTaskBundleUrl(taskId: number): string {
     return `/api/v1${this.basePath}/tasks/${taskId}/bundle`;
+  }
+
+  // ─── Auto-Inspection Policy APIs ──────────────────────────────────────────
+
+  /**
+   * List builtin condition templates.
+   * 获取内置条件模板列表。
+   */
+  static async listBuiltinConditionTemplates(): Promise<InspectionConditionTemplate[]> {
+    return this.get<InspectionConditionTemplate[]>('/auto-policies/templates');
+  }
+
+  /**
+   * Safely list builtin condition templates.
+   * 安全获取内置条件模板列表。
+   */
+  static async listBuiltinConditionTemplatesSafe(): Promise<{
+    success: boolean;
+    data?: InspectionConditionTemplate[];
+    error?: string;
+  }> {
+    try {
+      const data = await this.listBuiltinConditionTemplates();
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '加载条件模板失败',
+      };
+    }
+  }
+
+  /**
+   * List auto-inspection policies.
+   * 获取自动巡检策略列表。
+   */
+  static async listAutoPolicies(
+    params?: {cluster_id?: number; page?: number; page_size?: number},
+  ): Promise<InspectionAutoPolicyListData> {
+    return this.get<InspectionAutoPolicyListData>(
+      '/auto-policies',
+      params as Record<string, unknown> | undefined,
+    );
+  }
+
+  /**
+   * Safely list auto-inspection policies.
+   * 安全获取自动巡检策略列表。
+   */
+  static async listAutoPoliciesSafe(
+    params?: {cluster_id?: number; page?: number; page_size?: number},
+  ): Promise<{
+    success: boolean;
+    data?: InspectionAutoPolicyListData;
+    error?: string;
+  }> {
+    try {
+      const data = await this.listAutoPolicies(params);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '加载自动巡检策略失败',
+      };
+    }
+  }
+
+  /**
+   * Create an auto-inspection policy.
+   * 创建自动巡检策略。
+   */
+  static async createAutoPolicy(
+    payload: CreateInspectionAutoPolicyRequest,
+  ): Promise<InspectionAutoPolicy> {
+    return this.post<InspectionAutoPolicy>('/auto-policies', payload);
+  }
+
+  /**
+   * Safely create an auto-inspection policy.
+   * 安全创建自动巡检策略。
+   */
+  static async createAutoPolicySafe(
+    payload: CreateInspectionAutoPolicyRequest,
+  ): Promise<{
+    success: boolean;
+    data?: InspectionAutoPolicy;
+    error?: string;
+  }> {
+    try {
+      const data = await this.createAutoPolicy(payload);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '创建自动巡检策略失败',
+      };
+    }
+  }
+
+  /**
+   * Get an auto-inspection policy by ID.
+   * 获取自动巡检策略详情。
+   */
+  static async getAutoPolicy(id: number): Promise<InspectionAutoPolicy> {
+    return this.get<InspectionAutoPolicy>(`/auto-policies/${id}`);
+  }
+
+  /**
+   * Safely get an auto-inspection policy by ID.
+   * 安全获取自动巡检策略详情。
+   */
+  static async getAutoPolicySafe(
+    id: number,
+  ): Promise<{
+    success: boolean;
+    data?: InspectionAutoPolicy;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getAutoPolicy(id);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '加载自动巡检策略详情失败',
+      };
+    }
+  }
+
+  /**
+   * Update an auto-inspection policy.
+   * 更新自动巡检策略。
+   */
+  static async updateAutoPolicy(
+    id: number,
+    payload: UpdateInspectionAutoPolicyRequest,
+  ): Promise<InspectionAutoPolicy> {
+    return this.put<InspectionAutoPolicy>(`/auto-policies/${id}`, payload);
+  }
+
+  /**
+   * Safely update an auto-inspection policy.
+   * 安全更新自动巡检策略。
+   */
+  static async updateAutoPolicySafe(
+    id: number,
+    payload: UpdateInspectionAutoPolicyRequest,
+  ): Promise<{
+    success: boolean;
+    data?: InspectionAutoPolicy;
+    error?: string;
+  }> {
+    try {
+      const data = await this.updateAutoPolicy(id, payload);
+      return {success: true, data};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '更新自动巡检策略失败',
+      };
+    }
+  }
+
+  /**
+   * Delete an auto-inspection policy.
+   * 删除自动巡检策略。
+   */
+  static async deleteAutoPolicy(id: number): Promise<void> {
+    await this.delete<void>(`/auto-policies/${id}`);
+  }
+
+  /**
+   * Safely delete an auto-inspection policy.
+   * 安全删除自动巡检策略。
+   */
+  static async deleteAutoPolicySafe(
+    id: number,
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      await this.deleteAutoPolicy(id);
+      return {success: true};
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '删除自动巡检策略失败',
+      };
+    }
   }
 }

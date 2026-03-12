@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1848,7 +1849,8 @@ func buildDiagnosticLogCandidates(target DiagnosticTaskNodeTarget, errorEvents [
 			}
 		}
 	}
-	defaultLog := filepath.Join(target.InstallDir, "logs", diagnosticDefaultLogFile(target.Role))
+	// target.InstallDir 是远端 Seatunnel 安装路径，通常运行在 Linux 上，这里必须使用 POSIX 路径拼接。
+	defaultLog := path.Join(target.InstallDir, "logs", diagnosticDefaultLogFile(target.Role))
 	if _, ok := seen[defaultLog]; !ok {
 		candidates = append(candidates, defaultLog)
 	}

@@ -2197,15 +2197,15 @@
   },
   "diagnosticsCenter": {
     "title": "诊断中心",
-    "subtitle": "先看问题线索，再做诊断检查，必要时继续抓现场并生成诊断报告。",
+    "subtitle": "先看错误中心，再到巡检中心，必要时抓现场并查看诊断报告。",
     "workspaceTitle": "统一诊断工作台",
     "loading": "加载诊断中心中...",
     "loadError": "加载诊断中心失败",
     "clearContext": "清除上下文",
     "comingSoon": "{tab} 能力将在后续阶段逐步落地。",
     "tabs": {
-      "errors": "问题线索",
-      "inspections": "诊断检查",
+      "errors": "错误中心",
+      "inspections": "巡检中心",
       "tasks": "诊断执行"
     },
     "tabDescriptions": {
@@ -2262,7 +2262,7 @@
       }
     },
     "inspections": {
-      "title": "诊断检查",
+      "title": "巡检中心",
       "globalHint": "请选择一个受管集群，先做一次轻量检查，再决定是否继续抓现场证据。",
       "clusterScopedHint": "当前已按集群 {name} 过滤检查记录。",
       "matchedReports": "匹配巡检报告 {count} 条",
@@ -2319,13 +2319,14 @@
         "title": "继续诊断",
         "hasFindingsDescription": "本次检查已经发现异常。你可以直接继续抓现场证据，系统会生成诊断包和诊断报告。",
         "currentFinding": "当前准备继续排查的问题",
-        "createTask": "继续生成诊断包和报告",
+        "createTask": "继续抓现场并查看诊断报告",
+        "viewExistingTask": "查看诊断结果",
         "dismiss": "先只看检查结果",
         "hasFindingsHint": "这一步会立即开始采集日志样本、线程栈等现场证据；如果现场已经变化，报告里也会明确区分“历史异常”和“当前现场”。",
         "noFindingsTitle": "本次检查未发现需要继续排查的问题",
         "noFindingsDescription": "当前没有需要继续抓现场的异常项，可以直接把本次检查结果当作轻量诊断结论查看。",
         "dismissedTitle": "你已选择先查看检查结果",
-        "dismissedDescription": "如果后续还想继续抓现场证据，可随时恢复并继续生成诊断包和报告。",
+        "dismissedDescription": "如果后续还想继续抓现场证据，可随时恢复并继续查看诊断报告。",
         "resume": "恢复继续诊断",
         "chooseFindingFirst": "请先选择一个要继续排查的问题",
         "createTaskSuccess": "已开始继续诊断，正在生成诊断包和报告",
@@ -2334,7 +2335,7 @@
     },
     "tasks": {
       "title": "诊断执行",
-      "globalHint": "你可以手动开始一次诊断，或从错误、巡检异常、告警等问题线索继续排查。",
+      "globalHint": "你可以手动开始一次诊断，或从错误中心、巡检异常、告警等错误线索继续排查。",
       "clusterScopedHint": "当前按集群 {name} 过滤诊断记录；你也可以围绕该集群继续排查。",
       "matchedTasks": "匹配任务 {count} 条",
       "listTitle": "任务列表",
@@ -2428,7 +2429,7 @@
       "triggerSourcePlaceholder": "选择本次诊断任务的触发来源",
       "triggerSourceHint": "系统会记录任务来源；你可以在这里决定本次诊断的依据。",
       "clearPrefill": "清除预填依据",
-      "prefillAvailableHint": "当前页面还保留了从上一页带入的问题线索；如果你想重新围绕它排查，可在上方切换回来。",
+      "prefillAvailableHint": "当前页面还保留了从上一页带入的错误线索；如果你想重新围绕它排查，可在上方切换回来。",
       "entrySourceLabel": "进入来源：{source}",
       "entrySource": {
         "alerts": "告警中心",
@@ -2442,8 +2443,8 @@
       "manualOnlyHint": "当前没有带入错误、巡检异常或告警线索，所以这里只能手动开始。若想直接围绕某个问题排查，请从对应页面进入。",
       "switchToManual": "改为手动开始",
       "entryRouteLabel": "进入方式：{source}",
-      "diagnosisBasisLabel": "问题线索",
-      "noDiagnosisBasis": "当前没有带入具体问题线索，本次会围绕所选集群做一次通用诊断。"
+      "diagnosisBasisLabel": "错误中心",
+      "noDiagnosisBasis": "当前没有带入具体错误线索，本次会围绕所选集群做一次通用诊断。"
     }
   },
   "stUpgrade": {

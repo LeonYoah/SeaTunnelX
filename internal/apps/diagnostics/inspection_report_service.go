@@ -185,9 +185,16 @@ func (s *Service) GetInspectionReportDetail(ctx context.Context, reportID uint) 
 	for _, finding := range findings {
 		items = append(items, finding.ToInfo())
 	}
+
+	var relatedTask *DiagnosticTask
+	if linked, linkErr := s.repo.GetLatestDiagnosticTaskByInspectionReportID(ctx, reportID); linkErr == nil && linked != nil {
+		relatedTask = linked
+	}
+
 	return &ClusterInspectionReportDetailData{
-		Report:   report.ToInfo(),
-		Findings: items,
+		Report:                report.ToInfo(),
+		Findings:              items,
+		RelatedDiagnosticTask: relatedTask,
 	}, nil
 }
 

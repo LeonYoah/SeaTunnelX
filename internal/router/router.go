@@ -461,6 +461,12 @@ func Serve() {
 				diagnosticsRouter.GET("/errors/groups", diagnosticsHandler.ListSeatunnelErrorGroups)
 				diagnosticsRouter.GET("/errors/events", diagnosticsHandler.ListSeatunnelErrorEvents)
 				diagnosticsRouter.GET("/errors/groups/:id", diagnosticsHandler.GetSeatunnelErrorGroupDetail)
+				diagnosticsRouter.GET("/auto-policies/templates", diagnosticsHandler.ListBuiltinConditionTemplates)
+				diagnosticsRouter.GET("/auto-policies", diagnosticsHandler.ListAutoPolicies)
+				diagnosticsRouter.POST("/auto-policies", diagnosticsHandler.CreateAutoPolicy)
+				diagnosticsRouter.GET("/auto-policies/:id", diagnosticsHandler.GetAutoPolicy)
+				diagnosticsRouter.PUT("/auto-policies/:id", diagnosticsHandler.UpdateAutoPolicy)
+				diagnosticsRouter.DELETE("/auto-policies/:id", diagnosticsHandler.DeleteAutoPolicy)
 			}
 
 			// Platform cluster health summary (powered by monitoring remote integration).

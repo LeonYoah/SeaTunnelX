@@ -1,0 +1,15 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端模块布局规范，新文件命名遵循此模式"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "GORM AutoMigrate 注册模式，新模型必须加入 migrator"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "双语注释、License 头、禁止模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Sentinel error 模式"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "App Router 布局，components/common/<domain>/ 模式"}
+{"file": ".trellis/spec/frontend/api-and-services.md", "reason": "BaseService + Safe wrapper 模式"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "页面布局、固定高度内部滚动约定"}
+{"file": "internal/apps/diagnostics/task_models.go", "reason": "JSON driver.Valuer/Scanner 模式，新的 Conditions 字段复用此模式"}
+{"file": "internal/apps/diagnostics/inspection_models.go", "reason": "巡检模型，需要新增 auto source 和 AutoTriggerReason"}
+{"file": "internal/apps/diagnostics/service.go", "reason": "IngestSeatunnelError Hook 点在此文件末尾"}
+{"file": "internal/apps/diagnostics/handler.go", "reason": "新 API 路由注册参考此文件模式"}
+{"file": "internal/apps/monitoring/remote_integration.go", "reason": "Prometheus HTTP client 调用参考模式"}

@@ -538,9 +538,16 @@ func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions
 	// 获取版本（从缓存、在线或备用列表）
 	versions := s.getVersions(ctx)
 
+	recommended := seatunnel.RecommendedVersion()
+	if len(versions) > 0 && versions[0] != "" {
+		// 默认按抓取到的最新版本作为推荐版本（versions 已按降序排序）
+		// By default, use the newest fetched version as the recommended version.
+		recommended = versions[0]
+	}
+
 	result := &AvailableVersions{
 		Versions:           versions,
-		RecommendedVersion: seatunnel.RecommendedVersion(),
+		RecommendedVersion: recommended,
 		LocalPackages:      make([]PackageInfo, 0),
 	}
 

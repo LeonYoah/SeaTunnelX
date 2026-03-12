@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-export type DiagnosticsTabKey = 'errors' | 'inspections' | 'tasks';
+export type DiagnosticsTabKey = 'errors' | 'inspections';
 export type DiagnosticsInspectionReportStatus =
   | 'pending'
   | 'running'
@@ -24,7 +24,8 @@ export type DiagnosticsInspectionReportStatus =
 export type DiagnosticsInspectionTriggerSource =
   | 'manual'
   | 'cluster_detail'
-  | 'diagnostics_workspace';
+  | 'diagnostics_workspace'
+  | 'auto';
 export type DiagnosticsInspectionFindingSeverity =
   | 'info'
   | 'warning'
@@ -171,6 +172,8 @@ export interface DiagnosticsInspectionReport {
   finished_at?: string | null;
   created_at: string;
   updated_at: string;
+  auto_trigger_reason?: string;
+  cluster_name?: string;
 }
 
 export interface DiagnosticsInspectionFinding {
@@ -202,6 +205,7 @@ export interface DiagnosticsInspectionReportListData {
 export interface DiagnosticsInspectionReportDetailData {
   report: DiagnosticsInspectionReport;
   findings: DiagnosticsInspectionFinding[];
+  related_diagnostic_task?: DiagnosticsTask | null;
 }
 
 export interface DiagnosticsInspectionReportListParams {
@@ -413,10 +417,13 @@ export interface DiagnosticsTaskLogListData {
   page_size: number;
 }
 
+export type DiagnosticsTaskNodeScope = 'all' | 'related' | 'custom';
+
 export interface CreateDiagnosticsTaskRequest {
   cluster_id?: number;
   trigger_source?: DiagnosticsTaskSourceType;
   source_ref?: DiagnosticsTaskSourceRef;
+   node_scope?: DiagnosticsTaskNodeScope;
   selected_node_ids?: number[];
   options?: DiagnosticsTaskOptions;
   summary?: string;
@@ -442,4 +449,76 @@ export interface DiagnosticsTaskEvent {
   error?: string;
   command_summary?: string;
   failure_reason?: string;
+}
+
+// ─── Auto-Inspection Policy Types ────────────────────────────────────────────
+
+export type InspectionConditionCategory =
+  | 'java_error'
+  | 'prometheus'
+  | 'error_rate'
+  | 'node_unhealthy'
+  | 'alert_firing'
+  | 'schedule';
+
+export interface InspectionConditionTemplate {
+  code: string;
+  category: InspectionConditionCategory;
+  name: string;
+  description: string;
+  default_threshold: number;
+  default_window_minutes: number;
+  default_cron_expr: string;
+  immediate_on_match: boolean;
+}
+
+export interface InspectionConditionItem {
+  template_code: string;
+  enabled: boolean;
+  threshold_override?: number | null;
+  window_minutes_override?: number | null;
+  cron_expr_override?: string;
+  extra_keywords?: string[];
+}
+
+export interface InspectionAutoPolicy {
+  id: number;
+  cluster_id: number;
+  name: string;
+  enabled: boolean;
+  conditions: InspectionConditionItem[];
+  cooldown_minutes: number;
+  auto_create_task: boolean;
+  auto_start_task: boolean;
+  task_options: DiagnosticsTaskOptions;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InspectionAutoPolicyListData {
+  items: InspectionAutoPolicy[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CreateInspectionAutoPolicyRequest {
+  cluster_id: number;
+  name: string;
+  enabled?: boolean;
+  conditions: InspectionConditionItem[];
+  cooldown_minutes?: number;
+  auto_create_task?: boolean;
+  auto_start_task?: boolean;
+  task_options?: DiagnosticsTaskOptions;
+}
+
+export interface UpdateInspectionAutoPolicyRequest {
+  name?: string;
+  enabled?: boolean;
+  conditions?: InspectionConditionItem[];
+  cooldown_minutes?: number;
+  auto_create_task?: boolean;
+  auto_start_task?: boolean;
+  task_options?: DiagnosticsTaskOptions;
 }

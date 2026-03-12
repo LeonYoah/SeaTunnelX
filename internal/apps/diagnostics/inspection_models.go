@@ -61,6 +61,9 @@ const (
 	// InspectionTriggerSourceDiagnosticsWorkspace indicates the inspection was started from diagnostics workspace.
 	// InspectionTriggerSourceDiagnosticsWorkspace 表示巡检来自诊断中心工作台。
 	InspectionTriggerSourceDiagnosticsWorkspace InspectionTriggerSource = "diagnostics_workspace"
+	// InspectionTriggerSourceAuto indicates the inspection was triggered automatically by an auto-policy.
+	// InspectionTriggerSourceAuto 表示巡检由自动策略自动触发。
+	InspectionTriggerSourceAuto InspectionTriggerSource = "auto"
 )
 
 // InspectionFindingSeverity represents finding severity in an inspection report.
@@ -95,6 +98,7 @@ type ClusterInspectionReport struct {
 	CriticalCount     int                     `json:"critical_count" gorm:"default:0"`
 	WarningCount      int                     `json:"warning_count" gorm:"default:0"`
 	InfoCount         int                     `json:"info_count" gorm:"default:0"`
+	AutoTriggerReason string                  `json:"auto_trigger_reason" gorm:"size:200"`
 	StartedAt         *time.Time              `json:"started_at" gorm:"index"`
 	FinishedAt        *time.Time              `json:"finished_at" gorm:"index"`
 	CreatedAt         time.Time               `json:"created_at" gorm:"autoCreateTime;index"`
@@ -185,6 +189,7 @@ type ClusterInspectionReportInfo struct {
 	CriticalCount     int                     `json:"critical_count"`
 	WarningCount      int                     `json:"warning_count"`
 	InfoCount         int                     `json:"info_count"`
+	AutoTriggerReason string                  `json:"auto_trigger_reason,omitempty"`
 	StartedAt         *time.Time              `json:"started_at,omitempty"`
 	FinishedAt        *time.Time              `json:"finished_at,omitempty"`
 	CreatedAt         time.Time               `json:"created_at"`
@@ -224,8 +229,9 @@ type ClusterInspectionReportsData struct {
 // ClusterInspectionReportDetailData is the inspection report detail payload.
 // ClusterInspectionReportDetailData 是巡检报告详情载荷。
 type ClusterInspectionReportDetailData struct {
-	Report   *ClusterInspectionReportInfo    `json:"report"`
-	Findings []*ClusterInspectionFindingInfo `json:"findings"`
+	Report                *ClusterInspectionReportInfo    `json:"report"`
+	Findings              []*ClusterInspectionFindingInfo `json:"findings"`
+	RelatedDiagnosticTask *DiagnosticTask                 `json:"related_diagnostic_task,omitempty"`
 }
 
 // ToInfo converts a persisted inspection report into API view model.
@@ -248,6 +254,7 @@ func (r *ClusterInspectionReport) ToInfo() *ClusterInspectionReportInfo {
 		CriticalCount:     r.CriticalCount,
 		WarningCount:      r.WarningCount,
 		InfoCount:         r.InfoCount,
+		AutoTriggerReason: r.AutoTriggerReason,
 		StartedAt:         r.StartedAt,
 		FinishedAt:        r.FinishedAt,
 		CreatedAt:         r.CreatedAt,
@@ -291,6 +298,8 @@ func normalizeInspectionTriggerSource(value InspectionTriggerSource) (Inspection
 		return InspectionTriggerSourceClusterDetail, true
 	case InspectionTriggerSourceDiagnosticsWorkspace:
 		return InspectionTriggerSourceDiagnosticsWorkspace, true
+	case InspectionTriggerSourceAuto:
+		return InspectionTriggerSourceAuto, true
 	default:
 		return "", false
 	}

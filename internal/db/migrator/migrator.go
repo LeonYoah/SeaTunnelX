@@ -97,6 +97,7 @@ func Migrate() {
 		&diagnostics.DiagnosticTaskStep{},       // 诊断任务步骤表 / Diagnostics task step table
 		&diagnostics.DiagnosticNodeExecution{},  // 诊断任务节点执行表 / Diagnostics node execution table
 		&diagnostics.DiagnosticStepLog{},        // 诊断任务日志表 / Diagnostics task log table
+		&diagnostics.InspectionAutoPolicy{},     // 诊断自动巡检策略表 / Diagnostics auto-inspection policy table
 		&stupgrade.UpgradePlanRecord{},          // SeaTunnel 升级计划表 / SeaTunnel upgrade plan table
 		&stupgrade.UpgradeTask{},                // SeaTunnel 升级任务表 / SeaTunnel upgrade task table
 		&stupgrade.UpgradeTaskStep{},            // SeaTunnel 升级步骤表 / SeaTunnel upgrade step table

@@ -38,6 +38,10 @@ func (s *Service) CreateDiagnosticTask(ctx context.Context, req *CreateDiagnosti
 	}
 
 	sourceRef := req.SourceRef
+	nodeScope := req.NodeScope
+	if nodeScope == "" {
+		nodeScope = DiagnosticTaskNodeScopeRelated
+	}
 	requestedNodeIDs := normalizeDiagnosticSelectedNodeIDs(req.SelectedNodeIDs)
 	clusterID := req.ClusterID
 
@@ -58,7 +62,7 @@ func (s *Service) CreateDiagnosticTask(ctx context.Context, req *CreateDiagnosti
 		if err != nil {
 			return nil, err
 		}
-		if len(requestedNodeIDs) == 0 && group.LastNodeID > 0 {
+		if nodeScope != DiagnosticTaskNodeScopeAll && len(requestedNodeIDs) == 0 && group.LastNodeID > 0 {
 			requestedNodeIDs = []uint{group.LastNodeID}
 		}
 	case DiagnosticTaskSourceInspectionFinding:
@@ -76,7 +80,7 @@ func (s *Service) CreateDiagnosticTask(ctx context.Context, req *CreateDiagnosti
 		if sourceRef.InspectionReportID == 0 {
 			sourceRef.InspectionReportID = finding.ReportID
 		}
-		if len(requestedNodeIDs) == 0 && finding.RelatedNodeID > 0 {
+		if nodeScope != DiagnosticTaskNodeScopeAll && len(requestedNodeIDs) == 0 && finding.RelatedNodeID > 0 {
 			requestedNodeIDs = []uint{finding.RelatedNodeID}
 		}
 	case DiagnosticTaskSourceAlert:

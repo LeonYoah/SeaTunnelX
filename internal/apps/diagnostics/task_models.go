@@ -50,6 +50,22 @@ const (
 	DiagnosticTaskSourceAlert             DiagnosticTaskSourceType = "alert"
 )
 
+// DiagnosticTaskNodeScope represents how task node targets are selected.
+// DiagnosticTaskNodeScope 表示诊断任务节点选择范围。
+type DiagnosticTaskNodeScope string
+
+const (
+	// DiagnosticTaskNodeScopeAll selects all managed nodes in the cluster.
+	// DiagnosticTaskNodeScopeAll 表示选中集群内所有受管节点。
+	DiagnosticTaskNodeScopeAll DiagnosticTaskNodeScope = "all"
+	// DiagnosticTaskNodeScopeRelated selects only nodes related to the source context (e.g. error group / finding).
+	// DiagnosticTaskNodeScopeRelated 表示仅选中与来源上下文相关的节点（如错误组 / 巡检发现）。
+	DiagnosticTaskNodeScopeRelated DiagnosticTaskNodeScope = "related"
+	// DiagnosticTaskNodeScopeCustom selects an explicit custom node list.
+	// DiagnosticTaskNodeScopeCustom 表示使用显式自定义节点列表。
+	DiagnosticTaskNodeScopeCustom DiagnosticTaskNodeScope = "custom"
+)
+
 // DiagnosticStepCode identifies one fixed step in the diagnostic bundle workflow.
 // DiagnosticStepCode 表示诊断包编排中的固定步骤编码。
 type DiagnosticStepCode string
@@ -250,7 +266,7 @@ func DefaultDiagnosticTaskSteps() []DiagnosticPlanStep {
 		{Sequence: 2, Code: DiagnosticStepCodeCollectProcessEvents, Title: "收集进程事件", Description: "采集近期进程事件和自动拉起记录。", NodeScoped: false, Required: true},
 		{Sequence: 3, Code: DiagnosticStepCodeCollectAlertSnapshot, Title: "收集告警快照", Description: "采集相关告警状态与通知上下文。", NodeScoped: false, Required: true},
 		{Sequence: 4, Code: DiagnosticStepCodeCollectConfigSnapshot, Title: "收集配置快照", Description: "导出 Seatunnel 与相关运行配置快照。", NodeScoped: true, Required: true},
-		{Sequence: 5, Code: DiagnosticStepCodeCollectLogSample, Title: "收集日志样本", Description: "采集错误附近日志样本和近期运行日志片段。", NodeScoped: true, Required: true},
+		{Sequence: 5, Code: DiagnosticStepCodeCollectLogSample, Title: "收集日志样本", Description: "采集错误附近日志样本和近期运行日志片段。", NodeScoped: true, Required: false},
 		{Sequence: 6, Code: DiagnosticStepCodeCollectThreadDump, Title: "收集线程栈", Description: "对选中节点执行线程栈采集。", NodeScoped: true, Required: false},
 		{Sequence: 7, Code: DiagnosticStepCodeCollectJVMDump, Title: "收集 JVM Dump", Description: "对选中节点执行 JVM Dump 采集。", NodeScoped: true, Required: false},
 		{Sequence: 8, Code: DiagnosticStepCodeAssembleManifest, Title: "生成 Manifest", Description: "生成机器可读的诊断证据清单。", NodeScoped: false, Required: true},
@@ -414,6 +430,7 @@ type CreateDiagnosticTaskRequest struct {
 	ClusterID       uint                     `json:"cluster_id"`
 	TriggerSource   DiagnosticTaskSourceType `json:"trigger_source"`
 	SourceRef       DiagnosticTaskSourceRef  `json:"source_ref"`
+	NodeScope       DiagnosticTaskNodeScope  `json:"node_scope,omitempty"`
 	SelectedNodeIDs []uint                   `json:"selected_node_ids"`
 	Options         DiagnosticTaskOptions    `json:"options"`
 	Summary         string                   `json:"summary"`

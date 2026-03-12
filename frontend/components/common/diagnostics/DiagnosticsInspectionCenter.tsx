@@ -19,6 +19,7 @@
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import Link from 'next/link';
+import {useRouter} from 'next/navigation';
 import {useTranslations} from 'next-intl';
 import {ClipboardCheck, Loader2, RefreshCw} from 'lucide-react';
 import {toast} from 'sonner';
@@ -28,7 +29,6 @@ import type {
   DiagnosticsInspectionFindingSeverity,
   DiagnosticsInspectionReport,
   DiagnosticsInspectionReportStatus,
-  DiagnosticsTaskOptions,
 } from '@/lib/services/diagnostics';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
@@ -51,15 +51,9 @@ type DiagnosticsInspectionCenterProps = {
   clusterName?: string;
   reportId?: number;
   onSelectReport?: (reportId: number | null) => void;
-  onContinueDiagnosis?: (params: {
-    clusterId: number;
-    reportId: number;
-    findingId: number;
-    taskId?: number;
-  }) => void;
 };
 
-const DEFAULT_DIAGNOSIS_TASK_OPTIONS: DiagnosticsTaskOptions = {
+const DEFAULT_DIAGNOSIS_TASK_OPTIONS = {
   include_thread_dump: true,
   include_jvm_dump: false,
   jvm_dump_min_free_mb: 2048,
@@ -126,10 +120,10 @@ export function DiagnosticsInspectionCenter({
   clusterName,
   reportId,
   onSelectReport,
-  onContinueDiagnosis,
 }: DiagnosticsInspectionCenterProps) {
   const t = useTranslations('diagnosticsCenter');
   const commonT = useTranslations('common');
+  const router = useRouter();
 
   const [statusFilter, setStatusFilter] = useState<
     'all' | DiagnosticsInspectionReportStatus
@@ -149,6 +143,8 @@ export function DiagnosticsInspectionCenter({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [selectedReport, setSelectedReport] =
     useState<DiagnosticsInspectionReport | null>(null);
+  const [relatedTask, setRelatedTask] =
+    useState<import('@/lib/services/diagnostics').DiagnosticsTask | null>(null);
   const [findings, setFindings] = useState<DiagnosticsInspectionFinding[]>([]);
   const [selectedFindingId, setSelectedFindingId] = useState<number | null>(null);
   const [creatingDiagnosisTask, setCreatingDiagnosisTask] = useState(false);
@@ -191,10 +187,12 @@ export function DiagnosticsInspectionCenter({
           toast.error(result.error || t('inspections.loadDetailError'));
           setSelectedReport(null);
           setFindings([]);
+          setRelatedTask(null);
           return;
         }
         setSelectedReport(result.data.report);
         setFindings(result.data.findings || []);
+        setRelatedTask(result.data.related_diagnostic_task || null);
       } finally {
         setLoadingDetail(false);
       }
@@ -211,6 +209,7 @@ export function DiagnosticsInspectionCenter({
       setSelectedReportId(null);
       setSelectedReport(null);
       setFindings([]);
+      setRelatedTask(null);
       return;
     }
     if (
@@ -327,6 +326,11 @@ export function DiagnosticsInspectionCenter({
       toast.error(t('inspections.followUp.chooseFindingFirst'));
       return;
     }
+    // 已经存在关联诊断任务时，优先引导用户查看现有结果，避免重复创建。
+    if (relatedTask) {
+      router.push(`/diagnostics/inspections/${selectedReport.id}`);
+      return;
+    }
     setCreatingDiagnosisTask(true);
     try {
       const result = await services.diagnostics.createTaskSafe({
@@ -344,16 +348,11 @@ export function DiagnosticsInspectionCenter({
         return;
       }
       toast.success(t('inspections.followUp.createTaskSuccess'));
-      onContinueDiagnosis?.({
-        clusterId: selectedReport.cluster_id,
-        reportId: selectedReport.id,
-        findingId: selectedFinding.id,
-        taskId: result.data.id,
-      });
+      router.push(`/diagnostics/inspections/${selectedReport.id}`);
     } finally {
       setCreatingDiagnosisTask(false);
     }
-  }, [onContinueDiagnosis, selectedFinding, selectedReport, t]);
+  }, [relatedTask, router, selectedFinding, selectedReport, t]);
 
   return (
     <div className='grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] xl:items-start'>
@@ -483,7 +482,7 @@ export function DiagnosticsInspectionCenter({
           </CardHeader>
         </Card>
 
-        <Card className='flex min-h-[420px] flex-col overflow-hidden xl:h-[520px]'>
+        <Card className='flex min-h-[630px] flex-col overflow-hidden xl:h-[780px]'>
           <CardHeader>
             <CardTitle>{t('inspections.listTitle')}</CardTitle>
           </CardHeader>
@@ -514,6 +513,9 @@ export function DiagnosticsInspectionCenter({
                         onClick={() => {
                           setSelectedReportId(report.id);
                           onSelectReport?.(report.id);
+                        }}
+                        onDoubleClick={() => {
+                          router.push(`/diagnostics/inspections/${report.id}`);
                         }}
                       >
                         <div className='flex flex-wrap items-center gap-2'>
@@ -550,11 +552,24 @@ export function DiagnosticsInspectionCenter({
                             })}
                           </div>
                         </div>
-                        <div className='mt-auto text-xs text-muted-foreground'>
-                          {t('inspections.finishedAt')}:{' '}
-                          {formatDateTime(
-                            report.finished_at || report.created_at,
-                          )}
+                        <div className='mt-auto flex items-center justify-between'>
+                          <div className='text-xs text-muted-foreground'>
+                            {t('inspections.finishedAt')}:{' '}
+                            {formatDateTime(
+                              report.finished_at || report.created_at,
+                            )}
+                          </div>
+                          <Button
+                            asChild
+                            size='sm'
+                            variant='ghost'
+                            className='h-auto px-2 py-1 text-xs'
+                            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                          >
+                            <Link href={`/diagnostics/inspections/${report.id}`}>
+                              查看详情
+                            </Link>
+                          </Button>
                         </div>
                       </button>
                     ))}
@@ -596,7 +611,7 @@ export function DiagnosticsInspectionCenter({
         </Card>
       </div>
 
-      <Card className='flex min-h-[680px] flex-col overflow-hidden xl:h-[740px]'>
+      <Card className='flex min-h-[1020px] flex-col overflow-hidden xl:h-[1110px]'>
         <CardHeader>
           <CardTitle>{t('inspections.detailTitle')}</CardTitle>
         </CardHeader>
@@ -716,7 +731,9 @@ export function DiagnosticsInspectionCenter({
                             {creatingDiagnosisTask ? (
                               <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                             ) : null}
-                            {t('inspections.followUp.createTask')}
+                            {relatedTask
+                              ? t('inspections.followUp.viewExistingTask')
+                              : t('inspections.followUp.createTask')}
                           </Button>
                           <Button
                             variant='outline'

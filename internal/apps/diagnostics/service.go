@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -68,6 +69,7 @@ type Service struct {
 	monitoringService alertInstanceReader
 	agentSender       diagnosticAgentCommandSender
 	taskEvents        *diagnosticTaskEventHub
+	policyChecker     *AutoPolicyChecker
 }
 
 // NewService creates a diagnostics service using the global database when available.
@@ -83,12 +85,16 @@ func NewService(clusterService *cluster.Service, monitorService *monitor.Service
 // NewServiceWithRepository creates a diagnostics service with an explicit repository.
 // NewServiceWithRepository 使用显式仓储创建诊断服务。
 func NewServiceWithRepository(repo *Repository, clusterService clusterReader, monitorService processEventReader, monitoringService alertInstanceReader) *Service {
-	return &Service{
+	svc := &Service{
 		repo:              repo,
 		clusterService:    clusterService,
 		monitorService:    monitorService,
 		monitoringService: monitoringService,
 	}
+	if repo != nil {
+		svc.policyChecker = NewAutoPolicyChecker(repo, svc)
+	}
+	return svc
 }
 
 // SetHostReader sets the optional host reader used to enrich diagnostic node targets.
@@ -127,11 +133,6 @@ func (s *Service) GetWorkspaceBootstrap(ctx context.Context, req *WorkspaceBoots
 				Label:       "Inspections",
 				Description: "Run and review cluster inspections based on managed runtime signals.",
 			},
-			{
-				Key:         WorkspaceTabTasks,
-				Label:       "Diagnostic Tasks",
-				Description: "Create and observe diagnostic bundle tasks and collected evidence.",
-			},
 		},
 		ClusterOptions: make([]*ClusterOption, 0),
 		Boundaries: []*WorkspaceBoundary{
@@ -144,11 +145,6 @@ func (s *Service) GetWorkspaceBootstrap(ctx context.Context, req *WorkspaceBoots
 				Key:         "inspection",
 				Title:       "Inspection Signals",
 				Description: "Diagnostics consumes monitoring, process events, and alert signals for inspections.",
-			},
-			{
-				Key:         "tasks",
-				Title:       "Task Execution",
-				Description: "Diagnostics will reuse task / step / log execution patterns for diagnostic bundles.",
 			},
 		},
 	}
@@ -220,7 +216,7 @@ func (s *Service) IngestSeatunnelError(ctx context.Context, req *IngestSeatunnel
 		return fmt.Errorf("%w: fingerprint empty", ErrInvalidSeatunnelErrorRequest)
 	}
 
-	return s.repo.Transaction(ctx, func(tx *Repository) error {
+	txErr := s.repo.Transaction(ctx, func(tx *Repository) error {
 		cursor, err := tx.GetLogCursor(ctx, req.AgentID, req.InstallDir, req.Role, req.SourceFile)
 		if err != nil && !errors.Is(err, ErrSeatunnelLogCursorNotFound) {
 			return err
@@ -327,6 +323,24 @@ func (s *Service) IngestSeatunnelError(ctx context.Context, req *IngestSeatunnel
 			LastOccurredAt: &req.OccurredAt,
 		})
 	})
+	if txErr != nil {
+		return txErr
+	}
+
+	// 异步自动策略检查（不阻塞错误入库）
+	// Async auto-policy check (non-blocking, does not block error ingestion)
+	if s.policyChecker != nil && s.clusterService != nil && req.ClusterID > 0 {
+		clusterID := req.ClusterID
+		ec := exceptionClass
+		msg := req.Message
+		go func() {
+			if err := s.policyChecker.CheckJavaErrorTrigger(context.Background(), clusterID, ec, msg); err != nil {
+				log.Printf("[DiagnosticsAutoPolicy] auto-policy check failed: cluster_id=%d err=%v", clusterID, err)
+			}
+		}()
+	}
+
+	return nil
 }
 
 func truncateString(value string, limit int) string {

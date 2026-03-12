@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "双语注释检查、License 头检查"}
+{"file": ".trellis/spec/frontend/api-and-services.md", "reason": "Safe wrapper 覆盖检查"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "UI 规范检查"}

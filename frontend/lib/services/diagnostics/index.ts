@@ -17,6 +17,8 @@
 
 export {DiagnosticsService} from './diagnostics.service';
 export type {
+  CreateDiagnosticsTaskRequest,
+  CreateInspectionAutoPolicyRequest,
   DiagnosticsClusterOption,
   DiagnosticsEntryContext,
   DiagnosticsErrorEvent,
@@ -54,8 +56,13 @@ export type {
   DiagnosticsTaskStep,
   DiagnosticsTaskStepCode,
   DiagnosticsTaskSummary,
-  CreateDiagnosticsTaskRequest,
+  InspectionAutoPolicy,
+  InspectionAutoPolicyListData,
+  InspectionConditionCategory,
+  InspectionConditionItem,
+  InspectionConditionTemplate,
   StartDiagnosticsInspectionRequest,
+  UpdateInspectionAutoPolicyRequest,
   DiagnosticsWorkspaceBootstrapData,
   DiagnosticsWorkspaceBootstrapParams,
   DiagnosticsWorkspaceBoundary,

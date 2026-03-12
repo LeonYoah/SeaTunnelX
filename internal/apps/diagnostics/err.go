@@ -56,4 +56,10 @@ var (
 	// ErrInvalidDiagnosticTaskRequest indicates the diagnostics task request is invalid.
 	// ErrInvalidDiagnosticTaskRequest 表示诊断任务请求非法。
 	ErrInvalidDiagnosticTaskRequest = errors.New("diagnostics: invalid diagnostic task request")
+	// ErrAutoPolicyNotFound indicates the auto-inspection policy does not exist.
+	// ErrAutoPolicyNotFound 表示自动巡检策略不存在。
+	ErrAutoPolicyNotFound = errors.New("diagnostics: auto-policy not found")
+	// ErrInvalidAutoPolicyRequest indicates the auto-policy request is invalid.
+	// ErrInvalidAutoPolicyRequest 表示自动策略请求非法。
+	ErrInvalidAutoPolicyRequest = errors.New("diagnostics: invalid auto-policy request")
 )

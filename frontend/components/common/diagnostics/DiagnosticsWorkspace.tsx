@@ -21,7 +21,7 @@ import {useCallback, useEffect, useMemo, useState} from 'react';
 import Link from 'next/link';
 import {usePathname, useRouter, useSearchParams} from 'next/navigation';
 import {useTranslations} from 'next-intl';
-import {Bug, RefreshCw} from 'lucide-react';
+import {Bug, RefreshCw, Settings} from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import type {
@@ -41,13 +41,13 @@ import {
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {DiagnosticsErrorCenter} from './DiagnosticsErrorCenter';
 import {DiagnosticsInspectionCenter} from './DiagnosticsInspectionCenter';
-import {DiagnosticsTaskCenter} from './DiagnosticsTaskCenter';
+import {AutoPolicyConfigPanel} from './AutoPolicyConfigPanel';
 
 function resolveTab(
   tab: string | null,
   fallback: DiagnosticsTabKey = 'errors',
 ): DiagnosticsTabKey {
-  if (tab === 'errors' || tab === 'inspections' || tab === 'tasks') {
+  if (tab === 'errors' || tab === 'inspections') {
     return tab;
   }
   return fallback;
@@ -63,6 +63,7 @@ export function DiagnosticsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [bootstrap, setBootstrap] =
     useState<DiagnosticsWorkspaceBootstrapData | null>(null);
+  const [autoPolicyOpen, setAutoPolicyOpen] = useState(false);
 
   const activeTab = useMemo(
     () =>
@@ -176,6 +177,10 @@ export function DiagnosticsWorkspace() {
           <div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
             <CardTitle>{t('workspaceTitle')}</CardTitle>
             <div className='flex flex-wrap gap-2'>
+              <Button variant='outline' onClick={() => setAutoPolicyOpen(true)}>
+                <Settings className='mr-2 h-4 w-4' />
+                自动巡检设置
+              </Button>
               <Button variant='outline' onClick={() => void loadBootstrap()}>
                 <RefreshCw className='mr-2 h-4 w-4' />
                 {commonT('refresh')}
@@ -270,10 +275,9 @@ export function DiagnosticsWorkspace() {
           updateQuery({tab: resolveTab(value) as string})
         }
       >
-        <TabsList className='grid w-full grid-cols-3 gap-1 md:w-[420px]'>
+        <TabsList className='grid w-full grid-cols-2 gap-1 md:w-[320px]'>
           <TabsTrigger value='errors'>{t('tabs.errors')}</TabsTrigger>
           <TabsTrigger value='inspections'>{t('tabs.inspections')}</TabsTrigger>
-          <TabsTrigger value='tasks'>{t('tabs.tasks')}</TabsTrigger>
         </TabsList>
 
         {loading && !bootstrap ? (
@@ -308,53 +312,20 @@ export function DiagnosticsWorkspace() {
                 }
                 clusterName={selectedClusterName || undefined}
                 reportId={reportId ? Number.parseInt(reportId, 10) : undefined}
-                onContinueDiagnosis={({clusterId, reportId, findingId, taskId}) =>
-                  updateQuery({
-                    tab: 'tasks',
-                    cluster_id: String(clusterId),
-                    report_id: String(reportId),
-                    finding_id: String(findingId),
-                    task_id: taskId ? String(taskId) : null,
-                    source: 'inspection-finding',
-                  })
-                }
                 onSelectReport={(value) =>
                   updateQuery({report_id: value ? String(value) : null})
                 }
               />
-            ) : (
-              <DiagnosticsTaskCenter
-                clusterId={
-                  selectedClusterId !== 'all'
-                    ? Number.parseInt(selectedClusterId, 10)
-                    : undefined
-                }
-                clusterName={selectedClusterName || undefined}
-                groupId={groupId ? Number.parseInt(groupId, 10) : undefined}
-                reportId={reportId ? Number.parseInt(reportId, 10) : undefined}
-                findingId={
-                  findingId ? Number.parseInt(findingId, 10) : undefined
-                }
-                alertId={alertId || undefined}
-                taskId={taskId ? Number.parseInt(taskId, 10) : undefined}
-                source={source || undefined}
-                onClearSourceContext={() =>
-                  updateQuery({
-                    source: null,
-                    alert_id: null,
-                    group_id: null,
-                    report_id: null,
-                    finding_id: null,
-                  })
-                }
-                onSelectTask={(value) =>
-                  updateQuery({task_id: value ? String(value) : null})
-                }
-              />
-            )}
+            ) : null}
           </TabsContent>
         ))}
       </Tabs>
+
+      <AutoPolicyConfigPanel
+        open={autoPolicyOpen}
+        onOpenChange={setAutoPolicyOpen}
+        clusterOptions={bootstrap?.cluster_options || []}
+      />
     </div>
   );
 }
