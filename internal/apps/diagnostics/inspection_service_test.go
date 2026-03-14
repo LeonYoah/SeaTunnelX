@@ -83,6 +83,17 @@ func (f *fakeInspectionAlertReader) ListAlertInstances(_ context.Context, _ *mon
 	return f.data, nil
 }
 
+type fakeInspectionHostReader struct {
+	hosts map[uint]*cluster.HostInfo
+}
+
+func (f *fakeInspectionHostReader) GetHostByID(_ context.Context, id uint) (*cluster.HostInfo, error) {
+	if f == nil {
+		return nil, nil
+	}
+	return f.hosts[id], nil
+}
+
 func newInspectionEvaluationRepository(t *testing.T) *Repository {
 	t.Helper()
 
@@ -94,6 +105,15 @@ func newInspectionEvaluationRepository(t *testing.T) *Repository {
 		t.Fatalf("auto migrate diagnostics error group: %v", err)
 	}
 	return NewRepository(database)
+}
+
+func findInspectionFindingByCode(findings []*ClusterInspectionFindingInfo, code string) *ClusterInspectionFindingInfo {
+	for _, finding := range findings {
+		if finding != nil && finding.CheckCode == code {
+			return finding
+		}
+	}
+	return nil
 }
 
 func TestServiceEvaluateInspectionFindings_aggregatesManagedSignals(t *testing.T) {
@@ -504,6 +524,11 @@ func TestServiceStartInspection_persistsCompletedReportAndSupportsSeverityFilter
 			},
 		},
 	)
+	service.SetHostReader(&fakeInspectionHostReader{
+		hosts: map[uint]*cluster.HostInfo{
+			6: {ID: 6, Name: "worker-6", IPAddress: "10.0.0.6"},
+		},
+	})
 
 	detail, err := service.StartInspection(ctx, &StartClusterInspectionRequest{
 		ClusterID:       9,
@@ -533,6 +558,16 @@ func TestServiceStartInspection_persistsCompletedReportAndSupportsSeverityFilter
 	}
 	if detail.Report.FindingTotal != 4 || len(detail.Findings) != 4 {
 		t.Fatalf("expected 4 persisted findings, got report=%d detail=%d", detail.Report.FindingTotal, len(detail.Findings))
+	}
+	warningFinding := findInspectionFindingByCode(detail.Findings, inspectionCheckRecentErrorBurst)
+	if warningFinding == nil {
+		t.Fatalf("expected recent error burst finding in detail")
+	}
+	if warningFinding.RelatedNodeID != 6 || warningFinding.RelatedHostID != 6 {
+		t.Fatalf("expected warning finding node scope from recent event, got %+v", warningFinding)
+	}
+	if warningFinding.RelatedHostName != "worker-6" || warningFinding.RelatedHostIP != "10.0.0.6" {
+		t.Fatalf("expected warning finding host display, got %+v", warningFinding)
 	}
 
 	reports, err := service.ListInspectionReports(ctx, &ClusterInspectionReportFilter{

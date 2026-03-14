@@ -18,14 +18,27 @@
 package diagnostics
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+type fakeDiagnosticsHostReader struct {
+	hosts map[uint]*cluster.HostInfo
+}
+
+func (f *fakeDiagnosticsHostReader) GetHostByID(_ context.Context, id uint) (*cluster.HostInfo, error) {
+	if f == nil {
+		return nil, nil
+	}
+	return f.hosts[id], nil
+}
 
 func newDiagnosticsTestService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
@@ -173,4 +186,63 @@ func TestIngestSeatunnelErrorAcceptsCursorResetAfterRotation(t *testing.T) {
 	var cursor SeatunnelLogCursor
 	require.NoError(t, database.First(&cursor).Error)
 	assert.Equal(t, int64(120), cursor.CursorOffset)
+}
+
+func TestGetSeatunnelErrorGroupDetailScopesEventsAndEnrichesHostDisplay(t *testing.T) {
+	service, _ := newDiagnosticsTestService(t)
+	service.SetHostReader(&fakeDiagnosticsHostReader{
+		hosts: map[uint]*cluster.HostInfo{
+			21: {ID: 21, Name: "worker-a", IPAddress: "10.0.0.21"},
+			22: {ID: 22, Name: "worker-b", IPAddress: "10.0.0.22"},
+		},
+	})
+	ctx := t.Context()
+	baseTime := time.Now().UTC()
+
+	require.NoError(t, service.IngestSeatunnelError(ctx, &IngestSeatunnelErrorRequest{
+		ClusterID:   1,
+		NodeID:      101,
+		HostID:      21,
+		AgentID:     "agent-a",
+		Role:        "worker",
+		InstallDir:  "/opt/seatunnel-a",
+		SourceFile:  "/opt/seatunnel-a/logs/seatunnel-engine-worker.log",
+		SourceKind:  "engine",
+		OccurredAt:  baseTime,
+		Message:     "java.lang.IllegalStateException: same fingerprint",
+		Evidence:    "java.lang.IllegalStateException: same fingerprint\nat org.apache.seatunnel.Engine.run(Engine.java:100)",
+		CursorStart: 10,
+		CursorEnd:   88,
+	}))
+	require.NoError(t, service.IngestSeatunnelError(ctx, &IngestSeatunnelErrorRequest{
+		ClusterID:   2,
+		NodeID:      202,
+		HostID:      22,
+		AgentID:     "agent-b",
+		Role:        "worker",
+		InstallDir:  "/opt/seatunnel-b",
+		SourceFile:  "/opt/seatunnel-b/logs/seatunnel-engine-worker.log",
+		SourceKind:  "engine",
+		OccurredAt:  baseTime.Add(time.Minute),
+		Message:     "java.lang.IllegalStateException: same fingerprint",
+		Evidence:    "java.lang.IllegalStateException: same fingerprint\nat org.apache.seatunnel.Engine.run(Engine.java:200)",
+		CursorStart: 90,
+		CursorEnd:   160,
+	}))
+
+	groups, err := service.ListSeatunnelErrorGroups(ctx, &SeatunnelErrorGroupFilter{ClusterID: 1, Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	require.Len(t, groups.Items, 1)
+	assert.Equal(t, "worker-b", groups.Items[0].LastHostName)
+	assert.Equal(t, "10.0.0.22", groups.Items[0].LastHostIP)
+
+	detail, err := service.GetSeatunnelErrorGroupDetail(ctx, &SeatunnelErrorEventFilter{
+		ErrorGroupID: groups.Items[0].ID,
+		ClusterID:    1,
+	}, 20)
+	require.NoError(t, err)
+	require.Len(t, detail.Events, 1)
+	assert.Equal(t, uint(1), detail.Events[0].ClusterID)
+	assert.Equal(t, "worker-a", detail.Events[0].HostName)
+	assert.Equal(t, "10.0.0.21", detail.Events[0].HostIP)
 }

@@ -79,19 +79,24 @@ type diagnosticBundleExecutionState struct {
 }
 
 type diagnosticBundleHTMLPayload struct {
-	GeneratedAt        time.Time                            `json:"generated_at"`
-	Health             diagnosticBundleHTMLHealthSummary    `json:"health"`
-	Task               diagnosticBundleHTMLTaskSummary      `json:"task"`
-	Cluster            *diagnosticBundleHTMLClusterSummary  `json:"cluster,omitempty"`
-	Inspection         *diagnosticBundleHTMLInspectionPanel `json:"inspection,omitempty"`
-	ErrorContext       *diagnosticBundleHTMLErrorPanel      `json:"error_context,omitempty"`
-	AlertSnapshot      *diagnosticBundleHTMLAlertPanel      `json:"alert_snapshot,omitempty"`
-	ProcessEvents      *diagnosticBundleHTMLProcessPanel    `json:"process_events,omitempty"`
-	TaskExecution      diagnosticBundleHTMLExecutionPanel   `json:"task_execution"`
-	ArtifactGroups     []diagnosticBundleHTMLArtifactGroup  `json:"artifact_groups"`
-	SourceTraceability []diagnosticBundleHTMLTraceItem      `json:"source_traceability"`
-	Recommendations    []diagnosticBundleHTMLAdvice         `json:"recommendations"`
-	PassedChecks       []diagnosticBundleHTMLAdvice         `json:"passed_checks"`
+	GeneratedAt time.Time `json:"generated_at"`
+	// Summary：聚焦一句话结论 + 少量关键指标
+	Health diagnosticBundleHTMLHealthSummary `json:"health"`
+	// Critical Findings：按严重级别排序的关键发现（来自巡检发现或错误/告警上下文）
+	Inspection *diagnosticBundleHTMLInspectionPanel `json:"inspection,omitempty"`
+	// Evidence：证据详情，按需展开
+	ErrorContext   *diagnosticBundleHTMLErrorPanel     `json:"error_context,omitempty"`
+	AlertSnapshot  *diagnosticBundleHTMLAlertPanel     `json:"alert_snapshot,omitempty"`
+	ProcessEvents  *diagnosticBundleHTMLProcessPanel   `json:"process_events,omitempty"`
+	ArtifactGroups []diagnosticBundleHTMLArtifactGroup `json:"artifact_groups"`
+
+	// 附录类信息：任务概览、执行过程、溯源与建议，弱化展示
+	Cluster            *diagnosticBundleHTMLClusterSummary `json:"cluster,omitempty"`
+	Task               diagnosticBundleHTMLTaskSummary     `json:"task"`
+	TaskExecution      diagnosticBundleHTMLExecutionPanel  `json:"task_execution"`
+	SourceTraceability []diagnosticBundleHTMLTraceItem     `json:"source_traceability"`
+	Recommendations    []diagnosticBundleHTMLAdvice        `json:"recommendations"`
+	PassedChecks       []diagnosticBundleHTMLAdvice        `json:"passed_checks"`
 }
 
 type diagnosticBundleHTMLHealthSummary struct {
@@ -1099,6 +1104,7 @@ func buildDiagnosticBundleHTMLPayload(task *DiagnosticTask, state *diagnosticBun
 		payload.PassedChecks = buildDiagnosticBundleHTMLPassedChecks(task, state, artifacts)
 		return payload
 	}
+	// Evidence & 附录
 	payload.Cluster = buildDiagnosticBundleHTMLClusterSummary(state.ClusterSnapshot)
 	payload.Inspection = buildDiagnosticBundleHTMLInspectionPanel(state.InspectionDetail)
 	payload.ErrorContext = buildDiagnosticBundleHTMLErrorPanel(state.ErrorGroup, state.ErrorEvents)
@@ -1394,30 +1400,15 @@ func buildDiagnosticBundleHTMLExecutionPanel(task *DiagnosticTask) diagnosticBun
 
 func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnosticBundleExecutionState, artifacts []*diagnosticBundleArtifact) diagnosticBundleHTMLHealthSummary {
 	summary := diagnosticBundleHTMLHealthSummary{
-		Tone:  "neutral",
-		Title: bilingualText("诊断报告已生成", "Diagnostic report generated"),
-		Summary: bilingualText(
-			"可通过本报告快速判断当前健康信号、关键问题与诊断证据。",
-			"Use this report to quickly assess health signals, key issues, and diagnostic evidence.",
-		),
+		Tone:    "neutral",
+		Title:   "",
+		Summary: "",
 		Metrics: []diagnosticBundleHTMLMetricCard{},
 	}
-	clusterLabel := "-"
-	if task != nil && task.ClusterID > 0 {
-		clusterLabel = fmt.Sprintf("#%d", task.ClusterID)
-	}
-	selectedNodes := 0
-	if task != nil {
-		selectedNodes = len(task.SelectedNodes)
-	}
-	summary.Metrics = append(summary.Metrics,
-		diagnosticBundleHTMLMetricCard{Label: bilingualText("集群", "Cluster"), Value: clusterLabel},
-		diagnosticBundleHTMLMetricCard{Label: bilingualText("采集节点", "Selected Nodes"), Value: fmt.Sprintf("%d", selectedNodes)},
-		diagnosticBundleHTMLMetricCard{Label: bilingualText("产物数量", "Artifacts"), Value: fmt.Sprintf("%d", len(artifacts))},
-	)
 
 	if state != nil && state.InspectionDetail != nil && state.InspectionDetail.Report != nil {
 		report := state.InspectionDetail.Report
+		// 按巡检结果给出一句话结论与语气
 		switch {
 		case report.Status == InspectionReportStatusFailed || report.CriticalCount > 0:
 			summary.Tone = "critical"
@@ -1432,28 +1423,40 @@ func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnos
 			summary.Title = bilingualText("巡检未发现明显异常", "Inspection found no critical issue")
 			summary.Summary = normalizeDiagnosticDisplayText(report.Summary)
 		}
+		// 仅保留与“时间范围 + 发现数”直接相关的少量指标
+		windowLabel := fmt.Sprintf("%d min", firstNonZeroInt(report.LookbackMinutes, defaultInspectionLookbackMinutes))
 		summary.Metrics = append(summary.Metrics,
-			diagnosticBundleHTMLMetricCard{Label: bilingualText("严重发现", "Critical Findings"), Value: fmt.Sprintf("%d", report.CriticalCount)},
-			diagnosticBundleHTMLMetricCard{Label: bilingualText("告警发现", "Warning Findings"), Value: fmt.Sprintf("%d", report.WarningCount)},
-			diagnosticBundleHTMLMetricCard{Label: bilingualText("信息发现", "Info Findings"), Value: fmt.Sprintf("%d", report.InfoCount)},
+			diagnosticBundleHTMLMetricCard{
+				Label: bilingualText("时间范围", "Time Window"),
+				Value: windowLabel,
+				Note:  "",
+			},
+			diagnosticBundleHTMLMetricCard{
+				Label: bilingualText("发现统计", "Findings"),
+				Value: fmt.Sprintf("%d", report.FindingTotal),
+				Note: bilingualText(
+					fmt.Sprintf("严重 %d / 告警 %d / 信息 %d", report.CriticalCount, report.WarningCount, report.InfoCount),
+					fmt.Sprintf("critical %d / warning %d / info %d", report.CriticalCount, report.WarningCount, report.InfoCount),
+				),
+			},
 		)
 	} else {
-		errorCount := 0
-		alertCount := 0
-		if state != nil {
-			errorCount = len(state.ErrorEvents)
-			alertCount = len(state.AlertSnapshot)
+		// 无巡检上下文时，仅给出非常简短的概览
+		clusterLabel := "-"
+		if task != nil && task.ClusterID > 0 {
+			clusterLabel = fmt.Sprintf("#%d", task.ClusterID)
 		}
-		if errorCount > 0 {
-			summary.Tone = "warning"
-			summary.Title = bilingualText("诊断报告包含错误证据", "Diagnostic report includes error evidence")
-		}
-		if alertCount > 0 {
-			summary.Tone = "warning"
-		}
+		summary.Title = bilingualText("诊断报告已生成", "Diagnostic report generated")
+		summary.Summary = bilingualText(
+			"当前报告基于错误、告警与运行时信号生成，可结合下方证据详情排查问题。",
+			"This report aggregates errors, alerts and runtime signals for troubleshooting.",
+		)
 		summary.Metrics = append(summary.Metrics,
-			diagnosticBundleHTMLMetricCard{Label: bilingualText("错误事件", "Error Events"), Value: fmt.Sprintf("%d", errorCount)},
-			diagnosticBundleHTMLMetricCard{Label: bilingualText("活动告警", "Active Alerts"), Value: fmt.Sprintf("%d", alertCount)},
+			diagnosticBundleHTMLMetricCard{
+				Label: bilingualText("集群", "Cluster"),
+				Value: clusterLabel,
+				Note:  "",
+			},
 		)
 	}
 	return summary
@@ -1516,7 +1519,7 @@ func buildDiagnosticBundleHTMLArtifactGroups(bundleDir string, artifacts []*diag
 }
 
 func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagnosticBundleExecutionState) []diagnosticBundleHTMLAdvice {
-	items := make([]diagnosticBundleHTMLAdvice, 0, 6)
+	items := make([]diagnosticBundleHTMLAdvice, 0, 3)
 	appendAdvice := func(title, details string) {
 		title = strings.TrimSpace(title)
 		details = strings.TrimSpace(details)
@@ -1529,6 +1532,7 @@ func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagn
 		})
 	}
 
+	// 优先从巡检发现中挑选 1~2 条最关键建议
 	if state != nil && state.InspectionDetail != nil {
 		for _, finding := range state.InspectionDetail.Findings {
 			if finding == nil {
@@ -1538,11 +1542,12 @@ func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagn
 				firstNonEmptyString(finding.CheckName, finding.Summary),
 				firstNonEmptyString(finding.Recommendation, finding.EvidenceSummary),
 			)
-			if len(items) >= 4 {
+			if len(items) >= 2 {
 				break
 			}
 		}
 	}
+	// 兜底：针对错误组或告警给出 1 条高层动作建议
 	if len(items) == 0 && state != nil && state.ErrorGroup != nil {
 		appendAdvice(
 			bilingualText("优先排查错误组根因", "Prioritize the root cause of the error group"),
@@ -1558,12 +1563,7 @@ func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagn
 			)
 		}
 	}
-	if len(items) == 0 {
-		appendAdvice(
-			bilingualText("复核诊断证据完整性", "Review diagnostic evidence completeness"),
-			bilingualText("优先查看诊断报告中的日志样本、配置快照与执行过程，再决定是否需要重新采集或升级为更深层排查。", "Review log samples, config snapshots, and execution evidence in this report before deciding whether deeper collection is required."),
-		)
-	}
+	// 不再强行追加通用长段落，仅在确有 JVM Dump 时补充一条提示
 	if task != nil && task.Options.IncludeJVMDump {
 		appendAdvice(
 			bilingualText("复查 JVM Dump 元数据", "Review JVM dump metadata"),
@@ -1574,7 +1574,7 @@ func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagn
 }
 
 func buildDiagnosticBundleHTMLPassedChecks(task *DiagnosticTask, state *diagnosticBundleExecutionState, artifacts []*diagnosticBundleArtifact) []diagnosticBundleHTMLAdvice {
-	items := make([]diagnosticBundleHTMLAdvice, 0, 8)
+	items := make([]diagnosticBundleHTMLAdvice, 0, 4)
 	appendAdvice := func(title, details string) {
 		title = strings.TrimSpace(title)
 		details = strings.TrimSpace(details)
@@ -1839,7 +1839,17 @@ func buildDiagnosticLogCandidates(target DiagnosticTaskNodeTarget, errorEvents [
 		if event == nil {
 			continue
 		}
-		if event.HostID != target.HostID {
+		if target.NodeID > 0 && event.NodeID > 0 {
+			if event.NodeID != target.NodeID {
+				continue
+			}
+		} else if event.HostID != target.HostID {
+			continue
+		}
+		if role := strings.TrimSpace(target.Role); role != "" && strings.TrimSpace(event.Role) != "" && !strings.EqualFold(event.Role, role) {
+			continue
+		}
+		if installDir := strings.TrimSpace(target.InstallDir); installDir != "" && strings.TrimSpace(event.InstallDir) != "" && strings.TrimSpace(event.InstallDir) != installDir {
 			continue
 		}
 		if path := strings.TrimSpace(event.SourceFile); path != "" {
@@ -2420,31 +2430,13 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
 
         <article class="focus-panel">
           <div class="focus-label">影响范围 / Impact Scope</div>
-          <div class="stat-grid">
-            <div class="stat-card">
-              <div class="label">Cluster Nodes</div>
-              <div class="value">{{if .Cluster}}{{.Cluster.NodeCount}}{{else}}-{{end}}</div>
-            </div>
-            <div class="stat-card">
-              <div class="label">Error Occurrences</div>
-              <div class="value">{{if .ErrorContext}}{{.ErrorContext.OccurrenceCount}}{{else}}-{{end}}</div>
-            </div>
-            <div class="stat-card">
-              <div class="label">Critical Findings</div>
-              <div class="value">{{if .Inspection}}{{.Inspection.CriticalCount}}{{else}}-{{end}}</div>
-            </div>
-            <div class="stat-card">
-              <div class="label">Firing Alerts</div>
-              <div class="value">{{if .AlertSnapshot}}{{.AlertSnapshot.Firing}}{{else}}-{{end}}</div>
-            </div>
-          </div>
-          <div class="panel-note">
+          <p>
             {{if .Inspection}}
             巡检窗口：最近 {{.Inspection.LookbackMinutes}} 分钟；共发现 {{.Inspection.CriticalCount}} 严重 / {{.Inspection.WarningCount}} 告警 / {{.Inspection.InfoCount}} 信息。
             {{else}}
             当前影响范围以错误事件、告警快照和任务采集结果为准。
             {{end}}
-          </div>
+          </p>
         </article>
 
         <article class="focus-panel">
@@ -2548,8 +2540,8 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
                   <span class="badge {{statusClass .Severity}}">{{.Severity}}</span>
                 </div>
                 <div>{{.Summary}}</div>
-                {{if .Evidence}}<div class="muted" style="margin-top: 8px;">{{.Evidence}}</div>{{end}}
-                {{if .Recommendation}}<div class="muted" style="margin-top: 8px;">{{.Recommendation}}</div>{{end}}
+                {{if .Evidence}}<div class="muted small" style="margin-top: 6px;">{{.Evidence}}</div>{{end}}
+                {{if .Recommendation}}<div class="muted small" style="margin-top: 6px;">{{.Recommendation}}</div>{{end}}
               </div>
               {{end}}
             </div>

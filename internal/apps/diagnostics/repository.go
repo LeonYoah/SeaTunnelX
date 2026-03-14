@@ -161,6 +161,21 @@ func (r *Repository) UpsertLogCursor(ctx context.Context, cursor *SeatunnelLogCu
 	return r.db.WithContext(ctx).Save(existing).Error
 }
 
+// ListLogCursorsByAgent lists all log cursors for a given agent.
+// ListLogCursorsByAgent 返回某个 Agent 的所有日志游标。
+func (r *Repository) ListLogCursorsByAgent(ctx context.Context, agentID string) ([]*SeatunnelLogCursor, error) {
+	if r == nil || r.db == nil {
+		return nil, ErrDiagnosticsRepositoryUnavailable
+	}
+	var rows []*SeatunnelLogCursor
+	if err := r.db.WithContext(ctx).
+		Where("agent_id = ?", agentID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // GetErrorGroupByID retrieves one error group by identifier.
 // GetErrorGroupByID 根据标识获取一个错误组。
 func (r *Repository) GetErrorGroupByID(ctx context.Context, id uint) (*SeatunnelErrorGroup, error) {
@@ -245,15 +260,19 @@ func (r *Repository) ListErrorEvents(ctx context.Context, filter *SeatunnelError
 
 // ListEventsByGroupID lists recent events for one error group.
 // ListEventsByGroupID 返回一个错误组的近期事件。
-func (r *Repository) ListEventsByGroupID(ctx context.Context, groupID uint, limit int) ([]*SeatunnelErrorEvent, error) {
+func (r *Repository) ListEventsByGroupID(ctx context.Context, filter *SeatunnelErrorEventFilter, limit int) ([]*SeatunnelErrorEvent, error) {
 	if r == nil || r.db == nil {
 		return nil, ErrDiagnosticsRepositoryUnavailable
+	}
+	if filter == nil || filter.ErrorGroupID == 0 {
+		return nil, ErrInvalidSeatunnelErrorRequest
 	}
 	if limit <= 0 {
 		limit = 20
 	}
+	query := applyEventFilters(r.db.WithContext(ctx).Model(&SeatunnelErrorEvent{}), filter)
 	var events []*SeatunnelErrorEvent
-	if err := r.db.WithContext(ctx).Where("error_group_id = ?", groupID).Order("occurred_at DESC").Limit(limit).Find(&events).Error; err != nil {
+	if err := query.Order("occurred_at DESC").Limit(limit).Find(&events).Error; err != nil {
 		return nil, err
 	}
 	return events, nil

@@ -103,19 +103,25 @@ func (s *Service) CreateDiagnosticTask(ctx context.Context, req *CreateDiagnosti
 	planSteps := DefaultDiagnosticTaskSteps()
 	options := req.Options.Normalize()
 	initialStepCode := resolveInitialDiagnosticTaskStep(planSteps, options)
+	lookbackMinutes := req.LookbackMinutes
+	if lookbackMinutes < minInspectionLookbackMinutes || lookbackMinutes > maxInspectionLookbackMinutes {
+		// 0 或非法值时回退到默认巡检窗口，后续可根据来源巡检窗口进一步细化。
+		lookbackMinutes = 0
+	}
 	task := &DiagnosticTask{
-		ClusterID:     clusterID,
-		TriggerSource: triggerSource,
-		SourceRef:     sourceRef,
-		Options:       options,
-		Status:        DiagnosticTaskStatusReady,
-		CurrentStep:   initialStepCode,
-		SelectedNodes: nodeTargets,
-		Summary:       buildDiagnosticTaskSummary(triggerSource, sourceRef, req.Summary),
-		CreatedBy:     createdBy,
-		CreatedByName: strings.TrimSpace(createdByName),
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ClusterID:      clusterID,
+		TriggerSource:  triggerSource,
+		SourceRef:      sourceRef,
+		Options:        options,
+		LookbackMinutes: lookbackMinutes,
+		Status:         DiagnosticTaskStatusReady,
+		CurrentStep:    initialStepCode,
+		SelectedNodes:  nodeTargets,
+		Summary:        buildDiagnosticTaskSummary(triggerSource, sourceRef, req.Summary),
+		CreatedBy:      createdBy,
+		CreatedByName:  strings.TrimSpace(createdByName),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	steps := make([]*DiagnosticTaskStep, 0, len(planSteps))

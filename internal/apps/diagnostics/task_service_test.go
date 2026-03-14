@@ -20,6 +20,7 @@ package diagnostics
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
@@ -256,5 +257,53 @@ func TestServiceCreateDiagnosticTaskMarksOptionalDumpStepsSkippedByDefault(t *te
 	}
 	if statusByCode[DiagnosticStepCodeCollectJVMDump] != DiagnosticTaskStatusSkipped {
 		t.Fatalf("expected jvm dump step skipped, got %s", statusByCode[DiagnosticStepCodeCollectJVMDump])
+	}
+}
+
+func TestBuildDiagnosticLogCandidatesPrefersNodeScopedEvents(t *testing.T) {
+	target := DiagnosticTaskNodeTarget{
+		NodeID:     101,
+		HostID:     21,
+		Role:       "worker",
+		InstallDir: "/opt/seatunnel-a",
+	}
+	events := []*SeatunnelErrorEvent{
+		{
+			NodeID:     101,
+			HostID:     21,
+			Role:       "worker",
+			InstallDir: "/opt/seatunnel-a",
+			SourceFile: "/opt/seatunnel-a/logs/node-101.log",
+			OccurredAt:  time.Now().UTC(),
+		},
+		{
+			NodeID:     102,
+			HostID:     21,
+			Role:       "worker",
+			InstallDir: "/opt/seatunnel-a",
+			SourceFile: "/opt/seatunnel-a/logs/node-102.log",
+			OccurredAt:  time.Now().UTC(),
+		},
+		{
+			NodeID:     0,
+			HostID:     21,
+			Role:       "master",
+			InstallDir: "/opt/seatunnel-a",
+			SourceFile: "/opt/seatunnel-a/logs/master.log",
+			OccurredAt:  time.Now().UTC(),
+		},
+	}
+
+	candidates := buildDiagnosticLogCandidates(target, events)
+	if len(candidates) == 0 {
+		t.Fatalf("expected at least one candidate")
+	}
+	if candidates[0] != "/opt/seatunnel-a/logs/node-101.log" {
+		t.Fatalf("expected node-specific candidate first, got %v", candidates)
+	}
+	for _, candidate := range candidates {
+		if candidate == "/opt/seatunnel-a/logs/node-102.log" || candidate == "/opt/seatunnel-a/logs/master.log" {
+			t.Fatalf("unexpected unrelated candidate included: %v", candidates)
+		}
 	}
 }

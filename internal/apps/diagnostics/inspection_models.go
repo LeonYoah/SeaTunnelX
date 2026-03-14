@@ -178,6 +178,7 @@ type StartClusterInspectionRequest struct {
 type ClusterInspectionReportInfo struct {
 	ID                uint                    `json:"id"`
 	ClusterID         uint                    `json:"cluster_id"`
+	ClusterName       string                  `json:"cluster_name,omitempty"`
 	Status            InspectionReportStatus  `json:"status"`
 	TriggerSource     InspectionTriggerSource `json:"trigger_source"`
 	LookbackMinutes   int                     `json:"lookback_minutes"`
@@ -211,6 +212,8 @@ type ClusterInspectionFindingInfo struct {
 	EvidenceSummary     string                    `json:"evidence_summary"`
 	RelatedNodeID       uint                      `json:"related_node_id"`
 	RelatedHostID       uint                      `json:"related_host_id"`
+	RelatedHostName     string                    `json:"related_host_name"`
+	RelatedHostIP       string                    `json:"related_host_ip"`
 	RelatedErrorGroupID uint                      `json:"related_error_group_id"`
 	RelatedAlertID      string                    `json:"related_alert_id"`
 	CreatedAt           time.Time                 `json:"created_at"`
@@ -264,11 +267,11 @@ func (r *ClusterInspectionReport) ToInfo() *ClusterInspectionReportInfo {
 
 // ToInfo converts one persisted inspection finding into API view model.
 // ToInfo 将巡检发现项转换为 API 视图模型。
-func (f *ClusterInspectionFinding) ToInfo() *ClusterInspectionFindingInfo {
+func (f *ClusterInspectionFinding) ToInfo(display *DiagnosticHostDisplayContext) *ClusterInspectionFindingInfo {
 	if f == nil {
 		return nil
 	}
-	return &ClusterInspectionFindingInfo{
+	info := &ClusterInspectionFindingInfo{
 		ID:                  f.ID,
 		ReportID:            f.ReportID,
 		ClusterID:           f.ClusterID,
@@ -286,6 +289,11 @@ func (f *ClusterInspectionFinding) ToInfo() *ClusterInspectionFindingInfo {
 		CreatedAt:           f.CreatedAt,
 		UpdatedAt:           f.UpdatedAt,
 	}
+	if display != nil {
+		info.RelatedHostName = display.HostName
+		info.RelatedHostIP = display.HostIP
+	}
+	return info
 }
 
 func normalizeInspectionTriggerSource(value InspectionTriggerSource) (InspectionTriggerSource, bool) {

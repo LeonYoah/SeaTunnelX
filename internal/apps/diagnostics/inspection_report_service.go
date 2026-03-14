@@ -152,7 +152,13 @@ func (s *Service) ListInspectionReports(ctx context.Context, filter *ClusterInsp
 	page, pageSize := normalizePagination(filter.Page, filter.PageSize)
 	items := make([]*ClusterInspectionReportInfo, 0, len(reports))
 	for _, report := range reports {
-		items = append(items, report.ToInfo())
+		info := report.ToInfo()
+		if info != nil && s.clusterService != nil {
+			if clusterInfo, err := s.clusterService.Get(ctx, report.ClusterID); err == nil && clusterInfo != nil {
+				info.ClusterName = clusterInfo.Name
+			}
+		}
+		items = append(items, info)
 	}
 	return &ClusterInspectionReportsData{
 		Items:    items,
@@ -183,7 +189,7 @@ func (s *Service) GetInspectionReportDetail(ctx context.Context, reportID uint) 
 
 	items := make([]*ClusterInspectionFindingInfo, 0, len(findings))
 	for _, finding := range findings {
-		items = append(items, finding.ToInfo())
+		items = append(items, finding.ToInfo(s.resolveDiagnosticHostDisplayContext(ctx, finding.RelatedHostID)))
 	}
 
 	var relatedTask *DiagnosticTask
@@ -191,8 +197,15 @@ func (s *Service) GetInspectionReportDetail(ctx context.Context, reportID uint) 
 		relatedTask = linked
 	}
 
+	reportInfo := report.ToInfo()
+	if reportInfo != nil && s.clusterService != nil {
+		if clusterInfo, err := s.clusterService.Get(ctx, report.ClusterID); err == nil && clusterInfo != nil {
+			reportInfo.ClusterName = clusterInfo.Name
+		}
+	}
+
 	return &ClusterInspectionReportDetailData{
-		Report:                report.ToInfo(),
+		Report:                reportInfo,
 		Findings:              items,
 		RelatedDiagnosticTask: relatedTask,
 	}, nil

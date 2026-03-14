@@ -283,23 +283,26 @@ type DiagnosticTask struct {
 	TriggerSource  DiagnosticTaskSourceType  `json:"trigger_source" gorm:"size:40;index;not null"`
 	SourceRef      DiagnosticTaskSourceRef   `json:"source_ref" gorm:"type:json;not null"`
 	Options        DiagnosticTaskOptions     `json:"options" gorm:"type:json;not null"`
-	Status         DiagnosticTaskStatus      `json:"status" gorm:"size:32;index;not null"`
-	CurrentStep    DiagnosticStepCode        `json:"current_step" gorm:"size:64;index"`
-	FailureStep    DiagnosticStepCode        `json:"failure_step" gorm:"size:64"`
-	FailureReason  string                    `json:"failure_reason" gorm:"type:text"`
-	SelectedNodes  DiagnosticTaskNodeTargets `json:"selected_nodes" gorm:"type:json;not null"`
-	Summary        string                    `json:"summary" gorm:"type:text"`
-	BundleDir      string                    `json:"bundle_dir" gorm:"size:500"`
-	ManifestPath   string                    `json:"manifest_path" gorm:"size:500"`
-	IndexPath      string                    `json:"index_path" gorm:"size:500"`
-	StartedAt      *time.Time                `json:"started_at"`
-	CompletedAt    *time.Time                `json:"completed_at"`
-	CreatedBy      uint                      `json:"created_by"`
-	CreatedByName  string                    `json:"created_by_name" gorm:"size:120;index"`
-	CreatedAt      time.Time                 `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt      time.Time                 `json:"updated_at" gorm:"autoUpdateTime"`
-	Steps          []DiagnosticTaskStep      `json:"steps" gorm:"foreignKey:TaskID"`
-	NodeExecutions []DiagnosticNodeExecution `json:"node_executions" gorm:"foreignKey:TaskID"`
+	// LookbackMinutes controls the diagnostics collection window in minutes.
+	// LookbackMinutes 控制诊断采集时间窗口（分钟），0 表示使用默认或来源巡检窗口。
+	LookbackMinutes int                       `json:"lookback_minutes" gorm:"default:0"`
+	Status          DiagnosticTaskStatus      `json:"status" gorm:"size:32;index;not null"`
+	CurrentStep     DiagnosticStepCode        `json:"current_step" gorm:"size:64;index"`
+	FailureStep     DiagnosticStepCode        `json:"failure_step" gorm:"size:64"`
+	FailureReason   string                    `json:"failure_reason" gorm:"type:text"`
+	SelectedNodes   DiagnosticTaskNodeTargets `json:"selected_nodes" gorm:"type:json;not null"`
+	Summary         string                    `json:"summary" gorm:"type:text"`
+	BundleDir       string                    `json:"bundle_dir" gorm:"size:500"`
+	ManifestPath    string                    `json:"manifest_path" gorm:"size:500"`
+	IndexPath       string                    `json:"index_path" gorm:"size:500"`
+	StartedAt       *time.Time                `json:"started_at"`
+	CompletedAt     *time.Time                `json:"completed_at"`
+	CreatedBy       uint                      `json:"created_by"`
+	CreatedByName   string                    `json:"created_by_name" gorm:"size:120;index"`
+	CreatedAt       time.Time                 `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt       time.Time                 `json:"updated_at" gorm:"autoUpdateTime"`
+	Steps           []DiagnosticTaskStep      `json:"steps" gorm:"foreignKey:TaskID"`
+	NodeExecutions  []DiagnosticNodeExecution `json:"node_executions" gorm:"foreignKey:TaskID"`
 }
 
 // TableName specifies the diagnostic task table name.
@@ -433,8 +436,11 @@ type CreateDiagnosticTaskRequest struct {
 	NodeScope       DiagnosticTaskNodeScope  `json:"node_scope,omitempty"`
 	SelectedNodeIDs []uint                   `json:"selected_node_ids"`
 	Options         DiagnosticTaskOptions    `json:"options"`
-	Summary         string                   `json:"summary"`
-	AutoStart       bool                     `json:"auto_start"`
+	// LookbackMinutes overrides the default diagnostics collection window in minutes.
+	// LookbackMinutes 覆盖默认诊断采集时间窗口（分钟），0 表示使用默认或来源巡检窗口。
+	LookbackMinutes int    `json:"lookback_minutes,omitempty"`
+	Summary         string `json:"summary"`
+	AutoStart       bool   `json:"auto_start"`
 }
 
 // DiagnosticTaskListData is the paginated diagnostics task payload.

@@ -72,6 +72,19 @@ type Service struct {
 	policyChecker     *AutoPolicyChecker
 }
 
+// ListLogCursorsByAgent returns all log cursors for the given agent.
+// ListLogCursorsByAgent 返回某个 Agent 的所有日志游标。
+func (s *Service) ListLogCursorsByAgent(ctx context.Context, agentID string) ([]*SeatunnelLogCursor, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrDiagnosticsRepositoryUnavailable
+	}
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return []*SeatunnelLogCursor{}, nil
+	}
+	return s.repo.ListLogCursorsByAgent(ctx, agentID)
+}
+
 // NewService creates a diagnostics service using the global database when available.
 // NewService 使用全局数据库（如果已初始化）创建诊断服务。
 func NewService(clusterService *cluster.Service, monitorService *monitor.Service, monitoringService *monitoringapp.Service) *Service {
@@ -366,7 +379,7 @@ func (s *Service) ListSeatunnelErrorGroups(ctx context.Context, filter *Seatunne
 	page, pageSize := normalizePagination(filter.Page, filter.PageSize)
 	items := make([]*SeatunnelErrorGroupInfo, 0, len(groups))
 	for _, group := range groups {
-		items = append(items, group.ToInfo())
+		items = append(items, s.buildSeatunnelErrorGroupInfo(ctx, group))
 	}
 	return &SeatunnelErrorGroupsData{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
@@ -387,28 +400,71 @@ func (s *Service) ListSeatunnelErrorEvents(ctx context.Context, filter *Seatunne
 	page, pageSize := normalizePagination(filter.Page, filter.PageSize)
 	items := make([]*SeatunnelErrorEventInfo, 0, len(events))
 	for _, event := range events {
-		items = append(items, event.ToInfo())
+		items = append(items, s.buildSeatunnelErrorEventInfo(ctx, event))
 	}
 	return &SeatunnelErrorEventsData{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 // GetSeatunnelErrorGroupDetail returns one group and its recent events.
 // GetSeatunnelErrorGroupDetail 返回一个错误组及其近期事件。
-func (s *Service) GetSeatunnelErrorGroupDetail(ctx context.Context, groupID uint, eventLimit int) (*SeatunnelErrorGroupDetailData, error) {
+func (s *Service) GetSeatunnelErrorGroupDetail(ctx context.Context, filter *SeatunnelErrorEventFilter, eventLimit int) (*SeatunnelErrorGroupDetailData, error) {
 	if s == nil || s.repo == nil {
 		return nil, ErrDiagnosticsRepositoryUnavailable
 	}
-	group, err := s.repo.GetErrorGroupByID(ctx, groupID)
+	if filter == nil || filter.ErrorGroupID == 0 {
+		return nil, ErrInvalidSeatunnelErrorRequest
+	}
+	group, err := s.repo.GetErrorGroupByID(ctx, filter.ErrorGroupID)
 	if err != nil {
 		return nil, err
 	}
-	events, err := s.repo.ListEventsByGroupID(ctx, groupID, eventLimit)
+	events, err := s.repo.ListEventsByGroupID(ctx, filter, eventLimit)
 	if err != nil {
 		return nil, err
 	}
 	items := make([]*SeatunnelErrorEventInfo, 0, len(events))
 	for _, event := range events {
-		items = append(items, event.ToInfo())
+		items = append(items, s.buildSeatunnelErrorEventInfo(ctx, event))
 	}
-	return &SeatunnelErrorGroupDetailData{Group: group.ToInfo(), Events: items}, nil
+	groupInfo := s.buildSeatunnelErrorGroupInfo(ctx, group)
+	if groupInfo != nil && len(events) > 0 {
+		latestEvent := events[0]
+		groupInfo.LastClusterID = latestEvent.ClusterID
+		groupInfo.LastNodeID = latestEvent.NodeID
+		groupInfo.LastHostID = latestEvent.HostID
+		groupInfo.LastSeenAt = latestEvent.OccurredAt
+		if display := s.resolveDiagnosticHostDisplayContext(ctx, latestEvent.HostID); display != nil {
+			groupInfo.LastHostName = display.HostName
+			groupInfo.LastHostIP = display.HostIP
+		}
+	}
+	return &SeatunnelErrorGroupDetailData{Group: groupInfo, Events: items}, nil
+}
+
+func (s *Service) buildSeatunnelErrorGroupInfo(ctx context.Context, group *SeatunnelErrorGroup) *SeatunnelErrorGroupInfo {
+	if group == nil {
+		return nil
+	}
+	return group.ToInfo(s.resolveDiagnosticHostDisplayContext(ctx, group.LastHostID))
+}
+
+func (s *Service) buildSeatunnelErrorEventInfo(ctx context.Context, event *SeatunnelErrorEvent) *SeatunnelErrorEventInfo {
+	if event == nil {
+		return nil
+	}
+	return event.ToInfo(s.resolveDiagnosticHostDisplayContext(ctx, event.HostID))
+}
+
+func (s *Service) resolveDiagnosticHostDisplayContext(ctx context.Context, hostID uint) *DiagnosticHostDisplayContext {
+	if s == nil || s.hostService == nil || hostID == 0 {
+		return nil
+	}
+	hostInfo, err := s.hostService.GetHostByID(ctx, hostID)
+	if err != nil || hostInfo == nil {
+		return nil
+	}
+	return &DiagnosticHostDisplayContext{
+		HostName: strings.TrimSpace(hostInfo.Name),
+		HostIP:   strings.TrimSpace(hostInfo.IPAddress),
+	}
 }

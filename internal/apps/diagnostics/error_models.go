@@ -173,15 +173,17 @@ type SeatunnelErrorGroupInfo struct {
 	LastClusterID      uint      `json:"last_cluster_id"`
 	LastNodeID         uint      `json:"last_node_id"`
 	LastHostID         uint      `json:"last_host_id"`
+	LastHostName       string    `json:"last_host_name"`
+	LastHostIP         string    `json:"last_host_ip"`
 }
 
 // ToInfo converts one group model to response info.
 // ToInfo 将错误组模型转换为响应视图。
-func (g *SeatunnelErrorGroup) ToInfo() *SeatunnelErrorGroupInfo {
+func (g *SeatunnelErrorGroup) ToInfo(display *DiagnosticHostDisplayContext) *SeatunnelErrorGroupInfo {
 	if g == nil {
 		return nil
 	}
-	return &SeatunnelErrorGroupInfo{
+	info := &SeatunnelErrorGroupInfo{
 		ID:                 g.ID,
 		Fingerprint:        g.Fingerprint,
 		FingerprintVersion: g.FingerprintVersion,
@@ -195,6 +197,11 @@ func (g *SeatunnelErrorGroup) ToInfo() *SeatunnelErrorGroupInfo {
 		LastNodeID:         g.LastNodeID,
 		LastHostID:         g.LastHostID,
 	}
+	if display != nil {
+		info.LastHostName = display.HostName
+		info.LastHostIP = display.HostIP
+	}
+	return info
 }
 
 // SeatunnelErrorEventInfo is the API view model for an error event.
@@ -206,6 +213,8 @@ type SeatunnelErrorEventInfo struct {
 	ClusterID      uint      `json:"cluster_id"`
 	NodeID         uint      `json:"node_id"`
 	HostID         uint      `json:"host_id"`
+	HostName       string    `json:"host_name"`
+	HostIP         string    `json:"host_ip"`
 	AgentID        string    `json:"agent_id"`
 	Role           string    `json:"role"`
 	InstallDir     string    `json:"install_dir"`
@@ -222,11 +231,11 @@ type SeatunnelErrorEventInfo struct {
 
 // ToInfo converts one event model to response info.
 // ToInfo 将错误事件模型转换为响应视图。
-func (e *SeatunnelErrorEvent) ToInfo() *SeatunnelErrorEventInfo {
+func (e *SeatunnelErrorEvent) ToInfo(display *DiagnosticHostDisplayContext) *SeatunnelErrorEventInfo {
 	if e == nil {
 		return nil
 	}
-	return &SeatunnelErrorEventInfo{
+	info := &SeatunnelErrorEventInfo{
 		ID:             e.ID,
 		ErrorGroupID:   e.ErrorGroupID,
 		Fingerprint:    e.Fingerprint,
@@ -246,6 +255,11 @@ func (e *SeatunnelErrorEvent) ToInfo() *SeatunnelErrorEventInfo {
 		CursorStart:    e.CursorStart,
 		CursorEnd:      e.CursorEnd,
 	}
+	if display != nil {
+		info.HostName = display.HostName
+		info.HostIP = display.HostIP
+	}
+	return info
 }
 
 // SeatunnelErrorGroupsData is the paginated error group payload.
@@ -271,4 +285,11 @@ type SeatunnelErrorEventsData struct {
 type SeatunnelErrorGroupDetailData struct {
 	Group  *SeatunnelErrorGroupInfo   `json:"group"`
 	Events []*SeatunnelErrorEventInfo `json:"events"`
+}
+
+// DiagnosticHostDisplayContext stores host display labels for diagnostics API views.
+// DiagnosticHostDisplayContext 存储 diagnostics API 视图的主机展示信息。
+type DiagnosticHostDisplayContext struct {
+	HostName string
+	HostIP   string
 }

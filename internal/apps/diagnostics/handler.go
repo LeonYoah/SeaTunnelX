@@ -122,8 +122,14 @@ func (h *Handler) GetSeatunnelErrorGroupDetail(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
 		return
 	}
+	filter, err := parseErrorEventFilter(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
+		return
+	}
+	filter.ErrorGroupID = groupID
 
-	data, err := h.service.GetSeatunnelErrorGroupDetail(c.Request.Context(), groupID, eventLimit)
+	data, err := h.service.GetSeatunnelErrorGroupDetail(c.Request.Context(), filter, eventLimit)
 	if err != nil {
 		if errors.Is(err, ErrSeatunnelErrorGroupNotFound) {
 			c.JSON(http.StatusNotFound, Response{ErrorMsg: err.Error()})
