@@ -494,9 +494,9 @@ func (m *ProcessMonitor) GetAllTrackedProcesses() []*TrackedProcess {
 	return processes
 }
 
-// isProcessAlive checks if a tracked process is alive and still matches the expected executable.
-// isProcessAlive 检查被跟踪进程是否存活且仍然对应期望的可执行文件。
-// 这里除了检查 PID 是否存在外，还会在 Unix 上比对 /proc/<pid>/exe 是否落在原先的 InstallDir 下，
+// isProcessAlive checks if a tracked process is alive and still matches the expected command line.
+// isProcessAlive 检查被跟踪进程是否存活且仍然对应期望的命令行。
+// 这里除了检查 PID 是否存在外，会在 Unix 上比对 /proc/<pid>/cmdline 是否仍然包含原先的 InstallDir，
 // 以避免 PID 复用导致的“幽灵进程”（例如原进程退出后，mysqld 复用了相同 PID）。
 func isProcessAlive(proc *TrackedProcess) bool {
 	if proc == nil {
@@ -520,19 +520,19 @@ func isProcessAlive(proc *TrackedProcess) bool {
 		return true
 	}
 
-	// Best-effort check: ensure /proc/<pid>/exe 路径仍然包含原来的 InstallDir。
-	// 失败时不认为进程死亡，只在明确发现可执行文件不在该目录下时才视为“不是我们的进程”。
-	exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	// Best-effort check: ensure /proc/<pid>/cmdline 仍然包含原来的 InstallDir。
+	// 失败时不认为进程死亡，只在明确发现命令行已完全不包含该目录时才视为“不是我们的进程”。
+	cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		return true
 	}
-	exePath = strings.TrimSpace(exePath)
-	if exePath == "" {
+	cmdline := strings.TrimSpace(strings.ReplaceAll(string(cmdlineBytes), "\x00", " "))
+	if cmdline == "" {
 		return true
 	}
 
-	if !strings.Contains(exePath, installDir) {
-		// PID 仍然存在，但指向了不同的可执行文件（例如被 mysqld 复用），视为目标进程已退出。
+	if !strings.Contains(cmdline, installDir) {
+		// PID 仍然存在，但命令行不再包含原先的 InstallDir（例如被 mysqld 等进程复用），视为目标进程已退出。
 		// 这样可以触发 AutoRestarter，而不会误杀新进程。
 		return false
 	}
