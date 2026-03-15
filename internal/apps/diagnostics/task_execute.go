@@ -273,6 +273,11 @@ type diagnosticBundleHTMLPayload struct {
 	GeneratedAt time.Time `json:"generated_at"`
 	// Summary：聚焦一句话结论 + 少量关键指标
 	Health diagnosticBundleHTMLHealthSummary `json:"health"`
+	// 3.0 信息架构：结论、分类、时间线、关键信号
+	Findings   []diagnosticBundleHTMLFindingCard  `json:"findings"`
+	Categories []diagnosticBundleHTMLCategoryCard `json:"categories"`
+	Timeline   []diagnosticBundleHTMLTimelineItem `json:"timeline"`
+	KeySignals []diagnosticBundleHTMLSignalCard   `json:"key_signals"`
 	// Critical Findings：按严重级别排序的关键发现（来自巡检发现或错误/告警上下文）
 	Inspection *diagnosticBundleHTMLInspectionPanel `json:"inspection,omitempty"`
 	// Evidence：证据详情，按需展开
@@ -293,10 +298,39 @@ type diagnosticBundleHTMLPayload struct {
 }
 
 type diagnosticBundleHTMLHealthSummary struct {
-	Tone    string                           `json:"tone"`
-	Title   string                           `json:"title"`
-	Summary string                           `json:"summary"`
-	Metrics []diagnosticBundleHTMLMetricCard `json:"metrics"`
+	Tone          string                           `json:"tone"`
+	Title         string                           `json:"title"`
+	Summary       string                           `json:"summary"`
+	ClusterLabel  string                           `json:"cluster_label"`
+	WindowLabel   string                           `json:"window_label"`
+	ImpactSummary string                           `json:"impact_summary"`
+	PrimaryFocus  string                           `json:"primary_focus"`
+	LastSignalAt  string                           `json:"last_signal_at"`
+	Metrics       []diagnosticBundleHTMLMetricCard `json:"metrics"`
+}
+
+type diagnosticBundleHTMLFindingCard struct {
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	Title    string `json:"title"`
+	Summary  string `json:"summary"`
+	Impact   string `json:"impact"`
+	Action   string `json:"action"`
+}
+
+type diagnosticBundleHTMLCategoryCard struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+	Note  string `json:"note"`
+}
+
+type diagnosticBundleHTMLTimelineItem struct {
+	OccurredAt time.Time `json:"occurred_at"`
+	TimeLabel  string    `json:"time_label"`
+	Tone       string    `json:"tone"`
+	Title      string    `json:"title"`
+	Details    string    `json:"details"`
 }
 
 type diagnosticBundleHTMLTaskSummary struct {
@@ -326,11 +360,13 @@ type diagnosticBundleHTMLClusterSummary struct {
 }
 
 type diagnosticBundleHTMLClusterNode struct {
-	Role       string `json:"role"`
-	HostID     uint   `json:"host_id"`
-	InstallDir string `json:"install_dir"`
-	Status     string `json:"status"`
-	ProcessPID int    `json:"process_pid"`
+	ClusterNodeID uint   `json:"cluster_node_id"`
+	HostLabel     string `json:"host_label"`
+	Role          string `json:"role"`
+	HostID        uint   `json:"host_id"`
+	InstallDir    string `json:"install_dir"`
+	Status        string `json:"status"`
+	ProcessPID    int    `json:"process_pid"`
 }
 
 type diagnosticBundleHTMLInspectionPanel struct {
@@ -508,6 +544,23 @@ type diagnosticBundleHTMLMetricCard struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
 	Note  string `json:"note"`
+}
+
+type diagnosticBundleHTMLSignalCard struct {
+	Key            string                      `json:"key"`
+	Title          string                      `json:"title"`
+	Status         string                      `json:"status"`
+	Summary        string                      `json:"summary"`
+	ThresholdText  string                      `json:"threshold_text"`
+	Instance       string                      `json:"instance"`
+	LastValue      string                      `json:"last_value"`
+	PeakValue      string                      `json:"peak_value"`
+	PeakAt         string                      `json:"peak_at"`
+	Interpretation string                      `json:"interpretation"`
+	Threshold      float64                     `json:"threshold"`
+	Comparator     string                      `json:"comparator"`
+	Unit           string                      `json:"unit"`
+	Points         []diagnosticPrometheusPoint `json:"points"`
 }
 
 type diagnosticBundleHTMLAdvice struct {
@@ -738,22 +791,12 @@ func (s *Service) executeCollectErrorContextStep(ctx context.Context, task *Diag
 		EndAt:           window.End,
 		LookbackMinutes: window.LookbackMinutes,
 	}
-	if task.SourceRef.ErrorGroupID > 0 {
-		group, err := s.repo.GetErrorGroupByID(ctx, task.SourceRef.ErrorGroupID)
-		if err != nil {
-			return err
-		}
+	group, events, err := s.resolveDiagnosticErrorContext(ctx, task, window)
+	if err != nil {
+		return err
+	}
+	if group != nil {
 		state.ErrorGroup = group
-		events, _, err := s.repo.ListErrorEvents(ctx, &SeatunnelErrorEventFilter{
-			ErrorGroupID: group.ID,
-			StartTime:    timePtr(window.Start),
-			EndTime:      timePtr(window.End),
-			Page:         1,
-			PageSize:     100,
-		})
-		if err != nil {
-			return err
-		}
 		state.ErrorEvents = events
 		payload["error_group"] = group
 		payload["error_events"] = events
@@ -764,6 +807,45 @@ func (s *Service) executeCollectErrorContextStep(ctx context.Context, task *Diag
 		Format:   "json",
 		Status:   "created",
 	})
+}
+
+func (s *Service) resolveDiagnosticErrorContext(ctx context.Context, task *DiagnosticTask, window diagnosticCollectionWindow) (*SeatunnelErrorGroup, []*SeatunnelErrorEvent, error) {
+	if s == nil || s.repo == nil || task == nil {
+		return nil, nil, nil
+	}
+	groupID := task.SourceRef.ErrorGroupID
+	if groupID == 0 {
+		groups, _, err := s.repo.ListErrorGroups(ctx, &SeatunnelErrorGroupFilter{
+			ClusterID: task.ClusterID,
+			StartTime: timePtr(window.Start),
+			EndTime:   timePtr(window.End),
+			Page:      1,
+			PageSize:  1,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(groups) == 0 || groups[0] == nil {
+			return nil, nil, nil
+		}
+		groupID = groups[0].ID
+	}
+	group, err := s.repo.GetErrorGroupByID(ctx, groupID)
+	if err != nil {
+		return nil, nil, err
+	}
+	events, _, err := s.repo.ListErrorEvents(ctx, &SeatunnelErrorEventFilter{
+		ErrorGroupID: group.ID,
+		ClusterID:    task.ClusterID,
+		StartTime:    timePtr(window.Start),
+		EndTime:      timePtr(window.End),
+		Page:         1,
+		PageSize:     100,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return group, events, nil
 }
 
 func (s *Service) executeCollectProcessEventsStep(ctx context.Context, task *DiagnosticTask, step *DiagnosticTaskStep, state *diagnosticBundleExecutionState, bundleDir string) error {
@@ -1991,6 +2073,15 @@ func (s *Service) executeRenderHTMLSummaryStep(ctx context.Context, task *Diagno
 	}
 	payload := buildDiagnosticBundleHTMLPayload(task, state, bundleDir, append(cloneDiagnosticArtifacts(state.Artifacts), htmlArtifact))
 	tmpl, err := template.New("diagnostic-summary").Funcs(template.FuncMap{
+		"pair": func(zh, en string) template.HTML {
+			return renderDiagnosticLocalizedPair(zh, en)
+		},
+		"loc": func(value interface{}) template.HTML {
+			if value == nil {
+				return renderDiagnosticLocalizedText("-")
+			}
+			return renderDiagnosticLocalizedText(fmt.Sprint(value))
+		},
 		"formatTime": func(value interface{}) string {
 			switch typed := value.(type) {
 			case *time.Time:
@@ -2693,6 +2784,10 @@ func buildDiagnosticBundleHTMLPayload(task *DiagnosticTask, state *diagnosticBun
 		ArtifactGroups:     buildDiagnosticBundleHTMLArtifactGroups(bundleDir, artifacts),
 	}
 	payload.Health = buildDiagnosticBundleHTMLHealthSummary(task, state, artifacts)
+	payload.Findings = buildDiagnosticBundleHTMLFindingCards(task, state)
+	payload.Categories = buildDiagnosticBundleHTMLCategoryCards(task, state)
+	payload.Timeline = buildDiagnosticBundleHTMLTimeline(task, state)
+	payload.KeySignals = buildDiagnosticBundleHTMLSignalCards(state)
 	if state == nil {
 		payload.Recommendations = buildDiagnosticBundleHTMLRecommendations(task, state)
 		payload.PassedChecks = buildDiagnosticBundleHTMLPassedChecks(task, state, artifacts)
@@ -2746,7 +2841,7 @@ func buildDiagnosticBundleHTMLTraceItems(task *DiagnosticTask) []diagnosticBundl
 		return nil
 	}
 	items := []diagnosticBundleHTMLTraceItem{
-		{Label: bilingualText("触发来源", "Trigger Source"), Value: normalizeDiagnosticDisplayText(string(task.TriggerSource))},
+		{Label: bilingualText("触发方式", "How it was triggered"), Value: resolveDiagnosticTriggerSourceLabel(task.TriggerSource)},
 	}
 	if task.SourceRef.ErrorGroupID > 0 {
 		items = append(items, diagnosticBundleHTMLTraceItem{
@@ -2782,11 +2877,13 @@ func buildDiagnosticBundleHTMLClusterSummary(snapshot *cluster.Cluster) *diagnos
 	nodes := make([]diagnosticBundleHTMLClusterNode, 0, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
 		nodes = append(nodes, diagnosticBundleHTMLClusterNode{
-			Role:       normalizeDiagnosticDisplayText(string(node.Role)),
-			HostID:     node.HostID,
-			InstallDir: normalizeDiagnosticDisplayText(node.InstallDir),
-			Status:     normalizeDiagnosticDisplayText(string(node.Status)),
-			ProcessPID: node.ProcessPID,
+			ClusterNodeID: node.ID,
+			HostLabel:     fmt.Sprintf("Host #%d", node.HostID),
+			Role:          normalizeDiagnosticDisplayText(string(node.Role)),
+			HostID:        node.HostID,
+			InstallDir:    normalizeDiagnosticDisplayText(node.InstallDir),
+			Status:        normalizeDiagnosticDisplayText(string(node.Status)),
+			ProcessPID:    node.ProcessPID,
 		})
 	}
 	sort.SliceStable(nodes, func(i, j int) bool {
@@ -3088,37 +3185,43 @@ func buildDiagnosticBundleHTMLExecutionPanel(task *DiagnosticTask) diagnosticBun
 
 func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnosticBundleExecutionState, artifacts []*diagnosticBundleArtifact) diagnosticBundleHTMLHealthSummary {
 	summary := diagnosticBundleHTMLHealthSummary{
-		Tone:    "neutral",
-		Title:   "",
-		Summary: "",
-		Metrics: []diagnosticBundleHTMLMetricCard{},
+		Tone:          "neutral",
+		Title:         "",
+		Summary:       "",
+		ClusterLabel:  resolveDiagnosticClusterLabel(task, state),
+		WindowLabel:   resolveDiagnosticWindowLabel(task, state),
+		ImpactSummary: bilingualText("当前影响范围正在根据错误、巡检、告警与进程证据综合判断。", "Impact is summarized from errors, inspections, alerts and process evidence."),
+		PrimaryFocus:  bilingualText("继续查看关键发现与时间线。", "Continue with key findings and the timeline."),
+		LastSignalAt:  resolveDiagnosticLastSignalAt(state),
+		Metrics:       []diagnosticBundleHTMLMetricCard{},
 	}
+	riskTone := resolveDiagnosticRiskTone(task, state)
+	summary.Tone = riskTone
 
 	if state != nil && state.InspectionDetail != nil && state.InspectionDetail.Report != nil {
 		report := state.InspectionDetail.Report
 		// 按巡检结果给出一句话结论与语气
 		switch {
 		case report.Status == InspectionReportStatusFailed || report.CriticalCount > 0:
-			summary.Tone = "critical"
 			summary.Title = bilingualText("集群存在严重风险", "Cluster requires immediate attention")
 			summary.Summary = normalizeDiagnosticDisplayText(firstNonEmptyString(report.Summary, report.ErrorMessage))
 		case report.WarningCount > 0:
-			summary.Tone = "warning"
 			summary.Title = bilingualText("集群存在待排查问题", "Cluster has issues to investigate")
 			summary.Summary = normalizeDiagnosticDisplayText(report.Summary)
 		default:
-			summary.Tone = "healthy"
 			summary.Title = bilingualText("巡检未发现明显异常", "Inspection found no critical issue")
 			summary.Summary = normalizeDiagnosticDisplayText(report.Summary)
 		}
+		summary.ImpactSummary = bilingualText(
+			fmt.Sprintf("巡检窗口内共发现 %d 项异常（严重 %d / 告警 %d / 信息 %d）。", report.FindingTotal, report.CriticalCount, report.WarningCount, report.InfoCount),
+			fmt.Sprintf("%d findings were generated in the inspection window (%d critical / %d warning / %d info).", report.FindingTotal, report.CriticalCount, report.WarningCount, report.InfoCount),
+		)
+		summary.PrimaryFocus = buildDiagnosticPrimaryFocus(state)
 		// 仅保留与“时间范围 + 发现数”直接相关的少量指标
 		windowLabel := fmt.Sprintf("%d min", firstNonZeroInt(report.LookbackMinutes, defaultInspectionLookbackMinutes))
 		windowNote := ""
 		if state.WindowStart != nil && state.WindowEnd != nil {
-			windowNote = bilingualText(
-				fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTime(state.WindowStart), formatDiagnosticBundleTime(state.WindowEnd)),
-				fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTime(state.WindowStart), formatDiagnosticBundleTime(state.WindowEnd)),
-			)
+			windowNote = fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTime(state.WindowStart), formatDiagnosticBundleTime(state.WindowEnd))
 		}
 		summary.Metrics = append(summary.Metrics,
 			diagnosticBundleHTMLMetricCard{
@@ -3153,13 +3256,6 @@ func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnos
 		}
 	} else {
 		// 无巡检上下文时，仅给出非常简短的概览
-		clusterLabel := "-"
-		switch {
-		case state != nil && state.ClusterSnapshot != nil && strings.TrimSpace(state.ClusterSnapshot.Name) != "":
-			clusterLabel = state.ClusterSnapshot.Name
-		case task != nil && task.ClusterID > 0:
-			clusterLabel = fmt.Sprintf("#%d", task.ClusterID)
-		}
 		window := resolveDiagnosticCollectionWindow(task, nil)
 		if state != nil {
 			if state.WindowStart != nil && state.WindowEnd != nil {
@@ -3170,24 +3266,18 @@ func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnos
 				window.LookbackMinutes = state.LookbackMinutes
 			}
 		}
-		summary.Title = bilingualText("诊断报告已生成", "Diagnostic report generated")
-		summary.Summary = bilingualText(
-			"当前报告基于错误、告警与运行时信号生成，可结合下方证据详情排查问题。",
-			"This report aggregates errors, alerts and runtime signals for troubleshooting.",
-		)
+		summary.Title, summary.Summary = resolveDiagnosticHealthCopy(riskTone, state)
+		summary.PrimaryFocus = buildDiagnosticPrimaryFocus(state)
 		summary.Metrics = append(summary.Metrics,
 			diagnosticBundleHTMLMetricCard{
 				Label: bilingualText("集群", "Cluster"),
-				Value: clusterLabel,
+				Value: summary.ClusterLabel,
 				Note:  "",
 			},
 			diagnosticBundleHTMLMetricCard{
 				Label: bilingualText("时间范围", "Time Window"),
 				Value: fmt.Sprintf("%d min", window.LookbackMinutes),
-				Note: bilingualText(
-					fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(window.Start), formatDiagnosticBundleTimeValue(window.End)),
-					fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(window.Start), formatDiagnosticBundleTimeValue(window.End)),
-				),
+				Note:  fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(window.Start), formatDiagnosticBundleTimeValue(window.End)),
 			},
 		)
 		if state != nil && state.MetricsSnapshot != nil {
@@ -3208,6 +3298,228 @@ func buildDiagnosticBundleHTMLHealthSummary(task *DiagnosticTask, state *diagnos
 		}
 	}
 	return summary
+}
+
+func buildDiagnosticBundleHTMLFindingCards(task *DiagnosticTask, state *diagnosticBundleExecutionState) []diagnosticBundleHTMLFindingCard {
+	items := make([]diagnosticBundleHTMLFindingCard, 0, 5)
+	appendItem := func(item diagnosticBundleHTMLFindingCard) {
+		if strings.TrimSpace(item.Title) == "" {
+			return
+		}
+		item.Severity = normalizeDiagnosticDisplayText(item.Severity)
+		item.Category = normalizeDiagnosticDisplayText(item.Category)
+		item.Title = normalizeDiagnosticDisplayText(item.Title)
+		item.Summary = normalizeDiagnosticDisplayText(item.Summary)
+		item.Impact = normalizeDiagnosticDisplayText(item.Impact)
+		item.Action = normalizeDiagnosticDisplayText(item.Action)
+		items = append(items, item)
+	}
+
+	if state != nil && state.ErrorGroup != nil {
+		appendItem(diagnosticBundleHTMLFindingCard{
+			Severity: resolveDiagnosticRiskTone(task, state),
+			Category: resolveDiagnosticPrimaryCategory(state),
+			Title:    firstNonEmptyString(state.ErrorGroup.Title, state.ErrorGroup.ExceptionClass, bilingualText("错误上下文", "Error Context")),
+			Summary: bilingualText(
+				fmt.Sprintf("诊断窗口内累计出现 %d 次，最近一次发生在 %s。", state.ErrorGroup.OccurrenceCount, formatDiagnosticBundleTimeValue(state.ErrorGroup.LastSeenAt)),
+				fmt.Sprintf("%d occurrences were observed in this window, and the last one happened at %s.", state.ErrorGroup.OccurrenceCount, formatDiagnosticBundleTimeValue(state.ErrorGroup.LastSeenAt)),
+			),
+			Impact: buildDiagnosticFindingImpact(state),
+			Action: buildDiagnosticPrimaryFocus(state),
+		})
+	}
+
+	if state != nil && state.InspectionDetail != nil {
+		for _, finding := range state.InspectionDetail.Findings {
+			if finding == nil {
+				continue
+			}
+			appendItem(diagnosticBundleHTMLFindingCard{
+				Severity: strings.ToLower(strings.TrimSpace(string(finding.Severity))),
+				Category: mapInspectionFindingToDiagnosticCategory(finding),
+				Title:    firstNonEmptyString(finding.CheckName, finding.CheckCode),
+				Summary:  firstNonEmptyString(finding.Summary, finding.EvidenceSummary),
+				Impact: bilingualText(
+					fmt.Sprintf("影响范围：%s", resolveDiagnosticInspectionImpact(state.InspectionDetail.Report)),
+					fmt.Sprintf("Impact: %s", resolveDiagnosticInspectionImpact(state.InspectionDetail.Report)),
+				),
+				Action: firstNonEmptyString(finding.Recommendation, buildDiagnosticPrimaryFocus(state)),
+			})
+			if len(items) >= 3 {
+				break
+			}
+		}
+	}
+
+	if len(items) < 3 {
+		resourceSummary := buildDiagnosticResourceFinding(state)
+		if resourceSummary.Title != "" {
+			appendItem(resourceSummary)
+		}
+	}
+	if len(items) > 4 {
+		items = items[:4]
+	}
+	return items
+}
+
+func buildDiagnosticBundleHTMLCategoryCards(task *DiagnosticTask, state *diagnosticBundleExecutionState) []diagnosticBundleHTMLCategoryCard {
+	counts := map[string]int{
+		"dependency":    0,
+		"configuration": 0,
+		"resource":      0,
+		"process":       0,
+		"unknown":       0,
+	}
+	if state != nil {
+		primary := resolveDiagnosticPrimaryCategory(state)
+		if primary != "" {
+			counts[primary]++
+		}
+		if state.InspectionDetail != nil {
+			for _, finding := range state.InspectionDetail.Findings {
+				if finding == nil {
+					continue
+				}
+				counts[mapInspectionFindingToDiagnosticCategory(finding)]++
+			}
+		}
+		if state.MetricsSnapshot != nil {
+			for _, signal := range state.MetricsSnapshot.Signals {
+				if strings.EqualFold(strings.TrimSpace(signal.Status), "healthy") || strings.TrimSpace(signal.Status) == "" {
+					continue
+				}
+				if isDiagnosticResourceSignal(signal.Key) {
+					counts["resource"]++
+				}
+			}
+		}
+		if len(state.ProcessEvents) > 0 {
+			counts["process"]++
+		}
+	}
+	cards := []diagnosticBundleHTMLCategoryCard{
+		{Key: "dependency", Label: bilingualText("外部依赖", "Dependency"), Count: counts["dependency"], Note: bilingualText("连接超时、依赖不可达、DNS / 网络链路异常。", "Timeouts, dependency reachability and network resolution issues.")},
+		{Key: "configuration", Label: bilingualText("运行配置", "Configuration"), Count: counts["configuration"], Note: bilingualText("catalog / connector / 运行配置偏差。", "Catalog, connector and runtime configuration drift.")},
+		{Key: "resource", Label: bilingualText("资源信号", "Resource"), Count: counts["resource"], Note: bilingualText("CPU、Heap、Old Gen、GC、FD 等资源压力。", "CPU, Heap, Old Gen, GC, FD and related pressure.")},
+		{Key: "process", Label: bilingualText("进程恢复", "Process"), Count: counts["process"], Note: bilingualText("crashed、restart_failed、节点短暂离线。", "crashed, restart_failed and brief node offline events.")},
+		{Key: "unknown", Label: bilingualText("待确认", "Unknown"), Count: counts["unknown"], Note: bilingualText("证据不足或需要进一步补充采集。", "Evidence is still insufficient and needs more collection.")},
+	}
+	return cards
+}
+
+func buildDiagnosticBundleHTMLTimeline(task *DiagnosticTask, state *diagnosticBundleExecutionState) []diagnosticBundleHTMLTimelineItem {
+	items := make([]diagnosticBundleHTMLTimelineItem, 0, 16)
+	appendItem := func(at time.Time, tone, title, details string) {
+		if at.IsZero() || strings.TrimSpace(title) == "" {
+			return
+		}
+		items = append(items, diagnosticBundleHTMLTimelineItem{
+			OccurredAt: at.UTC(),
+			TimeLabel:  formatDiagnosticBundleTimeValue(at),
+			Tone:       normalizeDiagnosticDisplayText(tone),
+			Title:      normalizeDiagnosticDisplayText(title),
+			Details:    normalizeDiagnosticDisplayText(details),
+		})
+	}
+	if state != nil {
+		for _, event := range state.ErrorEvents {
+			if event == nil {
+				continue
+			}
+			appendItem(event.OccurredAt, resolveDiagnosticRiskTone(task, state), bilingualText("错误事件", "Error Event"), firstNonEmptyString(event.Message, event.Evidence))
+		}
+		for _, event := range state.ProcessEvents {
+			if event == nil {
+				continue
+			}
+			appendItem(event.CreatedAt, "warning", bilingualText("进程事件", "Process Event"), fmt.Sprintf("%s · %s", normalizeDiagnosticDisplayText(string(event.EventType)), normalizeDiagnosticDisplayText(event.Details)))
+		}
+		for _, alert := range state.AlertSnapshot {
+			if alert == nil {
+				continue
+			}
+			appendItem(alert.FiringAt, strings.ToLower(strings.TrimSpace(string(alert.Severity))), bilingualText("告警触发", "Alert Fired"), firstNonEmptyString(alert.AlertName, alert.Summary))
+		}
+		if state.MetricsSnapshot != nil {
+			for _, signal := range state.MetricsSnapshot.Signals {
+				if strings.EqualFold(strings.TrimSpace(signal.Status), "healthy") || len(signal.Series) == 0 {
+					continue
+				}
+				top := signal.Series[0]
+				if top.MaxAt == nil {
+					continue
+				}
+				appendItem(*top.MaxAt, signal.Status, bilingualText("指标峰值", "Metric Peak"), fmt.Sprintf("%s · %s", signal.Title, formatDiagnosticMetricValue(signal.Unit, top.MaxValue)))
+			}
+		}
+	}
+	if task != nil && task.StartedAt != nil && !task.StartedAt.IsZero() {
+		appendItem(*task.StartedAt, "neutral", bilingualText("开始采集", "Task Started"), normalizeDiagnosticDisplayText(task.Summary))
+	}
+	if task != nil && task.CompletedAt != nil && !task.CompletedAt.IsZero() {
+		appendItem(*task.CompletedAt, strings.ToLower(strings.TrimSpace(string(task.Status))), bilingualText("生成诊断报告", "Report Generated"), bilingualText("采集执行完成。", "Task execution completed."))
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].OccurredAt.Before(items[j].OccurredAt)
+	})
+	if len(items) > 12 {
+		items = items[len(items)-12:]
+	}
+	return items
+}
+
+func buildDiagnosticBundleHTMLSignalCards(state *diagnosticBundleExecutionState) []diagnosticBundleHTMLSignalCard {
+	if state == nil || state.MetricsSnapshot == nil || len(state.MetricsSnapshot.Signals) == 0 {
+		return []diagnosticBundleHTMLSignalCard{}
+	}
+	preferred := []string{"cpu_usage_high", "memory_usage_high", "old_gen_usage_high", "gc_time_ratio_high"}
+	byKey := make(map[string]diagnosticPrometheusSignal, len(state.MetricsSnapshot.Signals))
+	for _, signal := range state.MetricsSnapshot.Signals {
+		byKey[signal.Key] = signal
+	}
+	cards := make([]diagnosticBundleHTMLSignalCard, 0, 4)
+	for _, key := range preferred {
+		signal, ok := byKey[key]
+		if !ok {
+			continue
+		}
+		cards = append(cards, buildDiagnosticBundleHTMLSignalCard(signal))
+	}
+	if len(cards) == 0 {
+		for _, signal := range state.MetricsSnapshot.Signals {
+			cards = append(cards, buildDiagnosticBundleHTMLSignalCard(signal))
+			if len(cards) >= 4 {
+				break
+			}
+		}
+	}
+	return cards
+}
+
+func buildDiagnosticBundleHTMLSignalCard(signal diagnosticPrometheusSignal) diagnosticBundleHTMLSignalCard {
+	card := diagnosticBundleHTMLSignalCard{
+		Key:            signal.Key,
+		Title:          normalizeDiagnosticDisplayText(signal.Title),
+		Status:         normalizeDiagnosticDisplayText(signal.Status),
+		Summary:        normalizeDiagnosticDisplayText(signal.Summary),
+		ThresholdText:  normalizeDiagnosticDisplayText(signal.ThresholdText),
+		Interpretation: buildDiagnosticSignalInterpretation(signal),
+		Threshold:      signal.Threshold,
+		Comparator:     signal.Comparator,
+		Unit:           signal.Unit,
+		Points:         []diagnosticPrometheusPoint{},
+	}
+	if len(signal.Series) == 0 {
+		return card
+	}
+	series := signal.Series[0]
+	card.Instance = normalizeDiagnosticDisplayText(series.Instance)
+	card.LastValue = formatDiagnosticMetricValue(signal.Unit, series.LastValue)
+	card.PeakValue = formatDiagnosticMetricValue(signal.Unit, series.MaxValue)
+	card.PeakAt = formatDiagnosticBundleTime(series.MaxAt)
+	card.Points = append(card.Points, series.Points...)
+	return card
 }
 
 func buildDiagnosticBundleHTMLArtifactGroups(bundleDir string, artifacts []*diagnosticBundleArtifact) []diagnosticBundleHTMLArtifactGroup {
@@ -3266,6 +3578,326 @@ func buildDiagnosticBundleHTMLArtifactGroups(bundleDir string, artifacts []*diag
 		})
 	}
 	return result
+}
+
+func resolveDiagnosticClusterLabel(task *DiagnosticTask, state *diagnosticBundleExecutionState) string {
+	if state != nil && state.ClusterSnapshot != nil {
+		name := strings.TrimSpace(state.ClusterSnapshot.Name)
+		if name != "" {
+			return fmt.Sprintf("%s (#%d)", name, state.ClusterSnapshot.ID)
+		}
+		if state.ClusterSnapshot.ID > 0 {
+			return fmt.Sprintf("#%d", state.ClusterSnapshot.ID)
+		}
+	}
+	if task != nil && task.ClusterID > 0 {
+		return fmt.Sprintf("#%d", task.ClusterID)
+	}
+	return "-"
+}
+
+func resolveDiagnosticWindowLabel(task *DiagnosticTask, state *diagnosticBundleExecutionState) string {
+	window := resolveDiagnosticCollectionWindow(task, nil)
+	if state != nil && state.WindowStart != nil && state.WindowEnd != nil {
+		window.Start = state.WindowStart.UTC()
+		window.End = state.WindowEnd.UTC()
+	}
+	return fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(window.Start), formatDiagnosticBundleTimeValue(window.End))
+}
+
+func resolveDiagnosticRiskTone(task *DiagnosticTask, state *diagnosticBundleExecutionState) string {
+	if task != nil {
+		switch task.Status {
+		case DiagnosticTaskStatusFailed:
+			return "critical"
+		case DiagnosticTaskStatusRunning:
+			return "warning"
+		}
+	}
+	if state != nil {
+		if state.InspectionDetail != nil && state.InspectionDetail.Report != nil {
+			report := state.InspectionDetail.Report
+			if report.Status == InspectionReportStatusFailed || report.CriticalCount > 0 {
+				return "critical"
+			}
+			if report.WarningCount > 0 {
+				return "warning"
+			}
+		}
+		for _, event := range state.ProcessEvents {
+			if event == nil {
+				continue
+			}
+			switch event.EventType {
+			case monitor.EventTypeRestartFailed, monitor.EventTypeCrashed:
+				return "critical"
+			case monitor.EventTypeNodeOffline:
+				return "warning"
+			}
+		}
+		for _, signal := range state.MetricsSnapshot.Signals {
+			status := strings.ToLower(strings.TrimSpace(signal.Status))
+			if status == "critical" {
+				return "critical"
+			}
+			if status == "warning" {
+				return "warning"
+			}
+		}
+		if state.ErrorGroup != nil {
+			return "warning"
+		}
+	}
+	return "healthy"
+}
+
+func resolveDiagnosticHealthCopy(riskTone string, state *diagnosticBundleExecutionState) (string, string) {
+	primary := buildDiagnosticPrimaryFocus(state)
+	switch riskTone {
+	case "critical":
+		return bilingualText("当前问题已影响运行稳定性", "Current issue impacts runtime stability"), primary
+	case "warning":
+		return bilingualText("当前存在待定位异常信号", "There are anomaly signals to investigate"), primary
+	default:
+		return bilingualText("当前未见明显高风险信号", "No high-risk signal is visible in this window"),
+			bilingualText("当前报告主要用于复盘问题窗口内的关键证据。", "This report is mainly for reviewing evidence in the diagnostics window.")
+	}
+}
+
+func buildDiagnosticPrimaryFocus(state *diagnosticBundleExecutionState) string {
+	switch resolveDiagnosticPrimaryCategory(state) {
+	case "dependency":
+		return bilingualText("优先检查外部依赖连通性、DNS 解析与 connector / catalog 配置。", "Check dependency reachability, DNS resolution and connector/catalog settings first.")
+	case "configuration":
+		return bilingualText("优先核对最近配置变更与运行时配置是否一致。", "Compare recent config changes with runtime configs first.")
+	case "resource":
+		return bilingualText("优先检查资源曲线峰值、阈值命中时刻和是否存在持续高位。", "Review resource peaks, threshold breaches and sustained high usage first.")
+	case "process":
+		return bilingualText("优先检查 crashed / restart_failed 事件与启动脚本、依赖路径。", "Inspect crashed / restart_failed events together with startup scripts and dependency paths first.")
+	default:
+		return bilingualText("优先从关键发现与时间线中确认最早异常信号。", "Start from key findings and the timeline to identify the earliest anomaly.")
+	}
+}
+
+func resolveDiagnosticPrimaryCategory(state *diagnosticBundleExecutionState) string {
+	if state == nil {
+		return "unknown"
+	}
+	if state.ErrorGroup != nil {
+		text := strings.ToLower(strings.Join([]string{state.ErrorGroup.Title, state.ErrorGroup.SampleMessage, state.ErrorGroup.ExceptionClass}, " "))
+		switch {
+		case strings.Contains(text, "deadline_exceeded"),
+			strings.Contains(text, "connection"),
+			strings.Contains(text, "timeout"),
+			strings.Contains(text, "refused"),
+			strings.Contains(text, "dns"),
+			strings.Contains(text, "unknownhost"),
+			strings.Contains(text, "network"):
+			return "dependency"
+		case strings.Contains(text, "config"),
+			strings.Contains(text, "catalog initialize failed"),
+			strings.Contains(text, "plugin"),
+			strings.Contains(text, "connector"):
+			return "configuration"
+		}
+	}
+	for _, event := range state.ProcessEvents {
+		if event == nil {
+			continue
+		}
+		switch event.EventType {
+		case monitor.EventTypeRestartFailed, monitor.EventTypeCrashed, monitor.EventTypeNodeOffline:
+			return "process"
+		}
+	}
+	if state.MetricsSnapshot != nil {
+		for _, signal := range state.MetricsSnapshot.Signals {
+			if !strings.EqualFold(strings.TrimSpace(signal.Status), "healthy") && isDiagnosticResourceSignal(signal.Key) {
+				return "resource"
+			}
+		}
+	}
+	if state.InspectionDetail != nil {
+		for _, finding := range state.InspectionDetail.Findings {
+			if finding == nil {
+				continue
+			}
+			category := mapInspectionFindingToDiagnosticCategory(finding)
+			if category != "unknown" {
+				return category
+			}
+		}
+	}
+	return "unknown"
+}
+
+func mapInspectionFindingToDiagnosticCategory(finding *ClusterInspectionFindingInfo) string {
+	if finding == nil {
+		return "unknown"
+	}
+	text := strings.ToLower(strings.Join([]string{finding.CheckCode, finding.CheckName, finding.Summary, finding.Recommendation, finding.EvidenceSummary}, " "))
+	switch {
+	case strings.Contains(text, "error"),
+		strings.Contains(text, "dependency"),
+		strings.Contains(text, "timeout"),
+		strings.Contains(text, "connection"),
+		strings.Contains(text, "network"):
+		return "dependency"
+	case strings.Contains(text, "config"),
+		strings.Contains(text, "catalog"),
+		strings.Contains(text, "connector"),
+		strings.Contains(text, "plugin"):
+		return "configuration"
+	case strings.Contains(text, "cpu"),
+		strings.Contains(text, "heap"),
+		strings.Contains(text, "memory"),
+		strings.Contains(text, "gc"),
+		strings.Contains(text, "fd"):
+		return "resource"
+	case strings.Contains(text, "restart"),
+		strings.Contains(text, "offline"),
+		strings.Contains(text, "process"):
+		return "process"
+	default:
+		return "unknown"
+	}
+}
+
+func isDiagnosticResourceSignal(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "cpu_usage_high", "memory_usage_high", "fd_usage_high", "old_gen_usage_high", "gc_time_ratio_high":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildDiagnosticFindingImpact(state *diagnosticBundleExecutionState) string {
+	if state == nil {
+		return "-"
+	}
+	hostSet := make(map[string]struct{})
+	for _, event := range state.ErrorEvents {
+		if event == nil {
+			continue
+		}
+		hostSet[resolveDiagnosticHostLabel("", event.HostID, "")] = struct{}{}
+	}
+	for _, event := range state.ProcessEvents {
+		if event == nil {
+			continue
+		}
+		hostSet[resolveDiagnosticHostLabel("", event.HostID, "")] = struct{}{}
+	}
+	if len(hostSet) == 0 {
+		return bilingualText("影响范围待确认", "Impact scope needs confirmation")
+	}
+	labels := make([]string, 0, len(hostSet))
+	for label := range hostSet {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	return strings.Join(labels, ", ")
+}
+
+func resolveDiagnosticInspectionImpact(report *ClusterInspectionReportInfo) string {
+	if report == nil {
+		return bilingualText("待确认", "to be confirmed")
+	}
+	return bilingualText(
+		fmt.Sprintf("严重 %d / 告警 %d / 信息 %d", report.CriticalCount, report.WarningCount, report.InfoCount),
+		fmt.Sprintf("%d critical / %d warning / %d info", report.CriticalCount, report.WarningCount, report.InfoCount),
+	)
+}
+
+func buildDiagnosticResourceFinding(state *diagnosticBundleExecutionState) diagnosticBundleHTMLFindingCard {
+	if state == nil || state.MetricsSnapshot == nil {
+		return diagnosticBundleHTMLFindingCard{}
+	}
+	resourceSignals := make([]diagnosticPrometheusSignal, 0, 4)
+	for _, signal := range state.MetricsSnapshot.Signals {
+		if isDiagnosticResourceSignal(signal.Key) {
+			resourceSignals = append(resourceSignals, signal)
+		}
+	}
+	if len(resourceSignals) == 0 {
+		return diagnosticBundleHTMLFindingCard{}
+	}
+	abnormal := 0
+	for _, signal := range resourceSignals {
+		if strings.TrimSpace(signal.Status) != "" && !strings.EqualFold(signal.Status, "healthy") {
+			abnormal++
+		}
+	}
+	severity := "healthy"
+	summary := bilingualText("CPU、Heap、Old Gen 与 GC 未表现出持续高位。", "CPU, Heap, Old Gen and GC do not show a sustained high-usage pattern.")
+	if abnormal > 0 {
+		severity = "warning"
+		summary = bilingualText(
+			fmt.Sprintf("共有 %d 个资源类指标触达阈值，需要结合时间线继续判断。", abnormal),
+			fmt.Sprintf("%d resource-oriented signals breached the threshold and should be reviewed on the timeline.", abnormal),
+		)
+	}
+	return diagnosticBundleHTMLFindingCard{
+		Severity: severity,
+		Category: "resource",
+		Title:    bilingualText("资源侧信号总结", "Resource Signal Summary"),
+		Summary:  summary,
+		Impact:   bilingualText("覆盖 CPU / Heap / Old Gen / GC 等核心运行指标。", "Covers CPU, Heap, Old Gen and GC signals."),
+		Action:   buildDiagnosticSignalInterpretation(resourceSignals[0]),
+	}
+}
+
+func buildDiagnosticSignalInterpretation(signal diagnosticPrometheusSignal) string {
+	if len(signal.Series) == 0 {
+		return signal.Summary
+	}
+	top := signal.Series[0]
+	switch strings.ToLower(strings.TrimSpace(signal.Status)) {
+	case "critical", "warning":
+		return bilingualText(
+			fmt.Sprintf("峰值 %s，实例 %s 于 %s 命中阈值 %s。", formatDiagnosticMetricValue(signal.Unit, top.MaxValue), top.Instance, formatDiagnosticBundleTime(top.MaxAt), signal.ThresholdText),
+			fmt.Sprintf("Peak %s on %s at %s, breaching %s.", formatDiagnosticMetricValue(signal.Unit, top.MaxValue), top.Instance, formatDiagnosticBundleTime(top.MaxAt), signal.ThresholdText),
+		)
+	default:
+		return bilingualText(
+			fmt.Sprintf("最新值 %s，诊断窗口内未见持续阈值命中。", formatDiagnosticMetricValue(signal.Unit, top.LastValue)),
+			fmt.Sprintf("Latest value %s, with no sustained threshold breach in this window.", formatDiagnosticMetricValue(signal.Unit, top.LastValue)),
+		)
+	}
+}
+
+func resolveDiagnosticLastSignalAt(state *diagnosticBundleExecutionState) string {
+	var latest *time.Time
+	track := func(value *time.Time) {
+		if value == nil || value.IsZero() {
+			return
+		}
+		if latest == nil || latest.Before(value.UTC()) {
+			normalized := value.UTC()
+			latest = &normalized
+		}
+	}
+	if state != nil {
+		if state.ErrorGroup != nil {
+			track(&state.ErrorGroup.LastSeenAt)
+		}
+		for _, event := range state.ProcessEvents {
+			if event == nil {
+				continue
+			}
+			value := event.CreatedAt
+			track(&value)
+		}
+		for _, alert := range state.AlertSnapshot {
+			if alert == nil {
+				continue
+			}
+			value := alert.LastSeenAt
+			track(&value)
+		}
+	}
+	return formatDiagnosticBundleTime(latest)
 }
 
 func buildDiagnosticBundleHTMLRecommendations(task *DiagnosticTask, state *diagnosticBundleExecutionState) []diagnosticBundleHTMLAdvice {
@@ -3431,6 +4063,21 @@ func resolveDiagnosticArtifactCategoryLabel(category string) string {
 		return bilingualText("诊断报告", "Diagnostic Report")
 	default:
 		return normalizeDiagnosticDisplayText(category)
+	}
+}
+
+func resolveDiagnosticTriggerSourceLabel(source DiagnosticTaskSourceType) string {
+	switch source {
+	case DiagnosticTaskSourceManual:
+		return bilingualText("手动创建", "Manual")
+	case DiagnosticTaskSourceInspectionFinding:
+		return bilingualText("巡检发现触发", "Inspection Finding")
+	case DiagnosticTaskSourceErrorGroup:
+		return bilingualText("错误组触发", "Error Group")
+	case DiagnosticTaskSourceAlert:
+		return bilingualText("告警触发", "Alert")
+	default:
+		return normalizeDiagnosticDisplayText(string(source))
 	}
 }
 
@@ -4126,33 +4773,6 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       margin-top: 8px;
       line-height: 1.5;
     }
-    .report-nav {
-      position: sticky;
-      top: 12px;
-      z-index: 20;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      padding: 10px 12px;
-      border: 1px solid rgba(198,211,225,0.9);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.92);
-      backdrop-filter: blur(10px);
-    }
-    .report-nav a {
-      display: inline-flex;
-      align-items: center;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: #f8fbff;
-      color: #1e293b;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .report-nav a:hover {
-      background: #eef4ff;
-      text-decoration: none;
-    }
     .section {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -4331,26 +4951,38 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
     }
     .process-events-table th:first-child,
     .process-events-table td:first-child {
-      width: 168px;
-      min-width: 168px;
-      white-space: normal;
+      width: 188px;
+      min-width: 188px;
+      white-space: nowrap;
       overflow-wrap: normal;
-      word-break: keep-all;
+      word-break: normal;
     }
     .process-events-table th:nth-child(2),
     .process-events-table td:nth-child(2) {
-      width: 110px;
-      min-width: 110px;
+      width: 156px;
+      min-width: 156px;
+      white-space: nowrap;
     }
     .process-events-table th:nth-child(3),
     .process-events-table td:nth-child(3) {
-      width: 92px;
-      min-width: 92px;
+      width: 140px;
+      min-width: 140px;
     }
     .process-events-table th:nth-child(4),
     .process-events-table td:nth-child(4) {
-      width: 92px;
-      min-width: 92px;
+      width: 180px;
+      min-width: 180px;
+    }
+    .process-events-table th:nth-child(5),
+    .process-events-table td:nth-child(5) {
+      min-width: 420px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .process-events-table {
+      width: max-content;
+      min-width: 100%;
     }
     .metric-signals-table th {
       white-space: nowrap;
@@ -4463,6 +5095,52 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       word-break: break-word;
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     }
+    .copyable-block {
+      margin-top: 10px;
+    }
+    .copyable-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+    .copy-btn {
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .copy-btn:hover {
+      background: #dbeafe;
+    }
+    .copy-btn.copied {
+      background: #dcfce7;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+    .copy-btn.failed {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #b91c1c;
+    }
+    .copy-btn .label-copied,
+    .copy-btn .label-failed {
+      display: none;
+    }
+    .copy-btn.copied .label-copy,
+    .copy-btn.failed .label-copy {
+      display: none;
+    }
+    .copy-btn.copied .label-copied {
+      display: inline;
+    }
+    .copy-btn.failed .label-failed {
+      display: inline;
+    }
     details {
       border: 1px dashed var(--border);
       border-radius: 12px;
@@ -4514,12 +5192,390 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
     .metric-chart-label.threshold-label {
       text-anchor: end;
     }
+    .summary-grid,
+    .finding-grid,
+    .category-grid,
+    .signal-card-grid {
+      display: grid;
+      gap: 16px;
+    }
+    .summary-grid,
+    .category-grid {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .finding-grid,
+    .signal-card-grid {
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+    .finding-card,
+    .category-card,
+    .signal-card {
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 18px;
+      background: #fff;
+    }
+    .signal-card {
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }
+    .finding-meta,
+    .category-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .category-count {
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .timeline-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 176px 16px minmax(0, 1fr);
+      gap: 14px;
+    }
+    .timeline-time {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      padding-top: 2px;
+    }
+    .timeline-dot-wrap {
+      display: flex;
+      justify-content: center;
+    }
+    .timeline-dot {
+      margin-top: 6px;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+    .timeline-dot.tone-critical { background: #dc2626; }
+    .timeline-dot.tone-warning { background: #f59e0b; }
+    .timeline-dot.tone-healthy { background: #059669; }
+    .timeline-content {
+      min-width: 0;
+      padding-bottom: 12px;
+      border-bottom: 1px dashed #e2e8f0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .timeline-content:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .timeline-content .entry-title,
+    .timeline-content .muted {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .signal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .signal-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .signal-stat {
+      border-radius: 12px;
+      background: #f8fafc;
+      padding: 10px 12px;
+    }
+    .signal-stat .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .signal-stat .value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .report-shell {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+    .report-sidebar {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      min-height: calc(100vh - 40px);
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(14px);
+      padding: 20px 18px;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    }
+    .sidebar-brand {
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 16px;
+    }
+    .sidebar-brand .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+    .sidebar-brand .title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.35;
+    }
+    .lang-switch {
+      display: inline-flex;
+      gap: 8px;
+      margin: 16px 0 18px;
+      padding: 4px;
+      border-radius: 999px;
+      background: #eff6ff;
+      border: 1px solid #dbeafe;
+    }
+    .lang-btn {
+      border: 0;
+      background: transparent;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .lang-btn.active {
+      background: #ffffff;
+      color: #1d4ed8;
+      box-shadow: 0 6px 16px rgba(37,99,235,0.16);
+    }
+    .i18n-zh,
+    .i18n-en {
+      display: none;
+    }
+    html[data-report-lang="zh"] .i18n-zh {
+      display: inline;
+    }
+    html[data-report-lang="en"] .i18n-en {
+      display: inline;
+    }
+    .sidebar-meta {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .sidebar-meta-card {
+      border-radius: 16px;
+      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid #e2e8f0;
+      padding: 12px 14px;
+    }
+    .sidebar-meta-card .label {
+      font-size: 11px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .sidebar-meta-card .value {
+      margin-top: 6px;
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.5;
+    }
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1 1 auto;
+    }
+    .sidebar-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      text-decoration: none;
+      color: #334155;
+      border: 1px solid transparent;
+      border-radius: 16px;
+      padding: 12px 14px;
+      transition: all 0.18s ease;
+      background: transparent;
+    }
+    .sidebar-link:hover {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    .sidebar-link.active {
+      background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+      box-shadow: 0 8px 22px rgba(37,99,235,0.10);
+    }
+    .sidebar-link .meta {
+      min-width: 0;
+    }
+    .sidebar-link .title {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .sidebar-link .desc {
+      margin-top: 4px;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .sidebar-link .count {
+      flex-shrink: 0;
+      min-width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #0f172a;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 8px;
+    }
+    .sidebar-link.active .count {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+    .report-main {
+      min-width: 0;
+      min-height: calc(100vh - 40px);
+    }
+    .tab-page {
+      display: none;
+      min-width: 0;
+      min-height: calc(100vh - 40px);
+    }
+    .tab-page.active {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .tab-page.active > .section:last-child,
+    .tab-page.active > .hero:last-child {
+      flex: 1 1 auto;
+    }
+    .overview-drill-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+    .inner-tab-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 18px 0 20px;
+    }
+    .inner-tab-btn {
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .inner-tab-btn:hover {
+      background: #dbeafe;
+    }
+    .inner-tab-btn.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+      box-shadow: 0 10px 22px rgba(37,99,235,0.18);
+    }
+    .inner-tab-panel {
+      display: none;
+      min-width: 0;
+    }
+    .inner-tab-panel.active {
+      display: block;
+    }
+    .drill-card {
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: #fff;
+      padding: 18px;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    }
+    .drill-card:hover {
+      transform: translateY(-2px);
+      border-color: #bfdbfe;
+      box-shadow: 0 14px 30px rgba(37,99,235,0.10);
+    }
+    .drill-card .title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .drill-card .count {
+      margin-top: 12px;
+      font-size: 28px;
+      font-weight: 700;
+      color: #2563eb;
+      line-height: 1;
+    }
+    .drill-card .desc {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.6;
+    }
     .empty {
       border: 1px dashed var(--border);
       border-radius: 12px;
       padding: 18px;
       color: var(--muted);
       background: #fafcff;
+    }
+    @media (max-width: 1280px) {
+      .report-shell {
+        grid-template-columns: 1fr;
+      }
+      .report-sidebar {
+        position: static;
+        min-height: auto;
+      }
+      .report-main,
+      .tab-page {
+        min-height: auto;
+      }
+      .sidebar-nav {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
     }
     @media (max-width: 1120px) {
       .hero-grid,
@@ -4536,35 +5592,128 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       }
       .metric-grid,
       .stat-grid,
-      .artifact-meta {
+      .artifact-meta,
+      .signal-stats {
+        grid-template-columns: 1fr;
+      }
+      .timeline-item {
         grid-template-columns: 1fr;
       }
     }
-  </style>
+</style>
 </head>
 <body>
-  <div class="page">
+  <div class="page report-shell">
+    <aside class="report-sidebar">
+      <div class="sidebar-brand">
+        <div class="eyebrow">SeaTunnelX</div>
+        <div class="title">{{pair "诊断报告" "Diagnostic Report"}}</div>
+      </div>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-lang-button="zh">中文</button>
+        <button type="button" class="lang-btn" data-lang-button="en">EN</button>
+      </div>
+      <div class="sidebar-meta">
+        <div class="sidebar-meta-card">
+          <div class="label">{{pair "风险" "Risk"}}</div>
+          <div class="value">{{loc .Health.Tone}} · {{.Health.ClusterLabel}}</div>
+        </div>
+        <div class="sidebar-meta-card">
+          <div class="label">{{pair "时间范围" "Window"}}</div>
+          <div class="value">{{.Health.WindowLabel}}</div>
+        </div>
+        <div class="sidebar-meta-card">
+          <div class="label">{{pair "生成时间" "Generated"}}</div>
+          <div class="value">{{formatTime .GeneratedAt}}</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="sidebar-link active" data-tab-link="tab-overview" href="#tab-overview">
+          <div class="meta">
+            <div class="title">{{pair "总览" "Overview"}}</div>
+          </div>
+          <span class="count">1</span>
+        </a>
+        <a class="sidebar-link" data-tab-link="tab-findings" href="#tab-findings">
+          <div class="meta">
+            <div class="title">{{pair "关键发现" "Findings"}}</div>
+          </div>
+          <span class="count">{{len .Findings}}</span>
+        </a>
+        <a class="sidebar-link" data-tab-link="tab-timeline" href="#tab-timeline">
+          <div class="meta">
+            <div class="title">{{pair "时间线" "Timeline"}}</div>
+          </div>
+          <span class="count">{{len .Timeline}}</span>
+        </a>
+        <a class="sidebar-link" data-tab-link="tab-signals" href="#tab-signals">
+          <div class="meta">
+            <div class="title">{{pair "指标" "Signals"}}</div>
+          </div>
+          <span class="count">{{if .MetricsSnapshot}}{{.MetricsSnapshot.SignalCount}}{{else}}0{{end}}</span>
+        </a>
+        <a class="sidebar-link" data-tab-link="tab-evidence" href="#tab-evidence">
+          <div class="meta">
+            <div class="title">{{pair "相关证据" "Evidence"}}</div>
+          </div>
+          <span class="count">{{if .ErrorContext}}{{.ErrorContext.RecentEventCount}}{{else}}0{{end}}</span>
+        </a>
+        <a class="sidebar-link" data-tab-link="tab-appendix" href="#tab-appendix">
+          <div class="meta">
+            <div class="title">{{pair "更多信息" "More"}}</div>
+          </div>
+          <span class="count">{{len .TaskExecution.Steps}}</span>
+        </a>
+      </nav>
+    </aside>
+
+    <main class="report-main">
+    <div class="tab-page active" id="tab-overview" data-tab-page="tab-overview">
     <header class="hero">
       <div class="hero-grid">
         <div class="hero-main">
           <div class="hero-badges">
-            <span class="badge {{statusClass .Task.Status}}">{{.Task.Status}}</span>
-            <span class="badge {{statusClass .Health.Tone}}">{{.Health.Title}}</span>
-            <span class="badge">Task #{{.Task.ID}}</span>
-            <span class="badge">Generated {{formatTime .GeneratedAt}}</span>
+            <span class="badge {{statusClass .Health.Tone}}">{{loc .Health.Tone}}</span>
+            <span class="badge">{{.Health.ClusterLabel}}</span>
+            <span class="badge">{{.Health.WindowLabel}}</span>
           </div>
           <div class="hero-kicker">SeaTunnelX</div>
-          <h1 class="hero-title">诊断报告 / Diagnostic Report</h1>
-          <p class="hero-summary">{{.Health.Summary}}</p>
+          <h1 class="hero-title">{{pair "诊断报告" "Diagnostic Report"}}</h1>
+          <div class="muted small" style="margin-top: 10px;">{{pair "生成时间" "Generated"}} {{formatTime .GeneratedAt}}</div>
+          <h2 style="margin: 16px 0 0; font-size: 28px; line-height: 1.3; color: #0f172a;">{{loc .Health.Title}}</h2>
+          <p class="hero-summary">{{loc .Health.Summary}}</p>
+          <div class="summary-grid" style="margin-top: 24px;">
+            <div class="stat-card">
+              <div class="label">{{pair "影响范围" "Impact"}}</div>
+              <div class="value" style="font-size: 18px;">{{loc .Health.ImpactSummary}}</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">{{pair "优先排查" "Priority"}}</div>
+              <div class="value" style="font-size: 18px;">{{loc .Health.PrimaryFocus}}</div>
+            </div>
+          </div>
         </div>
         <aside class="hero-side {{toneClass .Health.Tone}}">
-          <div class="side-label">核心指标 / Key Signals</div>
+          <div class="side-label">{{pair "建议动作" "Suggested Actions"}}</div>
+          {{if .Recommendations}}
+          <div class="list">
+            {{range .Recommendations}}
+            <div class="entry" style="background: rgba(255,255,255,0.78);">
+              <div class="entry-title">{{loc .Title}}</div>
+              <div class="muted small" style="margin-top: 6px;">{{loc .Details}}</div>
+            </div>
+            {{end}}
+          </div>
+          {{else}}
+          <div class="empty">{{pair "当前没有额外建议，可直接查看关键发现与时间线。" "No extra advice is available for now."}}</div>
+          {{end}}
+          <div class="side-label" style="margin-top: 18px;">{{pair "核心指标" "Key Signals"}}</div>
           <div class="metric-grid">
             {{range .Health.Metrics}}
             <div class="metric-card">
-              <div class="label">{{.Label}}</div>
+              <div class="label">{{loc .Label}}</div>
               <div class="value">{{.Value}}</div>
-              {{if .Note}}<div class="note">{{.Note}}</div>{{end}}
+              {{if .Note}}<div class="note">{{loc .Note}}</div>{{end}}
             </div>
             {{end}}
           </div>
@@ -4572,120 +5721,196 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       </div>
     </header>
 
-    <nav class="report-nav">
-      <a href="#focus">摘要</a>
-      <a href="#findings">关键发现</a>
-      <a href="#evidence">证据详情</a>
-      <a href="#appendix">附录</a>
-    </nav>
-
     <section class="section" id="focus">
       <div class="section-heading">
         <div>
-          <h2>摘要 / Summary</h2>
-          <p class="section-lead">先看本次诊断的整体结论、影响范围和建议动作，再进入关键发现与证据详情。</p>
+          <h2>{{pair "结论摘要" "Executive Summary"}}</h2>
         </div>
       </div>
-      <div class="focus-grid">
-        <article class="focus-panel {{toneClass .Health.Tone}}">
-          <div class="focus-label">一句话结论 / Current Assessment</div>
-          <h3>{{.Health.Title}}</h3>
-          <p>{{.Health.Summary}}</p>
-          {{if .ErrorContext}}
-          <div class="panel-note">最近关联错误组：{{.ErrorContext.GroupTitle}}</div>
-          {{else if .Inspection}}
-          <div class="panel-note">本报告包含巡检上下文，可结合巡检发现确认问题影响范围。</div>
-          {{else}}
-          <div class="panel-note">当前报告主要依据任务执行证据与已收集产物生成。</div>
-          {{end}}
-        </article>
-
-        <article class="focus-panel">
-          <div class="focus-label">影响范围 / Impact Summary</div>
-          <p>
-            {{if .Inspection}}
-            巡检窗口：最近 {{.Inspection.LookbackMinutes}} 分钟；共发现 {{.Inspection.CriticalCount}} 严重 / {{.Inspection.WarningCount}} 告警 / {{.Inspection.InfoCount}} 信息。
-            {{else}}
-            当前影响范围以错误事件、告警快照和任务采集结果为准。
-            {{end}}
-          </p>
-        </article>
-
-        <article class="focus-panel">
-          <div class="focus-label">建议动作 / Recommended Next Step</div>
-          {{if .Recommendations}}
-          <ul class="list-clean">
-            {{range .Recommendations}}
-            <li>
-              <strong>{{.Title}}</strong>
-              <div class="muted small">{{.Details}}</div>
-            </li>
-            {{end}}
-          </ul>
-          {{else}}
-          <div class="empty">当前报告没有生成额外建议，请直接查看错误上下文与任务执行过程。 / No extra recommendations were generated for this report.</div>
-          {{end}}
-        </article>
+      <div class="inner-tab-toolbar">
+        <button type="button" class="inner-tab-btn active" data-inner-tab-group="overview" data-inner-tab-key="summary">{{pair "摘要" "Summary"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="overview" data-inner-tab-key="next">{{pair "继续查看" "Explore More"}}</button>
+      </div>
+      <div class="inner-tab-panel active" data-inner-tab-group="overview" data-inner-tab-key="summary">
+        <div class="summary-grid">
+          <article class="focus-panel {{toneClass .Health.Tone}}">
+            <div class="focus-label">{{pair "风险等级" "Risk Level"}}</div>
+            <h3>{{loc .Health.Tone}}</h3>
+            <p>{{loc .Health.Summary}}</p>
+          </article>
+          <article class="focus-panel">
+            <div class="focus-label">{{pair "核心现象" "Core Signals"}}</div>
+            <p>{{loc .Health.PrimaryFocus}}</p>
+            {{if .ErrorContext}}<div class="panel-note">{{pair "主要错误" "Top error"}}: {{.ErrorContext.GroupTitle}}</div>{{end}}
+          </article>
+          <article class="focus-panel">
+            <div class="focus-label">{{pair "影响范围" "Blast Radius"}}</div>
+            <p>{{loc .Health.ImpactSummary}}</p>
+            <div class="panel-note">{{.Health.WindowLabel}}</div>
+          </article>
+        </div>
+      </div>
+      <div class="inner-tab-panel" data-inner-tab-group="overview" data-inner-tab-key="next">
+        <div class="overview-drill-grid">
+          <a class="drill-card" href="#tab-findings">
+            <div class="title">{{pair "关键发现" "Findings"}}</div>
+            <div class="count">{{len .Findings}}</div>
+            <div class="desc">{{pair "查看最需要优先处理的问题和建议动作。" "Review the most urgent issues and next actions."}}</div>
+          </a>
+          <a class="drill-card" href="#tab-timeline">
+            <div class="title">{{pair "时间线" "Timeline"}}</div>
+            <div class="count">{{len .Timeline}}</div>
+            <div class="desc">{{pair "按时间查看异常、事件和峰值的先后关系。" "See the order of anomalies, events and peaks over time."}}</div>
+          </a>
+          <a class="drill-card" href="#tab-signals">
+            <div class="title">{{pair "指标" "Signals"}}</div>
+            <div class="count">{{if .MetricsSnapshot}}{{.MetricsSnapshot.SignalCount}}{{else}}0{{end}}</div>
+            <div class="desc">{{pair "查看关键指标和趋势变化。" "Inspect prioritized signals and their trends."}}</div>
+          </a>
+          <a class="drill-card" href="#tab-evidence">
+            <div class="title">{{pair "相关证据" "Evidence"}}</div>
+            <div class="count">{{if .ErrorContext}}{{.ErrorContext.RecentEventCount}}{{else}}0{{end}}</div>
+            <div class="desc">{{pair "查看日志、配置和运行时上下文。" "Open logs, config and runtime context."}}</div>
+          </a>
+        </div>
       </div>
     </section>
+    </div>
 
+    <div class="tab-page" id="tab-findings" data-tab-page="tab-findings">
     <section class="section" id="findings">
       <div class="section-heading">
         <div>
-          <h2>关键发现 / Critical Findings</h2>
-          <p class="section-lead">按严重程度优先展示本次诊断最值得先处理的问题。</p>
+          <h2>{{pair "关键发现" "Critical Findings"}}</h2>
         </div>
       </div>
-      {{if and .Inspection .Inspection.Findings}}
-      <div class="list">
-        {{range .Inspection.Findings}}
-        <div class="entry">
-          <div class="entry-header">
+      {{if .Findings}}
+      <div class="finding-grid">
+        {{range .Findings}}
+        <article class="finding-card">
+          <div class="finding-meta">
             <div>
-              <div class="entry-title">{{.CheckName}}</div>
-              <div class="muted small">{{.CheckCode}}</div>
+              <div class="entry-title">{{loc .Title}}</div>
+              <div class="muted small">{{loc .Category}}</div>
             </div>
-            <span class="badge {{statusClass .Severity}}">{{.Severity}}</span>
+            <span class="badge {{statusClass .Severity}}">{{loc .Severity}}</span>
           </div>
-          {{if .Summary}}<div>{{.Summary}}</div>{{end}}
-          {{if .Evidence}}<div class="muted small" style="margin-top: 6px;">{{.Evidence}}</div>{{end}}
-          {{if .Recommendation}}<div class="muted small" style="margin-top: 6px;">{{.Recommendation}}</div>{{end}}
-        </div>
+          <div>{{loc .Summary}}</div>
+          <div class="muted small" style="margin-top: 10px;">{{loc .Impact}}</div>
+          <div class="callout" style="margin-top: 12px;">{{loc .Action}}</div>
+        </article>
         {{end}}
       </div>
-      {{else if .ErrorContext}}
-      <div class="focus-grid">
-        <article class="focus-panel critical">
-          <div class="focus-label">错误组 / Error Group</div>
-          <h3>{{.ErrorContext.GroupTitle}}</h3>
-          <p>{{.ErrorContext.SampleMessage}}</p>
-          <div class="panel-note">最近窗口内事件数：{{.ErrorContext.RecentEventCount}}</div>
-        </article>
-      </div>
       {{else}}
-      <div class="empty">当前诊断窗口内没有生成结构化关键发现，请继续查看证据详情确认是否存在偶发问题。 / No structured critical findings were generated in this window.</div>
+      <div class="empty">{{pair "当前诊断窗口内没有生成结构化关键发现，请继续查看相关证据确认是否存在偶发问题。" "No structured findings were generated in this window. Continue with the evidence view if needed."}}</div>
       {{end}}
     </section>
+    </div>
 
+    <div class="tab-page" id="tab-timeline" data-tab-page="tab-timeline">
+    <section class="section" id="categories">
+      <div class="section-heading">
+        <div>
+          <h2>{{pair "根因分类" "Root Cause Categories"}}</h2>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="category-grid">
+          {{range .Categories}}
+          <article class="category-card">
+            <div class="category-meta">
+              <div class="entry-title">{{loc .Label}}</div>
+              <div class="category-count">{{.Count}}</div>
+            </div>
+            <div class="muted small">{{loc .Note}}</div>
+          </article>
+          {{end}}
+        </div>
+        <div class="detail-panel">
+          <div class="panel-label">{{pair "时间线" "Timeline"}}</div>
+          {{if .Timeline}}
+          <div class="timeline-list">
+            {{range .Timeline}}
+            <div class="timeline-item">
+              <div class="timeline-time">{{.TimeLabel}}</div>
+              <div class="timeline-dot-wrap"><span class="timeline-dot {{toneClass .Tone}}"></span></div>
+              <div class="timeline-content">
+                <div class="entry-title">{{loc .Title}}</div>
+                <div class="muted small" style="margin-top: 4px;">{{loc .Details}}</div>
+              </div>
+            </div>
+            {{end}}
+          </div>
+          {{else}}
+          <div class="empty">{{pair "当前没有可展示的时间线事件。" "No timeline events are available for this report."}}</div>
+          {{end}}
+        </div>
+      </div>
+    </section>
+    </div>
+
+    <div class="tab-page" id="tab-signals" data-tab-page="tab-signals">
+    <section class="section" id="signals">
+      <div class="section-heading">
+        <div>
+          <h2>{{pair "重点指标" "Key Signals"}}</h2>
+        </div>
+      </div>
+      {{if .KeySignals}}
+      <div class="signal-card-grid">
+        {{range .KeySignals}}
+        <article class="signal-card">
+          <div class="signal-head">
+            <div>
+              <div class="entry-title">{{loc .Title}}</div>
+              <div class="muted small">{{loc .ThresholdText}}</div>
+            </div>
+            <span class="badge {{statusClass .Status}}">{{loc .Status}}</span>
+          </div>
+          <div class="signal-stats">
+            <div class="signal-stat"><div class="label">{{pair "实例" "Instance"}}</div><div class="value">{{.Instance}}</div></div>
+            <div class="signal-stat"><div class="label">{{pair "峰值" "Peak"}}</div><div class="value">{{.PeakValue}}</div></div>
+            <div class="signal-stat"><div class="label">{{pair "最新值" "Last"}}</div><div class="value">{{.LastValue}}</div></div>
+          </div>
+          {{metricChartSVG .Points .Threshold .Comparator .Unit}}
+          <div class="muted small" style="margin-top: 12px;">{{pair "峰值时间" "Peak At"}} {{.PeakAt}}</div>
+          <div style="margin-top: 10px;">{{loc .Interpretation}}</div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="empty">{{pair "未采集到关键指标信号。" "No prioritized signals are available for this report."}}</div>
+      {{end}}
+    </section>
+    </div>
+
+    <div class="tab-page" id="tab-evidence" data-tab-page="tab-evidence">
     <section class="section" id="evidence">
       <div class="section-heading">
         <div>
-          <h2>证据详情 / Evidence Details</h2>
-          <p class="section-lead">这一部分用于回答“问题是什么、是否仍在发生、影响到了哪里”。</p>
+          <h2>{{pair "相关证据" "Evidence"}}</h2>
         </div>
       </div>
+      <div class="inner-tab-toolbar">
+        <button type="button" class="inner-tab-btn active" data-inner-tab-group="evidence" data-inner-tab-key="error">{{pair "错误" "Errors"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="evidence" data-inner-tab-key="inspection">{{pair "巡检" "Inspection"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="evidence" data-inner-tab-key="config">{{pair "配置" "Config"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="evidence" data-inner-tab-key="metrics">{{pair "指标" "Signals"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="evidence" data-inner-tab-key="alerts">{{pair "告警" "Alerts"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="evidence" data-inner-tab-key="process">{{pair "进程" "Process"}}</button>
+      </div>
 
-      <div class="grid-2">
+      <div class="inner-tab-panel active" data-inner-tab-group="evidence" data-inner-tab-key="error">
         <div class="detail-panel">
-          <div class="panel-label">错误上下文 / Error Context</div>
+          <div class="panel-label">{{pair "错误上下文" "Error Context"}}</div>
           {{if .ErrorContext}}
           <div class="dl">
-            <div class="dl-row"><div class="dl-term">错误组</div><div class="dl-value">{{.ErrorContext.GroupTitle}}</div></div>
-            <div class="dl-row"><div class="dl-term">异常类型</div><div class="dl-value">{{.ErrorContext.ExceptionClass}}</div></div>
-            <div class="dl-row"><div class="dl-term">累计次数</div><div class="dl-value">{{.ErrorContext.OccurrenceCount}}</div></div>
-            <div class="dl-row"><div class="dl-term">最近事件数</div><div class="dl-value">{{.ErrorContext.RecentEventCount}}</div></div>
-            <div class="dl-row"><div class="dl-term">首次出现</div><div class="dl-value">{{formatTime .ErrorContext.FirstSeenAt}}</div></div>
-            <div class="dl-row"><div class="dl-term">最近出现</div><div class="dl-value">{{formatTime .ErrorContext.LastSeenAt}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "错误组" "Error Group"}}</div><div class="dl-value">{{.ErrorContext.GroupTitle}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "异常类型" "Exception"}}</div><div class="dl-value">{{.ErrorContext.ExceptionClass}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "累计次数" "Occurrences"}}</div><div class="dl-value">{{.ErrorContext.OccurrenceCount}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "最近事件数" "Recent Events"}}</div><div class="dl-value">{{.ErrorContext.RecentEventCount}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "首次出现" "First Seen"}}</div><div class="dl-value">{{formatTime .ErrorContext.FirstSeenAt}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "最近出现" "Last Seen"}}</div><div class="dl-value">{{formatTime .ErrorContext.LastSeenAt}}</div></div>
           </div>
           <div class="callout critical">{{.ErrorContext.SampleMessage}}</div>
           {{if .ErrorContext.Events}}
@@ -4693,11 +5918,11 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
             <table>
               <thead>
                 <tr>
-                  <th>Occurred At</th>
-                  <th>Host</th>
-                  <th>Role</th>
-                  <th>Job ID</th>
-                  <th>Source File</th>
+                  <th>{{pair "发生时间" "Occurred At"}}</th>
+                  <th>{{pair "主机" "Host"}}</th>
+                  <th>{{pair "角色" "Role"}}</th>
+                  <th>{{pair "作业 ID" "Job ID"}}</th>
+                  <th>{{pair "来源文件" "Source File"}}</th>
                 </tr>
               </thead>
               <tbody>
@@ -4712,7 +5937,7 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
                 <tr>
                   <td colspan="5">
                     <div>{{.Message}}</div>
-                    {{if .Evidence}}<div class="muted small" style="margin-top: 6px;">{{.Evidence}}</div>{{end}}
+                    {{if .Evidence}}<div class="muted small wrap-text" style="margin-top: 6px;">{{.Evidence}}</div>{{end}}
                   </td>
                 </tr>
                 {{end}}
@@ -4722,7 +5947,7 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{end}}
           {{if .ErrorContext.LogSamples}}
           <div class="subsection">
-            <div class="subsection-label">原始错误日志预览 / Raw Error Log Preview</div>
+            <div class="subsection-label">{{pair "原始错误日志" "Raw Error Logs"}}</div>
             <div class="list">
               {{range .ErrorContext.LogSamples}}
               <div class="entry">
@@ -4733,61 +5958,72 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
                   </div>
                   <span class="badge">{{.WindowLabel}}</span>
                 </div>
-                <pre>{{.Content}}</pre>
+                <div class="copyable-block">
+                  <div class="copyable-actions">
+                    <button type="button" class="copy-btn" data-copy-button>
+                      <span class="label-copy">{{pair "复制内容" "Copy"}}</span>
+                      <span class="label-copied">{{pair "已复制" "Copied"}}</span>
+                      <span class="label-failed">{{pair "复制失败" "Copy failed"}}</span>
+                    </button>
+                  </div>
+                  <pre>{{.Content}}</pre>
+                </div>
               </div>
               {{end}}
             </div>
           </div>
           {{end}}
           {{else}}
-          <div class="empty">当前诊断报告未附带错误组上下文。 / No error-group context is attached to this report.</div>
-          {{end}}
-        </div>
-
-        <div class="detail-panel">
-          <div class="panel-label">巡检上下文 / Inspection Context</div>
-          {{if .Inspection}}
-          <div class="dl">
-            <div class="dl-row"><div class="dl-term">Summary</div><div class="dl-value">{{.Inspection.Summary}}</div></div>
-            <div class="dl-row"><div class="dl-term">Status</div><div class="dl-value"><span class="badge {{statusClass .Inspection.Status}}">{{.Inspection.Status}}</span></div></div>
-            <div class="dl-row"><div class="dl-term">Requested By</div><div class="dl-value">{{.Inspection.RequestedBy}}</div></div>
-            <div class="dl-row"><div class="dl-term">Lookback Window</div><div class="dl-value">{{.Inspection.LookbackMinutes}} min</div></div>
-            <div class="dl-row"><div class="dl-term">Started At</div><div class="dl-value">{{formatTime .Inspection.StartedAt}}</div></div>
-            <div class="dl-row"><div class="dl-term">Finished At</div><div class="dl-value">{{formatTime .Inspection.FinishedAt}}</div></div>
-          </div>
-          {{else}}
-          <div class="empty">当前诊断报告没有巡检详情上下文。 / No inspection context is attached to this report.</div>
+          <div class="empty">{{pair "当前诊断报告未附带错误组上下文。" "No error-group context is attached to this report."}}</div>
           {{end}}
         </div>
       </div>
 
-      <div class="grid-2" style="margin-top: 18px;">
+      <div class="inner-tab-panel" data-inner-tab-group="evidence" data-inner-tab-key="inspection">
         <div class="detail-panel">
-          <div class="panel-label">运行配置文件 / Runtime Config Files</div>
+          <div class="panel-label">{{pair "巡检上下文" "Inspection Context"}}</div>
+          {{if .Inspection}}
+          <div class="dl">
+            <div class="dl-row"><div class="dl-term">{{pair "摘要" "Summary"}}</div><div class="dl-value">{{loc .Inspection.Summary}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "状态" "Status"}}</div><div class="dl-value"><span class="badge {{statusClass .Inspection.Status}}">{{loc .Inspection.Status}}</span></div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "发起人" "Requested By"}}</div><div class="dl-value">{{.Inspection.RequestedBy}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "巡检时间范围" "Lookback Window"}}</div><div class="dl-value">{{.Inspection.LookbackMinutes}} {{pair "分钟" "min"}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "开始时间" "Started At"}}</div><div class="dl-value">{{formatTime .Inspection.StartedAt}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "完成时间" "Finished At"}}</div><div class="dl-value">{{formatTime .Inspection.FinishedAt}}</div></div>
+          </div>
+          {{else}}
+          <div class="empty">{{pair "当前诊断报告没有巡检详情上下文。" "No inspection context is attached to this report."}}</div>
+          {{end}}
+        </div>
+      </div>
+
+      <div class="inner-tab-panel" data-inner-tab-group="evidence" data-inner-tab-key="config">
+        <div class="detail-panel">
+          <div class="panel-label">{{pair "运行配置" "Runtime Config"}}</div>
           {{if .ConfigSnapshot}}
           <div class="stat-grid">
-            <div class="stat-card"><div class="label">Files</div><div class="value">{{.ConfigSnapshot.FileCount}}</div></div>
-            <div class="stat-card"><div class="label">Key Settings</div><div class="value">{{.ConfigSnapshot.KeyHighlightCount}}</div></div>
-            <div class="stat-card"><div class="label">Inventories</div><div class="value">{{.ConfigSnapshot.DirectoryCount}}</div></div>
-            <div class="stat-card"><div class="label">DB Changes</div><div class="value">{{.ConfigSnapshot.ChangedConfigCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "文件数" "Files"}}</div><div class="value">{{.ConfigSnapshot.FileCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "关键项" "Key Settings"}}</div><div class="value">{{.ConfigSnapshot.KeyHighlightCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "目录清单" "Inventories"}}</div><div class="value">{{.ConfigSnapshot.DirectoryCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "配置变更" "DB Changes"}}</div><div class="value">{{.ConfigSnapshot.ChangedConfigCount}}</div></div>
           </div>
           {{if .ConfigSnapshot.KeyHighlights}}
           <div class="subsection">
-            <div class="subsection-label">关键配置摘要 / Key Runtime Settings</div>
+            <div class="subsection-label">{{pair "关键配置摘要" "Key Runtime Settings"}}</div>
             <div class="list">
               {{range .ConfigSnapshot.KeyHighlights}}
               <div class="entry">
                 <div class="entry-header">
                   <div>
                     <div class="entry-title">{{.ConfigType}}</div>
-                    <div class="muted small">{{if .HostName}}{{.HostName}}{{else}}Host #{{.HostID}}{{end}} / {{.Role}}</div>
+                    <div class="muted small">{{if .HostName}}{{.HostName}}{{else}}{{pair "主机" "Host"}} #{{.HostID}}{{end}} / {{.Role}}</div>
                   </div>
                 </div>
                 <div class="muted small"><code class="inline">{{.RemotePath}}</code></div>
                 <div class="dl">
                   {{range .Items}}
                   <div class="dl-row">
-                    <div class="dl-term">{{.Label}}</div>
+                    <div class="dl-term">{{loc .Label}}</div>
                     <div class="dl-value">{{.Value}}</div>
                   </div>
                   {{end}}
@@ -4799,18 +6035,27 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{end}}
           {{if .ConfigSnapshot.FilePreviews}}
           <div class="subsection">
-            <div class="subsection-label">配置文件预览 / Runtime Config Preview</div>
+            <div class="subsection-label">{{pair "配置文件预览" "Config Preview"}}</div>
             <div class="list">
               {{range .ConfigSnapshot.FilePreviews}}
               <div class="entry">
                 <div class="entry-header">
                   <div>
                     <div class="entry-title">{{.ConfigType}}</div>
-                    <div class="muted small">{{if .HostName}}{{.HostName}}{{else}}Host #{{.HostID}}{{end}} / {{.Role}}</div>
+                    <div class="muted small">{{if .HostName}}{{.HostName}}{{else}}{{pair "主机" "Host"}} #{{.HostID}}{{end}} / {{.Role}}</div>
                   </div>
                 </div>
                 <div class="muted small"><code class="inline">{{.RemotePath}}</code></div>
-                <pre>{{.Preview}}</pre>
+                <div class="copyable-block">
+                  <div class="copyable-actions">
+                    <button type="button" class="copy-btn" data-copy-button>
+                      <span class="label-copy">{{pair "复制内容" "Copy"}}</span>
+                      <span class="label-copied">{{pair "已复制" "Copied"}}</span>
+                      <span class="label-failed">{{pair "复制失败" "Copy failed"}}</span>
+                    </button>
+                  </div>
+                  <pre>{{.Preview}}</pre>
+                </div>
               </div>
               {{end}}
             </div>
@@ -4818,14 +6063,14 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{end}}
           {{if .ConfigSnapshot.RecentChanges}}
           <div class="subsection">
-            <div class="subsection-label">窗口内变化轨迹 / Change Timeline</div>
+            <div class="subsection-label">{{pair "窗口内变化轨迹" "Change Timeline"}}</div>
             <div class="list">
               {{range .ConfigSnapshot.RecentChanges}}
               <div class="entry">
                 <div class="entry-header">
                   <div>
                     <div class="entry-title">{{.ConfigType}}</div>
-                    <div class="muted small">{{.HostScope}} · version {{.Version}}</div>
+                    <div class="muted small">{{.HostScope}} · {{pair "版本" "Version"}} {{.Version}}</div>
                   </div>
                   <span class="badge">{{formatTime .UpdatedAt}}</span>
                 </div>
@@ -4835,16 +6080,16 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
             </div>
             {{if .ConfigSnapshot.RemainingChanges}}
             <details style="margin-top: 12px;">
-              <summary>查看其余配置变更 / View remaining config changes ({{len .ConfigSnapshot.RemainingChanges}})</summary>
+              <summary>{{pair "查看其余配置变更" "View remaining config changes"}} ({{len .ConfigSnapshot.RemainingChanges}})</summary>
               <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Updated At</th>
-                      <th>Config Type</th>
-                      <th>Scope</th>
-                      <th>Version</th>
-                      <th>Path</th>
+                      <th>{{pair "更新时间" "Updated At"}}</th>
+                      <th>{{pair "配置类型" "Config Type"}}</th>
+                      <th>{{pair "范围" "Scope"}}</th>
+                      <th>{{pair "版本" "Version"}}</th>
+                      <th>{{pair "路径" "Path"}}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4867,23 +6112,23 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{if .ConfigSnapshot.Files}}
           <div class="subsection">
             <details>
-              <summary>查看原始运行配置文件清单 / View raw runtime config files</summary>
+              <summary>{{pair "查看原始运行配置文件清单" "View raw runtime config files"}}</summary>
               <div class="table-wrap">
                 <table class="metric-signals-table">
                   <thead>
                     <tr>
-                      <th>Host</th>
-                      <th>Role</th>
-                      <th>Type</th>
-                      <th>Remote Path</th>
-                      <th>Size</th>
-                      <th>Hash</th>
+                      <th>{{pair "主机" "Host"}}</th>
+                      <th>{{pair "角色" "Role"}}</th>
+                      <th>{{pair "类型" "Type"}}</th>
+                      <th>{{pair "远程路径" "Remote Path"}}</th>
+                      <th>{{pair "大小" "Size"}}</th>
+                      <th>{{pair "哈希" "Hash"}}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {{range .ConfigSnapshot.Files}}
                     <tr>
-                      <td>{{if .HostName}}{{.HostName}}{{else}}Host #{{.HostID}}{{end}}</td>
+                      <td>{{if .HostName}}{{.HostName}}{{else}}{{pair "主机" "Host"}} #{{.HostID}}{{end}}</td>
                       <td>{{.Role}}</td>
                       <td>{{.ConfigType}}</td>
                       <td><code class="inline">{{.RemotePath}}</code></td>
@@ -4900,23 +6145,23 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{if .ConfigSnapshot.DirectoryManifests}}
           <div class="subsection">
             <details>
-              <summary>查看目录清单（配置 / 依赖 / 连接器） / View directory inventories</summary>
+              <summary>{{pair "目录清单（配置 / 依赖 / 连接器）" "Directory inventories"}}</summary>
               <div class="list" style="margin-top: 12px;">
                 {{range .ConfigSnapshot.DirectoryManifests}}
                 <div class="entry">
                   <div class="entry-header">
                     <div class="entry-title">{{.Directory}}</div>
-                    <span class="badge">{{.EntryCount}} entries</span>
+                    <span class="badge">{{.EntryCount}} {{pair "项" "entries"}}</span>
                   </div>
-                  <div class="muted small">Host #{{.HostID}} / {{.Role}}</div>
+                  <div class="muted small">{{pair "主机" "Host"}} #{{.HostID}} / {{.Role}}</div>
                   <div class="table-wrap" style="margin-top: 10px;">
                     <table>
                       <thead>
                         <tr>
-                          <th>Name</th>
-                          <th>Path</th>
-                          <th>Size</th>
-                          <th>Modified</th>
+                          <th>{{pair "名称" "Name"}}</th>
+                          <th>{{pair "路径" "Path"}}</th>
+                          <th>{{pair "大小" "Size"}}</th>
+                          <th>{{pair "修改时间" "Modified"}}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -4940,18 +6185,18 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{if .ConfigSnapshot.CollectionNotes}}
           <div class="subsection">
             <details>
-              <summary>查看采集备注 / View collection notes</summary>
+              <summary>{{pair "查看采集备注" "View collection notes"}}</summary>
               <div class="list" style="margin-top: 12px;">
                 {{range .ConfigSnapshot.CollectionNotes}}
                 <div class="entry">
                   <div class="entry-header">
-                    <div class="entry-title">{{if .ConfigType}}{{.ConfigType}}{{else}}note{{end}}</div>
-                    <span class="badge">{{if .Role}}{{.Role}}{{else}}system{{end}}</span>
+                    <div class="entry-title">{{if .ConfigType}}{{.ConfigType}}{{else}}{{pair "备注" "Note"}}{{end}}</div>
+                    <span class="badge">{{if .Role}}{{.Role}}{{else}}{{pair "系统" "System"}}{{end}}</span>
                   </div>
                   <div class="muted small">
-                    {{if .HostID}}Host #{{.HostID}}{{else}}Cluster scope{{end}}
+                    {{if .HostID}}{{pair "主机" "Host"}} #{{.HostID}}{{else}}{{pair "集群范围" "Cluster scope"}}{{end}}
                   </div>
-                  <div style="margin-top: 6px;">{{.Message}}</div>
+                  <div style="margin-top: 6px;">{{loc .Message}}</div>
                 </div>
                 {{end}}
               </div>
@@ -4959,90 +6204,67 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           </div>
           {{end}}
           {{else}}
-          <div class="empty">未采集到 SeaTunnel 运行配置文件。 / No runtime config files were collected.</div>
+          <div class="empty">{{pair "未采集到 SeaTunnel 运行配置文件。" "No runtime config files were collected."}}</div>
           {{end}}
         </div>
+      </div>
 
+      <div class="inner-tab-panel" data-inner-tab-group="evidence" data-inner-tab-key="metrics">
         <div class="detail-panel">
-          <div class="panel-label">Prometheus 指标快照 / Prometheus Metric Snapshot</div>
+          <div class="panel-label">{{pair "更多指标" "More Signals"}}</div>
           {{if .MetricsSnapshot}}
           <div class="stat-grid">
-            <div class="stat-card"><div class="label">Signals</div><div class="value">{{.MetricsSnapshot.SignalCount}}</div></div>
-            <div class="stat-card"><div class="label">Anomalies</div><div class="value">{{.MetricsSnapshot.AnomalyCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "指标数" "Signals"}}</div><div class="value">{{.MetricsSnapshot.SignalCount}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "异常数" "Anomalies"}}</div><div class="value">{{.MetricsSnapshot.AnomalyCount}}</div></div>
           </div>
           {{if .MetricsSnapshot.CollectionNotes}}
           <div class="subsection">
-            <div class="subsection-label">采集备注 / Collection Notes</div>
+            <div class="subsection-label">{{pair "采集备注" "Collection Notes"}}</div>
             <div class="list">
               {{range .MetricsSnapshot.CollectionNotes}}
               <div class="entry">
-                <div>{{.}}</div>
+                <div>{{loc .}}</div>
               </div>
               {{end}}
             </div>
           </div>
           {{end}}
-          <div class="subsection">
-            <div class="subsection-label">优先关注指标 / Prioritized Signals</div>
-            <div class="list">
-            {{range .MetricsSnapshot.HighlightedSignals}}
-            <div class="entry">
-              <div class="entry-header">
-                <div>
-                  <div class="entry-title">{{.Title}}</div>
-                  <div class="muted small">{{.ThresholdText}}</div>
-                </div>
-                <span class="badge {{statusClass .Status}}">{{.Status}}</span>
-              </div>
-              <div>{{.Summary}}</div>
-              {{if .Series}}
-              {{$unit := .Unit}}
-              {{$threshold := .Threshold}}
-              {{$comparator := .Comparator}}
-              <div class="table-wrap" style="margin-top: 10px;">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Instance</th>
-                      <th>Curve</th>
-                      <th>Peak</th>
-                      <th>Last</th>
-                      <th>Samples</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {{range .Series}}
-                    <tr>
-                      <td>{{.Instance}}</td>
-                      <td>{{metricChartSVG .Points $threshold $comparator $unit}}</td>
-                      <td>{{formatMetricValue $unit .MaxValue}}<div class="muted small">{{formatTime .MaxAt}}</div></td>
-                      <td>{{formatMetricValue $unit .LastValue}}</td>
-                      <td>{{.Samples}}</td>
-                    </tr>
-                    {{end}}
-                  </tbody>
-                </table>
-              </div>
-              {{end}}
-            </div>
-            {{end}}
-            </div>
-          </div>
           {{if .MetricsSnapshot.AdditionalSignals}}
           <div class="subsection">
             <details>
-              <summary>查看其余指标信号 / View remaining signals ({{len .MetricsSnapshot.AdditionalSignals}})</summary>
+              <summary>{{pair "查看其余指标" "View remaining signals"}} ({{len .MetricsSnapshot.AdditionalSignals}})</summary>
               <div class="list" style="margin-top: 12px;">
                 {{range .MetricsSnapshot.AdditionalSignals}}
                 <div class="entry">
                   <div class="entry-header">
                     <div>
-                      <div class="entry-title">{{.Title}}</div>
-                      <div class="muted small">{{.ThresholdText}}</div>
+                      <div class="entry-title">{{loc .Title}}</div>
+                      <div class="muted small">{{loc .ThresholdText}}</div>
                     </div>
-                    <span class="badge {{statusClass .Status}}">{{.Status}}</span>
+                    <span class="badge {{statusClass .Status}}">{{loc .Status}}</span>
                   </div>
-                  <div>{{.Summary}}</div>
+                  <div>{{loc .Summary}}</div>
+                </div>
+                {{end}}
+              </div>
+            </details>
+          </div>
+          {{end}}
+          {{if and (not .MetricsSnapshot.AdditionalSignals) .MetricsSnapshot.HighlightedSignals}}
+          <div class="subsection">
+            <details>
+              <summary>{{pair "查看原始重点指标摘要" "View raw prioritized signal summaries"}} ({{len .MetricsSnapshot.HighlightedSignals}})</summary>
+              <div class="list" style="margin-top: 12px;">
+                {{range .MetricsSnapshot.HighlightedSignals}}
+                <div class="entry">
+                  <div class="entry-header">
+                    <div>
+                      <div class="entry-title">{{loc .Title}}</div>
+                      <div class="muted small">{{loc .ThresholdText}}</div>
+                    </div>
+                    <span class="badge {{statusClass .Status}}">{{loc .Status}}</span>
+                  </div>
+                  <div>{{loc .Summary}}</div>
                 </div>
                 {{end}}
               </div>
@@ -5050,310 +6272,423 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           </div>
           {{end}}
           {{else}}
-          <div class="empty">未采集到 Prometheus 指标快照。 / No Prometheus metrics snapshot was collected.</div>
+          <div class="empty">{{pair "未采集到 Prometheus 指标快照。" "No Prometheus metrics snapshot was collected."}}</div>
           {{end}}
         </div>
       </div>
-    </section>
 
-    <section class="section" id="operations">
-      <div class="section-heading">
-        <div>
-          <h2>附录：告警与进程 / Appendix: Alerts & Process Signals</h2>
-          <p class="section-lead">这部分主要用于补充当时的告警态势和进程事件，优先级低于错误、配置和指标本身。</p>
-        </div>
-      </div>
-      <div class="detail-columns">
+      <div class="inner-tab-panel" data-inner-tab-group="evidence" data-inner-tab-key="alerts">
         <div class="detail-panel">
-          <div class="panel-label">告警快照 / Alert Snapshot</div>
+          <div class="panel-label">{{pair "告警快照" "Alert Snapshot"}}</div>
           {{if .AlertSnapshot}}
           <div class="stat-grid">
-            <div class="stat-card"><div class="label">Total Alerts</div><div class="value">{{.AlertSnapshot.Total}}</div></div>
-            <div class="stat-card"><div class="label">Critical</div><div class="value">{{.AlertSnapshot.Critical}}</div></div>
-            <div class="stat-card"><div class="label">Warning</div><div class="value">{{.AlertSnapshot.Warning}}</div></div>
-            <div class="stat-card"><div class="label">Firing</div><div class="value">{{.AlertSnapshot.Firing}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "告警总数" "Total Alerts"}}</div><div class="value">{{.AlertSnapshot.Total}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "严重" "Critical"}}</div><div class="value">{{.AlertSnapshot.Critical}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "警告" "Warning"}}</div><div class="value">{{.AlertSnapshot.Warning}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "告警中" "Firing"}}</div><div class="value">{{.AlertSnapshot.Firing}}</div></div>
           </div>
           <div class="dl" style="margin-top: 14px;">
-            <div class="dl-row"><div class="dl-term">首次告警 / First Seen</div><div class="dl-value">{{.AlertSnapshot.FirstSeenAt}}</div></div>
-            <div class="dl-row"><div class="dl-term">最近告警 / Last Seen</div><div class="dl-value">{{.AlertSnapshot.LastSeenAt}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "首次告警" "First Seen"}}</div><div class="dl-value">{{.AlertSnapshot.FirstSeenAt}}</div></div>
+            <div class="dl-row"><div class="dl-term">{{pair "最近告警" "Last Seen"}}</div><div class="dl-value">{{.AlertSnapshot.LastSeenAt}}</div></div>
           </div>
           <div class="subsection">
-            <div class="subsection-label">告警明细 / Alert Details</div>
+            <div class="subsection-label">{{pair "告警明细" "Alert Details"}}</div>
             <div class="list">
               {{range .AlertSnapshot.Alerts}}
               <div class="entry">
                 <div class="entry-header">
                   <div>
                     <div class="entry-title">{{.Name}}</div>
-                    <div class="muted small wrap-text">Created {{.CreatedAt}} · Firing {{.FiringAt}} · Last Seen {{.LastSeenAt}}</div>
+                    <div class="muted small wrap-text">{{pair "创建于" "Created"}} {{.CreatedAt}} · {{pair "告警于" "Firing"}} {{.FiringAt}} · {{pair "最近出现" "Last Seen"}} {{.LastSeenAt}}</div>
                   </div>
                   <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <span class="badge {{statusClass .Severity}}">{{.Severity}}</span>
-                    <span class="badge {{statusClass .Status}}">{{.Status}}</span>
+                    <span class="badge {{statusClass .Severity}}">{{loc .Severity}}</span>
+                    <span class="badge {{statusClass .Status}}">{{loc .Status}}</span>
                   </div>
                 </div>
-                {{if ne .ResolvedAt "-"}}<div class="muted small wrap-text">Resolved {{.ResolvedAt}}</div>{{end}}
-                {{if .Summary}}<div style="margin-top: 8px;">{{.Summary}}</div>{{end}}
-                {{if .Description}}<div class="muted wrap-text" style="margin-top: 8px;">{{.Description}}</div>{{end}}
+                {{if ne .ResolvedAt "-"}}<div class="muted small wrap-text">{{pair "恢复于" "Resolved"}} {{.ResolvedAt}}</div>{{end}}
+                {{if .Summary}}<div style="margin-top: 8px;">{{loc .Summary}}</div>{{end}}
+                {{if .Description}}<div class="muted wrap-text" style="margin-top: 8px;">{{loc .Description}}</div>{{end}}
               </div>
               {{end}}
             </div>
           </div>
           {{else}}
-          <div class="empty">未采集到活动告警。 / No alert snapshot was collected.</div>
+          <div class="empty">{{pair "未采集到活动告警。" "No alert snapshot was collected."}}</div>
           {{end}}
         </div>
+      </div>
 
+      <div class="inner-tab-panel" data-inner-tab-group="evidence" data-inner-tab-key="process">
         <div class="detail-panel">
-          <div class="panel-label">进程信号 / Process Signals</div>
+          <div class="panel-label">{{pair "进程信号" "Process Signals"}}</div>
           {{if .ProcessEvents}}
           <div class="stat-grid">
-            <div class="stat-card"><div class="label">Total Events</div><div class="value">{{.ProcessEvents.Total}}</div></div>
+            <div class="stat-card"><div class="label">{{pair "事件总数" "Total Events"}}</div><div class="value">{{.ProcessEvents.Total}}</div></div>
             {{range .ProcessEvents.ByType}}
-            <div class="stat-card"><div class="label">{{.Label}}</div><div class="value">{{.Value}}</div></div>
+            <div class="stat-card"><div class="label">{{loc .Label}}</div><div class="value">{{.Value}}</div></div>
             {{end}}
           </div>
           <div class="table-wrap" style="margin-top: 14px;">
             <table class="process-events-table">
               <thead>
                 <tr>
-                  <th>Created At</th>
-                  <th>Event Type</th>
-                  <th>Process</th>
-                  <th>Node</th>
-                  <th>Details</th>
+                  <th>{{pair "发生时间" "Created At"}}</th>
+                  <th>{{pair "事件类型" "Event Type"}}</th>
+                  <th>{{pair "进程" "Process"}}</th>
+                  <th>{{pair "节点" "Node"}}</th>
+                  <th>{{pair "详情" "Details"}}</th>
                 </tr>
               </thead>
               <tbody>
                 {{range .ProcessEvents.Events}}
                 <tr>
                   <td>{{.CreatedAt}}</td>
-                  <td>{{.EventType}}</td>
+                  <td>{{loc .EventType}}</td>
                   <td>{{.ProcessName}}</td>
                   <td>{{.NodeLabel}}</td>
-                  <td>{{.Details}}</td>
+                  <td>{{loc .Details}}</td>
                 </tr>
                 {{end}}
               </tbody>
             </table>
           </div>
           {{else}}
-          <div class="empty">未采集到近期进程事件。 / No process events were collected.</div>
+          <div class="empty">{{pair "未采集到近期进程事件。" "No process events were collected."}}</div>
           {{end}}
         </div>
       </div>
     </section>
+    </div>
 
-    <section class="section" id="overview">
+    <div class="tab-page" id="tab-appendix" data-tab-page="tab-appendix">
+    <section class="section" id="task-overview">
       <div class="section-heading">
         <div>
-          <h2>附录：任务概览 / Appendix: Task Overview</h2>
-          <p class="section-lead">这部分主要用于补充报告来源、采集选项和目标节点，排查时按需查看即可。</p>
+          <h2>{{pair "更多信息" "More"}}</h2>
         </div>
       </div>
-
-      <div class="detail-columns">
-        <div class="detail-panel">
-          <div class="panel-label">任务信息 / Task Metadata</div>
-          <div class="dl">
-            <div class="dl-row"><div class="dl-term">任务摘要 / Summary</div><div class="dl-value">{{.Task.Summary}}</div></div>
-            <div class="dl-row"><div class="dl-term">创建人 / Created By</div><div class="dl-value">{{.Task.CreatedBy}}</div></div>
-            <div class="dl-row"><div class="dl-term">开始时间 / Started At</div><div class="dl-value">{{formatTime .Task.StartedAt}}</div></div>
-            <div class="dl-row"><div class="dl-term">完成时间 / Completed At</div><div class="dl-value">{{formatTime .Task.CompletedAt}}</div></div>
-            <div class="dl-row"><div class="dl-term">诊断包目录 / Bundle Dir</div><div class="dl-value"><code class="inline">{{.Task.BundleDir}}</code></div></div>
-            <div class="dl-row"><div class="dl-term">Manifest</div><div class="dl-value"><code class="inline">{{.Task.ManifestPath}}</code></div></div>
-            <div class="dl-row"><div class="dl-term">Report Index</div><div class="dl-value"><code class="inline">{{.Task.IndexPath}}</code></div></div>
-          </div>
-        </div>
-
-        <div class="detail-panel">
-          <div class="panel-label">来源与选项 / Source & Options</div>
-          <div class="dl">
-            {{range .SourceTraceability}}
-            <div class="dl-row"><div class="dl-term">{{.Label}}</div><div class="dl-value">{{.Value}}</div></div>
-            {{end}}
-            <div class="dl-row"><div class="dl-term">Thread Dump</div><div class="dl-value">{{if .Task.Options.IncludeThreadDump}}Enabled{{else}}Disabled{{end}}</div></div>
-            <div class="dl-row"><div class="dl-term">JVM Dump</div><div class="dl-value">{{if .Task.Options.IncludeJVMDump}}Enabled{{else}}Disabled{{end}}</div></div>
-            <div class="dl-row"><div class="dl-term">Min Free Space for JVM Dump</div><div class="dl-value">{{.Task.Options.JVMDumpMinFreeMB}} MB</div></div>
-          </div>
-        </div>
+      <div class="inner-tab-toolbar">
+        <button type="button" class="inner-tab-btn active" data-inner-tab-group="appendix" data-inner-tab-key="task">{{pair "任务" "Task"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="appendix" data-inner-tab-key="execution">{{pair "执行" "Execution"}}</button>
+        <button type="button" class="inner-tab-btn" data-inner-tab-group="appendix" data-inner-tab-key="cluster">{{pair "集群" "Cluster"}}</button>
       </div>
 
-      <div class="detail-columns" style="margin-top: 18px;">
-        <div class="detail-panel">
-          <div class="panel-label">目标节点 / Selected Nodes</div>
-          {{if .Task.SelectedNodes}}
-          <div class="table-wrap" style="margin-top: 0;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host</th>
-                  <th>Role</th>
-                  <th>Cluster Node</th>
-                  <th>Install Dir</th>
-                </tr>
-              </thead>
-              <tbody>
-                {{range .Task.SelectedNodes}}
-                <tr>
-                  <td>{{.HostLabel}}</td>
-                  <td>{{.Role}}</td>
-                  <td>{{.ClusterNode}}</td>
-                  <td><code class="inline">{{.InstallDir}}</code></td>
-                </tr>
-                {{end}}
-              </tbody>
-            </table>
-          </div>
-          {{else}}
-          <div class="empty">No selected nodes recorded.</div>
-          {{end}}
-        </div>
-
-        <div class="detail-panel">
-          <div class="panel-label">已确认正常 / Confirmed Normal</div>
-          {{if .PassedChecks}}
-          <div class="list">
-            {{range .PassedChecks}}
-            <div class="entry">
-              <div class="entry-title">{{.Title}}</div>
-              <div class="muted" style="margin-top: 6px;">{{.Details}}</div>
+      <div class="inner-tab-panel active" data-inner-tab-group="appendix" data-inner-tab-key="task">
+        <div class="detail-columns">
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "任务信息" "Task Metadata"}}</div>
+            <div class="dl">
+              <div class="dl-row"><div class="dl-term">{{pair "任务摘要" "Summary"}}</div><div class="dl-value">{{loc .Task.Summary}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "创建人" "Created By"}}</div><div class="dl-value">{{.Task.CreatedBy}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "开始时间" "Started At"}}</div><div class="dl-value">{{formatTime .Task.StartedAt}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "完成时间" "Completed At"}}</div><div class="dl-value">{{formatTime .Task.CompletedAt}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "诊断包目录" "Bundle Dir"}}</div><div class="dl-value"><code class="inline">{{.Task.BundleDir}}</code></div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "清单文件" "Manifest"}}</div><div class="dl-value"><code class="inline">{{.Task.ManifestPath}}</code></div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "报告入口" "Report Index"}}</div><div class="dl-value"><code class="inline">{{.Task.IndexPath}}</code></div></div>
             </div>
+          </div>
+
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "来源与选项" "Source & Options"}}</div>
+            <div class="dl">
+              {{range .SourceTraceability}}
+              <div class="dl-row"><div class="dl-term">{{loc .Label}}</div><div class="dl-value">{{loc .Value}}</div></div>
+              {{end}}
+              <div class="dl-row"><div class="dl-term">{{pair "线程栈" "Thread Dump"}}</div><div class="dl-value">{{if .Task.Options.IncludeThreadDump}}{{pair "已开启" "Enabled"}}{{else}}{{pair "已关闭" "Disabled"}}{{end}}</div></div>
+              <div class="dl-row"><div class="dl-term">JVM Dump</div><div class="dl-value">{{if .Task.Options.IncludeJVMDump}}{{pair "已开启" "Enabled"}}{{else}}{{pair "已关闭" "Disabled"}}{{end}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "JVM Dump 最小剩余空间" "Min Free Space for JVM Dump"}}</div><div class="dl-value">{{.Task.Options.JVMDumpMinFreeMB}} MB</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-columns" style="margin-top: 18px;">
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "目标节点" "Selected Nodes"}}</div>
+            {{if .Task.SelectedNodes}}
+            <div class="table-wrap" style="margin-top: 0;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{pair "主机" "Host"}}</th>
+                    <th>{{pair "角色" "Role"}}</th>
+                    <th>{{pair "集群节点" "Cluster Node"}}</th>
+                    <th>{{pair "安装目录" "Install Dir"}}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .Task.SelectedNodes}}
+                  <tr>
+                    <td>{{.HostLabel}}</td>
+                    <td>{{.Role}}</td>
+                    <td>{{.ClusterNode}}</td>
+                    <td><code class="inline">{{.InstallDir}}</code></td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+            {{else}}
+            <div class="empty">{{pair "未记录目标节点。" "No selected nodes recorded."}}</div>
             {{end}}
           </div>
-          {{else}}
-          <div class="empty">当前没有可展示的已通过项。 / No passed checks are available for this report.</div>
-          {{end}}
+
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "已确认正常" "Confirmed Normal"}}</div>
+            {{if .PassedChecks}}
+            <div class="list">
+              {{range .PassedChecks}}
+              <div class="entry">
+                <div class="entry-title">{{loc .Title}}</div>
+                <div class="muted" style="margin-top: 6px;">{{loc .Details}}</div>
+              </div>
+              {{end}}
+            </div>
+            {{else}}
+            <div class="empty">{{pair "当前没有可展示的已通过项。" "No passed checks are available for this report."}}</div>
+            {{end}}
+          </div>
         </div>
+      </div>
+
+      <div class="inner-tab-panel" data-inner-tab-group="appendix" data-inner-tab-key="execution">
+        <div class="grid-2">
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "步骤状态" "Steps"}}</div>
+            {{if .TaskExecution.Steps}}
+            <div class="table-wrap" style="margin-top: 0;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>{{pair "步骤" "Step"}}</th>
+                    <th>{{pair "状态" "Status"}}</th>
+                    <th>{{pair "信息" "Message"}}</th>
+                    <th>{{pair "时间" "Time"}}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .TaskExecution.Steps}}
+                  <tr>
+                    <td>{{.Sequence}}</td>
+                    <td><strong>{{loc .Title}}</strong><div class="muted small">{{.Code}}</div></td>
+                    <td><span class="badge {{statusClass .Status}}">{{loc .Status}}</span></td>
+                    <td>{{if ne .Error "-"}}{{loc .Error}}{{else}}{{loc .Message}}{{end}}</td>
+                    <td>{{.StartedAt}} → {{.CompletedAt}}</td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+            {{else}}
+            <div class="empty">{{pair "未记录任务步骤。" "No task steps recorded."}}</div>
+            {{end}}
+          </div>
+
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "节点执行" "Node Execution"}}</div>
+            {{if .TaskExecution.Nodes}}
+            <div class="table-wrap" style="margin-top: 0;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{pair "主机" "Host"}}</th>
+                    <th>{{pair "角色" "Role"}}</th>
+                    <th>{{pair "状态" "Status"}}</th>
+                    <th>{{pair "当前步骤" "Current Step"}}</th>
+                    <th>{{pair "信息" "Message"}}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .TaskExecution.Nodes}}
+                  <tr>
+                    <td>{{.HostLabel}}</td>
+                    <td>{{.Role}}</td>
+                    <td><span class="badge {{statusClass .Status}}">{{loc .Status}}</span></td>
+                    <td>{{loc .CurrentStep}}</td>
+                    <td>{{if ne .Error "-"}}{{loc .Error}}{{else}}{{loc .Message}}{{end}}</td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+            {{else}}
+            <div class="empty">{{pair "未记录节点执行信息。" "No node executions recorded."}}</div>
+            {{end}}
+          </div>
+        </div>
+      </div>
+
+      <div class="inner-tab-panel" data-inner-tab-group="appendix" data-inner-tab-key="cluster">
+        {{if .Cluster}}
+        <div class="detail-columns">
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "集群信息" "Cluster Snapshot"}}</div>
+            <div class="dl">
+              <div class="dl-row"><div class="dl-term">{{pair "名称" "Name"}}</div><div class="dl-value">{{.Cluster.Name}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "版本" "Version"}}</div><div class="dl-value">{{.Cluster.Version}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "状态" "Status"}}</div><div class="dl-value"><span class="badge {{statusClass .Cluster.Status}}">{{loc .Cluster.Status}}</span></div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "部署方式" "Deployment"}}</div><div class="dl-value">{{.Cluster.DeploymentMode}}</div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "安装目录" "Install Dir"}}</div><div class="dl-value"><code class="inline">{{.Cluster.InstallDir}}</code></div></div>
+              <div class="dl-row"><div class="dl-term">{{pair "节点数" "Node Count"}}</div><div class="dl-value">{{.Cluster.NodeCount}}</div></div>
+            </div>
+          </div>
+          <div class="detail-panel">
+            <div class="panel-label">{{pair "节点信息" "Nodes"}}</div>
+            <div class="table-wrap" style="margin-top: 0;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{{pair "主机" "Host"}}</th>
+                    <th>{{pair "集群节点" "Cluster Node"}}</th>
+                    <th>{{pair "角色" "Role"}}</th>
+                    <th>{{pair "状态" "Status"}}</th>
+                    <th>PID</th>
+                    <th>{{pair "安装目录" "Install Dir"}}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .Cluster.Nodes}}
+                  <tr>
+                    <td>{{.HostLabel}}</td>
+                    <td>#{{.ClusterNodeID}}</td>
+                    <td>{{.Role}}</td>
+                    <td><span class="badge {{statusClass .Status}}">{{loc .Status}}</span></td>
+                    <td>{{.ProcessPID}}</td>
+                    <td><code class="inline">{{.InstallDir}}</code></td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        {{else}}
+        <div class="empty">{{pair "未采集到集群快照。" "Cluster snapshot was not collected."}}</div>
+        {{end}}
       </div>
     </section>
-
-    <section class="section" id="execution">
-      <div class="section-heading">
-        <div>
-          <h2>附录：执行过程 / Appendix: Task Execution</h2>
-          <p class="section-lead">用于确认采集步骤是否完整执行、哪些步骤或节点失败；不是报告主体的第一阅读入口。</p>
-        </div>
-      </div>
-      <div class="grid-2">
-        <div class="detail-panel">
-          <div class="panel-label">步骤状态 / Steps</div>
-          {{if .TaskExecution.Steps}}
-          <div class="table-wrap" style="margin-top: 0;">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Step</th>
-                  <th>Status</th>
-                  <th>Message</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {{range .TaskExecution.Steps}}
-                <tr>
-                  <td>{{.Sequence}}</td>
-                  <td><strong>{{.Title}}</strong><div class="muted small">{{.Code}}</div></td>
-                  <td><span class="badge {{statusClass .Status}}">{{.Status}}</span></td>
-                  <td>{{if ne .Error "-"}}{{.Error}}{{else}}{{.Message}}{{end}}</td>
-                  <td>{{.StartedAt}} → {{.CompletedAt}}</td>
-                </tr>
-                {{end}}
-              </tbody>
-            </table>
-          </div>
-          {{else}}
-          <div class="empty">No task steps recorded.</div>
-          {{end}}
-        </div>
-
-        <div class="detail-panel">
-          <div class="panel-label">节点执行 / Node Execution</div>
-          {{if .TaskExecution.Nodes}}
-          <div class="table-wrap" style="margin-top: 0;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Current Step</th>
-                  <th>Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {{range .TaskExecution.Nodes}}
-                <tr>
-                  <td>{{.HostLabel}}</td>
-                  <td>{{.Role}}</td>
-                  <td><span class="badge {{statusClass .Status}}">{{.Status}}</span></td>
-                  <td>{{.CurrentStep}}</td>
-                  <td>{{if ne .Error "-"}}{{.Error}}{{else}}{{.Message}}{{end}}</td>
-                </tr>
-                {{end}}
-              </tbody>
-            </table>
-          </div>
-          {{else}}
-          <div class="empty">No node executions recorded.</div>
-          {{end}}
-        </div>
-      </div>
-    </section>
-
-    <section class="section" id="appendix">
-      <div class="section-heading">
-        <div>
-          <h2>附录：集群快照 / Appendix: Cluster Snapshot</h2>
-          <p class="section-lead">用于补充部署元信息；通常在确认问题后再查阅即可。</p>
-        </div>
-      </div>
-      {{if .Cluster}}
-      <div class="detail-columns">
-        <div class="detail-panel">
-          <div class="panel-label">集群快照 / Cluster Snapshot</div>
-          <div class="dl">
-            <div class="dl-row"><div class="dl-term">Name</div><div class="dl-value">{{.Cluster.Name}}</div></div>
-            <div class="dl-row"><div class="dl-term">Version</div><div class="dl-value">{{.Cluster.Version}}</div></div>
-            <div class="dl-row"><div class="dl-term">Status</div><div class="dl-value"><span class="badge {{statusClass .Cluster.Status}}">{{.Cluster.Status}}</span></div></div>
-            <div class="dl-row"><div class="dl-term">Deployment</div><div class="dl-value">{{.Cluster.DeploymentMode}}</div></div>
-            <div class="dl-row"><div class="dl-term">Install Dir</div><div class="dl-value"><code class="inline">{{.Cluster.InstallDir}}</code></div></div>
-            <div class="dl-row"><div class="dl-term">Node Count</div><div class="dl-value">{{.Cluster.NodeCount}}</div></div>
-          </div>
-        </div>
-        <div class="detail-panel">
-          <div class="panel-label">节点快照 / Nodes</div>
-          <div class="table-wrap" style="margin-top: 0;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host ID</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>PID</th>
-                  <th>Install Dir</th>
-                </tr>
-              </thead>
-              <tbody>
-                {{range .Cluster.Nodes}}
-                <tr>
-                  <td>#{{.HostID}}</td>
-                  <td>{{.Role}}</td>
-                  <td><span class="badge {{statusClass .Status}}">{{.Status}}</span></td>
-                  <td>{{.ProcessPID}}</td>
-                  <td><code class="inline">{{.InstallDir}}</code></td>
-                </tr>
-                {{end}}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      {{else}}
-      <div class="empty">未采集到集群快照。 / Cluster snapshot was not collected.</div>
-      {{end}}
-    </section>
+    </div>
+    </main>
   </div>
+  <script>
+    (function() {
+      const defaultTab = 'tab-overview';
+      const pages = Array.from(document.querySelectorAll('[data-tab-page]'));
+      const links = Array.from(document.querySelectorAll('[data-tab-link]'));
+      const languageButtons = Array.from(document.querySelectorAll('[data-lang-button]'));
+      const storageKey = 'stx-diagnostic-report-lang';
+      function resolveInitialLanguage() {
+        const saved = window.localStorage ? window.localStorage.getItem(storageKey) : '';
+        if (saved === 'zh' || saved === 'en') {
+          return saved;
+        }
+        const browserLanguage = (navigator.language || '').toLowerCase();
+        return browserLanguage.startsWith('zh') ? 'zh' : 'en';
+      }
+      function applyLanguage(lang) {
+        const active = lang === 'en' ? 'en' : 'zh';
+        document.documentElement.setAttribute('data-report-lang', active);
+        languageButtons.forEach((button) => {
+          button.classList.toggle('active', button.dataset.langButton === active);
+        });
+        if (window.localStorage) {
+          window.localStorage.setItem(storageKey, active);
+        }
+      }
+      function initInnerTabs() {
+        const groups = Array.from(new Set(Array.from(document.querySelectorAll('[data-inner-tab-group]')).map((node) => node.dataset.innerTabGroup).filter(Boolean)));
+        groups.forEach((group) => {
+          const selector = '[data-inner-tab-group=\"' + group + '\"][data-inner-tab-key]';
+          const buttons = Array.from(document.querySelectorAll(selector + '.inner-tab-btn'));
+          const panels = Array.from(document.querySelectorAll(selector + '.inner-tab-panel'));
+          if (!buttons.length || !panels.length) {
+            return;
+          }
+          const activate = (key) => {
+            buttons.forEach((button) => {
+              button.classList.toggle('active', button.dataset.innerTabKey === key);
+            });
+            panels.forEach((panel) => {
+              panel.classList.toggle('active', panel.dataset.innerTabKey === key);
+            });
+          };
+          const initial = buttons.find((button) => button.classList.contains('active'))?.dataset.innerTabKey || buttons[0].dataset.innerTabKey;
+          buttons.forEach((button) => {
+            button.addEventListener('click', () => activate(button.dataset.innerTabKey));
+          });
+          activate(initial);
+        });
+      }
+      async function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      }
+      function initCopyButtons() {
+        const buttons = Array.from(document.querySelectorAll('[data-copy-button]'));
+        buttons.forEach((button) => {
+          let resetTimer = null;
+          button.addEventListener('click', async () => {
+            const pre = button.closest('.copyable-block')?.querySelector('pre');
+            const text = pre ? pre.innerText : '';
+            if (!text) {
+              return;
+            }
+            try {
+              await copyText(text);
+              button.classList.remove('failed');
+              button.classList.add('copied');
+            } catch (error) {
+              button.classList.remove('copied');
+              button.classList.add('failed');
+            }
+            if (resetTimer) {
+              window.clearTimeout(resetTimer);
+            }
+            resetTimer = window.setTimeout(() => {
+              button.classList.remove('copied', 'failed');
+            }, 1800);
+          });
+        });
+      }
+      function applyTab() {
+        const hash = (window.location.hash || '#' + defaultTab).replace(/^#/, '');
+        const active = pages.some((page) => page.dataset.tabPage === hash) ? hash : defaultTab;
+        pages.forEach((page) => {
+          page.classList.toggle('active', page.dataset.tabPage === active);
+        });
+        links.forEach((link) => {
+          link.classList.toggle('active', link.dataset.tabLink === active);
+        });
+        if (window.location.hash.replace(/^#/, '') !== active) {
+          history.replaceState(null, '', '#' + active);
+        }
+        window.scrollTo({top: 0, behavior: 'auto'});
+      }
+      languageButtons.forEach((button) => {
+        button.addEventListener('click', () => applyLanguage(button.dataset.langButton));
+      });
+      window.addEventListener('hashchange', applyTab);
+      applyLanguage(resolveInitialLanguage());
+      initInnerTabs();
+      initCopyButtons();
+      applyTab();
+    })();
+  </script>
 </body>
 </html>`

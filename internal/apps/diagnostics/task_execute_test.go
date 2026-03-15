@@ -365,6 +365,70 @@ func TestBuildDiagnosticBundleHTMLMetricsPanel_prioritizesAnomalies(t *testing.T
 	}
 }
 
+func TestResolveDiagnosticRiskTone_prefersProcessFailureAndInspection(t *testing.T) {
+	state := &diagnosticBundleExecutionState{
+		ProcessEvents: []*monitor.ProcessEvent{
+			{EventType: monitor.EventTypeRestartFailed, CreatedAt: time.Now().UTC()},
+		},
+	}
+	if got := resolveDiagnosticRiskTone(&DiagnosticTask{}, state); got != "critical" {
+		t.Fatalf("expected critical, got %s", got)
+	}
+
+	state = &diagnosticBundleExecutionState{
+		InspectionDetail: &ClusterInspectionReportDetailData{
+			Report: &ClusterInspectionReportInfo{WarningCount: 1},
+		},
+	}
+	if got := resolveDiagnosticRiskTone(&DiagnosticTask{}, state); got != "warning" {
+		t.Fatalf("expected warning, got %s", got)
+	}
+}
+
+func TestBuildDiagnosticBundleHTMLSignalCards_prefersCoreSignals(t *testing.T) {
+	state := &diagnosticBundleExecutionState{
+		MetricsSnapshot: &diagnosticPrometheusSnapshot{
+			Signals: []diagnosticPrometheusSignal{
+				{Key: "fd_usage_high", Title: "FD", Status: "healthy"},
+				{Key: "memory_usage_high", Title: "Heap", Status: "warning", Series: []diagnosticPrometheusSeriesSummary{{Instance: "n1", MaxValue: 0.9, LastValue: 0.4}}},
+				{Key: "cpu_usage_high", Title: "CPU", Status: "healthy", Series: []diagnosticPrometheusSeriesSummary{{Instance: "n1", MaxValue: 0.2, LastValue: 0.1}}},
+				{Key: "gc_time_ratio_high", Title: "GC", Status: "warning", Series: []diagnosticPrometheusSeriesSummary{{Instance: "n1", MaxValue: 18, LastValue: 2}}},
+			},
+		},
+	}
+	cards := buildDiagnosticBundleHTMLSignalCards(state)
+	if len(cards) != 3 {
+		t.Fatalf("expected 3 cards, got %d", len(cards))
+	}
+	if cards[0].Key != "cpu_usage_high" || cards[1].Key != "memory_usage_high" || cards[2].Key != "gc_time_ratio_high" {
+		t.Fatalf("unexpected card order: %#v", cards)
+	}
+}
+
+func TestBuildDiagnosticBundleHTMLCategoryCards_countsPrimarySignals(t *testing.T) {
+	state := &diagnosticBundleExecutionState{
+		ErrorGroup: &SeatunnelErrorGroup{
+			Title:         "Failed to initialize connection",
+			SampleMessage: "DEADLINE_EXCEEDED timeout",
+		},
+		ProcessEvents: []*monitor.ProcessEvent{
+			{EventType: monitor.EventTypeRestartFailed, CreatedAt: time.Now().UTC()},
+		},
+		MetricsSnapshot: &diagnosticPrometheusSnapshot{
+			Signals: []diagnosticPrometheusSignal{
+				{Key: "memory_usage_high", Status: "warning"},
+			},
+		},
+	}
+	cards := buildDiagnosticBundleHTMLCategoryCards(&DiagnosticTask{}, state)
+	if len(cards) != 5 {
+		t.Fatalf("expected 5 category cards, got %d", len(cards))
+	}
+	if cards[0].Count == 0 {
+		t.Fatalf("expected dependency category to be counted, got %#v", cards[0])
+	}
+}
+
 func TestExtractDiagnosticLogWindowContent_filtersByTimeWindow(t *testing.T) {
 	start := time.Date(2026, 3, 15, 10, 0, 0, 0, time.Local)
 	end := start.Add(5 * time.Minute)
@@ -506,8 +570,81 @@ func TestQueryDiagnosticPrometheusSignal_marksWarningWhenThresholdBreached(t *te
 	}
 }
 
+func TestResolveDiagnosticErrorContext_fallsBackToLatestGroupWithinWindow(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := database.AutoMigrate(&SeatunnelErrorGroup{}, &SeatunnelErrorEvent{}); err != nil {
+		t.Fatalf("auto migrate error context models: %v", err)
+	}
+
+	repo := NewRepository(database)
+	service := NewServiceWithRepository(repo, nil, nil, nil)
+	now := time.Now().UTC()
+	group := &SeatunnelErrorGroup{
+		Fingerprint:        "fp-1",
+		FingerprintVersion: DefaultFingerprintVersion,
+		Title:              "DEADLINE_EXCEEDED",
+		SampleMessage:      "Failed to initialize connection",
+		OccurrenceCount:    3,
+		FirstSeenAt:        now.Add(-2 * time.Hour),
+		LastSeenAt:         now.Add(-30 * time.Minute),
+		LastClusterID:      6,
+		LastNodeID:         4,
+		LastHostID:         4,
+	}
+	if err := repo.CreateErrorGroup(t.Context(), group); err != nil {
+		t.Fatalf("create error group: %v", err)
+	}
+	event := &SeatunnelErrorEvent{
+		ErrorGroupID: group.ID,
+		Fingerprint:  group.Fingerprint,
+		ClusterID:    6,
+		NodeID:       4,
+		HostID:       4,
+		AgentID:      "agent-1",
+		Role:         "master/worker",
+		InstallDir:   "/opt/seatunnel",
+		SourceFile:   "/opt/seatunnel/logs/seatunnel-engine-server.log",
+		OccurredAt:   now.Add(-20 * time.Minute),
+		Message:      "Failed to initialize connection",
+		Evidence:     "DEADLINE_EXCEEDED",
+	}
+	if err := repo.CreateErrorEvent(t.Context(), event); err != nil {
+		t.Fatalf("create error event: %v", err)
+	}
+
+	resolvedGroup, resolvedEvents, err := service.resolveDiagnosticErrorContext(t.Context(), &DiagnosticTask{
+		ClusterID:       6,
+		TriggerSource:   DiagnosticTaskSourceManual,
+		LookbackMinutes: 1440,
+	}, diagnosticCollectionWindow{
+		Start: now.Add(-24 * time.Hour),
+		End:   now,
+	})
+	if err != nil {
+		t.Fatalf("resolveDiagnosticErrorContext returned error: %v", err)
+	}
+	if resolvedGroup == nil || resolvedGroup.ID != group.ID {
+		t.Fatalf("expected fallback error group %d, got %+v", group.ID, resolvedGroup)
+	}
+	if len(resolvedEvents) != 1 || resolvedEvents[0].ID != event.ID {
+		t.Fatalf("expected fallback error events to include event %d, got %+v", event.ID, resolvedEvents)
+	}
+}
+
 func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T) {
 	tmpl, err := template.New("diagnostic-summary").Funcs(template.FuncMap{
+		"pair": func(zh, en string) template.HTML {
+			return renderDiagnosticLocalizedPair(zh, en)
+		},
+		"loc": func(value interface{}) template.HTML {
+			if value == nil {
+				return renderDiagnosticLocalizedText("-")
+			}
+			return renderDiagnosticLocalizedText(fmt.Sprint(value))
+		},
 		"formatTime": func(value interface{}) string {
 			switch typed := value.(type) {
 			case *time.Time:
@@ -560,6 +697,27 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 			Summary:   "task",
 			CreatedBy: "tester",
 		},
+		KeySignals: []diagnosticBundleHTMLSignalCard{{
+			Key:            "cpu_usage_high",
+			Title:          "CPU",
+			Status:         "warning",
+			Summary:        "cpu summary",
+			ThresholdText:  "> 0.8",
+			Instance:       "node-1",
+			LastValue:      "70.0%",
+			PeakValue:      "90.0%",
+			PeakAt:         formatDiagnosticBundleTime(&now),
+			Interpretation: "peak reached threshold",
+			Threshold:      0.8,
+			Comparator:     "gt",
+			Unit:           "ratio",
+			Points: []diagnosticPrometheusPoint{
+				{Timestamp: now.Add(-4 * time.Minute), Value: 0.2},
+				{Timestamp: now.Add(-3 * time.Minute), Value: 0.4},
+				{Timestamp: now.Add(-2 * time.Minute), Value: 0.9},
+				{Timestamp: now.Add(-1 * time.Minute), Value: 0.7},
+			},
+		}},
 		MetricsSnapshot: &diagnosticBundleHTMLMetricsPanel{
 			SignalCount:  1,
 			AnomalyCount: 1,
@@ -655,10 +813,19 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 	if err := tmpl.Execute(&buf, payload); err != nil {
 		t.Fatalf("execute template: %v", err)
 	}
-	if !strings.Contains(buf.String(), "Prometheus") {
-		t.Fatalf("expected rendered html to contain Prometheus panel")
+	if !strings.Contains(buf.String(), "More Signals") {
+		t.Fatalf("expected rendered html to contain metrics evidence panel")
 	}
-	if !strings.Contains(buf.String(), "Key Runtime Settings") || !strings.Contains(buf.String(), "connector-fake.jar") || !strings.Contains(buf.String(), "<svg") || !strings.Contains(buf.String(), "Threshold") {
+	if !strings.Contains(buf.String(), "data-lang-button=\"zh\"") || !strings.Contains(buf.String(), "data-lang-button=\"en\"") {
+		t.Fatalf("expected rendered html to contain language toggles")
+	}
+	if !strings.Contains(buf.String(), "data-inner-tab-group=\"evidence\"") || !strings.Contains(buf.String(), "data-inner-tab-group=\"appendix\"") {
+		t.Fatalf("expected rendered html to contain nested inner tabs")
+	}
+	if strings.Contains(buf.String(), "借鉴 Allure categories") {
+		t.Fatalf("expected rendered html to remove internal allure guidance copy")
+	}
+	if !strings.Contains(buf.String(), "Key Runtime Settings") || !strings.Contains(buf.String(), "connector-fake.jar") || !strings.Contains(buf.String(), "<svg") || !strings.Contains(buf.String(), "CPU") {
 		t.Fatalf("expected rendered html to contain config inventory details")
 	}
 }
