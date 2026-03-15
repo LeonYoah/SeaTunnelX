@@ -35,6 +35,14 @@ func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
+// Transaction executes fn inside one database transaction.
+// Transaction 在一个数据库事务内执行 fn。
+func (r *Repository) Transaction(ctx context.Context, fn func(tx *Repository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(&Repository{db: tx})
+	})
+}
+
 // Create creates a new cluster record in the database.
 // Returns ErrClusterNameDuplicate if a cluster with the same name already exists.
 // Returns ErrClusterNameEmpty if the cluster name is empty.

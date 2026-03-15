@@ -203,7 +203,7 @@ const defaultConfig: ClusterDeployConfig = {
   httpPort: 8080, // Default HTTP API port / 默认 HTTP API 端口
   workerPort: 5802, // Default worker port for separated mode / 分离模式默认 Worker 端口
   jvm: {
-    hybrid_heap_size: 3, // GB
+    hybrid_heap_size: 2, // GB
     master_heap_size: 2, // GB
     worker_heap_size: 2, // GB
   },
@@ -629,6 +629,15 @@ export function ClusterDeployWizard({
           description: config.description || undefined,
           deployment_mode: config.deploymentMode,
           version: config.version,
+          install_dir: config.installDir,
+          config: {
+            jvm: config.jvm,
+            ports: {
+              master_hazelcast_port: config.clusterPort,
+              master_api_port: config.httpPort,
+              worker_port: config.workerPort,
+            },
+          },
         });
 
         if (!clusterResult.success || !clusterResult.data) {

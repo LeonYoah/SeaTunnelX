@@ -64,11 +64,11 @@ function TabsList({
   );
 
   const getActiveValue = React.useCallback(() => {
-    if (!localRef.current) return;
+    if (!localRef.current) {return;}
     const activeTab = localRef.current.querySelector<HTMLElement>(
       '[data-state="active"]',
     );
-    if (!activeTab) return;
+    if (!activeTab) {return;}
     setActiveValue(activeTab.getAttribute('data-value') ?? undefined);
   }, []);
 
@@ -179,11 +179,11 @@ function TabsContents({
   const [height, setHeight] = React.useState(0);
 
   React.useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current) {return;}
 
     const resizeObserver = new ResizeObserver((entries) => {
       const newHeight = entries?.[0]?.contentRect.height;
-      if (!newHeight) return;
+      if (!newHeight) {return;}
       requestAnimationFrame(() => {
         setHeight(newHeight);
       });

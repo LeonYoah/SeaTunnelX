@@ -97,6 +97,15 @@ apiClient.interceptors.response.use(
       return Promise.reject(new Error('权限不足'));
     }
 
+    // 处理请求体过大（常见于网关上传限制）
+    if (error.response?.status === 413) {
+      return Promise.reject(
+        new Error(
+          '上传文件过大或被网关限制（如 Cloudflare/Nginx body size 限制）。请使用更小文件、直连入口，或改用服务器下载。'
+        )
+      );
+    }
+
     // 处理服务器错误
     if (error.response && error.response.status >= 500) {
       return Promise.reject(new Error('服务器内部错误，请稍后重试'));

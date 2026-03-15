@@ -1,0 +1,44 @@
+{
+  "id": "unified-diagnosis-flow-mvp",
+  "name": "unified-diagnosis-flow-mvp",
+  "title": "统一巡检与诊断流程 MVP",
+  "description": "Unify inspection and diagnostics into one user-facing diagnosis flow with anomaly-driven follow-up collection and report generation entry points.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "diagnostics",
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-11",
+  "completedAt": "2026-03-15",
+  "branch": null,
+  "base_branch": "feature/add-cluster-diagnostics-center",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

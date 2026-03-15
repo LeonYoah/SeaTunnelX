@@ -49,6 +49,9 @@ main
 agent/seatunnelx-agent
 agent/seatunnelx-agent.exe
 
+# property-based test failure artifacts
+**/testdata/rapid/**/*.fail
+
 # local runtime artifacts
 app.pid
 frontend-next.pid

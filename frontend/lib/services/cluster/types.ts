@@ -118,6 +118,44 @@ export enum OperationType {
 export type ClusterConfig = Record<string, unknown>;
 
 /**
+ * Cluster JVM defaults
+ * 集群 JVM 默认值
+ */
+export interface ClusterJVMConfig {
+  hybrid_heap_size?: number;
+  master_heap_size?: number;
+  worker_heap_size?: number;
+}
+
+/**
+ * Cluster port defaults
+ * 集群端口默认值
+ */
+export interface ClusterPortConfig {
+  master_hazelcast_port?: number;
+  master_api_port?: number;
+  worker_port?: number;
+}
+
+/**
+ * Node-level JVM overrides
+ * 节点级 JVM overrides
+ */
+export interface NodeJVMOverrides {
+  hybrid_heap_size?: number;
+  master_heap_size?: number;
+  worker_heap_size?: number;
+}
+
+/**
+ * Node-level JSON overrides
+ * 节点级 JSON overrides
+ */
+export interface NodeOverrides {
+  jvm?: NodeJVMOverrides;
+}
+
+/**
  * Cluster information returned from API
  * API 返回的集群信息
  */
@@ -175,6 +213,8 @@ export interface NodeInfo {
   api_port: number;
   /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
   worker_port: number;
+  /** Node-level JSON overrides / 节点级 JSON 覆盖配置 */
+  overrides?: NodeOverrides;
   /** Node status / 节点状态 (may be 'offline' when host is offline) */
   status: NodeStatus;
   /** Whether host is online / 主机是否在线 */
@@ -332,6 +372,42 @@ export interface AddNodeRequest {
   api_port?: number;
   /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
   worker_port?: number;
+  /** Node-level JSON overrides / 节点级 JSON 覆盖配置 */
+  overrides?: NodeOverrides;
+  /** Whether to skip precheck / 是否跳过预检查 */
+  skip_precheck?: boolean;
+}
+
+/**
+ * One logical node entry under the same host
+ * 同一主机下的一个逻辑节点条目
+ */
+export interface AddNodeEntryRequest {
+  /** Node role / 节点角色 */
+  role: NodeRole;
+  /** Installation directory override / 安装目录覆盖 */
+  install_dir?: string;
+  /** Hazelcast port / Hazelcast 端口 */
+  hazelcast_port?: number;
+  /** API port / API 端口 */
+  api_port?: number;
+  /** Worker port / Worker 端口 */
+  worker_port?: number;
+  /** Node-level JSON overrides / 节点级 JSON 覆盖配置 */
+  overrides?: NodeOverrides;
+}
+
+/**
+ * Batch add-node request for the same host
+ * 同一主机批量添加节点请求
+ */
+export interface AddNodesRequest {
+  /** Host ID / 主机 ID */
+  host_id: number;
+  /** Shared installation directory / 共享安装目录 */
+  install_dir?: string;
+  /** Logical node entries / 逻辑节点条目 */
+  entries: AddNodeEntryRequest[];
   /** Whether to skip precheck / 是否跳过预检查 */
   skip_precheck?: boolean;
 }
@@ -349,6 +425,8 @@ export interface UpdateNodeRequest {
   api_port?: number;
   /** Worker hazelcast port (Hybrid only) / Worker Hazelcast 端口（仅混合模式） */
   worker_port?: number;
+  /** Node-level JSON overrides / 节点级 JSON 覆盖配置 */
+  overrides?: NodeOverrides;
 }
 
 /**
@@ -363,6 +441,179 @@ export const DefaultPorts = {
   /** Worker hazelcast port / Worker Hazelcast 端口 */
   WORKER_HAZELCAST: 5802,
 };
+
+const JVM_OVERRIDE_KEYS: Record<NodeRole, keyof NodeJVMOverrides> = {
+  [NodeRole.MASTER]: 'master_heap_size',
+  [NodeRole.WORKER]: 'worker_heap_size',
+  [NodeRole.MASTER_WORKER]: 'hybrid_heap_size',
+};
+
+function toNumberOrUndefined(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function toPositivePortOrUndefined(value: unknown): number | undefined {
+  const parsed = toNumberOrUndefined(value);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  return parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Get cluster-level JVM defaults from generic cluster config
+ * 从通用 cluster config 中提取集群 JVM 默认值
+ */
+export function getClusterJVMConfig(
+  config?: ClusterConfig | null,
+): ClusterJVMConfig | undefined {
+  const raw = config?.jvm;
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const jvm = raw as Record<string, unknown>;
+  const result: ClusterJVMConfig = {
+    hybrid_heap_size: toNumberOrUndefined(jvm.hybrid_heap_size),
+    master_heap_size: toNumberOrUndefined(jvm.master_heap_size),
+    worker_heap_size: toNumberOrUndefined(jvm.worker_heap_size),
+  };
+  if (
+    result.hybrid_heap_size === undefined &&
+    result.master_heap_size === undefined &&
+    result.worker_heap_size === undefined
+  ) {
+    return undefined;
+  }
+  return result;
+}
+
+/**
+ * Get cluster-level port defaults from generic cluster config
+ * 从通用 cluster config 中提取集群端口默认值
+ */
+export function getClusterPortConfig(
+  config?: ClusterConfig | null,
+): ClusterPortConfig | undefined {
+  const nestedPorts =
+    config?.ports && typeof config.ports === 'object'
+      ? (config.ports as Record<string, unknown>)
+      : undefined;
+  const fallbackRoot =
+    config && typeof config === 'object' ? (config as Record<string, unknown>) : undefined;
+  const ports = nestedPorts ?? fallbackRoot;
+
+  if (!ports) {
+    return undefined;
+  }
+
+  const result: ClusterPortConfig = {
+    master_hazelcast_port: toPositivePortOrUndefined(ports.master_hazelcast_port),
+    master_api_port: toPositivePortOrUndefined(ports.master_api_port),
+    worker_port: toPositivePortOrUndefined(ports.worker_port),
+  };
+
+  if (
+    result.master_hazelcast_port === undefined &&
+    result.master_api_port === undefined &&
+    result.worker_port === undefined
+  ) {
+    return undefined;
+  }
+
+  return result;
+}
+
+/**
+ * Read cluster default ports for a role
+ * 读取某角色的集群默认端口值
+ */
+export function getClusterPortDefaultsForRole(
+  role: NodeRole,
+  config?: ClusterConfig | null,
+): {
+  hazelcastPort?: number;
+  apiPort?: number;
+  workerPort?: number;
+} {
+  const ports = getClusterPortConfig(config);
+
+  if (role === NodeRole.WORKER) {
+    return {
+      hazelcastPort: ports?.worker_port,
+    };
+  }
+
+  if (role === NodeRole.MASTER_WORKER) {
+    return {
+      hazelcastPort: ports?.master_hazelcast_port,
+      apiPort: ports?.master_api_port,
+      workerPort: ports?.worker_port,
+    };
+  }
+
+  return {
+    hazelcastPort: ports?.master_hazelcast_port,
+    apiPort: ports?.master_api_port,
+  };
+}
+
+/**
+ * Get the JVM override key for a role
+ * 获取角色对应的 JVM override key
+ */
+export function getNodeJVMOverrideKey(role: NodeRole): keyof NodeJVMOverrides {
+  return JVM_OVERRIDE_KEYS[role];
+}
+
+/**
+ * Read the current node-level JVM override value for a role
+ * 读取某角色当前节点级 JVM override 值
+ */
+export function getNodeJVMOverrideValue(
+  role: NodeRole,
+  overrides?: NodeOverrides | null,
+): number | undefined {
+  const key = getNodeJVMOverrideKey(role);
+  return overrides?.jvm?.[key];
+}
+
+/**
+ * Read the cluster default JVM value for a role
+ * 读取某角色的集群默认 JVM 值
+ */
+export function getClusterJVMValueForRole(
+  role: NodeRole,
+  config?: ClusterConfig | null,
+): number | undefined {
+  const key = getNodeJVMOverrideKey(role);
+  return getClusterJVMConfig(config)?.[key];
+}
+
+/**
+ * Build a role-specific node JVM override payload
+ * 构建角色对应的节点 JVM override 载荷
+ */
+export function buildNodeJVMOverride(
+  role: NodeRole,
+  heapSize?: number,
+): NodeOverrides | undefined {
+  if (!heapSize || heapSize <= 0) {
+    return undefined;
+  }
+  const key = getNodeJVMOverrideKey(role);
+  const jvm: NodeJVMOverrides = {};
+  jvm[key] = heapSize;
+  return {
+    jvm,
+  };
+}
 
 /**
  * Request parameters for listing clusters
@@ -425,6 +676,9 @@ export type GetNodesResponse = BackendResponse<NodeInfo[]>;
 
 /** Add node response type / 添加节点响应类型 */
 export type AddNodeResponse = BackendResponse<NodeInfo>;
+
+/** Add nodes response type / 批量添加节点响应类型 */
+export type AddNodesResponse = BackendResponse<NodeInfo[]>;
 
 /** Remove node response type / 移除节点响应类型 */
 export type RemoveNodeResponse = BackendResponse<null>;

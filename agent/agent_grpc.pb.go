@@ -5,7 +5,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.0
 // - protoc             v5.28.3
-// source: internal/proto/agent/agent.proto
+// source: agent/agent.proto
 
 package agent
 
@@ -22,10 +22,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName      = "/seatunnel.agent.v1.AgentService/Register"
-	AgentService_Heartbeat_FullMethodName     = "/seatunnel.agent.v1.AgentService/Heartbeat"
-	AgentService_CommandStream_FullMethodName = "/seatunnel.agent.v1.AgentService/CommandStream"
-	AgentService_LogStream_FullMethodName     = "/seatunnel.agent.v1.AgentService/LogStream"
+	AgentService_Register_FullMethodName                 = "/seatunnel.agent.v1.AgentService/Register"
+	AgentService_Heartbeat_FullMethodName                = "/seatunnel.agent.v1.AgentService/Heartbeat"
+	AgentService_CommandStream_FullMethodName            = "/seatunnel.agent.v1.AgentService/CommandStream"
+	AgentService_LogStream_FullMethodName                = "/seatunnel.agent.v1.AgentService/LogStream"
+	AgentService_GetDiagnosticsLogCursors_FullMethodName = "/seatunnel.agent.v1.AgentService/GetDiagnosticsLogCursors"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -43,6 +44,8 @@ type AgentServiceClient interface {
 	CommandStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CommandResponse, CommandRequest], error)
 	// 日志流 - Agent 向 Control Plane 推送日志
 	LogStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogEntry, LogStreamResponse], error)
+	// 诊断日志游标查询 - Agent 启动时从 Control Plane 拉取历史游标，避免重复采集尾部错误
+	GetDiagnosticsLogCursors(ctx context.Context, in *DiagnosticsCursorRequest, opts ...grpc.CallOption) (*DiagnosticsCursorResponse, error)
 }
 
 type agentServiceClient struct {
@@ -99,6 +102,16 @@ func (c *agentServiceClient) LogStream(ctx context.Context, opts ...grpc.CallOpt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_LogStreamClient = grpc.ClientStreamingClient[LogEntry, LogStreamResponse]
 
+func (c *agentServiceClient) GetDiagnosticsLogCursors(ctx context.Context, in *DiagnosticsCursorRequest, opts ...grpc.CallOption) (*DiagnosticsCursorResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DiagnosticsCursorResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetDiagnosticsLogCursors_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -114,6 +127,8 @@ type AgentServiceServer interface {
 	CommandStream(grpc.BidiStreamingServer[CommandResponse, CommandRequest]) error
 	// 日志流 - Agent 向 Control Plane 推送日志
 	LogStream(grpc.ClientStreamingServer[LogEntry, LogStreamResponse]) error
+	// 诊断日志游标查询 - Agent 启动时从 Control Plane 拉取历史游标，避免重复采集尾部错误
+	GetDiagnosticsLogCursors(context.Context, *DiagnosticsCursorRequest) (*DiagnosticsCursorResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -135,6 +150,9 @@ func (UnimplementedAgentServiceServer) CommandStream(grpc.BidiStreamingServer[Co
 }
 func (UnimplementedAgentServiceServer) LogStream(grpc.ClientStreamingServer[LogEntry, LogStreamResponse]) error {
 	return status.Error(codes.Unimplemented, "method LogStream not implemented")
+}
+func (UnimplementedAgentServiceServer) GetDiagnosticsLogCursors(context.Context, *DiagnosticsCursorRequest) (*DiagnosticsCursorResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDiagnosticsLogCursors not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -207,6 +225,24 @@ func _AgentService_LogStream_Handler(srv interface{}, stream grpc.ServerStream) 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_LogStreamServer = grpc.ClientStreamingServer[LogEntry, LogStreamResponse]
 
+func _AgentService_GetDiagnosticsLogCursors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiagnosticsCursorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetDiagnosticsLogCursors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetDiagnosticsLogCursors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetDiagnosticsLogCursors(ctx, req.(*DiagnosticsCursorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -222,6 +258,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Heartbeat",
 			Handler:    _AgentService_Heartbeat_Handler,
 		},
+		{
+			MethodName: "GetDiagnosticsLogCursors",
+			Handler:    _AgentService_GetDiagnosticsLogCursors_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -236,5 +276,5 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "internal/proto/agent/agent.proto",
+	Metadata: "agent/agent.proto",
 }

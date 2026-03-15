@@ -179,7 +179,7 @@ export function CreateHostDialog({
    * 处理表单提交
    */
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {return;}
 
     setLoading(true);
     try {

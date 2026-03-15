@@ -63,14 +63,14 @@ func (m *InstallerManager) ExtractPackageToDir(ctx context.Context, packagePath,
 	return m.extractPackage(ctx, packagePath, targetDir, reporter)
 }
 
-// SyncConnectorsManifest 根据 manifest 清理 connectors 目录。
-// SyncConnectorsManifest reconciles the connectors directory based on the manifest.
+// SyncConnectorsManifest 根据 manifest 准备 connectors 目录，但保留安装包自带内容。
+// SyncConnectorsManifest prepares the connectors directory while preserving package-bundled assets.
 func (m *InstallerManager) SyncConnectorsManifest(installDir string, keepFiles []string) error {
 	return syncManifestDir(filepath.Join(installDir, "connectors"), keepFiles)
 }
 
-// SyncLibManifest 根据 manifest 清理 lib 目录。
-// SyncLibManifest reconciles the lib directory based on the manifest.
+// SyncLibManifest 根据 manifest 准备 lib 目录，但保留安装包自带内容。
+// SyncLibManifest prepares the lib directory while preserving package-bundled assets.
 func (m *InstallerManager) SyncLibManifest(installDir string, keepFiles []string) error {
 	return syncManifestDir(filepath.Join(installDir, "lib"), keepFiles)
 }
@@ -136,26 +136,12 @@ func syncManifestDir(dir string, keepFiles []string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to prepare manifest dir: %w", err)
 	}
-	keepSet := make(map[string]struct{}, len(keepFiles))
-	for _, keepFile := range keepFiles {
-		trimmed := strings.TrimSpace(keepFile)
-		if trimmed == "" {
-			continue
-		}
-		keepSet[trimmed] = struct{}{}
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("failed to read manifest dir: %w", err)
-	}
-	for _, entry := range entries {
-		if _, keep := keepSet[entry.Name()]; keep {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
-			return fmt.Errorf("failed to remove stale entry %s: %w", entry.Name(), err)
-		}
-	}
+	// keepFiles currently represents the managed overlay files prepared by Control Plane.
+	// During upgrade we must preserve the target package's built-in connectors/lib assets,
+	// so this primitive is intentionally non-destructive.
+	// keepFiles 当前仅表示控制面准备的“受管叠加文件”集合。
+	// 升级时必须保留目标安装包自带的 connectors/lib 资产，因此这里明确禁止做破坏式清理。
+	_ = keepFiles
 	return nil
 }
 

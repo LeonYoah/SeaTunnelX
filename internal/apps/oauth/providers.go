@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"golang.org/x/oauth2"
@@ -163,6 +164,14 @@ func fetchGitHubUserInfo(ctx context.Context, token *oauth2.Token) (*OAuthUserIn
 		return nil, fmt.Errorf("failed to decode GitHub user info: %w", err)
 	}
 
+	// GitHub /user may return empty email when profile email is private.
+	// GitHub 的 /user 在邮箱设为私密时可能返回空邮箱，这里再尝试 /user/emails。
+	if strings.TrimSpace(githubUser.Email) == "" {
+		if email, err := fetchGitHubPrimaryEmail(ctx, token); err == nil {
+			githubUser.Email = email
+		}
+	}
+
 	return &OAuthUserInfo{
 		ID:        fmt.Sprintf("%d", githubUser.ID),
 		Username:  githubUser.Login,
@@ -171,6 +180,43 @@ func fetchGitHubUserInfo(ctx context.Context, token *oauth2.Token) (*OAuthUserIn
 		AvatarURL: githubUser.AvatarURL,
 		Provider:  string(ProviderGitHub),
 	}, nil
+}
+
+func fetchGitHubPrimaryEmail(ctx context.Context, token *oauth2.Token) (string, error) {
+	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
+
+	resp, err := client.Get("https://api.github.com/user/emails")
+	if err != nil {
+		return "", fmt.Errorf("failed to get GitHub user emails: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub emails API error: %s", string(body))
+	}
+
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&emails); err != nil {
+		return "", fmt.Errorf("failed to decode GitHub user emails: %w", err)
+	}
+
+	for _, entry := range emails {
+		if entry.Primary && entry.Verified && strings.TrimSpace(entry.Email) != "" {
+			return strings.TrimSpace(entry.Email), nil
+		}
+	}
+	for _, entry := range emails {
+		if entry.Verified && strings.TrimSpace(entry.Email) != "" {
+			return strings.TrimSpace(entry.Email), nil
+		}
+	}
+
+	return "", errors.New("no verified github email found")
 }
 
 // fetchGoogleUserInfo 获取 Google 用户信息

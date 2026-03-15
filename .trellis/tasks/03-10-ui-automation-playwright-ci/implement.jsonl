@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/api-and-services.md", "reason": "Frontend services and API boundaries used by upload flow tests"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "UI automation and CI touch frontend, API, and service startup boundaries"}
+{"file": "frontend/vitest.config.ts", "reason": "Existing frontend test harness and conventions"}
+{"file": "frontend/components/common/installer/UploadPackageDialog.tsx", "reason": "Current upload dialog interaction pattern"}
+{"file": "frontend/lib/services/installer/installer.service.ts", "reason": "Current chunk upload client behavior and error surface"}
+{"file": ".github/workflows/ci-main.yml", "reason": "Current CI workflow baseline to extend with UI automation"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "UI automation must cover existing filter/enter/dialog interaction conventions"}

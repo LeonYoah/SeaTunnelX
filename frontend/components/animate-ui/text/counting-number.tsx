@@ -72,7 +72,7 @@ function CountingNumber({
   const isInView = !inView || inViewResult;
 
   React.useEffect(() => {
-    if (isInView) motionVal.set(number);
+    if (isInView) {motionVal.set(number);}
   }, [isInView, number, motionVal]);
 
   React.useEffect(() => {

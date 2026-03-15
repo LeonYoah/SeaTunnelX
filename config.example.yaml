@@ -181,8 +181,8 @@ storage:
   plugins_dir: "./data/storage/plugins"
   # 临时文件目录（下载中的文件等）
   temp_dir: "./data/storage/temp"
-  # 最大安装包大小（MB），默认 2048MB (2GB)
-  max_package_size: 2048
+  # 最大安装包大小（MB），默认 20480MB (20GB)
+  max_package_size: 20480
   # 临时文件清理间隔（小时），默认 24
   cleanup_interval_hours: 24
 

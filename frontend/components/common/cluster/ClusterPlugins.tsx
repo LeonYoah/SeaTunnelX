@@ -100,7 +100,7 @@ export function ClusterPlugins({clusterId}: ClusterPluginsProps) {
    * 处理卸载插件
    */
   const handleUninstall = async () => {
-    if (!pluginToUninstall) return;
+    if (!pluginToUninstall) {return;}
 
     setOperating(pluginToUninstall.plugin_name);
     try {

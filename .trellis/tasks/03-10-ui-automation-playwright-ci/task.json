@@ -1,0 +1,54 @@
+{
+  "id": "ui-automation-playwright-ci",
+  "name": "ui-automation-playwright-ci",
+  "title": "UI 自动化与 CI 框架设计（chunk upload）",
+  "description": "Design a Playwright-first UI automation strategy for chunk upload and other critical console flows, with layered local/CI execution modes.",
+  "status": "planning",
+  "dev_type": "fullstack",
+  "scope": "testing",
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/add-node-role-jvm-json-override",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".github/workflows/ci-main.yml",
+    "frontend/package.json",
+    "frontend/vitest.config.ts",
+    "frontend/components/common/installer/UploadPackageDialog.tsx",
+    "frontend/components/common/installer/PackageMain.tsx",
+    "frontend/lib/services/installer/installer.service.ts",
+    "internal/router/router.go",
+    "internal/apps/installer/service.go",
+    "scripts"
+  ],
+  "notes": "MVP 方向已确认：保留 Vitest 做单测/组件逻辑测试，引入 Playwright 作为唯一 UI 自动化主框架；CI 分为 PR 快速 lane 与 nightly/full lane。",
+  "meta": {}
+}

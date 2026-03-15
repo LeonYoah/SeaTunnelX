@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/cluster"
@@ -52,6 +53,8 @@ type Service struct {
 
 	nodeHealthEvaluatorStartedAt time.Time
 	nodeHealthStartupSuppression time.Duration
+	nodeHealthOfflineObservedAt  map[uint]time.Time
+	nodeHealthStateMu            sync.Mutex
 }
 
 // NewService creates a monitoring service.
@@ -62,6 +65,7 @@ func NewService(clusterService *cluster.Service, monitorService *monitor.Service
 		monitorService:               monitorService,
 		repo:                         repo,
 		nodeHealthStartupSuppression: defaultNodeHealthStartupSuppressionWindow(),
+		nodeHealthOfflineObservedAt:  make(map[uint]time.Time),
 	}
 }
 
@@ -1113,6 +1117,11 @@ func (s *Service) EvaluateNodeHealthAlerts(ctx context.Context) error {
 			}
 
 			offline, matured, reason, observedSince, graceWindow := evaluateNodeOfflineState(node, cfg, now)
+			if reason == "host_offline" {
+				observedSince, graceWindow, matured = s.applyRuntimeHostOfflineGrace(node, cfg, now, offline)
+			} else {
+				s.clearRuntimeHostOfflineObservation(node.ID)
+			}
 			switch {
 			case offline && matured:
 				if s.shouldSuppressNodeOfflineDuringStartup(now, reason) {
@@ -1122,6 +1131,7 @@ func (s *Service) EvaluateNodeHealthAlerts(ctx context.Context) error {
 					evalErrs = append(evalErrs, err)
 				}
 			case !offline:
+				s.clearRuntimeHostOfflineObservation(node.ID)
 				if err := s.recordNodeRecoveredEpisode(ctx, item.ID, node, now); err != nil {
 					evalErrs = append(evalErrs, err)
 				}
@@ -1148,6 +1158,50 @@ func defaultNodeHealthStartupSuppressionWindow() time.Duration {
 		window = 30 * time.Second
 	}
 	return window
+}
+
+func (s *Service) applyRuntimeHostOfflineGrace(node *cluster.NodeInfo, cfg *monitor.MonitorConfig, now time.Time, offline bool) (time.Time, time.Duration, bool) {
+	if node == nil {
+		return time.Time{}, 0, false
+	}
+	if !offline {
+		s.clearRuntimeHostOfflineObservation(node.ID)
+		return time.Time{}, 0, false
+	}
+
+	graceWindow := nodeRuntimeOfflineGrace(cfg)
+	observedSince := s.getOrInitRuntimeHostOfflineObservation(node.ID, now)
+	return observedSince, graceWindow, !now.Before(observedSince.Add(graceWindow))
+}
+
+func (s *Service) getOrInitRuntimeHostOfflineObservation(nodeID uint, now time.Time) time.Time {
+	if s == nil {
+		return now.UTC()
+	}
+
+	s.nodeHealthStateMu.Lock()
+	defer s.nodeHealthStateMu.Unlock()
+
+	if s.nodeHealthOfflineObservedAt == nil {
+		s.nodeHealthOfflineObservedAt = make(map[uint]time.Time)
+	}
+	if observedSince, ok := s.nodeHealthOfflineObservedAt[nodeID]; ok && !observedSince.IsZero() {
+		return observedSince.UTC()
+	}
+
+	observedSince := now.UTC()
+	s.nodeHealthOfflineObservedAt[nodeID] = observedSince
+	return observedSince
+}
+
+func (s *Service) clearRuntimeHostOfflineObservation(nodeID uint) {
+	if s == nil || nodeID == 0 {
+		return
+	}
+
+	s.nodeHealthStateMu.Lock()
+	defer s.nodeHealthStateMu.Unlock()
+	delete(s.nodeHealthOfflineObservedAt, nodeID)
 }
 
 func shouldSkipNodeOfflineEvaluation(node *cluster.NodeInfo) bool {

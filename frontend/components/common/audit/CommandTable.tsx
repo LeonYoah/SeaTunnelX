@@ -88,15 +88,15 @@ function formatDuration(
   startedAt: string | null,
   finishedAt: string | null,
 ): string {
-  if (!startedAt) return '-';
+  if (!startedAt) {return '-';}
   const start = new Date(startedAt);
   const end = finishedAt ? new Date(finishedAt) : new Date();
   const durationMs = end.getTime() - start.getTime();
   const seconds = Math.floor(durationMs / 1000);
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) {return `${seconds}s`;}
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  if (minutes < 60) {return `${minutes}m ${remainingSeconds}s`;}
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return `${hours}h ${remainingMinutes}m`;

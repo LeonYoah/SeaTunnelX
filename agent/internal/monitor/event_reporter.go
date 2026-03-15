@@ -157,7 +157,7 @@ func (r *EventReporter) ReportEvent(event *ProcessEvent) {
 	// Try to report immediately if connected and batch size reached
 	// 如果已连接且达到批量大小，尝试立即上报
 	if r.isConnected && len(r.eventCache) >= r.batchSize {
-		go r.flushEventsLocked()
+		go r.FlushEvents()
 	}
 }
 

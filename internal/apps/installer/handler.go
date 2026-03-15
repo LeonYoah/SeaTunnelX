@@ -20,10 +20,15 @@
 package installer
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
@@ -130,6 +135,13 @@ type UploadPackageResponse struct {
 	Data     *PackageInfo `json:"data"`
 }
 
+// UploadChunkResponse represents the response for uploading one package chunk.
+// UploadChunkResponse 表示上传单个安装包分片的响应。
+type UploadChunkResponse struct {
+	ErrorMsg string                    `json:"error_msg"`
+	Data     *PackageChunkUploadResult `json:"data"`
+}
+
 // UploadPackage handles POST /api/v1/packages/upload - uploads a package.
 // UploadPackage 处理 POST /api/v1/packages/upload - 上传安装包。
 // @Tags packages
@@ -148,18 +160,146 @@ func (h *Handler) UploadPackage(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, UploadPackageResponse{ErrorMsg: "文件上传失败 / File upload failed: " + err.Error()})
+		statusCode := http.StatusBadRequest
+		message := "文件上传失败 / File upload failed: " + err.Error()
+		// Common when upstream proxy rejects/interrupts large upload body.
+		// 常见于上游网关限制或中断大文件上传。
+		if errors.Is(err, io.ErrUnexpectedEOF) ||
+			strings.Contains(err.Error(), "unexpected EOF") ||
+			strings.Contains(strings.ToLower(err.Error()), "request body too large") {
+			statusCode = http.StatusRequestEntityTooLarge
+			message = "上传内容被中断或超过网关限制（可能是 Cloudflare/Nginx 上传大小限制） / Upload interrupted or blocked by upstream size limit"
+		}
+		c.JSON(statusCode, UploadPackageResponse{ErrorMsg: message})
+		return
+	}
+
+	maxPackageSize := config.GetMaxPackageSize()
+	if maxPackageSize > 0 && file.Size > maxPackageSize {
+		c.JSON(http.StatusRequestEntityTooLarge, UploadPackageResponse{
+			ErrorMsg: fmt.Sprintf(
+				"安装包超过配置上限（%.2f MB > %.2f MB） / Package exceeds configured max size",
+				float64(file.Size)/1024.0/1024.0,
+				float64(maxPackageSize)/1024.0/1024.0,
+			),
+		})
 		return
 	}
 
 	info, err := h.service.UploadPackage(c.Request.Context(), version, file)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, UploadPackageResponse{ErrorMsg: err.Error()})
+		switch {
+		case errors.Is(err, ErrInvalidPackageVersion),
+			errors.Is(err, ErrInvalidPackageFile),
+			errors.Is(err, ErrInvalidPackagePath):
+			c.JSON(http.StatusBadRequest, UploadPackageResponse{ErrorMsg: err.Error()})
+		case errors.Is(err, ErrPackageAlreadyExists):
+			c.JSON(http.StatusConflict, UploadPackageResponse{ErrorMsg: err.Error()})
+		case errors.Is(err, ErrPackageTooLarge):
+			c.JSON(http.StatusRequestEntityTooLarge, UploadPackageResponse{ErrorMsg: err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, UploadPackageResponse{ErrorMsg: err.Error()})
+		}
 		return
 	}
 
 	logger.InfoF(c.Request.Context(), "[Installer] 上传安装包成功: %s", version)
 	c.JSON(http.StatusOK, UploadPackageResponse{Data: info})
+}
+
+// UploadPackageChunk handles POST /api/v1/packages/upload/chunk - uploads one package chunk.
+// UploadPackageChunk 处理 POST /api/v1/packages/upload/chunk - 上传安装包分片。
+// @Tags packages
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "分片文件"
+// @Param version formData string true "版本号"
+// @Param upload_id formData string true "上传会话 ID"
+// @Param chunk_index formData int true "分片索引（从 0 开始）"
+// @Param total_chunks formData int true "总分片数"
+// @Param total_size formData int true "原始文件总大小（字节）"
+// @Param file_name formData string false "原始文件名"
+// @Success 200 {object} UploadChunkResponse
+// @Router /api/v1/packages/upload/chunk [post]
+func (h *Handler) UploadPackageChunk(c *gin.Context) {
+	version := strings.TrimSpace(c.PostForm("version"))
+	uploadID := strings.TrimSpace(c.PostForm("upload_id"))
+	fileName := strings.TrimSpace(c.PostForm("file_name"))
+	chunkIndexStr := strings.TrimSpace(c.PostForm("chunk_index"))
+	totalChunksStr := strings.TrimSpace(c.PostForm("total_chunks"))
+	totalSizeStr := strings.TrimSpace(c.PostForm("total_size"))
+
+	if version == "" {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "版本号不能为空 / Version is required"})
+		return
+	}
+	if uploadID == "" {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "上传会话 ID 不能为空 / upload_id is required"})
+		return
+	}
+	if chunkIndexStr == "" || totalChunksStr == "" || totalSizeStr == "" {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "缺少分片元数据 / missing chunk metadata"})
+		return
+	}
+
+	chunkIndex, err := strconv.Atoi(chunkIndexStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "chunk_index 必须为整数 / chunk_index must be an integer"})
+		return
+	}
+	totalChunks, err := strconv.Atoi(totalChunksStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "total_chunks 必须为整数 / total_chunks must be an integer"})
+		return
+	}
+	totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: "total_size 必须为整数 / total_size must be an integer"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		statusCode := http.StatusBadRequest
+		message := "分片上传失败 / Chunk upload failed: " + err.Error()
+		if errors.Is(err, io.ErrUnexpectedEOF) ||
+			strings.Contains(err.Error(), "unexpected EOF") ||
+			strings.Contains(strings.ToLower(err.Error()), "request body too large") {
+			statusCode = http.StatusRequestEntityTooLarge
+			message = "上传内容被中断或超过网关限制（可能是 Cloudflare/Nginx 上传大小限制） / Upload interrupted or blocked by upstream size limit"
+		}
+		c.JSON(statusCode, UploadChunkResponse{ErrorMsg: message})
+		return
+	}
+
+	result, err := h.service.UploadPackageChunk(c.Request.Context(), &PackageChunkUploadRequest{
+		Version:     version,
+		UploadID:    uploadID,
+		ChunkIndex:  chunkIndex,
+		TotalChunks: totalChunks,
+		TotalSize:   totalSize,
+		FileName:    fileName,
+	}, file)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidPackageVersion),
+			errors.Is(err, ErrInvalidPackageFile),
+			errors.Is(err, ErrInvalidPackagePath),
+			errors.Is(err, ErrInvalidUploadID),
+			errors.Is(err, ErrInvalidChunkIndex):
+			c.JSON(http.StatusBadRequest, UploadChunkResponse{ErrorMsg: err.Error()})
+		case errors.Is(err, ErrChunkOutOfOrder),
+			errors.Is(err, ErrPackageAlreadyExists):
+			c.JSON(http.StatusConflict, UploadChunkResponse{ErrorMsg: err.Error()})
+		case errors.Is(err, ErrPackageTooLarge):
+			c.JSON(http.StatusRequestEntityTooLarge, UploadChunkResponse{ErrorMsg: err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, UploadChunkResponse{ErrorMsg: err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, UploadChunkResponse{Data: result})
 }
 
 // DeletePackageResponse represents the response for deleting a package.
@@ -301,9 +441,9 @@ func (h *Handler) ListDownloads(c *gin.Context) {
 // PrecheckRequest represents the request for precheck.
 // PrecheckRequest 表示预检查请求。
 type PrecheckRequest struct {
-	MinMemoryMB    int64 `json:"min_memory_mb"`
-	MinCPUCores    int   `json:"min_cpu_cores"`
-	MinDiskSpaceMB int64 `json:"min_disk_space_mb"`
+	MinMemoryMB    int64  `json:"min_memory_mb"`
+	MinCPUCores    int    `json:"min_cpu_cores"`
+	MinDiskSpaceMB int64  `json:"min_disk_space_mb"`
 	InstallDir     string `json:"install_dir"`
 	Ports          []int  `json:"ports"`
 }

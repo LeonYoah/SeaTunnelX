@@ -30,7 +30,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import {
   CheckCircle2,
@@ -95,19 +94,18 @@ const statusColors: Record<StepStatus, string> = {
 
 // Format duration / 格式化持续时间
 function formatDuration(startTime?: string, endTime?: string): string {
-  if (!startTime) return '-';
+  if (!startTime) {return '-';}
 
   const start = new Date(startTime).getTime();
   const end = endTime ? new Date(endTime).getTime() : Date.now();
   const duration = Math.floor((end - start) / 1000);
 
-  if (duration < 60) return `${duration}s`;
-  if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`;
+  if (duration < 60) {return `${duration}s`;}
+  if (duration < 3600) {return `${Math.floor(duration / 60)}m ${duration % 60}s`;}
   return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`;
 }
 
 export function InstallStep({
-  hostId,
   status,
   loading,
   error,
@@ -119,7 +117,7 @@ export function InstallStep({
 
   // Get overall status icon / 获取整体状态图标
   const getOverallStatusIcon = () => {
-    if (!status) return <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />;
+    if (!status) {return <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />;}
 
     switch (status.status) {
       case 'success':
@@ -135,7 +133,7 @@ export function InstallStep({
 
   // Get overall status text / 获取整体状态文本
   const getOverallStatusText = () => {
-    if (!status) return t('common.loading');
+    if (!status) {return t('common.loading');}
 
     switch (status.status) {
       case 'success':
@@ -150,7 +148,7 @@ export function InstallStep({
   };
 
   // Render step item / 渲染步骤项
-  const renderStepItem = (step: StepInfo, index: number) => {
+  const renderStepItem = (step: StepInfo) => {
     const StatusIcon = statusIcons[step.status];
     const stepName = stepNames[step.step] || { en: step.name, zh: step.name };
     const isCurrentStep = status?.current_step === step.step;
@@ -320,7 +318,7 @@ export function InstallStep({
         <CardContent>
           <ScrollArea className="h-[300px] pr-4">
             <div className="space-y-2">
-              {status?.steps.map((step, index) => renderStepItem(step, index))}
+              {status?.steps.map((step) => renderStepItem(step))}
 
               {/* Loading state / 加载状态 */}
               {!status && loading && (

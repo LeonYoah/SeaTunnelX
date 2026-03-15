@@ -34,6 +34,7 @@ import {
   CreateClusterRequest,
   UpdateClusterRequest,
   AddNodeRequest,
+  AddNodesRequest,
   UpdateNodeRequest,
   PrecheckRequest,
   PrecheckResult,
@@ -45,6 +46,7 @@ import {
   DeleteClusterResponse,
   GetNodesResponse,
   AddNodeResponse,
+  AddNodesResponse,
   RemoveNodeResponse,
   ClusterOperationResponse,
   GetClusterStatusResponse,
@@ -209,6 +211,23 @@ export class ClusterService extends BaseService {
   static async addNode(clusterId: number, data: AddNodeRequest): Promise<NodeInfo> {
     const response = await apiClient.post<AddNodeResponse>(
       `${this.basePath}/${clusterId}/nodes`,
+      data,
+    );
+
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    return response.data.data;
+  }
+
+  /**
+   * Add multiple logical nodes for the same host atomically
+   * 为同一主机原子添加多个逻辑节点
+   */
+  static async addNodes(clusterId: number, data: AddNodesRequest): Promise<NodeInfo[]> {
+    const response = await apiClient.post<AddNodesResponse>(
+      `${this.basePath}/${clusterId}/nodes/batch`,
       data,
     );
 
@@ -497,6 +516,25 @@ export class ClusterService extends BaseService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : '添加节点失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  /**
+   * Add multiple logical nodes (with error handling)
+   * 批量添加逻辑节点（带错误处理）
+   */
+  static async addNodesSafe(clusterId: number, data: AddNodesRequest): Promise<{
+    success: boolean;
+    data?: NodeInfo[];
+    error?: string;
+  }> {
+    try {
+      const result = await this.addNodes(clusterId, data);
+      return {success: true, data: result};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '批量添加节点失败';
       return {success: false, error: errorMessage};
     }
   }

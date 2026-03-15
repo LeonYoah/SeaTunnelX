@@ -88,11 +88,11 @@ function SlidingNumberDisplay({
   transition,
 }: SlidingNumberDisplayProps) {
   const y = useTransform(motionValue, (latest) => {
-    if (!height) return 0;
+    if (!height) {return 0;}
     const currentNumber = latest % 10;
     const offset = (10 + number - currentNumber) % 10;
     let translateY = offset * height;
-    if (offset > 5) translateY -= 10 * height;
+    if (offset > 5) {translateY -= 10 * height;}
     return translateY;
   });
 
@@ -181,14 +181,14 @@ function SlidingNumber({
   }, [prevIntStr, newIntStr]);
 
   const adjustedPrevDec = React.useMemo(() => {
-    if (!newDecStrRaw) return '';
+    if (!newDecStrRaw) {return '';}
     return prevDecStrRaw.length > newDecStrRaw.length
       ? prevDecStrRaw.slice(0, newDecStrRaw.length)
       : prevDecStrRaw.padEnd(newDecStrRaw.length, '0');
   }, [prevDecStrRaw, newDecStrRaw]);
 
   React.useEffect(() => {
-    if (isInView) prevNumberRef.current = effectiveNumber;
+    if (isInView) {prevNumberRef.current = effectiveNumber;}
   }, [effectiveNumber, isInView]);
 
   const intDigitCount = newIntStr?.length ?? 0;

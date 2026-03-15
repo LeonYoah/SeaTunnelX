@@ -34,7 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -100,7 +100,6 @@ export function PluginSelectStep({
     loading,
     error,
     filterByCategory,
-    searchPlugins,
   } = useAvailablePlugins(version, mirror);
 
   // Filter and search plugins / 过滤和搜索插件
@@ -171,7 +170,7 @@ export function PluginSelectStep({
   // Check if all plugins in category are selected / 检查分类中的所有插件是否都已选择
   const isCategoryAllSelected = useCallback((category: PluginCategory) => {
     const categoryPlugins = pluginsByCategory[category];
-    if (categoryPlugins.length === 0) return false;
+    if (categoryPlugins.length === 0) {return false;}
     return categoryPlugins.every((p) => selectedPlugins.includes(p.name));
   }, [pluginsByCategory, selectedPlugins]);
 
@@ -244,7 +243,7 @@ export function PluginSelectStep({
 
   // Render category section / 渲染分类部分
   const renderCategorySection = (category: PluginCategory, plugins: Plugin[]) => {
-    if (plugins.length === 0) return null;
+    if (plugins.length === 0) {return null;}
 
     const CategoryIcon = categoryIcons[category];
     const allSelected = isCategoryAllSelected(category);

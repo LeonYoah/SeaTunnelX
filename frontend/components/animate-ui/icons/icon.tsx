@@ -156,26 +156,26 @@ function AnimateIcon({
   );
 
   React.useEffect(() => {
-    if (localAnimate) onAnimateStart?.();
+    if (localAnimate) {onAnimateStart?.();}
     controls.start(localAnimate ? 'animate' : 'initial').then(() => {
-      if (localAnimate) onAnimateEnd?.();
+      if (localAnimate) {onAnimateEnd?.();}
     });
   }, [localAnimate, controls, onAnimateStart, onAnimateEnd]);
 
   const handleMouseEnter = (e: MouseEvent) => {
-    if (animateOnHover) startAnimation(animateOnHover);
+    if (animateOnHover) {startAnimation(animateOnHover);}
     children.props?.onMouseEnter?.(e);
   };
   const handleMouseLeave = (e: MouseEvent) => {
-    if (animateOnHover || animateOnTap) stopAnimation();
+    if (animateOnHover || animateOnTap) {stopAnimation();}
     children.props?.onMouseLeave?.(e);
   };
   const handlePointerDown = (e: PointerEvent) => {
-    if (animateOnTap) startAnimation(animateOnTap);
+    if (animateOnTap) {startAnimation(animateOnTap);}
     children.props?.onPointerDown?.(e);
   };
   const handlePointerUp = (e: PointerEvent) => {
-    if (animateOnTap) stopAnimation();
+    if (animateOnTap) {stopAnimation();}
     children.props?.onPointerUp?.(e);
   };
 
@@ -201,7 +201,7 @@ function AnimateIcon({
   );
 }
 
-// eslint-disable-next-line quotes
+ 
 const pathClassName =
   "[&_[stroke-dasharray='1px_1px']]:![stroke-dasharray:1px_0px]";
 
@@ -333,7 +333,7 @@ function getVariants<
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const state = result[key] as any;
         const transition = state.animate?.transition;
-        if (!transition) continue;
+        if (!transition) {continue;}
 
         const hasNestedKeys = Object.values(transition).some(
           (v) =>

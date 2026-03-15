@@ -46,11 +46,11 @@ func TestInstallerManager_BackupInstallDir_skipsLogs(t *testing.T) {
 	}
 }
 
-func TestInstallerManager_SyncConnectorsManifest_removesStaleFiles(t *testing.T) {
+func TestInstallerManager_SyncConnectorsManifest_preservesExistingFiles(t *testing.T) {
 	manager := NewInstallerManager()
 	installDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(installDir, "connectors", "keep.jar"), "keep")
-	mustWriteFile(t, filepath.Join(installDir, "connectors", "stale.jar"), "stale")
+	mustWriteFile(t, filepath.Join(installDir, "connectors", "bundled-default.jar"), "default")
 
 	if err := manager.SyncConnectorsManifest(installDir, []string{"keep.jar"}); err != nil {
 		t.Fatalf("SyncConnectorsManifest returned error: %v", err)
@@ -58,8 +58,25 @@ func TestInstallerManager_SyncConnectorsManifest_removesStaleFiles(t *testing.T)
 	if _, err := os.Stat(filepath.Join(installDir, "connectors", "keep.jar")); err != nil {
 		t.Fatalf("expected keep.jar to remain: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(installDir, "connectors", "stale.jar")); !os.IsNotExist(err) {
-		t.Fatalf("expected stale.jar to be removed, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(installDir, "connectors", "bundled-default.jar")); err != nil {
+		t.Fatalf("expected bundled-default.jar to remain: %v", err)
+	}
+}
+
+func TestInstallerManager_SyncLibManifest_preservesExistingFiles(t *testing.T) {
+	manager := NewInstallerManager()
+	installDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(installDir, "lib", "seatunnel-core.jar"), "core")
+	mustWriteFile(t, filepath.Join(installDir, "lib", "mysql-cdc-dependency.jar"), "dependency")
+
+	if err := manager.SyncLibManifest(installDir, []string{"mysql-cdc-dependency.jar"}); err != nil {
+		t.Fatalf("SyncLibManifest returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "lib", "seatunnel-core.jar")); err != nil {
+		t.Fatalf("expected seatunnel-core.jar to remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "lib", "mysql-cdc-dependency.jar")); err != nil {
+		t.Fatalf("expected mysql-cdc-dependency.jar to remain: %v", err)
 	}
 }
 

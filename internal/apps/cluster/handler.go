@@ -172,6 +172,13 @@ type AddNodeResponse struct {
 	Data     *NodeInfo `json:"data"`
 }
 
+// AddNodesResponse represents the response for batch-adding nodes to a cluster.
+// AddNodesResponse 表示批量向集群添加节点的响应。
+type AddNodesResponse struct {
+	ErrorMsg string      `json:"error_msg"`
+	Data     []*NodeInfo `json:"data"`
+}
+
 // RemoveNodeResponse represents the response for removing a node from a cluster.
 // RemoveNodeResponse 表示从集群移除节点的响应。
 type RemoveNodeResponse struct {
@@ -404,29 +411,55 @@ func (h *Handler) AddNode(c *gin.Context) {
 		return
 	}
 
-	// Convert ClusterNode to NodeInfo
-	// 将 ClusterNode 转换为 NodeInfo
-	nodeInfo := &NodeInfo{
-		ID:            node.ID,
-		ClusterID:     node.ClusterID,
-		HostID:        node.HostID,
-		Role:          node.Role,
-		InstallDir:    node.InstallDir,
-		HazelcastPort: node.HazelcastPort,
-		APIPort:       node.APIPort,
-		WorkerPort:    node.WorkerPort,
-		Status:        node.Status,
-		ProcessPID:    node.ProcessPID,
-		CreatedAt:     node.CreatedAt,
-		UpdatedAt:     node.UpdatedAt,
-	}
-
 	resourceName := h.getClusterNodeResourceName(c, uint(clusterID), node.ID)
 	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(node.ID)
 	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
 		"add_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
-	logger.InfoF(c.Request.Context(), "[Cluster] 添加节点成功: cluster_id=%d, host_id=%d, role=%s, hazelcast_port=%d", clusterID, req.HostID, req.Role, node.HazelcastPort)
-	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
+	logger.InfoF(c.Request.Context(), "[Cluster] 添加节点成功: cluster_id=%d, host_id=%d, role=%s, hazelcast_port=%d", clusterID, req.HostID, node.Role, node.HazelcastPort)
+	c.JSON(http.StatusOK, AddNodeResponse{Data: buildNodeInfo(node)})
+}
+
+// AddNodes handles POST /api/v1/clusters/:id/nodes/batch - adds multiple logical nodes for one host atomically.
+// AddNodes 处理 POST /api/v1/clusters/:id/nodes/batch - 为同一主机原子添加多个逻辑节点。
+func (h *Handler) AddNodes(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, AddNodesResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	var req AddNodesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, AddNodesResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	nodes, err := h.service.AddNodes(c.Request.Context(), uint(clusterID), &req)
+	if err != nil {
+		statusCode := h.getStatusCodeForError(err)
+		c.JSON(statusCode, AddNodesResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	nodeInfos := make([]*NodeInfo, 0, len(nodes))
+	roleLabels := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		nodeInfos = append(nodeInfos, buildNodeInfo(node))
+		roleLabels = append(roleLabels, string(node.Role))
+	}
+
+	clusterName := h.getClusterNameForAudit(c.Request.Context(), uint(clusterID))
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"add_nodes", "cluster", audit.UintID(uint(clusterID)), clusterName, audit.AuditDetails{
+			"trigger": "manual",
+			"count":   len(nodeInfos),
+			"roles":   strings.Join(roleLabels, ","),
+		})
+	logger.InfoF(c.Request.Context(), "[Cluster] 批量添加节点成功: cluster_id=%d, host_id=%d, roles=%s", clusterID, req.HostID, strings.Join(roleLabels, ","))
+	c.JSON(http.StatusOK, AddNodesResponse{Data: nodeInfos})
 }
 
 // RemoveNode handles DELETE /api/v1/clusters/:id/nodes/:nodeId - removes a node from a cluster.
@@ -501,29 +534,12 @@ func (h *Handler) UpdateNode(c *gin.Context) {
 		return
 	}
 
-	// Convert ClusterNode to NodeInfo
-	// 将 ClusterNode 转换为 NodeInfo
-	nodeInfo := &NodeInfo{
-		ID:            node.ID,
-		ClusterID:     node.ClusterID,
-		HostID:        node.HostID,
-		Role:          node.Role,
-		InstallDir:    node.InstallDir,
-		HazelcastPort: node.HazelcastPort,
-		APIPort:       node.APIPort,
-		WorkerPort:    node.WorkerPort,
-		Status:        node.Status,
-		ProcessPID:    node.ProcessPID,
-		CreatedAt:     node.CreatedAt,
-		UpdatedAt:     node.UpdatedAt,
-	}
-
 	resourceName := h.getClusterNodeResourceName(c, uint(clusterID), node.ID)
 	resID := audit.UintID(uint(clusterID)) + "/" + audit.UintID(node.ID)
 	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
 		"update_node", "cluster_node", resID, resourceName, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 更新节点成功: cluster_id=%d, node_id=%d", clusterID, nodeID)
-	c.JSON(http.StatusOK, AddNodeResponse{Data: nodeInfo})
+	c.JSON(http.StatusOK, AddNodeResponse{Data: buildNodeInfo(node)})
 }
 
 // GetNodes handles GET /api/v1/clusters/:id/nodes - gets all nodes for a cluster.
@@ -746,6 +762,10 @@ func (h *Handler) getStatusCodeForError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrNodeAgentNotInstalled),
 		errors.Is(err, ErrInvalidHazelcastPort),
+		errors.Is(err, ErrInvalidAPIPort),
+		errors.Is(err, ErrInvalidWorkerPort),
+		errors.Is(err, ErrNodeBatchEntriesRequired),
+		errors.Is(err, ErrInvalidNodeJVMOverride),
 		errors.Is(err, ErrPrecheckFailed):
 		return http.StatusBadRequest
 	default:

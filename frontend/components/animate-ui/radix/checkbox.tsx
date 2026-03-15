@@ -32,7 +32,7 @@ function Checkbox({className, onCheckedChange, ...props}: CheckboxProps) {
   );
 
   React.useEffect(() => {
-    if (props?.checked !== undefined) setIsChecked(props.checked);
+    if (props?.checked !== undefined) {setIsChecked(props.checked);}
   }, [props?.checked]);
 
   const handleCheckedChange = React.useCallback(

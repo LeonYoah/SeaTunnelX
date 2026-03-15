@@ -333,7 +333,7 @@ func (s *Service) buildNodeTargets(ctx context.Context, nodes []*clusterapp.Node
 func (s *Service) buildConnectorManifest(ctx context.Context, clusterID uint, targetVersion string, connectorNames []string) (ConnectorManifest, []BlockingIssue, error) {
 	manifest := ConnectorManifest{
 		Version:         targetVersion,
-		ReplacementMode: "full_replace",
+		ReplacementMode: "package_overlay",
 		Connectors:      make([]ConnectorArtifact, 0),
 		Libraries:       make([]LibraryArtifact, 0),
 	}

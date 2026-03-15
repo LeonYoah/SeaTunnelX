@@ -107,7 +107,7 @@ export class DashboardService extends BaseService {
    */
   private static normalizeData(rawData: RawDashboardData): DashboardResponse {
     const parseJsonField = <T>(field: unknown, defaultValue: T): T => {
-      if (!field) return defaultValue;
+      if (!field) {return defaultValue;}
       if (typeof field === 'string') {
         try {
           return JSON.parse(field) as T;

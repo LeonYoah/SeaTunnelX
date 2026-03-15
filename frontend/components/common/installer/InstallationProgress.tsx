@@ -29,7 +29,7 @@
 
 import { useEffect } from 'react';
 import { useInstallation } from '@/hooks/use-installer';
-import { StepStatusBadge, StepStatusIcon } from './StepStatusBadge';
+import { StepStatusBadge } from './StepStatusBadge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -84,14 +84,14 @@ const stepNames: Record<string, { en: string; zh: string }> = {
  * 从开始时间格式化持续时间
  */
 function formatDuration(startTime?: string, endTime?: string): string {
-  if (!startTime) return '-';
+  if (!startTime) {return '-';}
   
   const start = new Date(startTime).getTime();
   const end = endTime ? new Date(endTime).getTime() : Date.now();
   const duration = Math.floor((end - start) / 1000);
   
-  if (duration < 60) return `${duration}s`;
-  if (duration < 3600) return `${Math.floor(duration / 60)}m ${duration % 60}s`;
+  if (duration < 60) {return `${duration}s`;}
+  if (duration < 3600) {return `${Math.floor(duration / 60)}m ${duration % 60}s`;}
   return `${Math.floor(duration / 3600)}h ${Math.floor((duration % 3600) / 60)}m`;
 }
 
@@ -161,9 +161,8 @@ export function InstallationProgress({
     );
   }
 
-  if (!status) return null;
+  if (!status) {return null;}
 
-  const currentStepInfo = status.steps.find(s => s.step === status.current_step);
   const failedStep = status.steps.find(s => s.status === 'failed');
 
   // Compact mode for embedding

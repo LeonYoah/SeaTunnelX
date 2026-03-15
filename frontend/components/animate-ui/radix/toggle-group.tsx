@@ -148,7 +148,7 @@ function ToggleGroupItem({
 
   React.useEffect(() => {
     const node = itemRef.current;
-    if (!node) return;
+    if (!node) {return;}
     const observer = new MutationObserver(() => {
       setIsActive(node.getAttribute('data-state') === 'on');
     });

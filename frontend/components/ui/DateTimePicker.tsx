@@ -72,7 +72,7 @@ export function DateTimePicker({
   }, [value]);
 
   const handleDateSelect = (date: Date | undefined) => {
-    if (!date) return;
+    if (!date) {return;}
 
     const newDateTime = new Date(date);
     newDateTime.setHours(

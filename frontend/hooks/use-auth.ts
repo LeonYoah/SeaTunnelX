@@ -49,7 +49,7 @@ interface UseAuthReturn extends AuthState {
   /** 清除错误 */
   clearError: () => void;
   /** 检查认证状态 */
-  checkAuthStatus: () => Promise<void>;
+  checkAuthStatus: (forceRefresh?: boolean) => Promise<void>;
   /** @deprecated 使用 loginWithOAuth 代替 */
   login: (redirectTo?: string) => Promise<void>;
 }
@@ -86,7 +86,7 @@ export function useAuth(): UseAuthReturn {
    * 检查用户认证状态
    * 实现请求缓存、防抖和请求合并
    */
-  const checkAuthStatus = useCallback(async () => {
+  const checkAuthStatus = useCallback(async (forceRefresh = false) => {
     try {
       if (!isMounted.current) return;
 
@@ -94,9 +94,19 @@ export function useAuth(): UseAuthReturn {
         setState((prev) => ({...prev, isLoading: true, error: null}));
       }
 
+      if (forceRefresh) {
+        userInfoCache.data = null;
+        userInfoCache.timestamp = 0;
+        userInfoCache.promise = null;
+      }
+
       // 使用缓存数据（如果缓存有效）
       const now = Date.now();
-      if (userInfoCache.data && now - userInfoCache.timestamp < CACHE_EXPIRY) {
+      if (
+        !forceRefresh &&
+        userInfoCache.data &&
+        now - userInfoCache.timestamp < CACHE_EXPIRY
+      ) {
         if (isMounted.current) {
           setState({
             isAuthenticated: true,
@@ -109,7 +119,7 @@ export function useAuth(): UseAuthReturn {
       }
 
       // 使用进行中的请求（请求合并）
-      if (userInfoCache.promise) {
+      if (!forceRefresh && userInfoCache.promise) {
         try {
           const userInfo = await userInfoCache.promise;
           if (isMounted.current) {

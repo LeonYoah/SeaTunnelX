@@ -29,6 +29,7 @@ import * as MonitorService from './monitor/index';
 import {MonitoringService} from './monitoring/index';
 import * as DiscoveryService from './discovery/index';
 import {StUpgradeService} from './st-upgrade/index';
+import {DiagnosticsService} from './diagnostics/index';
 
 /**
  * 服务层架构说明：
@@ -164,6 +165,12 @@ const services = {
    * Monitoring center service
    */
   monitoring: MonitoringService,
+
+  /**
+   * 诊断中心服务
+   * Diagnostics center service
+   */
+  diagnostics: DiagnosticsService,
 
   /**
    * 集群发现服务

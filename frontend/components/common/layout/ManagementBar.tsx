@@ -23,6 +23,7 @@ import {FloatingDock} from '@/components/ui/floating-dock';
 import {
   Activity,
   BarChartIcon,
+  Bug,
   User,
   LogOutIcon,
   Globe,
@@ -41,6 +42,8 @@ import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
 import {CountingNumber} from '@/components/animate-ui/text/counting-number';
 import {Button} from '@/components/ui/button';
+import {Input} from '@/components/ui/input';
+import {Label} from '@/components/ui/label';
 import Link from 'next/link';
 import {
   Dialog,
@@ -52,6 +55,7 @@ import {
 import {Avatar, AvatarFallback, AvatarImage} from '@/components/ui/avatar';
 import {TrustLevel} from '@/lib/services/core';
 import {useLocale, locales, localeNames, Locale} from '@/lib/i18n';
+import services from '@/lib/services';
 
 const IconOptions = {
   className: 'h-4 w-4',
@@ -70,6 +74,7 @@ const StaticIcons = {
   puzzle: <Puzzle {...IconOptions} />,
   dashboard: <LayoutDashboard {...IconOptions} />,
   monitoring: <Activity {...IconOptions} />,
+  diagnostics: <Bug {...IconOptions} />,
   divider: <div />,
 };
 
@@ -78,14 +83,45 @@ const StaticIcons = {
 // 个人信息按钮 - 独立组件
 const ProfileButton = memo(() => {
   const themeUtils = useThemeUtils();
-  const {user, isLoading, logout} = useAuth();
-  const {locale, setLocale} = useLocale();
+  const {user, isLoading, logout, checkAuthStatus} = useAuth();
+  const {locale, syncLocale} = useLocale();
   const [mounted, setMounted] = useState(false);
+  const [emailDraft, setEmailDraft] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSaved, setEmailSaved] = useState(false);
+  const [languageDraft, setLanguageDraft] = useState<Locale>('zh');
+  const [savingLanguage, setSavingLanguage] = useState(false);
+  const [languageError, setLanguageError] = useState<string | null>(null);
+  const [languageSaved, setLanguageSaved] = useState(false);
   const t = useTranslations('profile');
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    setEmailDraft(user?.email || '');
+    setEmailError(null);
+    setEmailSaved(false);
+    const nextLanguage =
+      user?.language && locales.includes(user.language as Locale)
+        ? (user.language as Locale)
+        : locale;
+    setLanguageDraft(nextLanguage);
+    setLanguageError(null);
+    setLanguageSaved(false);
+  }, [locale, user?.email, user?.id, user?.language]);
+
+  useEffect(() => {
+    if (!mounted || !user?.language) {
+      return;
+    }
+    if (!locales.includes(user.language as Locale)) {
+      return;
+    }
+    syncLocale(user.language as Locale);
+  }, [mounted, syncLocale, user?.language]);
 
   const getTrustLevelText = (level: number): string => {
     switch (level) {
@@ -108,6 +144,62 @@ const ProfileButton = memo(() => {
     logout('/login').catch((error) => {
       console.error('登出失败:', error);
     });
+  };
+
+  const handleSaveEmail = async () => {
+    if (!user) {
+      return;
+    }
+
+    const nextEmail = emailDraft.trim();
+    if (!nextEmail) {
+      setEmailError(t('emailRequired'));
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+      setEmailError(t('invalidEmail'));
+      return;
+    }
+
+    try {
+      setSavingEmail(true);
+      setEmailError(null);
+      await services.auth.updateProfile({email: nextEmail});
+      await checkAuthStatus(true);
+      setEmailSaved(true);
+    } catch (error) {
+      setEmailError(error instanceof Error ? error.message : t('emailSaveFailed'));
+      setEmailSaved(false);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const handleSaveLanguage = async () => {
+    if (!user) {
+      return;
+    }
+    const nextLanguage = languageDraft;
+    if (!locales.includes(nextLanguage)) {
+      setLanguageError(t('languageInvalid'));
+      return;
+    }
+
+    try {
+      setSavingLanguage(true);
+      setLanguageError(null);
+      await services.auth.updateProfile({language: nextLanguage});
+      syncLocale(nextLanguage);
+      await checkAuthStatus(true);
+      setLanguageSaved(true);
+    } catch (error) {
+      setLanguageError(
+        error instanceof Error ? error.message : t('languageSaveFailed'),
+      );
+      setLanguageSaved(false);
+    } finally {
+      setSavingLanguage(false);
+    }
   };
 
   return (
@@ -183,6 +275,46 @@ const ProfileButton = memo(() => {
                   </div>
                 </div>
               )}
+
+              <div>
+                <h4 className='text-sm font-semibold mb-3 text-muted-foreground'>
+                  {t('emailSettings')}
+                </h4>
+                <div className='space-y-2'>
+                  <Label htmlFor='profile-email'>{t('emailLabel')}</Label>
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      id='profile-email'
+                      type='email'
+                      value={emailDraft}
+                      placeholder={t('emailPlaceholder')}
+                      onChange={(event) => {
+                        setEmailDraft(event.target.value);
+                        setEmailError(null);
+                        setEmailSaved(false);
+                      }}
+                      disabled={savingEmail}
+                    />
+                    <Button
+                      size='sm'
+                      onClick={handleSaveEmail}
+                      disabled={
+                        savingEmail ||
+                        !user ||
+                        emailDraft.trim() === (user.email || '').trim()
+                      }
+                    >
+                      {savingEmail ? t('savingEmail') : t('saveEmail')}
+                    </Button>
+                  </div>
+                  {emailError ? (
+                    <p className='text-xs text-destructive'>{emailError}</p>
+                  ) : null}
+                  {!emailError && emailSaved ? (
+                    <p className='text-xs text-emerald-600'>{t('emailSaved')}</p>
+                  ) : null}
+                </div>
+              </div>
             </>
           )}
 
@@ -214,20 +346,46 @@ const ProfileButton = memo(() => {
                 {locales.map((loc) => (
                   <button
                     key={loc}
-                    onClick={() => setLocale(loc as Locale)}
+                    onClick={() => {
+                      setLanguageDraft(loc as Locale);
+                      setLanguageError(null);
+                      setLanguageSaved(false);
+                    }}
                     className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
-                      locale === loc
+                      languageDraft === loc
                         ? 'bg-primary/10 text-primary border border-primary/30'
                         : 'bg-muted/50 hover:bg-muted/80'
                     }`}
+                    disabled={savingLanguage}
                   >
                     <Globe className='h-4 w-4' />
                     <span className='text-sm'>
                       {localeNames[loc as Locale]}
                     </span>
-                    {locale === loc && <Check className='h-3 w-3' />}
+                    {languageDraft === loc && <Check className='h-3 w-3' />}
                   </button>
                 ))}
+              </div>
+              <div className='mt-3 flex items-center gap-2'>
+                <Button
+                  size='sm'
+                  onClick={handleSaveLanguage}
+                  disabled={
+                    savingLanguage ||
+                    !user ||
+                    languageDraft === (user.language || locale)
+                  }
+                >
+                  {savingLanguage ? t('savingLanguage') : t('saveLanguage')}
+                </Button>
+                {languageError ? (
+                  <p className='text-xs text-destructive'>{languageError}</p>
+                ) : null}
+                {!languageError && languageSaved ? (
+                  <p className='text-xs text-emerald-600'>
+                    {t('languageSaved')}
+                  </p>
+                ) : null}
               </div>
             </div>
           )}
@@ -338,6 +496,13 @@ export function ManagementBar() {
       title: tDock('monitoringCenter'),
       icon: StaticIcons.monitoring,
       href: '/monitoring',
+    });
+
+    // 诊断中心入口 / Diagnostics center entry
+    items.push({
+      title: tDock('diagnosticsCenter'),
+      icon: StaticIcons.diagnostics,
+      href: '/diagnostics',
     });
 
     // 安装包管理入口 / Package management entry

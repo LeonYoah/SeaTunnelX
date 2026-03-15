@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	installerapp "github.com/seatunnel/seatunnelX/internal/apps/installer"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
@@ -552,88 +553,301 @@ func isValidNodeRole(role NodeRole) bool {
 	return role == NodeRoleMaster || role == NodeRoleWorker || role == NodeRoleMasterWorker
 }
 
+func normalizeNodeRoleForDeployment(deploymentMode DeploymentMode, requestedRole NodeRole) (NodeRole, error) {
+	if !isValidNodeRole(requestedRole) {
+		return "", ErrInvalidNodeRole
+	}
+	if deploymentMode == DeploymentModeHybrid {
+		return NodeRoleMasterWorker, nil
+	}
+	if requestedRole == NodeRoleMasterWorker {
+		return "", ErrInvalidNodeRole
+	}
+	return requestedRole, nil
+}
+
+func resolveNodeInstallDir(requestedInstallDir string, clusterInstallDir string) string {
+	if installDir := strings.TrimSpace(requestedInstallDir); installDir != "" {
+		return installDir
+	}
+	if installDir := strings.TrimSpace(clusterInstallDir); installDir != "" {
+		return installDir
+	}
+	return "/opt/seatunnel"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func validateRequiredPort(port int, invalidErr error) error {
+	if port <= 0 || port > 65535 {
+		return invalidErr
+	}
+	return nil
+}
+
+func validateOptionalPort(port int, invalidErr error) error {
+	if port == 0 {
+		return nil
+	}
+	if port < 0 || port > 65535 {
+		return invalidErr
+	}
+	return nil
+}
+
+func resolveNodePorts(role NodeRole, deploymentMode DeploymentMode, hazelcastPort, apiPort, workerPort int) (int, int, int, error) {
+	switch role {
+	case NodeRoleMaster:
+		if hazelcastPort == 0 {
+			hazelcastPort = DefaultPorts.MasterHazelcast
+		}
+		if apiPort == 0 {
+			apiPort = DefaultPorts.MasterAPI
+		}
+		workerPort = 0
+	case NodeRoleWorker:
+		if hazelcastPort == 0 {
+			hazelcastPort = DefaultPorts.WorkerHazelcast
+		}
+		apiPort = 0
+		workerPort = 0
+	case NodeRoleMasterWorker:
+		if hazelcastPort == 0 {
+			hazelcastPort = DefaultPorts.MasterHazelcast
+		}
+		if apiPort == 0 {
+			apiPort = DefaultPorts.MasterAPI
+		}
+		if deploymentMode == DeploymentModeHybrid && workerPort == 0 {
+			workerPort = DefaultPorts.WorkerHazelcast
+		}
+	}
+
+	if err := validateRequiredPort(hazelcastPort, ErrInvalidHazelcastPort); err != nil {
+		return 0, 0, 0, err
+	}
+	if err := validateOptionalPort(apiPort, ErrInvalidAPIPort); err != nil {
+		return 0, 0, 0, err
+	}
+	if err := validateOptionalPort(workerPort, ErrInvalidWorkerPort); err != nil {
+		return 0, 0, 0, err
+	}
+	return hazelcastPort, apiPort, workerPort, nil
+}
+
+func validateNodeOverrides(overrides NodeOverrides) error {
+	normalized := overrides.Normalize()
+	if normalized.JVM == nil {
+		return nil
+	}
+
+	values := []*int{
+		normalized.JVM.HybridHeapSize,
+		normalized.JVM.MasterHeapSize,
+		normalized.JVM.WorkerHeapSize,
+	}
+	for _, value := range values {
+		if value != nil && *value <= 0 {
+			return ErrInvalidNodeJVMOverride
+		}
+	}
+	return nil
+}
+
+func (s *Service) ensureHostReady(ctx context.Context, hostID uint) error {
+	if s.hostProvider == nil {
+		return nil
+	}
+
+	hostInfo, err := s.hostProvider.GetHostByID(ctx, hostID)
+	if err != nil {
+		return err
+	}
+
+	if hostInfo.HostType == "bare_metal" || hostInfo.HostType == "" {
+		if hostInfo.AgentStatus != "installed" {
+			return ErrNodeAgentNotInstalled
+		}
+	}
+	return nil
+}
+
+func buildNodeForCreate(clusterID uint, hostID uint, cluster *Cluster, requestedRole NodeRole, requestedInstallDir string, hazelcastPort, apiPort, workerPort int, overrides *NodeOverrides) (*ClusterNode, error) {
+	role, err := normalizeNodeRoleForDeployment(cluster.DeploymentMode, requestedRole)
+	if err != nil {
+		return nil, err
+	}
+
+	resolvedHazelcastPort, resolvedAPIPort, resolvedWorkerPort, err := resolveNodePorts(role, cluster.DeploymentMode, hazelcastPort, apiPort, workerPort)
+	if err != nil {
+		return nil, err
+	}
+
+	resolvedOverrides := NodeOverrides{}
+	if overrides != nil {
+		resolvedOverrides = overrides.Normalize()
+		if err := validateNodeOverrides(resolvedOverrides); err != nil {
+			return nil, err
+		}
+	}
+
+	return &ClusterNode{
+		ClusterID:     clusterID,
+		HostID:        hostID,
+		Role:          role,
+		InstallDir:    resolveNodeInstallDir(requestedInstallDir, cluster.InstallDir),
+		HazelcastPort: resolvedHazelcastPort,
+		APIPort:       resolvedAPIPort,
+		WorkerPort:    resolvedWorkerPort,
+		Overrides:     resolvedOverrides,
+		Status:        NodeStatusPending,
+	}, nil
+}
+
+func parseIntValue(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		i, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return 0, false
+		}
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
+// GetJVMConfig returns cluster-level JVM defaults from cluster config.
+// GetJVMConfig 返回 cluster config 中的 JVM 默认值。
+func (c ClusterConfig) GetJVMConfig() *JVMConfig {
+	if len(c) == 0 {
+		return nil
+	}
+
+	raw, ok := c["jvm"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	switch typed := raw.(type) {
+	case JVMConfig:
+		cfg := typed
+		return &cfg
+	case *JVMConfig:
+		if typed == nil {
+			return nil
+		}
+		cfg := *typed
+		return &cfg
+	case map[string]interface{}:
+		cfg := &JVMConfig{}
+		if value, ok := parseIntValue(typed["hybrid_heap_size"]); ok {
+			cfg.HybridHeapSize = value
+		}
+		if value, ok := parseIntValue(typed["master_heap_size"]); ok {
+			cfg.MasterHeapSize = value
+		}
+		if value, ok := parseIntValue(typed["worker_heap_size"]); ok {
+			cfg.WorkerHeapSize = value
+		}
+		if cfg.HybridHeapSize == 0 && cfg.MasterHeapSize == 0 && cfg.WorkerHeapSize == 0 {
+			return nil
+		}
+		return cfg
+	default:
+		payload, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		var cfg JVMConfig
+		if err := json.Unmarshal(payload, &cfg); err != nil {
+			return nil
+		}
+		if cfg.HybridHeapSize == 0 && cfg.MasterHeapSize == 0 && cfg.WorkerHeapSize == 0 {
+			return nil
+		}
+		return &cfg
+	}
+}
+
+// ResolveJVM resolves node-level JVM overrides on top of cluster defaults.
+// ResolveJVM 基于集群默认值解析节点级 JVM overrides。
+func (n *ClusterNode) ResolveJVM(clusterConfig ClusterConfig) *JVMConfig {
+	var resolved JVMConfig
+	if defaults := clusterConfig.GetJVMConfig(); defaults != nil {
+		resolved = *defaults
+	}
+
+	if n.Overrides.JVM != nil {
+		if n.Overrides.JVM.HybridHeapSize != nil {
+			resolved.HybridHeapSize = *n.Overrides.JVM.HybridHeapSize
+		}
+		if n.Overrides.JVM.MasterHeapSize != nil {
+			resolved.MasterHeapSize = *n.Overrides.JVM.MasterHeapSize
+		}
+		if n.Overrides.JVM.WorkerHeapSize != nil {
+			resolved.WorkerHeapSize = *n.Overrides.JVM.WorkerHeapSize
+		}
+	}
+
+	if resolved.HybridHeapSize == 0 && resolved.MasterHeapSize == 0 && resolved.WorkerHeapSize == 0 {
+		return nil
+	}
+	return &resolved
+}
+
 // AddNode adds a node to a cluster with validation.
 // AddNode 向集群添加节点并进行验证。
 // Requirements: 7.2 - Validates host Agent status is "installed" before association.
 func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeRequest) (*ClusterNode, error) {
-	// Validate node role
-	// 验证节点角色
-	if !isValidNodeRole(req.Role) {
-		return nil, ErrInvalidNodeRole
-	}
-
-	// Get cluster to determine deployment mode
-	// 获取集群以确定部署模式
 	cluster, err := s.repo.GetByID(ctx, clusterID, false)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if host exists and has Agent installed
-	// 检查主机是否存在且已安装 Agent
-	if s.hostProvider != nil {
-		hostInfo, err := s.hostProvider.GetHostByID(ctx, req.HostID)
-		if err != nil {
-			return nil, err
-		}
-
-		// For bare_metal hosts, verify Agent is installed
-		// 对于物理机/VM 主机，验证 Agent 已安装
-		if hostInfo.HostType == "bare_metal" || hostInfo.HostType == "" {
-			if hostInfo.AgentStatus != "installed" {
-				return nil, ErrNodeAgentNotInstalled
-			}
-		}
+	if err := s.ensureHostReady(ctx, req.HostID); err != nil {
+		return nil, err
 	}
 
-	// Create node with install directory
-	// 创建节点，包含安装目录
-	installDir := req.InstallDir
-	if installDir == "" {
-		installDir = "/opt/seatunnel" // Default installation directory / 默认安装目录
-	}
-
-	// Set default ports based on role and deployment mode
-	// 根据角色和部署模式设置默认端口
-	hazelcastPort := req.HazelcastPort
-	apiPort := req.APIPort
-	workerPort := req.WorkerPort
-
-	if hazelcastPort == 0 {
-		if req.Role == NodeRoleMaster {
-			hazelcastPort = DefaultPorts.MasterHazelcast
-		} else {
-			hazelcastPort = DefaultPorts.WorkerHazelcast
-		}
-	}
-
-	// Validate resolved hazelcast port value
-	// 验证最终解析出的 Hazelcast 端口值
-	if hazelcastPort <= 0 || hazelcastPort > 65535 {
-		return nil, ErrInvalidHazelcastPort
-	}
-
-	// API port is optional for Master nodes
-	// API 端口对于 Master 节点是可选的
-	if req.Role == NodeRoleMaster && apiPort == 0 {
-		apiPort = DefaultPorts.MasterAPI
-	}
-
-	// Worker port for hybrid mode Master nodes
-	// 混合模式 Master 节点的 Worker 端口
-	if cluster.DeploymentMode == DeploymentModeHybrid && req.Role == NodeRoleMaster && workerPort == 0 {
-		workerPort = DefaultPorts.WorkerHazelcast
-	}
-
-	node := &ClusterNode{
-		ClusterID:     clusterID,
-		HostID:        req.HostID,
-		Role:          req.Role,
-		InstallDir:    installDir,
-		HazelcastPort: hazelcastPort,
-		APIPort:       apiPort,
-		WorkerPort:    workerPort,
-		Status:        NodeStatusPending,
+	node, err := buildNodeForCreate(
+		clusterID,
+		req.HostID,
+		cluster,
+		req.Role,
+		req.InstallDir,
+		req.HazelcastPort,
+		req.APIPort,
+		req.WorkerPort,
+		req.Overrides,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.AddNode(ctx, node); err != nil {
@@ -651,6 +865,67 @@ func (s *Service) AddNode(ctx context.Context, clusterID uint, req *AddNodeReque
 	s.notifyClusterTopologyChanged(ctx, clusterID)
 
 	return node, nil
+}
+
+// AddNodes adds one or more logical nodes for the same host atomically.
+// AddNodes 原子地为同一主机添加一个或多个逻辑节点。
+func (s *Service) AddNodes(ctx context.Context, clusterID uint, req *AddNodesRequest) ([]*ClusterNode, error) {
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(req.Entries) == 0 {
+		return nil, ErrNodeBatchEntriesRequired
+	}
+
+	if err := s.ensureHostReady(ctx, req.HostID); err != nil {
+		return nil, err
+	}
+
+	createdNodes := make([]*ClusterNode, 0, len(req.Entries))
+	seenRoles := make(map[NodeRole]struct{}, len(req.Entries))
+
+	err = s.repo.Transaction(ctx, func(tx *Repository) error {
+		for _, entry := range req.Entries {
+			node, err := buildNodeForCreate(
+				clusterID,
+				req.HostID,
+				cluster,
+				entry.Role,
+				firstNonEmpty(entry.InstallDir, req.InstallDir),
+				entry.HazelcastPort,
+				entry.APIPort,
+				entry.WorkerPort,
+				entry.Overrides,
+			)
+			if err != nil {
+				return err
+			}
+
+			if _, exists := seenRoles[node.Role]; exists {
+				return ErrNodeAlreadyExists
+			}
+			seenRoles[node.Role] = struct{}{}
+
+			if err := tx.AddNode(ctx, node); err != nil {
+				return err
+			}
+			createdNodes = append(createdNodes, node)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, node := range createdNodes {
+		s.detectAndUpdateNodeProcess(ctx, node, req.HostID)
+	}
+	s.updateClusterStatusFromNodes(ctx, clusterID)
+	s.notifyClusterTopologyChanged(ctx, clusterID)
+
+	return createdNodes, nil
 }
 
 // RemoveNode removes a node from a cluster.
@@ -686,6 +961,27 @@ func (s *Service) RemoveNodeByHostID(ctx context.Context, clusterID uint, hostID
 	return nil
 }
 
+func buildNodeInfo(node *ClusterNode) *NodeInfo {
+	if node == nil {
+		return nil
+	}
+	return &NodeInfo{
+		ID:            node.ID,
+		ClusterID:     node.ClusterID,
+		HostID:        node.HostID,
+		Role:          node.Role,
+		InstallDir:    node.InstallDir,
+		HazelcastPort: node.HazelcastPort,
+		APIPort:       node.APIPort,
+		WorkerPort:    node.WorkerPort,
+		Overrides:     node.Overrides.Normalize(),
+		Status:        node.Status,
+		ProcessPID:    node.ProcessPID,
+		CreatedAt:     node.CreatedAt,
+		UpdatedAt:     node.UpdatedAt,
+	}
+}
+
 // GetNodes retrieves all nodes for a cluster with host information.
 // GetNodes 获取集群的所有节点及其主机信息。
 // Requirements: 7.4 - Returns each node's host info, role, SeaTunnel process status, resource usage.
@@ -697,20 +993,7 @@ func (s *Service) GetNodes(ctx context.Context, clusterID uint) ([]*NodeInfo, er
 
 	nodeInfos := make([]*NodeInfo, len(nodes))
 	for i, node := range nodes {
-		nodeInfo := &NodeInfo{
-			ID:            node.ID,
-			ClusterID:     node.ClusterID,
-			HostID:        node.HostID,
-			Role:          node.Role,
-			InstallDir:    node.InstallDir,
-			HazelcastPort: node.HazelcastPort,
-			APIPort:       node.APIPort,
-			WorkerPort:    node.WorkerPort,
-			Status:        node.Status,
-			ProcessPID:    node.ProcessPID,
-			CreatedAt:     node.CreatedAt,
-			UpdatedAt:     node.UpdatedAt,
-		}
+		nodeInfo := buildNodeInfo(node)
 
 		// Get host information and online status; when host is offline, show node as offline
 		if s.hostProvider != nil {
@@ -789,6 +1072,39 @@ func (s *Service) GetNodeInstallDir(ctx context.Context, clusterID uint, hostID 
 	return node.InstallDir, nil
 }
 
+// ResolveNodeJVMByClusterAndHostAndRole resolves effective JVM config for one logical node.
+// ResolveNodeJVMByClusterAndHostAndRole 解析一个逻辑节点的生效 JVM 配置。
+func (s *Service) ResolveNodeJVMByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (*installerapp.JVMConfig, error) {
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedRole, err := normalizeNodeRoleForDeployment(cluster.DeploymentMode, NodeRole(role))
+	if err != nil {
+		return nil, err
+	}
+
+	node, err := s.repo.GetNodeByClusterAndHostAndRole(ctx, clusterID, hostID, string(normalizedRole))
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeNotFound
+	}
+
+	resolved := node.ResolveJVM(cluster.Config)
+	if resolved == nil {
+		return nil, nil
+	}
+
+	return &installerapp.JVMConfig{
+		HybridHeapSize: resolved.HybridHeapSize,
+		MasterHeapSize: resolved.MasterHeapSize,
+		WorkerHeapSize: resolved.WorkerHeapSize,
+	}, nil
+}
+
 // UpdateNodeStatus updates the status of a cluster node.
 // UpdateNodeStatus 更新集群节点的状态。
 func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID uint, status NodeStatus) error {
@@ -842,22 +1158,44 @@ func (s *Service) UpdateNode(ctx context.Context, clusterID uint, nodeID uint, r
 		return nil, ErrNodeNotFound
 	}
 
+	cluster, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+
 	// Update fields if provided
 	// 如果提供了字段则更新
 	if req.InstallDir != nil {
-		node.InstallDir = *req.InstallDir
+		node.InstallDir = resolveNodeInstallDir(*req.InstallDir, cluster.InstallDir)
 	}
 
+	hazelcastPort := node.HazelcastPort
+	apiPort := node.APIPort
+	workerPort := node.WorkerPort
 	if req.HazelcastPort != nil {
-		node.HazelcastPort = *req.HazelcastPort
+		hazelcastPort = *req.HazelcastPort
 	}
-
 	if req.APIPort != nil {
-		node.APIPort = *req.APIPort
+		apiPort = *req.APIPort
+	}
+	if req.WorkerPort != nil {
+		workerPort = *req.WorkerPort
 	}
 
-	if req.WorkerPort != nil {
-		node.WorkerPort = *req.WorkerPort
+	resolvedHazelcastPort, resolvedAPIPort, resolvedWorkerPort, err := resolveNodePorts(node.Role, cluster.DeploymentMode, hazelcastPort, apiPort, workerPort)
+	if err != nil {
+		return nil, err
+	}
+	node.HazelcastPort = resolvedHazelcastPort
+	node.APIPort = resolvedAPIPort
+	node.WorkerPort = resolvedWorkerPort
+
+	if req.Overrides != nil {
+		normalizedOverrides := req.Overrides.Normalize()
+		if err := validateNodeOverrides(normalizedOverrides); err != nil {
+			return nil, err
+		}
+		node.Overrides = normalizedOverrides
 	}
 
 	if err := s.repo.UpdateNode(ctx, node); err != nil {

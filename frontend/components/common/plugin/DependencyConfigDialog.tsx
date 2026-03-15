@@ -85,7 +85,7 @@ export function DependencyConfigDialog({
    * Load dependencies / 加载依赖
    */
   const loadDependencies = useCallback(async () => {
-    if (!pluginName) return;
+    if (!pluginName) {return;}
     setLoading(true);
     try {
       const deps = await PluginService.listDependencies(pluginName);

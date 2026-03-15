@@ -79,7 +79,7 @@ function RollingText({
   }, [isInView]);
 
   React.useEffect(() => {
-    if (!loop || !isInView) return;
+    if (!loop || !isInView) {return;}
 
     const intervalId = setInterval(() => {
       setIsAnimating(false);

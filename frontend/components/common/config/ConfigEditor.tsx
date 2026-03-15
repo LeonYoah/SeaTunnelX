@@ -86,12 +86,6 @@ export function ConfigEditor({
     setComment('');
   };
 
-  const getLanguage = () => {
-    if (config.config_type.endsWith('.yaml')) return 'yaml';
-    if (config.config_type.endsWith('.properties')) return 'properties';
-    return 'text';
-  };
-
   return (
     <div className="space-y-4">
       {/* Toolbar / 工具栏 */}

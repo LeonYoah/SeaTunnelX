@@ -40,6 +40,7 @@ import (
 	appconfig "github.com/seatunnel/seatunnelX/internal/apps/config"
 	"github.com/seatunnel/seatunnelX/internal/apps/dashboard"
 	"github.com/seatunnel/seatunnelX/internal/apps/deepwiki"
+	"github.com/seatunnel/seatunnelX/internal/apps/diagnostics"
 	"github.com/seatunnel/seatunnelX/internal/apps/discovery"
 	"github.com/seatunnel/seatunnelX/internal/apps/health"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
@@ -137,6 +138,7 @@ func Serve() {
 			apiV1Router.POST("/auth/login", auth.Login)
 			apiV1Router.POST("/auth/logout", auth.LoginRequired(), auth.Logout)
 			apiV1Router.GET("/auth/user-info", auth.LoginRequired(), auth.GetUserInfo)
+			apiV1Router.PUT("/auth/profile", auth.LoginRequired(), auth.UpdateProfile)
 
 			// OAuth（备选登录方式：GitHub、Google）
 			apiV1Router.GET("/oauth/providers", oauth.GetEnabledProvidersHandler)
@@ -262,6 +264,7 @@ func Serve() {
 
 				// Node management 节点管理
 				clusterRouter.POST("/:id/nodes", clusterHandler.AddNode)
+				clusterRouter.POST("/:id/nodes/batch", clusterHandler.AddNodes)
 				clusterRouter.GET("/:id/nodes", clusterHandler.GetNodes)
 				clusterRouter.PUT("/:id/nodes/:nodeId", clusterHandler.UpdateNode)
 				clusterRouter.DELETE("/:id/nodes/:nodeId", clusterHandler.RemoveNode)
@@ -387,6 +390,10 @@ func Serve() {
 				})
 			})
 			monitoringHandler := monitoringapp.NewHandler(monitoringService)
+			diagnosticsService := diagnostics.NewService(clusterService, monitorService, monitoringService)
+			diagnosticsService.SetHostReader(hostService)
+			diagnosticsService.SetAgentCommandSender(&agentCommandSenderAdapter{manager: agentManager})
+			diagnosticsHandler := diagnostics.NewHandler(diagnosticsService)
 
 			// Public remote-observability integration endpoints (no login required).
 			// 远程可观测集成公开接口（无需登录）。
@@ -433,6 +440,33 @@ func Serve() {
 				monitoringRouter.POST("/notification-routes", monitoringHandler.CreateNotificationRoute)
 				monitoringRouter.PUT("/notification-routes/:id", monitoringHandler.UpdateNotificationRoute)
 				monitoringRouter.DELETE("/notification-routes/:id", monitoringHandler.DeleteNotificationRoute)
+			}
+
+			diagnosticsRouter := apiV1Router.Group("/diagnostics")
+			diagnosticsRouter.Use(auth.LoginRequired())
+			{
+				diagnosticsRouter.GET("/bootstrap", diagnosticsHandler.GetWorkspaceBootstrap)
+				diagnosticsRouter.POST("/inspections", diagnosticsHandler.StartInspection)
+				diagnosticsRouter.GET("/inspections", diagnosticsHandler.ListInspectionReports)
+				diagnosticsRouter.GET("/inspections/:id", diagnosticsHandler.GetInspectionReportDetail)
+				diagnosticsRouter.POST("/tasks", diagnosticsHandler.CreateDiagnosticTask)
+				diagnosticsRouter.GET("/tasks", diagnosticsHandler.ListDiagnosticTasks)
+				diagnosticsRouter.GET("/tasks/:id", diagnosticsHandler.GetDiagnosticTask)
+				diagnosticsRouter.POST("/tasks/:id/start", diagnosticsHandler.StartDiagnosticTask)
+				diagnosticsRouter.GET("/tasks/:id/steps", diagnosticsHandler.ListDiagnosticTaskSteps)
+				diagnosticsRouter.GET("/tasks/:id/logs", diagnosticsHandler.ListDiagnosticTaskLogs)
+				diagnosticsRouter.GET("/tasks/:id/events/stream", diagnosticsHandler.StreamDiagnosticTaskEvents)
+				diagnosticsRouter.GET("/tasks/:id/html", diagnosticsHandler.PreviewDiagnosticTaskHTML)
+				diagnosticsRouter.GET("/tasks/:id/bundle", diagnosticsHandler.DownloadDiagnosticTaskBundle)
+				diagnosticsRouter.GET("/errors/groups", diagnosticsHandler.ListSeatunnelErrorGroups)
+				diagnosticsRouter.GET("/errors/events", diagnosticsHandler.ListSeatunnelErrorEvents)
+				diagnosticsRouter.GET("/errors/groups/:id", diagnosticsHandler.GetSeatunnelErrorGroupDetail)
+				diagnosticsRouter.GET("/auto-policies/templates", diagnosticsHandler.ListBuiltinConditionTemplates)
+				diagnosticsRouter.GET("/auto-policies", diagnosticsHandler.ListAutoPolicies)
+				diagnosticsRouter.POST("/auto-policies", diagnosticsHandler.CreateAutoPolicy)
+				diagnosticsRouter.GET("/auto-policies/:id", diagnosticsHandler.GetAutoPolicy)
+				diagnosticsRouter.PUT("/auto-policies/:id", diagnosticsHandler.UpdateAutoPolicy)
+				diagnosticsRouter.DELETE("/auto-policies/:id", diagnosticsHandler.DeleteAutoPolicy)
 			}
 
 			// Platform cluster health summary (powered by monitoring remote integration).
@@ -529,6 +563,7 @@ func Serve() {
 			// Set host provider for precheck operations
 			// 设置用于预检查操作的主机提供者
 			installerService.SetHostProvider(&hostProviderAdapter{hostService: hostService})
+			installerService.SetNodeJVMResolver(clusterService)
 			// Inject agent manager if available
 			// 如果 Agent Manager 可用，注入
 			if agentManager != nil {
@@ -558,6 +593,10 @@ func Serve() {
 				// POST /api/v1/packages/upload - 上传安装包
 				// POST /api/v1/packages/upload - Upload package
 				packageRouter.POST("/upload", installerHandler.UploadPackage)
+
+				// POST /api/v1/packages/upload/chunk - 分片上传安装包
+				// POST /api/v1/packages/upload/chunk - Upload package chunk
+				packageRouter.POST("/upload/chunk", installerHandler.UploadPackageChunk)
 
 				// DELETE /api/v1/packages/:version - 删除本地安装包
 				// DELETE /api/v1/packages/:version - Delete local package
@@ -910,7 +949,11 @@ func initGRPCServer(ctx context.Context) (*grpcServer.Server, *agent.Manager) {
 	// Set monitor service for gRPC handlers (for recording process events)
 	// 设置 gRPC 处理器的监控服务（用于记录进程事件）
 	grpcServer.SetMonitorService(monitorService)
-	log.Println("[gRPC] Cluster node provider and monitor service set for gRPC handlers / 已为 gRPC 处理器设置集群节点提供者和监控服务")
+	diagnosticsService := diagnostics.NewService(clusterService, monitorService, monitoringService)
+	diagnosticsService.SetHostReader(hostService)
+	diagnosticsService.SetAgentCommandSender(&agentCommandSenderAdapter{manager: agentManager})
+	grpcServer.SetDiagnosticsService(diagnosticsService)
+	log.Println("[gRPC] Cluster node provider, monitor service and diagnostics service set for gRPC handlers / 已为 gRPC 处理器设置集群节点提供者、监控服务和诊断服务")
 
 	if err := srv.Start(ctx); err != nil {
 		log.Printf("[gRPC] 启动 gRPC 服务器失败: %v / Failed to start gRPC server: %v\n", err, err)
@@ -990,9 +1033,19 @@ func (a *agentCommandSenderAdapter) SendCommand(ctx context.Context, agentID str
 		params["sub_command"] = commandType
 	}
 
-	// Send command with 30 second timeout
-	// 使用 30 秒超时发送命令
-	resp, err := a.manager.SendCommand(ctx, agentID, cmdType, params, 30*time.Second)
+	timeout := 30 * time.Second
+	switch commandType {
+	case "get_logs", "thread_dump":
+		timeout = 2 * time.Minute
+	case "jvm_dump":
+		timeout = 10 * time.Minute
+	case "pull_config":
+		timeout = 1 * time.Minute
+	}
+
+	// Send command with command-specific timeout
+	// 使用命令级超时发送命令
+	resp, err := a.manager.SendCommand(ctx, agentID, cmdType, params, timeout)
 	if err != nil {
 		return false, "", err
 	}
@@ -1030,6 +1083,12 @@ func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.Comma
 		return pb.CommandType_STATUS
 	case "get_logs":
 		return pb.CommandType_COLLECT_LOGS
+	case "thread_dump":
+		return pb.CommandType_THREAD_DUMP
+	case "jvm_dump":
+		return pb.CommandType_JVM_DUMP
+	case "pull_config":
+		return pb.CommandType_PULL_CONFIG
 	case "remove_install_dir":
 		return pb.CommandType_REMOVE_INSTALL_DIR
 	default:

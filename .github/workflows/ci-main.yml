@@ -54,9 +54,41 @@ jobs:
         if: github.event_name == 'push'
         run: python3 scripts/check_license.py --base-ref "${{ github.event.before }}" --head-ref "${{ github.sha }}"
 
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect frontend/backend changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci-main.yml'
+              - 'scripts/restart.sh'
+            backend:
+              - 'internal/**'
+              - 'agent/**'
+              - 'go.mod'
+              - 'go.sum'
+              - '.github/workflows/ci-main.yml'
+              - 'scripts/restart.sh'
+
   backend-test:
     name: Backend / Agent Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
 
     steps:
       - name: Checkout
@@ -79,6 +111,8 @@ jobs:
   frontend-verify:
     name: Frontend Verify
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
 
     steps:
       - name: Checkout

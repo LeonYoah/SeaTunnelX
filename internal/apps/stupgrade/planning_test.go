@@ -256,6 +256,35 @@ func TestService_RunPrecheck_usesRequestedTargetInstallDir(t *testing.T) {
 	}
 }
 
+func TestService_RunPrecheck_connectorManifestUsesPackageOverlayMode(t *testing.T) {
+	service := newPlanningService(t, nil)
+	packagePath := createTestPackage(t, map[string]string{
+		"config/seatunnel.yaml": "seatunnel: default",
+	})
+	service.SetPackageProvider(&stubPackageProvider{info: &installerapp.PackageInfo{
+		Version:   "2.3.12",
+		FileName:  "apache-seatunnel-2.3.12-bin.tar.gz",
+		IsLocal:   true,
+		LocalPath: packagePath,
+		FileSize:  1024,
+		Checksum:  "abc123",
+	}})
+
+	result, err := service.RunPrecheck(context.Background(), &PrecheckRequest{
+		ClusterID:     1,
+		TargetVersion: "2.3.12",
+	})
+	if err != nil {
+		t.Fatalf("RunPrecheck returned error: %v", err)
+	}
+	if result.ConnectorManifest == nil {
+		t.Fatalf("expected connector manifest to be present")
+	}
+	if got := result.ConnectorManifest.ReplacementMode; got != "package_overlay" {
+		t.Fatalf("expected replacement_mode package_overlay, got %q", got)
+	}
+}
+
 func TestService_CreatePlanFromRequest_persistsReadyPlan(t *testing.T) {
 	database := openTestDB(t)
 	repo := NewRepository(database)

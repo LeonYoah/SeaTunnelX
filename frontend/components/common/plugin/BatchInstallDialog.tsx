@@ -25,7 +25,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Dialog,
@@ -85,17 +85,7 @@ export function BatchInstallDialog({
   const [installing, setInstalling] = useState(false);
   const [installStatuses, setInstallStatuses] = useState<InstallStatus[]>([]);
 
-  // Load clusters / 加载集群列表
-  useEffect(() => {
-    if (open) {
-      loadClusters();
-      // Reset state / 重置状态
-      setSelectedClusterId('');
-      setInstallStatuses([]);
-    }
-  }, [open]);
-
-  const loadClusters = async () => {
+  const loadClusters = useCallback(async () => {
     setLoading(true);
     try {
       // 获取集群列表（只取前 100 条，按需要可调整）
@@ -122,11 +112,21 @@ export function BatchInstallDialog({
     } finally {
       setLoading(false);
     }
-  };
+  }, [version]);
+
+  // Load clusters / 加载集群列表
+  useEffect(() => {
+    if (open) {
+      void loadClusters();
+      // Reset state / 重置状态
+      setSelectedClusterId('');
+      setInstallStatuses([]);
+    }
+  }, [open, loadClusters]);
 
   // Handle batch install / 处理批量安装
   const handleBatchInstall = async () => {
-    if (!selectedClusterId || plugins.length === 0) return;
+    if (!selectedClusterId || plugins.length === 0) {return;}
 
     setInstalling(true);
     const clusterId = parseInt(selectedClusterId, 10);

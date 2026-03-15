@@ -1,0 +1,54 @@
+{
+  "id": "seatunnel-error-log-collection-ui",
+  "name": "seatunnel-error-log-collection-ui",
+  "title": "Seatunnel 错误日志收集与界面查看",
+  "description": "Design and implement Seatunnel cluster ERROR log collection, aggregation, and UI viewing for future AI scheduled analysis.",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "cluster",
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-10",
+  "completedAt": "2026-03-15",
+  "branch": null,
+  "base_branch": "feature/add-node-role-jvm-json-override",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "03-11-diagnostics-task-context-refactor",
+    "03-11-diagnostics-report-signal-polish",
+    "03-11-diagnostics-auto-capture-mvp",
+    "03-11-unified-diagnosis-flow-mvp"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    "agent",
+    "internal/apps",
+    "frontend/components/common",
+    "docs"
+  ],
+  "notes": "主链路已确认采用 Agent 侧直接采集 Seatunnel ERROR 日志；不依赖 Seatunnel API 作为默认采集链路。",
+  "meta": {}
+}

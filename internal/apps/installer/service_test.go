@@ -18,9 +18,13 @@
 package installer
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -274,5 +278,212 @@ func TestFetchVersionsFromApacheIntegration(t *testing.T) {
 	t.Log("Fetched versions:")
 	for _, v := range versions {
 		t.Logf("  - %s", v)
+	}
+}
+
+type stubNodeJVMResolver struct {
+	result *JVMConfig
+	err    error
+}
+
+func (s *stubNodeJVMResolver) ResolveNodeJVMByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (*JVMConfig, error) {
+	return s.result, s.err
+}
+
+func TestService_resolveInstallationJVM_usesNodeResolverWhenRequestJVMIsEmpty(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	service.SetNodeJVMResolver(&stubNodeJVMResolver{
+		result: &JVMConfig{
+			MasterHeapSize: 6,
+			WorkerHeapSize: 8,
+		},
+	})
+
+	req := &InstallationRequest{
+		HostID:    "7",
+		ClusterID: "9",
+		NodeRole:  NodeRoleMaster,
+	}
+
+	service.resolveInstallationJVM(context.Background(), req)
+
+	if req.JVM == nil {
+		t.Fatalf("expected JVM config to be resolved")
+	}
+	if req.JVM.MasterHeapSize != 6 {
+		t.Fatalf("expected master heap 6GB, got %d", req.JVM.MasterHeapSize)
+	}
+	if req.JVM.WorkerHeapSize != 8 {
+		t.Fatalf("expected worker heap 8GB, got %d", req.JVM.WorkerHeapSize)
+	}
+}
+
+func createUploadFileHeader(t *testing.T, fieldName, fileName string, content []byte) *multipart.FileHeader {
+	t.Helper()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatalf("create form file failed: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write form file content failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/packages/upload", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if err := req.ParseMultipartForm(int64(body.Len()) + 1024); err != nil {
+		t.Fatalf("parse multipart form failed: %v", err)
+	}
+
+	_, fileHeader, err := req.FormFile(fieldName)
+	if err != nil {
+		t.Fatalf("read multipart file failed: %v", err)
+	}
+	return fileHeader
+}
+
+func TestService_UploadPackageValidation(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	ctx := context.Background()
+
+	t.Run("invalid version is rejected", func(t *testing.T) {
+		fileHeader := createUploadFileHeader(t, "file", "apache-seatunnel-2.3.12-bin.tar.gz", []byte("test-data"))
+
+		_, err := service.UploadPackage(ctx, "2.3.12/../../x", fileHeader)
+		if err == nil || !errors.Is(err, ErrInvalidPackageVersion) {
+			t.Fatalf("expected ErrInvalidPackageVersion, got: %v", err)
+		}
+	})
+
+	t.Run("invalid extension is rejected", func(t *testing.T) {
+		fileHeader := createUploadFileHeader(t, "file", "apache-seatunnel-2.3.12-bin.zip", []byte("test-data"))
+
+		_, err := service.UploadPackage(ctx, "2.3.12", fileHeader)
+		if err == nil || !errors.Is(err, ErrInvalidPackageFile) {
+			t.Fatalf("expected ErrInvalidPackageFile, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate version is rejected", func(t *testing.T) {
+		fileHeader1 := createUploadFileHeader(t, "file", "apache-seatunnel-2.3.12-bin.tar.gz", []byte("test-data-1"))
+		if _, err := service.UploadPackage(ctx, "2.3.12", fileHeader1); err != nil {
+			t.Fatalf("first upload should succeed, got error: %v", err)
+		}
+
+		fileHeader2 := createUploadFileHeader(t, "file", "apache-seatunnel-2.3.12-bin.tar.gz", []byte("test-data-2"))
+		_, err := service.UploadPackage(ctx, "2.3.12", fileHeader2)
+		if err == nil || !errors.Is(err, ErrPackageAlreadyExists) {
+			t.Fatalf("expected ErrPackageAlreadyExists, got: %v", err)
+		}
+	})
+}
+
+func TestService_resolveOfflinePackagePath_RejectsPathTraversal(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	req := &InstallationRequest{
+		Version:     "2.3.12",
+		InstallMode: InstallModeOffline,
+		PackagePath: "../outside/apache-seatunnel-2.3.12-bin.tar.gz",
+	}
+
+	_, err := service.resolveOfflinePackagePath(req)
+	if err == nil || !errors.Is(err, ErrInvalidPackagePath) {
+		t.Fatalf("expected ErrInvalidPackagePath, got: %v", err)
+	}
+}
+
+func TestService_UploadPackageChunk_Success(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	ctx := context.Background()
+
+	version := "2.3.12"
+	fileName := "apache-seatunnel-2.3.12-bin.tar.gz"
+	content := []byte("chunk-upload-integration-test-content-1234567890")
+	chunkSize := 10
+	totalChunks := (len(content) + chunkSize - 1) / chunkSize
+	uploadID := "upload_chunk_12345678"
+
+	var finalResult *PackageChunkUploadResult
+	for chunkIndex := 0; chunkIndex < totalChunks; chunkIndex++ {
+		start := chunkIndex * chunkSize
+		end := start + chunkSize
+		if end > len(content) {
+			end = len(content)
+		}
+
+		fileHeader := createUploadFileHeader(t, "file", fileName, content[start:end])
+		result, err := service.UploadPackageChunk(ctx, &PackageChunkUploadRequest{
+			Version:     version,
+			UploadID:    uploadID,
+			ChunkIndex:  chunkIndex,
+			TotalChunks: totalChunks,
+			TotalSize:   int64(len(content)),
+			FileName:    fileName,
+		}, fileHeader)
+		if err != nil {
+			t.Fatalf("chunk %d upload failed: %v", chunkIndex, err)
+		}
+
+		if result.ReceivedChunks != chunkIndex+1 {
+			t.Fatalf("expected received chunks %d, got %d", chunkIndex+1, result.ReceivedChunks)
+		}
+
+		if chunkIndex < totalChunks-1 && result.Completed {
+			t.Fatalf("expected non-final chunk to be incomplete")
+		}
+
+		if chunkIndex == totalChunks-1 {
+			finalResult = result
+		}
+	}
+
+	if finalResult == nil {
+		t.Fatalf("expected final chunk result")
+	}
+	if !finalResult.Completed {
+		t.Fatalf("expected final result completed")
+	}
+	if finalResult.Package == nil {
+		t.Fatalf("expected final result package info")
+	}
+	if finalResult.Package.FileSize != int64(len(content)) {
+		t.Fatalf("expected file size %d, got %d", len(content), finalResult.Package.FileSize)
+	}
+
+	persisted, err := os.ReadFile(finalResult.Package.LocalPath)
+	if err != nil {
+		t.Fatalf("read persisted package failed: %v", err)
+	}
+	if !bytes.Equal(persisted, content) {
+		t.Fatalf("persisted package content mismatch")
+	}
+}
+
+func TestService_UploadPackageChunk_OutOfOrder(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	ctx := context.Background()
+
+	fileHeader := createUploadFileHeader(
+		t,
+		"file",
+		"apache-seatunnel-2.3.12-bin.tar.gz",
+		[]byte("chunk-data"),
+	)
+
+	_, err := service.UploadPackageChunk(ctx, &PackageChunkUploadRequest{
+		Version:     "2.3.12",
+		UploadID:    "upload_chunk_out_of_order",
+		ChunkIndex:  1,
+		TotalChunks: 2,
+		TotalSize:   int64(len("chunk-data") * 2),
+		FileName:    "apache-seatunnel-2.3.12-bin.tar.gz",
+	}, fileHeader)
+	if err == nil || !errors.Is(err, ErrChunkOutOfOrder) {
+		t.Fatalf("expected ErrChunkOutOfOrder, got: %v", err)
 	}
 }

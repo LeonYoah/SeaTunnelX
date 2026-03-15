@@ -265,8 +265,9 @@ func TestProperty_NodeAssociationValidation(t *testing.T) {
 				return false
 			}
 
-			if node.Role != role {
-				t.Logf("Node role mismatch: expected %s, got %s", role, node.Role)
+			expectedRole := NodeRoleMasterWorker
+			if node.Role != expectedRole {
+				t.Logf("Node role mismatch: expected %s, got %s", expectedRole, node.Role)
 				return false
 			}
 
@@ -825,5 +826,168 @@ func TestClusterServiceStartUsesNodeInstallDirAndRefreshesProcess(t *testing.T) 
 	}
 	if updatedNode.Status != NodeStatusRunning {
 		t.Fatalf("expected node status running after PID refresh, got %q", updatedNode.Status)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
+func TestService_AddNode_hybridNormalizesRoleToMasterWorker(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	mockHostProvider := NewMockHostProvider()
+	now := time.Now()
+	mockHostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "hybrid-host",
+		HostType:      "bare_metal",
+		IPAddress:     "127.0.0.1",
+		AgentStatus:   "installed",
+		LastHeartbeat: &now,
+	})
+
+	svc := NewService(repo, mockHostProvider, nil)
+	ctx := context.Background()
+
+	cluster, err := svc.Create(ctx, &CreateClusterRequest{
+		Name:           "hybrid-normalize",
+		DeploymentMode: DeploymentModeHybrid,
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	node, err := svc.AddNode(ctx, cluster.ID, &AddNodeRequest{
+		HostID: 1,
+		Role:   NodeRoleMaster,
+	})
+	if err != nil {
+		t.Fatalf("AddNode returned error: %v", err)
+	}
+
+	if node.Role != NodeRoleMasterWorker {
+		t.Fatalf("expected hybrid node role to normalize to %q, got %q", NodeRoleMasterWorker, node.Role)
+	}
+	if node.HazelcastPort != DefaultPorts.MasterHazelcast {
+		t.Fatalf("expected hybrid hazelcast port %d, got %d", DefaultPorts.MasterHazelcast, node.HazelcastPort)
+	}
+	if node.WorkerPort != DefaultPorts.WorkerHazelcast {
+		t.Fatalf("expected hybrid worker port %d, got %d", DefaultPorts.WorkerHazelcast, node.WorkerPort)
+	}
+}
+
+func TestService_AddNodes_sameHostSeparatedCreatesMasterAndWorkerAtomically(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	mockHostProvider := NewMockHostProvider()
+	now := time.Now()
+	mockHostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "separated-host",
+		HostType:      "bare_metal",
+		IPAddress:     "127.0.0.2",
+		AgentStatus:   "installed",
+		LastHeartbeat: &now,
+	})
+
+	svc := NewService(repo, mockHostProvider, nil)
+	ctx := context.Background()
+
+	cluster, err := svc.Create(ctx, &CreateClusterRequest{
+		Name:           "separated-batch",
+		DeploymentMode: DeploymentModeSeparated,
+		Config: ClusterConfig{
+			"jvm": map[string]interface{}{
+				"master_heap_size": 2,
+				"worker_heap_size": 4,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	nodes, err := svc.AddNodes(ctx, cluster.ID, &AddNodesRequest{
+		HostID:     1,
+		InstallDir: "/opt/seatunnel",
+		Entries: []AddNodeEntryRequest{
+			{
+				Role:          NodeRoleMaster,
+				HazelcastPort: 5801,
+				APIPort:       8080,
+				Overrides: &NodeOverrides{
+					JVM: &NodeJVMOverrides{MasterHeapSize: intPtr(6)},
+				},
+			},
+			{
+				Role:          NodeRoleWorker,
+				HazelcastPort: 5802,
+				Overrides: &NodeOverrides{
+					JVM: &NodeJVMOverrides{WorkerHeapSize: intPtr(8)},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddNodes returned error: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 created nodes, got %d", len(nodes))
+	}
+
+	storedNodes, err := repo.GetNodesByClusterID(ctx, cluster.ID)
+	if err != nil {
+		t.Fatalf("GetNodesByClusterID returned error: %v", err)
+	}
+	if len(storedNodes) != 2 {
+		t.Fatalf("expected 2 stored nodes, got %d", len(storedNodes))
+	}
+
+	roleMap := make(map[NodeRole]*ClusterNode, len(storedNodes))
+	for _, node := range storedNodes {
+		roleMap[node.Role] = node
+	}
+	if roleMap[NodeRoleMaster] == nil || roleMap[NodeRoleWorker] == nil {
+		t.Fatalf("expected both master and worker nodes, got %+v", roleMap)
+	}
+	if roleMap[NodeRoleMaster].Overrides.JVM == nil || roleMap[NodeRoleMaster].Overrides.JVM.MasterHeapSize == nil || *roleMap[NodeRoleMaster].Overrides.JVM.MasterHeapSize != 6 {
+		t.Fatalf("expected master JVM override 6GB, got %+v", roleMap[NodeRoleMaster].Overrides)
+	}
+	if roleMap[NodeRoleWorker].Overrides.JVM == nil || roleMap[NodeRoleWorker].Overrides.JVM.WorkerHeapSize == nil || *roleMap[NodeRoleWorker].Overrides.JVM.WorkerHeapSize != 8 {
+		t.Fatalf("expected worker JVM override 8GB, got %+v", roleMap[NodeRoleWorker].Overrides)
+	}
+}
+
+func TestClusterNode_ResolveJVM_usesNodeOverrideOverClusterDefault(t *testing.T) {
+	clusterConfig := ClusterConfig{
+		"jvm": map[string]interface{}{
+			"hybrid_heap_size": 3,
+			"master_heap_size": 2,
+			"worker_heap_size": 4,
+		},
+	}
+	node := &ClusterNode{
+		Role: NodeRoleWorker,
+		Overrides: NodeOverrides{
+			JVM: &NodeJVMOverrides{
+				WorkerHeapSize: intPtr(10),
+			},
+		},
+	}
+
+	resolved := node.ResolveJVM(clusterConfig)
+	if resolved == nil {
+		t.Fatalf("expected resolved JVM config")
+	}
+	if resolved.MasterHeapSize != 2 {
+		t.Fatalf("expected master heap to inherit 2GB, got %d", resolved.MasterHeapSize)
+	}
+	if resolved.WorkerHeapSize != 10 {
+		t.Fatalf("expected worker heap override 10GB, got %d", resolved.WorkerHeapSize)
 	}
 }

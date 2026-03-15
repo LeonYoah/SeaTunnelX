@@ -22,7 +22,7 @@
 
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
@@ -79,11 +79,11 @@ export function PluginGrid({
   }, [plugins, currentPage, pageSize]);
 
   // Reset to page 1 when plugins change / 当插件列表变化时重置到第一页
-  useMemo(() => {
+  useEffect(() => {
     if (currentPage > 1 && currentPage > totalPages) {
       setCurrentPage(1);
     }
-  }, [plugins.length, totalPages, currentPage]);
+  }, [plugins, totalPages, currentPage]);
 
   // Handle page change / 处理页码变化
   const handlePageChange = (page: number) => {

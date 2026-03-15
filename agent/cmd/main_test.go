@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/seatunnel/seatunnelX/agent/internal/config"
+	"github.com/seatunnel/seatunnelX/agent/internal/monitor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,4 +152,24 @@ func TestVersionCommand(t *testing.T) {
 func TestRootCommand(t *testing.T) {
 	assert.NotNil(t, rootCmd)
 	assert.Equal(t, "seatunnelx-agent", rootCmd.Use)
+}
+
+func TestExtractProcessEventReportFieldsPreservesDetails(t *testing.T) {
+	event := &monitor.ProcessEvent{
+		Type: monitor.EventRestartFailed,
+		Details: map[string]interface{}{
+			"install_dir": "/opt/seatunnel",
+			"role":        "master/worker",
+			"error":       "exit status 1",
+			"retry_count": 3,
+		},
+	}
+
+	installDir, role, details := extractProcessEventReportFields(event)
+	assert.Equal(t, "/opt/seatunnel", installDir)
+	assert.Equal(t, "master/worker", role)
+	assert.Equal(t, "/opt/seatunnel", details["install_dir"])
+	assert.Equal(t, "master/worker", details["role"])
+	assert.Equal(t, "exit status 1", details["error"])
+	assert.Equal(t, "3", details["retry_count"])
 }

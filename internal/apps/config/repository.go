@@ -20,6 +20,7 @@ package config
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -107,6 +108,21 @@ func (r *Repository) ListByCluster(ctx context.Context, clusterID uint) ([]*Conf
 		Where("cluster_id = ?", clusterID).
 		Order("config_type, host_id").
 		Find(&configs).Error
+	return configs, err
+}
+
+// ListUpdatedByClusterBetween returns configs updated within the given time window.
+// ListUpdatedByClusterBetween 返回指定时间窗口内更新过的配置记录。
+func (r *Repository) ListUpdatedByClusterBetween(ctx context.Context, clusterID uint, start, end time.Time) ([]*Config, error) {
+	var configs []*Config
+	query := r.db.WithContext(ctx).Model(&Config{}).Where("cluster_id = ?", clusterID)
+	if !start.IsZero() {
+		query = query.Where("updated_at >= ?", start.UTC())
+	}
+	if !end.IsZero() {
+		query = query.Where("updated_at <= ?", end.UTC())
+	}
+	err := query.Order("updated_at DESC").Order("config_type").Find(&configs).Error
 	return configs, err
 }
 

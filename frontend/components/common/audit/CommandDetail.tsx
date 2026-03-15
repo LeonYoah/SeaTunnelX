@@ -106,7 +106,7 @@ function getStatusBadgeVariant(
  * 格式化日期时间
  */
 function formatDateTime(dateStr: string | null): string {
-  if (!dateStr) return '-';
+  if (!dateStr) {return '-';}
   return new Date(dateStr).toLocaleString();
 }
 
@@ -118,15 +118,15 @@ function formatDuration(
   startedAt: string | null,
   finishedAt: string | null,
 ): string {
-  if (!startedAt) return '-';
+  if (!startedAt) {return '-';}
   const start = new Date(startedAt);
   const end = finishedAt ? new Date(finishedAt) : new Date();
   const durationMs = end.getTime() - start.getTime();
   const seconds = Math.floor(durationMs / 1000);
-  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 60) {return `${seconds} 秒`;}
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes} 分 ${remainingSeconds} 秒`;
+  if (minutes < 60) {return `${minutes} 分 ${remainingSeconds} 秒`;}
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return `${hours} 小时 ${remainingMinutes} 分`;

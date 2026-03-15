@@ -20,6 +20,7 @@ package auth
 
 import (
 	"net/http"
+	"net/mail"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -65,6 +66,18 @@ type UserInfoResponse struct {
 type LogoutResponse struct {
 	ErrorMsg string      `json:"error_msg"`
 	Data     interface{} `json:"data"`
+}
+
+// UpdateProfileRequest 更新当前登录用户的个人信息请求。
+type UpdateProfileRequest struct {
+	Email    string `json:"email" binding:"omitempty,max=255"`
+	Language string `json:"language" binding:"omitempty,oneof=zh en"`
+}
+
+// UpdateProfileResponse 更新当前登录用户的个人信息响应。
+type UpdateProfileResponse struct {
+	ErrorMsg string    `json:"error_msg"`
+	Data     *UserInfo `json:"data"`
 }
 
 // Login 处理用户登录
@@ -181,6 +194,78 @@ func GetUserInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, UserInfoResponse{Data: user.ToUserInfo()})
+}
+
+// UpdateProfile 更新当前登录用户的个人信息（支持邮箱和语言偏好）。
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body UpdateProfileRequest true "更新个人信息请求"
+// @Success 200 {object} UpdateProfileResponse
+// @Router /api/v1/auth/profile [put]
+func UpdateProfile(c *gin.Context) {
+	userID := GetUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, UpdateProfileResponse{ErrorMsg: "未登录"})
+		return
+	}
+
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	email := strings.TrimSpace(req.Email)
+	language := NormalizeLanguage(req.Language)
+	hasEmail := email != ""
+	hasLanguage := strings.TrimSpace(req.Language) != ""
+	if !hasEmail && !hasLanguage {
+		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "至少提供一个可更新字段 / At least one field is required"})
+		return
+	}
+	if hasEmail {
+		if _, err := mail.ParseAddress(email); err != nil {
+			c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "邮箱格式不正确 / Invalid email format"})
+			return
+		}
+	}
+	if hasLanguage && language == "" {
+		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "语言不合法 / Invalid language"})
+		return
+	}
+
+	user, err := FindByID(db.GetDB(c.Request.Context()), userID)
+	if err != nil {
+		logger.ErrorF(c.Request.Context(), "[Auth] 更新个人信息失败，用户不存在: %d, %v", userID, err)
+		c.JSON(http.StatusNotFound, UpdateProfileResponse{ErrorMsg: "用户不存在"})
+		return
+	}
+
+	updates := make(map[string]interface{}, 2)
+	if hasEmail {
+		updates["email"] = email
+	}
+	if hasLanguage {
+		updates["language"] = language
+	}
+
+	if err := db.GetDB(c.Request.Context()).
+		Model(user).
+		Updates(updates).Error; err != nil {
+		logger.ErrorF(c.Request.Context(), "[Auth] 更新个人信息失败: user_id=%d err=%v", userID, err)
+		c.JSON(http.StatusInternalServerError, UpdateProfileResponse{ErrorMsg: ErrMsgInternalError})
+		return
+	}
+
+	if hasEmail {
+		user.Email = email
+	}
+	if hasLanguage {
+		user.Language = language
+	}
+	logger.InfoF(c.Request.Context(), "[Auth] 更新个人信息成功: user_id=%d email_updated=%t language_updated=%t", userID, hasEmail, hasLanguage)
+	c.JSON(http.StatusOK, UpdateProfileResponse{Data: user.ToUserInfo()})
 }
 
 // GetUserIDFromContext 从 Gin 上下文获取用户 ID

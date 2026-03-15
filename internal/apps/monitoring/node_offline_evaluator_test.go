@@ -463,6 +463,128 @@ func TestEvaluateNodeHealthAlerts_repeatsNodeOfflineReminderAfterCooldown(t *tes
 	}
 }
 
+func TestEvaluateNodeHealthAlerts_suppressesTransientRuntimeHostOfflineWithinGraceWindow(t *testing.T) {
+	database, cleanup := setupMonitoringNodeOfflineTestDB(t)
+	t.Cleanup(cleanup)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	staleHeartbeat := now.Add(-35 * time.Second)
+
+	clusterRepo := clusterapp.NewRepository(database)
+	hostProvider := &stubNodeOfflineHostProvider{
+		hosts: map[uint]*clusterapp.HostInfo{
+			7: {
+				ID:            7,
+				Name:          "host-7",
+				IPAddress:     "10.0.0.7",
+				AgentID:       "agent-7",
+				AgentStatus:   "installed",
+				LastHeartbeat: &staleHeartbeat,
+			},
+		},
+	}
+	clusterService := clusterapp.NewService(clusterRepo, hostProvider, &clusterapp.ServiceConfig{
+		HeartbeatTimeout: 30 * time.Second,
+	})
+
+	monitorRepo := monitor.NewRepository(database)
+	monitorService := monitor.NewService(monitorRepo)
+	repo := NewRepository(database)
+	service := NewService(clusterService, monitorService, repo)
+
+	testCluster := &clusterapp.Cluster{
+		Name:           "node-offline-runtime-grace",
+		Description:    "test cluster",
+		DeploymentMode: clusterapp.DeploymentModeHybrid,
+		Version:        "2.3.11",
+		Status:         clusterapp.ClusterStatusRunning,
+		InstallDir:     "/opt/seatunnel",
+		CreatedBy:      1,
+	}
+	if err := database.WithContext(ctx).Create(testCluster).Error; err != nil {
+		t.Fatalf("failed to create cluster: %v", err)
+	}
+
+	node := &clusterapp.ClusterNode{
+		ClusterID:     testCluster.ID,
+		HostID:        7,
+		Role:          clusterapp.NodeRoleWorker,
+		InstallDir:    "/opt/seatunnel",
+		HazelcastPort: 5802,
+		WorkerPort:    5802,
+		Status:        clusterapp.NodeStatusRunning,
+		ProcessPID:    4242,
+	}
+	if err := database.WithContext(ctx).Create(node).Error; err != nil {
+		t.Fatalf("failed to create cluster node: %v", err)
+	}
+
+	if err := monitorRepo.CreateConfig(ctx, &monitor.MonitorConfig{
+		ClusterID:       testCluster.ID,
+		AutoMonitor:     true,
+		AutoRestart:     true,
+		MonitorInterval: 5,
+		RestartDelay:    10,
+		MaxRestarts:     3,
+		TimeWindow:      300,
+		CooldownPeriod:  1800,
+		ConfigVersion:   1,
+	}); err != nil {
+		t.Fatalf("failed to create monitor config: %v", err)
+	}
+
+	service.nodeHealthEvaluatorStartedAt = now.Add(-2 * time.Minute)
+	service.nodeHealthStartupSuppression = 30 * time.Second
+
+	if err := service.EvaluateNodeHealthAlerts(ctx); err != nil {
+		t.Fatalf("EvaluateNodeHealthAlerts during runtime grace returned error: %v", err)
+	}
+
+	offlineEvent, err := monitorService.GetLatestNodeEventByTypes(ctx, node.ID, []monitor.ProcessEventType{
+		monitor.EventTypeNodeOffline,
+	})
+	if err != nil {
+		t.Fatalf("failed to query node_offline event during runtime grace: %v", err)
+	}
+	if offlineEvent != nil {
+		t.Fatalf("expected no node_offline event during runtime grace, got %+v", offlineEvent)
+	}
+
+	if observedSince, ok := service.nodeHealthOfflineObservedAt[node.ID]; !ok || observedSince.IsZero() {
+		t.Fatal("expected runtime host_offline observation to be recorded")
+	}
+
+	recoveredHeartbeat := time.Now().UTC()
+	hostProvider.hosts[7].LastHeartbeat = &recoveredHeartbeat
+	if err := service.EvaluateNodeHealthAlerts(ctx); err != nil {
+		t.Fatalf("EvaluateNodeHealthAlerts after recovery returned error: %v", err)
+	}
+
+	offlineEvent, err = monitorService.GetLatestNodeEventByTypes(ctx, node.ID, []monitor.ProcessEventType{
+		monitor.EventTypeNodeOffline,
+	})
+	if err != nil {
+		t.Fatalf("failed to query node_offline event after recovery: %v", err)
+	}
+	if offlineEvent != nil {
+		t.Fatalf("expected no node_offline event after transient recovery, got %+v", offlineEvent)
+	}
+
+	recoveredEvent, err := monitorService.GetLatestNodeEventByTypes(ctx, node.ID, []monitor.ProcessEventType{
+		monitor.EventTypeNodeRecovered,
+	})
+	if err != nil {
+		t.Fatalf("failed to query node_recovered event after transient recovery: %v", err)
+	}
+	if recoveredEvent != nil {
+		t.Fatalf("expected no node_recovered event for suppressed transient offline, got %+v", recoveredEvent)
+	}
+	if _, ok := service.nodeHealthOfflineObservedAt[node.ID]; ok {
+		t.Fatal("expected runtime host_offline observation to be cleared after recovery")
+	}
+}
+
 func TestEvaluateNodeHealthAlerts_suppressesColdStartHostOfflineUntilStartupWindowElapses(t *testing.T) {
 	database, cleanup := setupMonitoringNodeOfflineTestDB(t)
 	t.Cleanup(cleanup)
@@ -553,6 +675,7 @@ func TestEvaluateNodeHealthAlerts_suppressesColdStartHostOfflineUntilStartupWind
 	}
 
 	service.nodeHealthEvaluatorStartedAt = processStart.Add(-31 * time.Second)
+	service.nodeHealthOfflineObservedAt[node.ID] = processStart.Add(-31 * time.Second)
 	if err := service.EvaluateNodeHealthAlerts(ctx); err != nil {
 		t.Fatalf("EvaluateNodeHealthAlerts after startup suppression returned error: %v", err)
 	}
@@ -571,7 +694,7 @@ func TestEvaluateNodeHealthAlerts_suppressesColdStartHostOfflineUntilStartupWind
 	}
 }
 
-func TestEvaluateNodeOfflineState_hostOfflineTriggersImmediately(t *testing.T) {
+func TestEvaluateNodeOfflineState_hostOfflineUsesRuntimeGraceAtServiceLayer(t *testing.T) {
 	now := time.Now().UTC()
 	node := &clusterapp.NodeInfo{
 		ID:         9,
@@ -585,25 +708,47 @@ func TestEvaluateNodeOfflineState_hostOfflineTriggersImmediately(t *testing.T) {
 		ProcessPID: 2345,
 		UpdatedAt:  now,
 	}
-
-	offline, matured, reason, _, grace := evaluateNodeOfflineState(node, &monitor.MonitorConfig{
+	cfg := &monitor.MonitorConfig{
 		AutoMonitor:     true,
 		AutoRestart:     true,
 		MonitorInterval: 5,
 		RestartDelay:    10,
-	}, now)
+	}
+	service := &Service{
+		nodeHealthOfflineObservedAt: make(map[uint]time.Time),
+	}
 
+	offline, matured, reason, observedSince, grace := evaluateNodeOfflineState(node, cfg, now)
 	if !offline {
 		t.Fatal("expected host-offline node to be considered offline")
 	}
 	if !matured {
-		t.Fatal("expected host-offline path to be immediately mature because heartbeat timeout already elapsed")
+		t.Fatal("expected base host-offline state to be offline before service-layer suppression")
 	}
 	if reason != "host_offline" {
 		t.Fatalf("expected host_offline reason, got %q", reason)
 	}
 	if grace != 0 {
-		t.Fatalf("expected zero additional grace for host_offline, got %s", grace)
+		t.Fatalf("expected base evaluator to report zero direct grace for host_offline, got %s", grace)
+	}
+	if !observedSince.Equal(now) {
+		t.Fatalf("expected base evaluator observedSince to be now, got %s want %s", observedSince, now)
+	}
+
+	observedSince, grace, matured = service.applyRuntimeHostOfflineGrace(node, cfg, now, offline)
+	if matured {
+		t.Fatal("expected runtime host_offline grace to delay alert maturation")
+	}
+	if grace < minNodeRuntimeOfflineGraceWindow {
+		t.Fatalf("expected runtime host_offline grace to be at least %s, got %s", minNodeRuntimeOfflineGraceWindow, grace)
+	}
+	if observedSince.IsZero() {
+		t.Fatal("expected runtime host_offline observation time to be recorded")
+	}
+
+	_, _, matured = service.applyRuntimeHostOfflineGrace(node, cfg, observedSince.Add(grace), offline)
+	if !matured {
+		t.Fatal("expected runtime host_offline grace to mature after grace window elapsed")
 	}
 }
 

@@ -47,7 +47,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {Tabs, TabsList, TabsTrigger} from '@/components/ui/tabs';
 
 type TimeRange = 'now-1h' | 'now-6h' | 'now-24h' | 'now-7d';
 type RefreshInterval = 'off' | '15s' | '30s' | '1m';

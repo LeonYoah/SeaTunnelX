@@ -173,7 +173,7 @@ function TagSelector({
   const addTag = React.useCallback(
     (tag: string) => {
       const trimmedTag = tag.trim();
-      if (!trimmedTag) return;
+      if (!trimmedTag) {return;}
 
       if (trimmedTag === '无标签') {
         toast.error('不允许创建名为"无标签"的标签');

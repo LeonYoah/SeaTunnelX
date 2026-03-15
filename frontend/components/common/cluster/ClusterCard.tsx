@@ -424,7 +424,7 @@ export function ClusterCard({cluster, onEdit, onDelete, onRefresh}: ClusterCardP
         open={isDeleteDialogOpen}
         onOpenChange={(open) => {
           setIsDeleteDialogOpen(open);
-          if (!open) setForceDelete(false);
+          if (!open) {setForceDelete(false);}
         }}
       >
         <AlertDialogContent>

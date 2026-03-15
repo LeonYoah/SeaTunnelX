@@ -1,0 +1,44 @@
+{
+  "id": "diagnostics-task-context-refactor",
+  "name": "diagnostics-task-context-refactor",
+  "title": "诊断任务来源上下文重构",
+  "description": "Refactor diagnostics task source context UX so URL context is prefill-only and users can switch/clear manual, error group, inspection finding, and alert sources.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "diagnostics",
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-11",
+  "completedAt": "2026-03-15",
+  "branch": null,
+  "base_branch": "feature/add-cluster-diagnostics-center",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

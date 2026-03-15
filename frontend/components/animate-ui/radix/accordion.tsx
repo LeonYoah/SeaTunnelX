@@ -95,7 +95,7 @@ function AccordionTrigger({
 
   React.useEffect(() => {
     const node = triggerRef.current;
-    if (!node) return;
+    if (!node) {return;}
 
     const observer = new MutationObserver((mutationsList) => {
       mutationsList.forEach((mutation) => {

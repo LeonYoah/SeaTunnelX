@@ -48,7 +48,11 @@ interface UsePackagesReturn {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  uploadPackage: (file: File, version: string) => Promise<PackageInfo>;
+  uploadPackage: (
+    file: File,
+    version: string,
+    onProgress?: (percent: number) => void,
+  ) => Promise<PackageInfo>;
   deletePackage: (version: string) => Promise<void>;
   startDownload: (
     version: string,
@@ -135,8 +139,16 @@ export function usePackages(): UsePackagesReturn {
   }, [fetchPackages, fetchDownloads]);
 
   const uploadPackage = useCallback(
-    async (file: File, version: string) => {
-      const result = await installerService.uploadPackage(file, version);
+    async (
+      file: File,
+      version: string,
+      onProgress?: (percent: number) => void,
+    ) => {
+      const result = await installerService.uploadPackage(
+        file,
+        version,
+        onProgress,
+      );
       await fetchPackages(); // Refresh list after upload
       return result;
     },

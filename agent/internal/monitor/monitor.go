@@ -28,8 +28,10 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -255,8 +257,8 @@ func (m *ProcessMonitor) checkAllProcesses() {
 			continue
 		}
 
-		// Check if process is alive / 检查进程是否存活
-		alive := isProcessAlive(proc.PID)
+		// Check if process is alive and still matches the expected executable / 检查进程是否存活且仍然是期望的可执行文件
+		alive := isProcessAlive(proc)
 		proc.LastCheck = time.Now()
 
 		if proc.ManuallyStopped {
@@ -492,9 +494,55 @@ func (m *ProcessMonitor) GetAllTrackedProcesses() []*TrackedProcess {
 	return processes
 }
 
-// isProcessAlive checks if a process with the given PID is alive
-// isProcessAlive 检查给定 PID 的进程是否存活
-func isProcessAlive(pid int) bool {
+// isProcessAlive checks if a tracked process is alive and still matches the expected command line.
+// isProcessAlive 检查被跟踪进程是否存活且仍然对应期望的命令行。
+// 这里除了检查 PID 是否存在外，会在 Unix 上比对 /proc/<pid>/cmdline 是否仍然包含原先的 InstallDir，
+// 以避免 PID 复用导致的“幽灵进程”（例如原进程退出后，mysqld 复用了相同 PID）。
+func isProcessAlive(proc *TrackedProcess) bool {
+	if proc == nil {
+		return false
+	}
+	pid := proc.PID
+	if !isPidAlive(pid) {
+		return false
+	}
+
+	// On Windows we don't attempt to resolve /proc paths; basic PID check is enough.
+	// 在 Windows 上不做额外校验，仅依赖基础的 PID 探活。
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
+	installDir := strings.TrimSpace(proc.InstallDir)
+	if installDir == "" {
+		// If we don't know the install dir, fall back to PID-only check.
+		// 如果未知安装目录，则退回到仅依赖 PID 的判断。
+		return true
+	}
+
+	// Best-effort check: ensure /proc/<pid>/cmdline 仍然包含原来的 InstallDir。
+	// 失败时不认为进程死亡，只在明确发现命令行已完全不包含该目录时才视为“不是我们的进程”。
+	cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return true
+	}
+	cmdline := strings.TrimSpace(strings.ReplaceAll(string(cmdlineBytes), "\x00", " "))
+	if cmdline == "" {
+		return true
+	}
+
+	if !strings.Contains(cmdline, installDir) {
+		// PID 仍然存在，但命令行不再包含原先的 InstallDir（例如被 mysqld 等进程复用），视为目标进程已退出。
+		// 这样可以触发 AutoRestarter，而不会误杀新进程。
+		return false
+	}
+
+	return true
+}
+
+// isPidAlive performs a basic liveness check for a PID using signal 0.
+// isPidAlive 使用信号 0 对给定 PID 做基础存活检查。
+func isPidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -504,15 +552,15 @@ func isProcessAlive(pid int) bool {
 		return false
 	}
 
-	// On Unix, FindProcess always succeeds, so we need to send signal 0 to check
-	// 在 Unix 上，FindProcess 总是成功，所以我们需要发送信号 0 来检查
+	// On Unix, FindProcess always succeeds, so we need to send signal 0 to check.
+	// 在 Unix 上，FindProcess 总是成功，所以需要发送信号 0 来检查。
 	if runtime.GOOS != "windows" {
 		err = process.Signal(syscall.Signal(0))
 		return err == nil
 	}
 
-	// On Windows, use a different approach
-	// 在 Windows 上，使用不同的方法
+	// On Windows, use a different approach.
+	// 在 Windows 上，使用不同的方法。
 	return checkProcessWindows(pid)
 }
 

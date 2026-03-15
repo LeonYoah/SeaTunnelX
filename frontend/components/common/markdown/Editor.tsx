@@ -219,7 +219,7 @@ export function MarkdownEditor({
   const insertText = useCallback(
     (beforeText: string, afterText: string = '') => {
       const textarea = textareaRef.current;
-      if (!textarea) return;
+      if (!textarea) {return;}
 
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
@@ -249,7 +249,7 @@ export function MarkdownEditor({
   const insertLineText = useCallback(
     (prefix: string) => {
       const textarea = textareaRef.current;
-      if (!textarea) return;
+      if (!textarea) {return;}
 
       const start = textarea.selectionStart;
       const lineStart = value.lastIndexOf('\n', start - 1) + 1;

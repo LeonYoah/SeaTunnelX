@@ -141,7 +141,7 @@ export function ConfigMain({ clusterId, clusterName }: ConfigMainProps) {
    * 处理保存配置
    */
   const handleSaveConfig = async (comment?: string) => {
-    if (!selectedConfig) return;
+    if (!selectedConfig) {return;}
 
     try {
       await services.config.updateConfig(selectedConfig.id, {
@@ -212,7 +212,7 @@ export function ConfigMain({ clusterId, clusterName }: ConfigMainProps) {
    * 处理回滚到指定版本
    */
   const handleRollback = async (version: number) => {
-    if (!selectedConfig) return;
+    if (!selectedConfig) {return;}
 
     try {
       await services.config.rollbackConfig(selectedConfig.id, {

@@ -33,12 +33,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import {
-  CheckCircle2,
-  XCircle,
   Server,
   Play,
   Package,
-  ExternalLink,
   Clock,
   ArrowRight,
   PartyPopper,
@@ -63,14 +60,14 @@ interface CompleteStepProps {
 
 // Format duration / 格式化持续时间
 function formatDuration(startTime?: string, endTime?: string): string {
-  if (!startTime || !endTime) return '-';
+  if (!startTime || !endTime) {return '-';}
 
   const start = new Date(startTime).getTime();
   const end = new Date(endTime).getTime();
   const duration = Math.floor((end - start) / 1000);
 
-  if (duration < 60) return `${duration} seconds`;
-  if (duration < 3600) return `${Math.floor(duration / 60)} minutes ${duration % 60} seconds`;
+  if (duration < 60) {return `${duration} seconds`;}
+  if (duration < 3600) {return `${Math.floor(duration / 60)} minutes ${duration % 60} seconds`;}
   return `${Math.floor(duration / 3600)} hours ${Math.floor((duration % 3600) / 60)} minutes`;
 }
 

@@ -192,6 +192,9 @@ func findOrCreateOAuthUser(ctx context.Context, info *OAuthUserInfo) (*auth.User
 		if info.Name != "" {
 			user.Nickname = info.Name
 		}
+		if strings.TrimSpace(info.Email) != "" {
+			user.Email = strings.TrimSpace(info.Email)
+		}
 		db.DB(ctx).Save(&user)
 		return &user, nil
 	}
@@ -202,6 +205,9 @@ func findOrCreateOAuthUser(ctx context.Context, info *OAuthUserInfo) (*auth.User
 		// 用户名已存在，关联 OAuth
 		user.OAuthID = oauthID
 		user.AvatarURL = info.AvatarURL
+		if strings.TrimSpace(info.Email) != "" {
+			user.Email = strings.TrimSpace(info.Email)
+		}
 		db.DB(ctx).Save(&user)
 		return &user, nil
 	}
@@ -210,6 +216,7 @@ func findOrCreateOAuthUser(ctx context.Context, info *OAuthUserInfo) (*auth.User
 	user = auth.User{
 		Username:  info.Username,
 		Nickname:  info.Name,
+		Email:     strings.TrimSpace(info.Email),
 		OAuthID:   oauthID,
 		AvatarURL: info.AvatarURL,
 		IsActive:  true,

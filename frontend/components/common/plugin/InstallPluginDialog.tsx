@@ -122,32 +122,10 @@ export function InstallPluginDialog({
   }, [plugin.name, version, t]);
 
   /**
-   * Load available clusters and check download status
-   * 加载可用集群列表并检查下载状态
-   */
-  useEffect(() => {
-    if (open) {
-      loadClusters();
-      checkDownloadStatus();
-    }
-  }, [open, checkDownloadStatus]);
-
-  /**
-   * Poll download status while downloading
-   * 下载时轮询下载状态
-   */
-  useEffect(() => {
-    if (!downloading) return;
-
-    const interval = setInterval(checkDownloadStatus, 1000);
-    return () => clearInterval(interval);
-  }, [downloading, checkDownloadStatus]);
-
-  /**
    * Load clusters and check plugin status for each
    * 加载集群列表并检查每个集群的插件状态
    */
-  const loadClusters = async () => {
+  const loadClusters = useCallback(async () => {
     setLoadingClusters(true);
     setError(null);
     try {
@@ -195,7 +173,29 @@ export function InstallPluginDialog({
     } finally {
       setLoadingClusters(false);
     }
-  };
+  }, [plugin.name, t]);
+
+  /**
+   * Load available clusters and check download status
+   * 加载可用集群列表并检查下载状态
+   */
+  useEffect(() => {
+    if (open) {
+      void loadClusters();
+      checkDownloadStatus();
+    }
+  }, [open, checkDownloadStatus, loadClusters]);
+
+  /**
+   * Poll download status while downloading
+   * 下载时轮询下载状态
+   */
+  useEffect(() => {
+    if (!downloading) {return;}
+
+    const interval = setInterval(checkDownloadStatus, 1000);
+    return () => clearInterval(interval);
+  }, [downloading, checkDownloadStatus]);
 
   /**
    * Handle download plugin

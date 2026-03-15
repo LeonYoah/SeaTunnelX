@@ -1,0 +1,7 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-11-unified-diagnosis-flow-mvp/prd.md", "reason": "Unified diagnosis workflow MVP requirements"}
+{"file": "frontend/components/common/diagnostics/DiagnosticsInspectionCenter.tsx", "reason": "Inspection detail and follow-up actions"}
+{"file": "frontend/components/common/diagnostics/DiagnosticsTaskCenter.tsx", "reason": "Existing diagnostics task creation flow"}
+{"file": "frontend/lib/services/diagnostics/types.ts", "reason": "Diagnostics inspection/task contract"}

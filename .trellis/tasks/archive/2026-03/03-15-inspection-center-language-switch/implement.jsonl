@@ -1,0 +1,16 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/api-and-services.md", "reason": "services and lang query propagation"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "i18n and diagnostics UI changes"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "persist user language preference"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "profile/lang validation and API errors"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "ctx/logging rules for diagnostics changes"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "spec update and backend quality constraints"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "language preference crosses profile/frontend/backend/report generation"}
+{"file": "frontend/components/common/layout/ManagementBar.tsx", "reason": "profile dialog already hosts language setting entry"}
+{"file": "frontend/lib/i18n/provider.tsx", "reason": "locale source and hydration behavior"}
+{"file": "internal/apps/auth/handler.go", "reason": "profile API contract to extend with language"}
+{"file": "internal/apps/auth/models.go", "reason": "user persistence model"}
+{"file": "internal/apps/diagnostics/display_text.go", "reason": "current bilingual text helpers to replace"}
+{"file": "internal/apps/diagnostics/task_execute.go", "reason": "offline report rendering and lang toggle removal"}

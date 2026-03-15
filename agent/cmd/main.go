@@ -34,7 +34,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +46,7 @@ import (
 	pb "github.com/seatunnel/seatunnelX/agent"
 	"github.com/seatunnel/seatunnelX/agent/internal/collector"
 	"github.com/seatunnel/seatunnelX/agent/internal/config"
+	agentdiagnostics "github.com/seatunnel/seatunnelX/agent/internal/diagnostics"
 	"github.com/seatunnel/seatunnelX/agent/internal/discovery"
 	"github.com/seatunnel/seatunnelX/agent/internal/executor"
 	agentgrpc "github.com/seatunnel/seatunnelX/agent/internal/grpc"
@@ -63,6 +66,8 @@ var (
 	GitCommit = "unknown"
 	BuildTime = "unknown"
 )
+
+var agentLogTimestampPattern = regexp.MustCompile(`\b(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)\b`)
 
 // Agent represents the main agent service that integrates all components
 // Agent 表示集成所有组件的主要 Agent 服务
@@ -113,6 +118,10 @@ type Agent struct {
 	// eventReporter 处理进程事件上报
 	eventReporter *monitor.EventReporter
 
+	// errorCollector handles incremental Seatunnel ERROR log collection.
+	// errorCollector 处理 Seatunnel ERROR 日志增量采集。
+	errorCollector *agentdiagnostics.Collector
+
 	// wg tracks running goroutines for graceful shutdown
 	// wg 跟踪运行中的 goroutine 以实现优雅关闭
 	wg sync.WaitGroup
@@ -155,6 +164,9 @@ func NewAgent(cfg *config.Config) *Agent {
 	// Create event reporter / 创建事件上报器
 	er := monitor.NewEventReporter(nil) // Will set report func later / 稍后设置上报函数
 
+	// Create diagnostics error collector / 创建诊断错误采集器
+	ec := agentdiagnostics.NewCollector(grpcClient)
+
 	return &Agent{
 		config:           cfg,
 		ctx:              ctx,
@@ -167,6 +179,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		processMonitor:   pmon,
 		autoRestarter:    ar,
 		eventReporter:    er,
+		errorCollector:   ec,
 	}
 }
 
@@ -367,16 +380,7 @@ func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
 		eventType = pb.ProcessEventType_PROCESS_RESTART_FAILED
 	}
 
-	installDir := ""
-	role := ""
-	if event.Details != nil {
-		if dir, ok := event.Details["install_dir"].(string); ok {
-			installDir = dir
-		}
-		if r, ok := event.Details["role"].(string); ok {
-			role = r
-		}
-	}
+	installDir, role, details := extractProcessEventReportFields(event)
 
 	report := &pb.ProcessEventReport{
 		AgentId:     a.grpcClient.GetAgentID(),
@@ -386,6 +390,7 @@ func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
 		InstallDir:  installDir,
 		Role:        role,
 		Timestamp:   event.Timestamp.UnixMilli(),
+		Details:     details,
 	}
 
 	if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
@@ -396,6 +401,23 @@ func (a *Agent) reportProcessEvent(event *monitor.ProcessEvent) {
 
 	logger.InfoF(ctx, "[Agent] Event reported to Control Plane: type=%s, name=%s, pid=%d / 事件已上报到 Control Plane：类型=%s，名称=%s，PID=%d",
 		event.Type, event.Name, event.PID, event.Type, event.Name, event.PID)
+}
+
+func extractProcessEventReportFields(event *monitor.ProcessEvent) (installDir, role string, details map[string]string) {
+	details = make(map[string]string)
+	if event == nil || event.Details == nil {
+		return "", "", details
+	}
+	for key, value := range event.Details {
+		details[key] = fmt.Sprint(value)
+	}
+	if dir, ok := event.Details["install_dir"].(string); ok {
+		installDir = dir
+	}
+	if r, ok := event.Details["role"].(string); ok {
+		role = r
+	}
+	return installDir, role, details
 }
 
 // connectToControlPlane establishes connection to Control Plane with retry
@@ -465,6 +487,30 @@ func (a *Agent) registerWithControlPlane() error {
 
 	logger.InfoF(ctx, "Registered successfully with ID: %s / 注册成功，ID：%s", resp.AssignedId, resp.AssignedId)
 
+	// Align diagnostics collector cursor with server-side persisted cursor.
+	// 对齐诊断采集器游标，避免 Agent 重启后按 initialTail 回采导致重复上报。
+	if a.errorCollector != nil {
+		if cursors, err := a.grpcClient.GetDiagnosticsLogCursors(ctx); err != nil {
+			logger.WarnF(ctx, "[Diagnostics] Failed to load diagnostics cursors: %v / 拉取诊断游标失败：%v", err, err)
+		} else if cursors != nil {
+			loaded := 0
+			for _, item := range cursors.Cursors {
+				if item == nil {
+					continue
+				}
+				key := strings.TrimSpace(item.InstallDir) + "::" + strings.TrimSpace(item.Role) + "::" + strings.TrimSpace(item.SourceFile)
+				if strings.TrimSpace(item.SourceFile) == "" || strings.TrimSpace(item.InstallDir) == "" || strings.TrimSpace(item.Role) == "" {
+					continue
+				}
+				a.errorCollector.SetInitialCursor(key, item.Offset)
+				loaded++
+			}
+			if loaded > 0 {
+				logger.InfoF(ctx, "[Diagnostics] Loaded %d diagnostics cursors / 已加载 %d 条诊断游标", loaded, loaded)
+			}
+		}
+	}
+
 	// Set up event reporter with gRPC report function / 设置事件上报器的 gRPC 上报函数
 	a.setupEventReporter()
 
@@ -503,16 +549,7 @@ func (a *Agent) setupEventReporter() {
 				eventType = pb.ProcessEventType_PROCESS_RESTART_FAILED
 			}
 
-			installDir := ""
-			role := ""
-			if event.Details != nil {
-				if dir, ok := event.Details["install_dir"].(string); ok {
-					installDir = dir
-				}
-				if r, ok := event.Details["role"].(string); ok {
-					role = r
-				}
-			}
+			installDir, role, details := extractProcessEventReportFields(event)
 
 			report := &pb.ProcessEventReport{
 				AgentId:     agentID,
@@ -522,6 +559,7 @@ func (a *Agent) setupEventReporter() {
 				InstallDir:  installDir,
 				Role:        role,
 				Timestamp:   event.Timestamp.UnixMilli(),
+				Details:     details,
 			}
 
 			if err := a.grpcClient.ReportProcessEvent(a.ctx, report); err != nil {
@@ -636,6 +674,11 @@ func (a *Agent) startBackgroundServices() {
 		defer a.wg.Done()
 		a.runConnectionMonitor()
 	}()
+
+	// Start diagnostics error collector / 启动诊断错误采集器
+	if a.errorCollector != nil {
+		a.errorCollector.Start(a.ctx)
+	}
 }
 
 // runHeartbeatLoop runs the heartbeat sending loop
@@ -778,9 +821,16 @@ func (a *Agent) handleCommand(ctx context.Context, cmd *pb.CommandRequest) (*pb.
 	resp, err := a.executor.Execute(ctx, cmd, reporter)
 	if err != nil {
 		logger.ErrorF(ctx, "Command %s failed: %v / 命令 %s 失败：%v", cmd.CommandId, err, cmd.CommandId, err)
+	} else if resp.Status == pb.CommandStatus_FAILED {
+		reason := resp.Error
+		if reason == "" {
+			reason = "unknown"
+		}
+		logger.WarnF(ctx, "Command %s (type: %s) completed: FAILED, reason: %s / 命令 %s（类型：%s）完成：失败，原因：%s",
+			cmd.CommandId, cmd.Type.String(), reason, cmd.CommandId, cmd.Type.String(), reason)
 	} else {
-		logger.InfoF(ctx, "Command %s completed with status: %s / 命令 %s 完成，状态：%s",
-			cmd.CommandId, resp.Status.String(), cmd.CommandId, resp.Status.String())
+		logger.InfoF(ctx, "Command %s (type: %s) completed: %s / 命令 %s（类型：%s）完成：%s",
+			cmd.CommandId, cmd.Type.String(), resp.Status.String(), cmd.CommandId, cmd.Type.String(), resp.Status.String())
 	}
 
 	return resp, err
@@ -852,6 +902,8 @@ func (a *Agent) registerCommandHandlers() {
 
 	// Register diagnostic handlers / 注册诊断处理器
 	a.executor.RegisterHandler(pb.CommandType_COLLECT_LOGS, a.handleCollectLogsCommand)
+	a.executor.RegisterHandler(pb.CommandType_THREAD_DUMP, a.handleThreadDumpCommand)
+	a.executor.RegisterHandler(pb.CommandType_JVM_DUMP, a.handleJVMDumpCommand)
 
 	// Register cluster discovery and monitoring handlers / 注册集群发现和监控处理器
 	a.executor.RegisterHandler(pb.CommandType_DISCOVER_CLUSTERS, a.handleDiscoverClustersCommand)
@@ -1255,7 +1307,7 @@ func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandReq
 	}
 
 	// mode: "tail" (default), "head", "all"
-	// mode: "tail"（默认）, "head", "all"
+	// mode: "tail"（默认）, "head", "all", "list"
 	mode := getParamString(cmd.Parameters, "mode", "tail")
 
 	// filter: grep pattern (optional)
@@ -1265,6 +1317,8 @@ func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandReq
 	// date: specific date for rolling log files (e.g., "2025-12-18")
 	// date: 滚动日志文件的特定日期（如 "2025-12-18"）
 	date := getParamString(cmd.Parameters, "date", "")
+	startTimeRaw := getParamString(cmd.Parameters, "start_time", "")
+	endTimeRaw := getParamString(cmd.Parameters, "end_time", "")
 
 	// If date is specified, try to find the dated log file
 	// 如果指定了日期，尝试查找带日期的日志文件
@@ -1295,14 +1349,70 @@ func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandReq
 		}
 	}
 
+	fileInfo, statErr := os.Stat(actualLogFile)
 	// Check if file exists / 检查文件是否存在
-	if _, err := os.Stat(actualLogFile); os.IsNotExist(err) {
+	if os.IsNotExist(statErr) {
 		// List available log files / 列出可用的日志文件
 		dir := filepath.Dir(logFile)
 		base := filepath.Base(logFile)
 		files, _ := filepath.Glob(filepath.Join(dir, base+"*"))
 		availableFiles := strings.Join(files, ", ")
 		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Log file not found: %s. Available files: %s / 日志文件不存在: %s。可用文件: %s", actualLogFile, availableFiles, actualLogFile, availableFiles)), nil
+	}
+	if statErr != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to stat file: %v / 文件状态获取失败: %v", statErr, statErr)), nil
+	}
+
+	if mode == "list" {
+		if !fileInfo.IsDir() {
+			return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Path is not a directory: %s / 路径不是目录: %s", actualLogFile, actualLogFile)), nil
+		}
+		type directoryEntry struct {
+			Name    string    `json:"name"`
+			Path    string    `json:"path"`
+			Size    int64     `json:"size"`
+			Mode    string    `json:"mode"`
+			ModTime time.Time `json:"mod_time"`
+			IsDir   bool      `json:"is_dir"`
+		}
+		type directoryListing struct {
+			Path    string           `json:"path"`
+			Entries []directoryEntry `json:"entries"`
+		}
+		entries, err := os.ReadDir(actualLogFile)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to list directory: %v / 目录读取失败: %v", err, err)), nil
+		}
+		items := make([]directoryEntry, 0, len(entries))
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			items = append(items, directoryEntry{
+				Name:    entry.Name(),
+				Path:    filepath.Join(actualLogFile, entry.Name()),
+				Size:    info.Size(),
+				Mode:    info.Mode().String(),
+				ModTime: info.ModTime(),
+				IsDir:   info.IsDir(),
+			})
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].IsDir != items[j].IsDir {
+				return !items[i].IsDir
+			}
+			return items[i].Name < items[j].Name
+		})
+		payload, err := json.Marshal(directoryListing{
+			Path:    actualLogFile,
+			Entries: items,
+		})
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to encode directory listing: %v / 目录列表编码失败: %v", err, err)), nil
+		}
+		reporter.Report(100, "Directory listed successfully / 目录读取成功")
+		return executor.CreateSuccessResponse(cmd.CommandId, string(payload)), nil
 	}
 
 	var output []byte
@@ -1319,7 +1429,15 @@ func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandReq
 	case "all":
 		// Read entire file (limited) / 读取整个文件（有限制）
 		output, err = os.ReadFile(actualLogFile)
-		if err == nil && len(output) > 500*1024 {
+		if err == nil && (startTimeRaw != "" || endTimeRaw != "") {
+			startTime, parseStartErr := parseAgentLogWindowTime(startTimeRaw)
+			endTime, parseEndErr := parseAgentLogWindowTime(endTimeRaw)
+			if parseStartErr != nil || parseEndErr != nil {
+				return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to parse time window: start=%v end=%v / 解析时间窗失败: start=%v end=%v", parseStartErr, parseEndErr, parseStartErr, parseEndErr)), nil
+			}
+			filtered := filterAgentLogWindowContent(string(output), startTime, endTime)
+			output = []byte(filtered)
+		} else if err == nil && len(output) > 500*1024 {
 			// Limit to 500KB / 限制为 500KB
 			output = output[:500*1024]
 			output = append(output, []byte("\n... [truncated / 已截断] ...")...)
@@ -1350,6 +1468,132 @@ func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandReq
 
 	reporter.Report(100, "Logs collected / 日志收集完成")
 	return executor.CreateSuccessResponse(cmd.CommandId, string(output)), nil
+}
+
+func (a *Agent) handleThreadDumpCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	reporter.Report(10, "Collecting thread dump... / 正在采集线程栈...")
+
+	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+	role := getParamString(cmd.Parameters, "role", "")
+	outputDir := getParamString(cmd.Parameters, "output_dir", filepath.Join(installDir, "logs", "diagnostics"))
+
+	result, err := agentdiagnostics.CollectThreadDump(ctx, installDir, role, outputDir)
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to collect thread dump: %v / 采集线程栈失败：%v", err, err)), nil
+	}
+	payload, err := agentdiagnostics.MarshalThreadDumpResult(result)
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to encode thread dump result: %v / 编码线程栈结果失败：%v", err, err)), nil
+	}
+
+	reporter.Report(100, "Thread dump collected / 线程栈采集完成")
+	return executor.CreateSuccessResponse(cmd.CommandId, payload), nil
+}
+
+func parseAgentLogWindowTime(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
+}
+
+func filterAgentLogWindowContent(content string, start, end time.Time) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	if !start.IsZero() {
+		start = start.Local()
+	}
+	if !end.IsZero() {
+		end = end.Local()
+	}
+	type logEntry struct {
+		ts      time.Time
+		hasTime bool
+		lines   []string
+	}
+	appendLine := func(entries []logEntry, current *logEntry, line string) ([]logEntry, *logEntry) {
+		if current == nil {
+			entries = append(entries, logEntry{lines: []string{line}})
+			return entries, &entries[len(entries)-1]
+		}
+		current.lines = append(current.lines, line)
+		return entries, current
+	}
+
+	entries := make([]logEntry, 0, 256)
+	var current *logEntry
+	for _, line := range strings.Split(content, "\n") {
+		if ts, ok := parseAgentLogTimestamp(line); ok {
+			entries = append(entries, logEntry{
+				ts:      ts,
+				hasTime: true,
+				lines:   []string{line},
+			})
+			current = &entries[len(entries)-1]
+			continue
+		}
+		entries, current = appendLine(entries, current, line)
+	}
+
+	filtered := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.hasTime {
+			if !start.IsZero() && entry.ts.Before(start) {
+				continue
+			}
+			if !end.IsZero() && entry.ts.After(end) {
+				continue
+			}
+		}
+		filtered = append(filtered, entry.lines...)
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+func parseAgentLogTimestamp(line string) (time.Time, bool) {
+	matches := agentLogTimestampPattern.FindStringSubmatch(line)
+	if len(matches) != 2 {
+		return time.Time{}, false
+	}
+	value := strings.TrimSpace(matches[1])
+	layouts := []string{"2006-01-02 15:04:05,000", "2006-01-02 15:04:05"}
+	for _, layout := range layouts {
+		if parsed, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (a *Agent) handleJVMDumpCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	reporter.Report(10, "Preparing JVM dump... / 准备采集 JVM Dump...")
+
+	installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+	role := getParamString(cmd.Parameters, "role", "")
+	outputDir := getParamString(cmd.Parameters, "output_dir", filepath.Join(installDir, "logs", "diagnostics"))
+	minFreeMB := getParamInt(cmd.Parameters, "min_free_mb", agentdiagnostics.DefaultJVMDumpMinFreeMB)
+
+	result, err := agentdiagnostics.CollectJVMDump(ctx, installDir, role, outputDir, int64(minFreeMB)*1024*1024)
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to create JVM dump: %v / 生成 JVM Dump 失败：%v", err, err)), nil
+	}
+	payload, err := agentdiagnostics.MarshalJVMDumpResult(result)
+	if err != nil {
+		return executor.CreateErrorResponse(cmd.CommandId, fmt.Sprintf("Failed to encode JVM dump result: %v / 编码 JVM Dump 结果失败：%v", err, err)), nil
+	}
+
+	if result.Status == agentdiagnostics.DumpStatusSkipped {
+		reporter.Report(100, "JVM dump skipped due to disk policy / JVM Dump 因磁盘策略被跳过")
+	} else {
+		reporter.Report(100, "JVM dump created / JVM Dump 采集完成")
+	}
+	return executor.CreateSuccessResponse(cmd.CommandId, payload), nil
 }
 
 // readLastNLines reads the last N lines from a file
@@ -1745,6 +1989,36 @@ func (a *Agent) handleDiscoverClustersCommand(ctx context.Context, cmd *pb.Comma
 	return executor.CreateSuccessResponse(cmd.CommandId, string(jsonOutput)), nil
 }
 
+func (a *Agent) updateDiagnosticsTargets(ctx context.Context, trackedProcessesJSON string) {
+	if a.errorCollector == nil {
+		return
+	}
+
+	targets := make([]*agentdiagnostics.ScanTarget, 0)
+	if strings.TrimSpace(trackedProcessesJSON) != "" {
+		var trackedProcesses []struct {
+			PID        int    `json:"pid"`
+			Name       string `json:"name"`
+			InstallDir string `json:"install_dir"`
+			Role       string `json:"role"`
+		}
+		if err := json.Unmarshal([]byte(trackedProcessesJSON), &trackedProcesses); err != nil {
+			logger.ErrorF(ctx, "[Agent] Failed to parse diagnostics tracked_processes: %v / 解析 diagnostics tracked_processes 失败：%v", err, err)
+			return
+		}
+		for _, proc := range trackedProcesses {
+			targets = append(targets, &agentdiagnostics.ScanTarget{
+				Name:       proc.Name,
+				InstallDir: proc.InstallDir,
+				Role:       proc.Role,
+			})
+		}
+	}
+
+	a.errorCollector.ReplaceTargets(targets)
+	logger.InfoF(ctx, "[Diagnostics] Updated %d scan targets / 已更新 %d 个诊断扫描目标", len(targets), len(targets))
+}
+
 // handleUpdateMonitorConfigCommand handles the UPDATE_MONITOR_CONFIG command
 // handleUpdateMonitorConfigCommand 处理 UPDATE_MONITOR_CONFIG 命令
 // Requirements 5.5: Apply new config immediately without restart
@@ -1753,7 +2027,9 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 	reporter.Report(10, "Updating monitor config... / 更新监控配置...")
 
 	// Parse config from parameters / 从参数解析配置
+	autoMonitorEnabled := getParamBool(cmd.Parameters, "auto_monitor", true)
 	autoRestartEnabled := getParamBool(cmd.Parameters, "auto_restart", true)
+	trackedProcessesJSON := getParamString(cmd.Parameters, "tracked_processes", "")
 	config := &restart.RestartConfig{
 		Enabled:        autoRestartEnabled,
 		RestartDelay:   time.Duration(getParamInt(cmd.Parameters, "restart_delay", 10)) * time.Second,
@@ -1770,24 +2046,30 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 		a.processMonitor.SetMonitorInterval(time.Duration(monitorInterval) * time.Second)
 	}
 
-	// If auto-restart is disabled, untrack all processes immediately
-	// 如果禁用了自动重启，静默取消跟踪所有进程（不发送事件，因为进程仍在运行）
-	if !autoRestartEnabled {
-		trackedProcesses := a.processMonitor.GetAllTrackedProcesses()
-		for _, proc := range trackedProcesses {
-			// Use silent untrack - process is still running, we just stop monitoring
-			// 使用静默取消跟踪 - 进程仍在运行，我们只是停止监控
-			a.processMonitor.UntrackProcessSilent(proc.Name)
-			logger.InfoF(ctx, "[Agent] Auto-restart disabled, stopped monitoring process: %s / 自动重启已禁用，停止监控进程：%s",
-				proc.Name, proc.Name)
-		}
-		reporter.Report(100, "Monitor config updated (auto-restart disabled, stopped monitoring) / 监控配置已更新（自动重启已禁用，停止监控）")
-		return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated, auto-restart disabled / 监控配置已更新，自动重启已禁用"), nil
+	// Update diagnostics scan targets from Control Plane.
+	// Diagnostics binds to managed monitoring targets instead of auto-restart.
+	// 根据 Control Plane 下发的受管进程刷新诊断扫描目标。
+	if autoMonitorEnabled {
+		a.updateDiagnosticsTargets(ctx, trackedProcessesJSON)
+	} else {
+		a.updateDiagnosticsTargets(ctx, "")
 	}
 
-	// Auto-restart is enabled, parse and track processes from Control Plane
-	// 自动重启已启用，解析并跟踪来自 Control Plane 的进程
-	trackedProcessesJSON := getParamString(cmd.Parameters, "tracked_processes", "")
+	// If auto-monitor is disabled, untrack all processes immediately.
+	// 如果禁用了自动监控，静默取消跟踪所有进程（不发送事件，因为进程仍在运行）
+	if !autoMonitorEnabled {
+		trackedProcesses := a.processMonitor.GetAllTrackedProcesses()
+		for _, proc := range trackedProcesses {
+			a.processMonitor.UntrackProcessSilent(proc.Name)
+			logger.InfoF(ctx, "[Agent] Auto-monitor disabled, stopped monitoring process: %s / 自动监控已禁用，停止监控进程：%s",
+				proc.Name, proc.Name)
+		}
+		reporter.Report(100, "Monitor config updated (auto-monitor disabled, stopped monitoring) / 监控配置已更新（自动监控已禁用，停止监控）")
+		return executor.CreateSuccessResponse(cmd.CommandId, "Monitor config updated, auto-monitor disabled / 监控配置已更新，自动监控已禁用"), nil
+	}
+
+	// Parse and track processes from Control Plane.
+	// 解析并跟踪来自 Control Plane 的受管进程。
 	if trackedProcessesJSON != "" {
 		var trackedProcesses []struct {
 			PID        int    `json:"pid"`
@@ -1798,7 +2080,21 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 		if err := json.Unmarshal([]byte(trackedProcessesJSON), &trackedProcesses); err != nil {
 			logger.ErrorF(ctx, "[Agent] Failed to parse tracked_processes: %v / 解析 tracked_processes 失败：%v", err, err)
 		} else {
-			logger.InfoF(ctx, "[Agent] Received %d processes to track / 收到 %d 个需要跟踪的进程", len(trackedProcesses), len(trackedProcesses))
+			logger.InfoF(ctx, "[Agent] Received %d processes to track (auto_monitor=%t, auto_restart=%t) / 收到 %d 个需要跟踪的进程（自动监控=%t，自动拉起=%t）",
+				len(trackedProcesses), autoMonitorEnabled, autoRestartEnabled, len(trackedProcesses), autoMonitorEnabled, autoRestartEnabled)
+
+			expected := make(map[string]struct{}, len(trackedProcesses))
+			for _, proc := range trackedProcesses {
+				expected[proc.Name] = struct{}{}
+			}
+			for _, existing := range a.processMonitor.GetAllTrackedProcesses() {
+				if _, ok := expected[existing.Name]; ok {
+					continue
+				}
+				a.processMonitor.UntrackProcessSilent(existing.Name)
+				logger.InfoF(ctx, "[Agent] Untracked stale monitored process: %s / 已移除过期受监控进程：%s", existing.Name, existing.Name)
+			}
+
 			for _, proc := range trackedProcesses {
 				// Create start params for potential restart / 创建启动参数用于可能的重启
 				startParams := &process.StartParams{
@@ -1807,16 +2103,15 @@ func (a *Agent) handleUpdateMonitorConfigCommand(ctx context.Context, cmd *pb.Co
 				}
 
 				if proc.PID > 0 {
-					// Track running process silently - no started event since process was already running
-					// 静默跟踪运行中的进程 - 不发送 started 事件，因为进程已经在运行
 					a.processMonitor.TrackProcessSilent(proc.Name, proc.PID, proc.InstallDir, proc.Role, startParams)
 					logger.InfoF(ctx, "[Agent] Tracking running process (silent): %s (PID: %d, Role: %s, Dir: %s) / 静默跟踪运行中的进程：%s（PID：%d，角色：%s，目录：%s）",
 						proc.Name, proc.PID, proc.Role, proc.InstallDir, proc.Name, proc.PID, proc.Role, proc.InstallDir)
-				} else {
-					// For stopped processes, register with PID 0 - auto-restart will start them if enabled
-					// 对于已停止的进程，用 PID 0 注册 - 如果启用了自动重启，会自动启动它们
+				} else if autoRestartEnabled {
 					a.processMonitor.TrackProcessSilent(proc.Name, 0, proc.InstallDir, proc.Role, startParams)
 					logger.InfoF(ctx, "[Agent] Registered stopped process (will auto-restart): %s (Role: %s, Dir: %s) / 注册已停止的进程（将自动重启）：%s（角色：%s，目录：%s）",
+						proc.Name, proc.Role, proc.InstallDir, proc.Name, proc.Role, proc.InstallDir)
+				} else {
+					logger.InfoF(ctx, "[Agent] Skip stopped process without auto-restart: %s (Role: %s, Dir: %s) / 自动拉起已禁用，跳过已停止进程：%s（角色：%s，目录：%s）",
 						proc.Name, proc.Role, proc.InstallDir, proc.Name, proc.Role, proc.InstallDir)
 				}
 			}

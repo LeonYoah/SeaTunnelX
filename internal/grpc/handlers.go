@@ -24,12 +24,15 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/apps/agent"
 	"github.com/seatunnel/seatunnelX/internal/apps/audit"
+	"github.com/seatunnel/seatunnelX/internal/apps/diagnostics"
 	"github.com/seatunnel/seatunnelX/internal/apps/host"
 	"github.com/seatunnel/seatunnelX/internal/apps/monitor"
+	"github.com/seatunnel/seatunnelX/internal/db"
 	pb "github.com/seatunnel/seatunnelX/internal/proto/agent"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -147,6 +150,45 @@ func (s *Server) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.Reg
 	}
 
 	return response, nil
+}
+
+// GetDiagnosticsLogCursors returns all diagnostics log cursors for a given agent.
+// GetDiagnosticsLogCursors 返回某个 Agent 的所有诊断日志游标。
+func (s *Server) GetDiagnosticsLogCursors(ctx context.Context, req *pb.DiagnosticsCursorRequest) (*pb.DiagnosticsCursorResponse, error) {
+	if req == nil || req.AgentId == "" {
+		return &pb.DiagnosticsCursorResponse{}, nil
+	}
+	if !db.IsDatabaseInitialized() {
+		return &pb.DiagnosticsCursorResponse{}, nil
+	}
+
+	// Lazily construct diagnostics repository; this RPC is infrequent and read-only.
+	repo := diagnostics.NewRepository(db.DB(ctx))
+	cursors, err := repo.ListLogCursorsByAgent(ctx, req.AgentId)
+	if err != nil {
+		s.logger.Error("GetDiagnosticsLogCursors failed",
+			zap.String("agent_id", req.AgentId),
+			zap.Error(err),
+		)
+		return nil, status.Errorf(codes.Internal, "failed to list log cursors: %v", err)
+	}
+
+	resp := &pb.DiagnosticsCursorResponse{
+		Cursors: make([]*pb.DiagnosticsCursor, 0, len(cursors)),
+	}
+	for _, c := range cursors {
+		item := &pb.DiagnosticsCursor{
+			InstallDir: c.InstallDir,
+			Role:       c.Role,
+			SourceFile: c.SourceFile,
+			Offset:     c.CursorOffset,
+		}
+		if c.LastOccurredAt != nil {
+			item.LastOccurredAt = c.LastOccurredAt.UnixMilli()
+		}
+		resp.Cursors = append(resp.Cursors, item)
+	}
+	return resp, nil
 }
 
 // Heartbeat handles Agent heartbeat requests.
@@ -484,9 +526,20 @@ func (s *Server) LogStream(stream grpc.ClientStreamingServer[pb.LogEntry, pb.Log
 			agentID = entry.AgentId
 		}
 
-		// Store log entry to audit log
-		// 将日志条目存储到审计日志
-		if s.auditRepo != nil {
+		// Route diagnostics seatunnel error logs into diagnostics domain,
+		// otherwise keep existing audit log behavior.
+		// seatunnel_error 进入 diagnostics 域，其余日志保持现有审计行为。
+		if isSeatunnelErrorLogEntry(entry) {
+			if err := s.handleSeatunnelErrorLogEntry(stream.Context(), entry); err != nil {
+				s.logger.Warn("Failed to ingest seatunnel diagnostics log entry",
+					zap.String("agent_id", entry.AgentId),
+					zap.Error(err),
+				)
+				if s.auditRepo != nil {
+					s.storeLogEntry(entry)
+				}
+			}
+		} else if s.auditRepo != nil {
 			s.storeLogEntry(entry)
 		}
 
@@ -541,6 +594,74 @@ func (s *Server) storeLogEntry(entry *pb.LogEntry) {
 	}
 }
 
+func isSeatunnelErrorLogEntry(entry *pb.LogEntry) bool {
+	if entry == nil || entry.Fields == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(entry.Fields["source"]), "seatunnel_error")
+}
+
+func (s *Server) handleSeatunnelErrorLogEntry(ctx context.Context, entry *pb.LogEntry) error {
+	if diagnosticsService == nil {
+		return diagnostics.ErrDiagnosticsRepositoryUnavailable
+	}
+	if s == nil || s.agentManager == nil || entry == nil {
+		return diagnostics.ErrInvalidSeatunnelErrorRequest
+	}
+
+	conn, ok := s.agentManager.GetAgent(entry.AgentId)
+	if !ok {
+		return fmt.Errorf("agent connection not found for %s", entry.AgentId)
+	}
+
+	installDir := strings.TrimSpace(entry.Fields["install_dir"])
+	role := strings.TrimSpace(entry.Fields["role"])
+	sourceFile := strings.TrimSpace(entry.Fields["source_file"])
+	if installDir == "" || role == "" || sourceFile == "" {
+		return fmt.Errorf("missing diagnostics fields for seatunnel_error entry")
+	}
+
+	var clusterID, nodeID uint
+	if clusterNodeProvider != nil && conn.HostID > 0 {
+		resolvedClusterID, resolvedNodeID, _, err := clusterNodeProvider.GetNodeByHostAndInstallDirAndRole(ctx, conn.HostID, installDir, role)
+		if err != nil {
+			return err
+		}
+		clusterID = resolvedClusterID
+		nodeID = resolvedNodeID
+	}
+
+	occurredAt := time.UnixMilli(entry.Timestamp)
+	if entry.Timestamp <= 0 {
+		occurredAt = time.Now()
+	}
+
+	return diagnosticsService.IngestSeatunnelError(ctx, &diagnostics.IngestSeatunnelErrorRequest{
+		ClusterID:   clusterID,
+		NodeID:      nodeID,
+		HostID:      conn.HostID,
+		AgentID:     entry.AgentId,
+		Role:        role,
+		InstallDir:  installDir,
+		SourceFile:  sourceFile,
+		SourceKind:  strings.TrimSpace(entry.Fields["source_kind"]),
+		JobID:       strings.TrimSpace(entry.Fields["job_id"]),
+		OccurredAt:  occurredAt,
+		Message:     strings.TrimSpace(entry.Message),
+		Evidence:    strings.TrimSpace(entry.Fields["body"]),
+		CursorStart: parseInt64Field(entry.Fields["cursor_start"]),
+		CursorEnd:   parseInt64Field(entry.Fields["cursor_end"]),
+	})
+}
+
+func parseInt64Field(value string) int64 {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
 // extractAgentIDFromResponse extracts the agent ID from a command response.
 // extractAgentIDFromResponse 从命令响应中提取 Agent ID。
 // The Agent sends its ID in the output field of the first message.
@@ -567,7 +688,6 @@ func generateAgentID(hostname, ipAddress string) string {
 	// 使用十六进制哈希的前 16 个字符作为 Agent ID
 	return fmt.Sprintf("agent-%x", hash[:8])
 }
-
 
 // ============================================================================
 // Process Monitor gRPC Handlers (Task 11)
@@ -618,6 +738,10 @@ var monitorService MonitorService
 // clusterNodeProvider 提供集群节点信息。
 var clusterNodeProvider ClusterNodeProvider
 
+// diagnosticsService handles structured diagnostics evidence ingestion.
+// diagnosticsService 处理结构化诊断证据入库。
+var diagnosticsService *diagnostics.Service
+
 // SetMonitorService sets the monitor service for gRPC handlers.
 // SetMonitorService 设置 gRPC 处理器的监控服务。
 func SetMonitorService(svc MonitorService) {
@@ -628,6 +752,12 @@ func SetMonitorService(svc MonitorService) {
 // SetClusterNodeProvider 设置 gRPC 处理器的集群节点提供者。
 func SetClusterNodeProvider(provider ClusterNodeProvider) {
 	clusterNodeProvider = provider
+}
+
+// SetDiagnosticsService sets the diagnostics service for gRPC handlers.
+// SetDiagnosticsService 设置 gRPC 处理器的诊断服务。
+func SetDiagnosticsService(svc *diagnostics.Service) {
+	diagnosticsService = svc
 }
 
 // HandleDiscoverClusters handles DISCOVER_CLUSTERS command.
@@ -678,15 +808,15 @@ func (s *Server) HandleUpdateMonitorConfig(ctx context.Context, agentID string, 
 
 	// Build parameters / 构建参数
 	params := map[string]string{
-		"cluster_id":      fmt.Sprintf("%d", config.ClusterID),
-		"config_version":  fmt.Sprintf("%d", config.ConfigVersion),
-		"auto_monitor":    fmt.Sprintf("%t", config.AutoMonitor),
-		"auto_restart":    fmt.Sprintf("%t", config.AutoRestart),
+		"cluster_id":       fmt.Sprintf("%d", config.ClusterID),
+		"config_version":   fmt.Sprintf("%d", config.ConfigVersion),
+		"auto_monitor":     fmt.Sprintf("%t", config.AutoMonitor),
+		"auto_restart":     fmt.Sprintf("%t", config.AutoRestart),
 		"monitor_interval": fmt.Sprintf("%d", config.MonitorInterval),
-		"restart_delay":   fmt.Sprintf("%d", config.RestartDelay),
-		"max_restarts":    fmt.Sprintf("%d", config.MaxRestarts),
-		"time_window":     fmt.Sprintf("%d", config.TimeWindow),
-		"cooldown_period": fmt.Sprintf("%d", config.CooldownPeriod),
+		"restart_delay":    fmt.Sprintf("%d", config.RestartDelay),
+		"max_restarts":     fmt.Sprintf("%d", config.MaxRestarts),
+		"time_window":      fmt.Sprintf("%d", config.TimeWindow),
+		"cooldown_period":  fmt.Sprintf("%d", config.CooldownPeriod),
 	}
 
 	// Add tracked processes as JSON / 添加跟踪进程列表（JSON 格式）
@@ -998,13 +1128,13 @@ func (s *Server) pushMonitorConfigToAgent(ctx context.Context, agentID string, h
 	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(3 * time.Second)
-		
+
 		// Check if agent has command stream available / 检查 Agent 是否有可用的命令流
 		conn, ok := s.agentManager.GetAgent(agentID)
 		if ok && conn.Stream != nil {
 			break
 		}
-		
+
 		if i == maxRetries-1 {
 			s.logger.Warn("Agent command stream not ready after retries, skipping config push / Agent 命令流重试后仍未就绪，跳过配置推送",
 				zap.String("agent_id", agentID),

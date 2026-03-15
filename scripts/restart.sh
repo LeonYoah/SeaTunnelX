@@ -14,18 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# SeaTunnelX 重启脚本：
+# SeaTunnelX 构建/重启脚本：
 # - 后端使用 PM2 启动（seatunnelx-api）
 # - 前端默认使用 Next.js standalone 产物 + PM2 启动（seatunnelx-ui）
-# - 可选通过 --frontend-dev 改为 pnpm run dev + PM2 启动，便于前端开发时避免重复构建
+# - 支持统一的目标（前端/后端）与动作（构建/重启）
 # - 启动前会检测并清理同名 PM2 进程，最后执行 pm2 save
-#
-# 用法：
-#   ./scripts/restart.sh                  # 默认：构建前后端并重启
-#   ./scripts/restart.sh --no-build       # 不构建，直接重启（需已有可用产物）
-#   ./scripts/restart.sh --frontend-dev   # 前端改用 pnpm run dev 启动（跳过前端 build）
-#   ./scripts/restart.sh --no-frontend    # 仅重启后端
-#   ./scripts/restart.sh --stop-frontend  # 仅停止前端 PM2 进程
 
 set -euo pipefail
 
@@ -35,17 +28,28 @@ cd "$PROJECT_ROOT"
 
 print_help() {
   cat <<'EOF'
-SeaTunnelX 重启脚本
+SeaTunnelX 构建/重启脚本
 
 用法:
   ./scripts/restart.sh [选项]
 
 选项:
-  --no-build       不构建，直接重启（需已有可用产物）
-  --frontend-dev   前端改用 pnpm run dev 启动（跳过前端 build）
-  --no-frontend    仅重启后端
+  --build-only     仅构建（不重启）
+  --restart-only   仅重启（不构建）
+  --frontend-only  仅处理前端
+  --backend-only   仅处理后端
+  --no-build       兼容旧参数，等价于 --restart-only
+  --no-frontend    兼容旧参数，跳过前端
+  --no-backend     跳过后端
+  --frontend-dev   前端用 pnpm run dev 启动（仅重启前端时生效）
   --stop-frontend  仅停止前端 PM2 进程并退出
   -h, --help       显示本帮助
+
+示例:
+  ./scripts/restart.sh                               # 默认：构建并重启前后端
+  ./scripts/restart.sh --restart-only --frontend-only # 仅重启前端
+  ./scripts/restart.sh --build-only --backend-only    # 仅构建后端
+  ./scripts/restart.sh --build-only                   # 仅构建前后端，不重启
 
 环境变量:
   PM2_API                        后端 PM2 进程名，默认 seatunnelx-api
@@ -57,8 +61,13 @@ SeaTunnelX 重启脚本
 EOF
 }
 
+BUILD_ONLY=false
+RESTART_ONLY=false
 NO_BUILD=false
 NO_FRONTEND=false
+NO_BACKEND=false
+FRONTEND_ONLY=false
+BACKEND_ONLY=false
 STOP_FRONTEND=false
 FRONTEND_DEV=false
 for arg in "$@"; do
@@ -67,9 +76,14 @@ for arg in "$@"; do
       print_help
       exit 0
       ;;
+    --build-only) BUILD_ONLY=true ;;
+    --restart-only) RESTART_ONLY=true ;;
+    --frontend-only) FRONTEND_ONLY=true ;;
+    --backend-only) BACKEND_ONLY=true ;;
     --no-build) NO_BUILD=true ;;
     --frontend-dev) FRONTEND_DEV=true ;;
     --no-frontend) NO_FRONTEND=true ;;
+    --no-backend) NO_BACKEND=true ;;
     --stop-frontend) STOP_FRONTEND=true ;;
     *)
       echo "未知参数: $arg"
@@ -79,6 +93,45 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if $BUILD_ONLY && $RESTART_ONLY; then
+  echo "参数冲突: --build-only 与 --restart-only 不能同时使用"
+  exit 1
+fi
+
+if $FRONTEND_ONLY && $BACKEND_ONLY; then
+  echo "参数冲突: --frontend-only 与 --backend-only 不能同时使用"
+  exit 1
+fi
+
+DO_BUILD=true
+DO_RESTART=true
+if $BUILD_ONLY; then
+  DO_RESTART=false
+fi
+if $RESTART_ONLY || $NO_BUILD; then
+  DO_BUILD=false
+fi
+
+RUN_BACKEND=true
+RUN_FRONTEND=true
+if $FRONTEND_ONLY; then
+  RUN_BACKEND=false
+fi
+if $BACKEND_ONLY; then
+  RUN_FRONTEND=false
+fi
+if $NO_FRONTEND; then
+  RUN_FRONTEND=false
+fi
+if $NO_BACKEND; then
+  RUN_BACKEND=false
+fi
+
+if ! $RUN_BACKEND && ! $RUN_FRONTEND; then
+  echo "没有可执行目标：前后端都被禁用了"
+  exit 1
+fi
 
 PM2_API="${PM2_API:-seatunnelx-api}"
 PM2_UI="${PM2_UI:-seatunnelx-ui}"
@@ -225,6 +278,7 @@ ensure_config_external_url() {
 }
 
 prepare_frontend_standalone() {
+  local should_build="${1:-false}"
   local next_standalone_dir="$FRONTEND_DIR/.next/standalone"
   local next_standalone_entry=""
   local entry_relative_path=""
@@ -237,7 +291,7 @@ prepare_frontend_standalone() {
 
   cd "$FRONTEND_DIR"
 
-  if ! $NO_BUILD; then
+  if [[ "$should_build" == "true" ]]; then
     echo "      构建前端（next build）..."
     pnpm run build
   fi
@@ -296,9 +350,13 @@ start_frontend_dev() {
   return 0
 }
 
-require_cmd go
 require_cmd pm2
-require_cmd pnpm
+if $RUN_BACKEND && $DO_BUILD; then
+  require_cmd go
+fi
+if $RUN_FRONTEND && ($DO_BUILD || $DO_RESTART); then
+  require_cmd pnpm
+fi
 
 if [[ ! -f go.mod ]]; then
   echo "未在项目根找到 go.mod，请于项目根目录执行: ./scripts/restart.sh"
@@ -316,12 +374,33 @@ if $STOP_FRONTEND; then
   exit 0
 fi
 
-total=1
-if ! $NO_BUILD; then total=$((total + 2)); fi
-if ! $NO_FRONTEND; then total=$((total + 1)); fi
-step=0
+if ! $DO_BUILD && ! $DO_RESTART; then
+  echo "无操作可执行：构建与重启均已禁用"
+  exit 0
+fi
 
-if ! $NO_BUILD; then
+if $FRONTEND_DEV && ! $RUN_FRONTEND; then
+  echo "警告: --frontend-dev 在当前参数下不会生效（前端已被禁用）"
+fi
+if $FRONTEND_DEV && ! $DO_RESTART; then
+  echo "警告: --frontend-dev 在 --build-only 下不会生效"
+fi
+
+total=0
+if $DO_BUILD && $RUN_BACKEND; then total=$((total + 2)); fi
+if $DO_BUILD && $RUN_FRONTEND && ! ($FRONTEND_DEV && $DO_RESTART); then total=$((total + 1)); fi
+if $DO_RESTART && $RUN_BACKEND; then total=$((total + 1)); fi
+if $DO_RESTART && $RUN_FRONTEND; then total=$((total + 1)); fi
+
+if [[ "$total" -eq 0 ]]; then
+  echo "无操作可执行：请检查参数组合"
+  exit 0
+fi
+
+step=0
+FRONTEND_PREPARED=false
+
+if $DO_BUILD && $RUN_BACKEND; then
   step=$((step + 1)); echo "[$step/$total] 构建 seatunnelx ..."
   go build -o seatunnelx .
   echo "      seatunnelx 构建完成."
@@ -336,43 +415,60 @@ if ! $NO_BUILD; then
   fi
 fi
 
-step=$((step + 1)); echo "[$step/$total] 启动后端 (PM2: $PM2_API) ..."
-if [[ ! -f "$PROJECT_ROOT/seatunnelx" ]]; then
-  echo "未找到 $PROJECT_ROOT/seatunnelx，请先执行一次不带 --no-build 的重启"
-  exit 1
-fi
-pm2_delete_if_exists "$PM2_API"
-# 兜底：清理非 PM2 拉起的旧后端进程
-pkill -f "$PROJECT_ROOT/seatunnelx api" >/dev/null 2>&1 || true
-CONFIG_PATH="$CONFIG_PATH" pm2 start "$PROJECT_ROOT/seatunnelx" --name "$PM2_API" --cwd "$PROJECT_ROOT" --interpreter none -- api
-echo "      后端已启动 (API: http://127.0.0.1:8000)."
-
-if $NO_FRONTEND; then
-  echo "      跳过前端 (--no-frontend)."
-else
-  step=$((step + 1))
-  if $FRONTEND_DEV; then
-    echo "[$step/$total] 启动前端开发模式 (PM2: $PM2_UI) ..."
-    if start_frontend_dev; then
-      :
-    else
-      echo "      前端启动已跳过."
-    fi
+if $DO_BUILD && $RUN_FRONTEND && ! ($FRONTEND_DEV && $DO_RESTART); then
+  step=$((step + 1)); echo "[$step/$total] 构建前端 standalone 产物 ..."
+  if prepare_frontend_standalone true; then
+    FRONTEND_PREPARED=true
+    echo "      前端 standalone 构建完成."
   else
-    echo "[$step/$total] 启动前端 standalone (PM2: $PM2_UI) ..."
-    if prepare_frontend_standalone; then
-      pm2_delete_if_exists "$PM2_UI"
-      kill_port_listeners_if_exists "$FRONTEND_PORT"
-      HOSTNAME="0.0.0.0" PORT="$FRONTEND_PORT" NEXT_PUBLIC_BACKEND_BASE_URL="$NEXT_PUBLIC_BACKEND_BASE_URL" \
-        pm2 start "$FRONTEND_ENTRY" --name "$PM2_UI" --cwd "$FRONTEND_RUNTIME_DIR" --update-env
-      echo "      前端已启动 (http://127.0.0.1:$FRONTEND_PORT)."
-    else
-      echo "      前端启动已跳过."
-    fi
+    echo "前端构建失败，已退出."
+    exit 1
   fi
 fi
 
-echo "[*] 保存 PM2 进程列表 (pm2 save) ..."
-pm2 save
-pm2 status
+if $DO_RESTART && $RUN_BACKEND; then
+  step=$((step + 1)); echo "[$step/$total] 启动后端 (PM2: $PM2_API) ..."
+  if [[ ! -f "$PROJECT_ROOT/seatunnelx" ]]; then
+    echo "未找到 $PROJECT_ROOT/seatunnelx，请先执行一次包含后端构建的命令"
+    exit 1
+  fi
+  pm2_delete_if_exists "$PM2_API"
+  # 兜底：清理非 PM2 拉起的旧后端进程
+  pkill -f "$PROJECT_ROOT/seatunnelx api" >/dev/null 2>&1 || true
+  CONFIG_PATH="$CONFIG_PATH" pm2 start "$PROJECT_ROOT/seatunnelx" --name "$PM2_API" --cwd "$PROJECT_ROOT" --interpreter none -- api
+  echo "      后端已启动 (API: http://127.0.0.1:8000)."
+fi
+
+if $DO_RESTART && $RUN_FRONTEND; then
+  step=$((step + 1))
+  if $FRONTEND_DEV; then
+    echo "[$step/$total] 启动前端开发模式 (PM2: $PM2_UI) ..."
+    if ! start_frontend_dev; then
+      echo "前端开发模式启动失败，已退出."
+      exit 1
+    fi
+  else
+    echo "[$step/$total] 启动前端 standalone (PM2: $PM2_UI) ..."
+    if ! $FRONTEND_PREPARED; then
+      if ! prepare_frontend_standalone false; then
+        echo "前端 standalone 准备失败，已退出."
+        exit 1
+      fi
+    fi
+    pm2_delete_if_exists "$PM2_UI"
+    kill_port_listeners_if_exists "$FRONTEND_PORT"
+    HOSTNAME="0.0.0.0" PORT="$FRONTEND_PORT" NEXT_PUBLIC_BACKEND_BASE_URL="$NEXT_PUBLIC_BACKEND_BASE_URL" \
+      pm2 start "$FRONTEND_ENTRY" --name "$PM2_UI" --cwd "$FRONTEND_RUNTIME_DIR" --update-env
+    echo "      前端已启动 (http://127.0.0.1:$FRONTEND_PORT)."
+  fi
+fi
+
+if $DO_RESTART; then
+  echo "[*] 保存 PM2 进程列表 (pm2 save) ..."
+  pm2 save
+  pm2 status
+else
+  echo "[*] 构建完成（未执行重启）."
+fi
+
 echo "完成."

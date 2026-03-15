@@ -181,8 +181,8 @@ type LibraryArtifact struct {
 	Scope      string      `json:"scope,omitempty"`
 }
 
-// ConnectorManifest 描述目标版本的 connector / lib 清单。
-// ConnectorManifest describes the connector and lib manifest of the target version.
+// ConnectorManifest 描述目标版本的 connector / lib 叠加清单。
+// ConnectorManifest describes the managed connector and lib overlay manifest of the target version.
 type ConnectorManifest struct {
 	Version         string              `json:"version"`
 	ReplacementMode string              `json:"replacement_mode"`
@@ -371,8 +371,8 @@ func DefaultExecutionSteps() []PlanStep {
 		{Sequence: 2, Code: StepCodePrecheckConnector, Title: "连接器预检查", Description: "检查 connector / lib 清单是否齐全。", Required: true},
 		{Sequence: 3, Code: StepCodeBackup, Title: "确认回滚基线", Description: "确认旧版本目录仍被保留，可作为双目录升级的回滚基线。", Required: true},
 		{Sequence: 4, Code: StepCodeDistributePackage, Title: "分发安装包", Description: "将目标安装包准备到所有目标节点。", Required: true},
-		{Sequence: 5, Code: StepCodeSyncLib, Title: "同步 Lib", Description: "按目标版本规则同步 lib 目录。", Required: true},
-		{Sequence: 6, Code: StepCodeSyncConnectors, Title: "同步 Connector", Description: "按 manifest 替换 connectors 目录。", Required: true},
+		{Sequence: 5, Code: StepCodeSyncLib, Title: "同步 Lib", Description: "保留目标安装包自带 lib，并叠加平台管理依赖。", Required: true},
+		{Sequence: 6, Code: StepCodeSyncConnectors, Title: "同步 Connector", Description: "保留目标安装包自带 connector，并叠加平台管理 connector。", Required: true},
 		{Sequence: 7, Code: StepCodeMergeConfig, Title: "应用配置", Description: "应用已确认的三方合并配置。", Required: true},
 		{Sequence: 8, Code: StepCodeStopCluster, Title: "停止集群", Description: "停止当前集群进程并进入切换窗口。", Required: true},
 		{Sequence: 9, Code: StepCodeSwitchVersion, Title: "切换版本", Description: "切换到目标版本目录或 current 指针。", Required: true},

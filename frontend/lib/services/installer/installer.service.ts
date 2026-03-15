@@ -30,7 +30,7 @@ import type {
   InstallationStatus,
   ListPackagesResponse,
   GetPackageInfoResponse,
-  UploadPackageResponse,
+  UploadChunkResponse,
   DeletePackageResponse,
   PrecheckResponse,
   InstallResponse,
@@ -42,6 +42,7 @@ import type {
 } from './types';
 
 const API_PREFIX = '';
+const DEFAULT_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
 
 // ==================== Package Management 安装包管理 ====================
 
@@ -75,24 +76,76 @@ export async function getPackageInfo(version: string): Promise<PackageInfo> {
  * Upload offline package
  * 上传离线安装包
  */
-export async function uploadPackage(file: File, version: string): Promise<PackageInfo> {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('version', version);
-
-  const response = await apiClient.post<UploadPackageResponse>(
-    `${API_PREFIX}/packages/upload`,
-    formData,
-    {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    }
-  );
-  if (response.data.error_msg) {
-    throw new Error(response.data.error_msg);
+export async function uploadPackage(
+  file: File,
+  version: string,
+  onProgress?: (percent: number) => void,
+): Promise<PackageInfo> {
+  if (!file || file.size <= 0) {
+    throw new Error('上传文件不能为空 / Upload file is empty');
   }
-  return response.data.data!;
+
+  const totalSize = file.size;
+  const totalChunks = Math.ceil(totalSize / DEFAULT_UPLOAD_CHUNK_SIZE);
+  const uploadID = createChunkUploadID(version);
+  let finalPackage: PackageInfo | null = null;
+
+  onProgress?.(0);
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const start = chunkIndex * DEFAULT_UPLOAD_CHUNK_SIZE;
+    const end = Math.min(start + DEFAULT_UPLOAD_CHUNK_SIZE, totalSize);
+    const chunkBlob = file.slice(start, end);
+
+    const formData = new FormData();
+    formData.append('file', chunkBlob, file.name);
+    formData.append('version', version);
+    formData.append('upload_id', uploadID);
+    formData.append('chunk_index', String(chunkIndex));
+    formData.append('total_chunks', String(totalChunks));
+    formData.append('total_size', String(totalSize));
+    formData.append('file_name', file.name);
+
+    const response = await apiClient.post<UploadChunkResponse>(
+      `${API_PREFIX}/packages/upload/chunk`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      },
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+
+    const result = response.data.data;
+    if (!result) {
+      throw new Error('分片上传返回为空 / Empty chunk upload response');
+    }
+
+    const isLastChunk = chunkIndex === totalChunks - 1;
+    if (isLastChunk && result.completed && result.package) {
+      finalPackage = result.package;
+      onProgress?.(100);
+      continue;
+    }
+
+    const percent = Math.floor(((chunkIndex + 1) / totalChunks) * 100);
+    onProgress?.(Math.min(99, percent));
+  }
+
+  if (!finalPackage) {
+    throw new Error('分片上传未完成，请重试 / Chunk upload did not complete');
+  }
+
+  return finalPackage;
+}
+
+function createChunkUploadID(version: string): string {
+  const sanitizedVersion = version.replace(/[^0-9A-Za-z_-]/g, '_');
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `upload_${Date.now()}_${sanitizedVersion}_${randomPart}`.slice(0, 120);
 }
 
 /**

@@ -43,6 +43,18 @@ var (
 	// ErrInvalidHazelcastPort indicates an invalid or missing hazelcast port.
 	// ErrInvalidHazelcastPort 表示无效或缺失的 Hazelcast 端口。
 	ErrInvalidHazelcastPort = errors.New("cluster: hazelcast port is required and must be valid")
+	// ErrInvalidAPIPort indicates an invalid API port.
+	// ErrInvalidAPIPort 表示无效的 API 端口。
+	ErrInvalidAPIPort = errors.New("cluster: api port must be valid when provided")
+	// ErrInvalidWorkerPort indicates an invalid worker port.
+	// ErrInvalidWorkerPort 表示无效的 worker 端口。
+	ErrInvalidWorkerPort = errors.New("cluster: worker port must be valid when provided")
+	// ErrNodeBatchEntriesRequired indicates batch add request has no entries.
+	// ErrNodeBatchEntriesRequired 表示批量加节点请求未提供任何条目。
+	ErrNodeBatchEntriesRequired = errors.New("cluster: at least one node entry is required")
+	// ErrInvalidNodeJVMOverride indicates node-level JVM override is invalid.
+	// ErrInvalidNodeJVMOverride 表示节点级 JVM override 非法。
+	ErrInvalidNodeJVMOverride = errors.New("cluster: jvm override must be greater than 0 when provided")
 	// ErrPrecheckFailed indicates the node precheck failed.
 	// ErrPrecheckFailed 表示节点预检查失败。
 	ErrPrecheckFailed = errors.New("cluster: node precheck failed")

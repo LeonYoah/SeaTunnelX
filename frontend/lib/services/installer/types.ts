@@ -299,6 +299,27 @@ export interface UploadPackageResponse {
 }
 
 /**
+ * Upload package chunk result
+ * 上传安装包分片结果
+ */
+export interface UploadChunkResult {
+  upload_id: string;
+  completed: boolean;
+  received_chunks: number;
+  total_chunks: number;
+  package?: PackageInfo;
+}
+
+/**
+ * Upload package chunk response
+ * 上传安装包分片响应
+ */
+export interface UploadChunkResponse {
+  error_msg: string;
+  data: UploadChunkResult | null;
+}
+
+/**
  * Delete package response
  * 删除安装包响应
  */

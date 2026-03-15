@@ -865,6 +865,12 @@ export function MonitoringPolicyCenter() {
         : '',
     [currentUser, t],
   );
+  const preferredDefaultReceiverUserIds = useMemo(() => {
+    if (currentUserNotifiableRecipient) {
+      return [String(currentUserNotifiableRecipient.id)];
+    }
+    return defaultReceiverUserIds;
+  }, [currentUserNotifiableRecipient, defaultReceiverUserIds]);
 
   const builderMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1182,13 +1188,16 @@ export function MonitoringPolicyCenter() {
         ...buildConditionDefaults(defaultTemplate),
         clusterId: prev.clusterId || (clusters[0] ? String(clusters[0].id) : ''),
         templateKey: defaultTemplate?.key || nextForm.templateKey,
-        receiverUserIds: defaultReceiverUserIds,
+        receiverUserIds: preferredDefaultReceiverUserIds,
       };
     });
-  }, [availableStaticTemplates, clusters, defaultReceiverUserIds]);
+  }, [availableStaticTemplates, clusters, preferredDefaultReceiverUserIds]);
 
   useEffect(() => {
-    if (editingPolicyId !== null || defaultReceiverUserIds.length === 0) {
+    if (
+      editingPolicyId !== null ||
+      preferredDefaultReceiverUserIds.length === 0
+    ) {
       return;
     }
     setForm((prev) => {
@@ -1197,10 +1206,10 @@ export function MonitoringPolicyCenter() {
       }
       return {
         ...prev,
-        receiverUserIds: defaultReceiverUserIds,
+        receiverUserIds: preferredDefaultReceiverUserIds,
       };
     });
-  }, [defaultReceiverUserIds, editingPolicyId]);
+  }, [editingPolicyId, preferredDefaultReceiverUserIds]);
 
   useEffect(() => {
     const shouldBlockLeave =
@@ -2225,14 +2234,14 @@ export function MonitoringPolicyCenter() {
                       {t('receiverHint')}
                     </p>
                   </div>
-                  {defaultReceiverUserIds.length > 0 ? (
+                  {preferredDefaultReceiverUserIds.length > 0 ? (
                     <Button
                       variant='ghost'
                       size='sm'
                       onClick={() =>
                         setForm((prev) => ({
                           ...prev,
-                          receiverUserIds: defaultReceiverUserIds,
+                          receiverUserIds: preferredDefaultReceiverUserIds,
                         }))
                       }
                     >

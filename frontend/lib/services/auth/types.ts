@@ -37,8 +37,16 @@ export interface LoginResponseData {
   username: string;
   /** 昵称 */
   nickname: string;
+  /** 邮箱 */
+  email?: string;
+  /** 语言偏好 */
+  language?: 'zh' | 'en';
+  /** 头像 */
+  avatar_url?: string;
   /** 是否管理员 */
   is_admin: boolean;
+  /** 是否激活 */
+  is_active?: boolean;
 }
 
 /**
@@ -70,3 +78,18 @@ export type CallbackResponse = ApiResponse<null>;
  * 用户信息响应
  */
 export type UserInfoResponse = ApiResponse<BasicUserInfo>;
+
+/**
+ * 更新个人信息请求
+ */
+export interface UpdateProfileRequest {
+  /** 邮箱 */
+  email?: string;
+  /** 语言偏好 */
+  language?: 'zh' | 'en';
+}
+
+/**
+ * 更新个人信息响应
+ */
+export type UpdateProfileResponse = ApiResponse<BasicUserInfo>;

@@ -102,7 +102,7 @@ export function PluginDetailDialog({ open, onOpenChange, plugin }: PluginDetailD
    * Load configured dependencies / 加载已配置的依赖
    */
   const loadConfiguredDeps = useCallback(async () => {
-    if (!plugin?.name) return;
+    if (!plugin?.name) {return;}
     setLoadingDeps(true);
     try {
       const deps = await PluginService.listDependencies(plugin.name);

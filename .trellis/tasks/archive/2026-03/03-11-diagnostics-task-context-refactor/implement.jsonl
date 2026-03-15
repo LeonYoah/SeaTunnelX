@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/tasks/03-11-diagnostics-task-context-refactor/prd.md", "reason": "Subtask requirements and acceptance criteria"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "Frontend layout and interaction conventions"}
+{"file": "frontend/components/common/diagnostics/DiagnosticsWorkspace.tsx", "reason": "Workspace query/context orchestration"}
+{"file": "frontend/components/common/diagnostics/DiagnosticsTaskCenter.tsx", "reason": "Diagnostics task create context and source UX"}
+{"file": "internal/apps/diagnostics/task_models.go", "reason": "Existing trigger source model"}

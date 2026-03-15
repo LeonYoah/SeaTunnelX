@@ -42,15 +42,19 @@ import { cn } from '@/lib/utils';
 interface UploadPackageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUpload: (file: File, version: string) => Promise<void>;
-  existingVersions: string[];
+  onUpload: (
+    file: File,
+    version: string,
+    onProgress?: (percent: number) => void,
+  ) => Promise<void>;
+  existingLocalVersions: string[];
 }
 
 export function UploadPackageDialog({
   open,
   onOpenChange,
   onUpload,
-  existingVersions,
+  existingLocalVersions,
 }: UploadPackageDialogProps) {
   const t = useTranslations();
   const [file, setFile] = useState<File | null>(null);
@@ -91,7 +95,7 @@ export function UploadPackageDialog({
   }, []);
 
   // Handle drop / 处理放置
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
@@ -99,7 +103,7 @@ export function UploadPackageDialog({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       handleFileSelect(e.dataTransfer.files[0]);
     }
-  }, []);
+  };
 
   // Handle file input change / 处理文件输入变化
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,12 +119,6 @@ export function UploadPackageDialog({
       return;
     }
 
-    // Check if version already exists / 检查版本是否已存在
-    if (existingVersions.includes(version)) {
-      setError(t('installer.versionAlreadyExists', { version }));
-      return;
-    }
-
     // Validate file extension / 验证文件扩展名
     if (!file.name.endsWith('.tar.gz')) {
       setError(t('installer.invalidFileFormat'));
@@ -132,15 +130,10 @@ export function UploadPackageDialog({
       setProgress(0);
       setError(null);
 
-      // Simulate progress (actual progress would come from upload API)
-      // 模拟进度（实际进度应来自上传 API）
-      const progressInterval = setInterval(() => {
-        setProgress((prev) => Math.min(prev + 10, 90));
-      }, 200);
+      await onUpload(file, version, (percent) => {
+        setProgress(percent);
+      });
 
-      await onUpload(file, version);
-
-      clearInterval(progressInterval);
       setProgress(100);
 
       // Reset and close / 重置并关闭
@@ -182,7 +175,7 @@ export function UploadPackageDialog({
           {/* Drop zone / 拖放区域 */}
           <div
             className={cn(
-              'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+              'relative border-2 border-dashed rounded-lg p-8 text-center transition-colors',
               dragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
               file ? 'bg-muted/50' : ''
             )}
@@ -236,7 +229,7 @@ export function UploadPackageDialog({
               id="version"
               value={version}
               onChange={(e) => setVersion(e.target.value)}
-              placeholder={existingVersions[0] ? `e.g., ${existingVersions[0]}` : 'e.g., 2.x.y'}
+              placeholder={existingLocalVersions[0] ? `e.g., ${existingLocalVersions[0]}` : 'e.g., 2.x.y'}
               disabled={uploading}
             />
             <p className="text-xs text-muted-foreground">

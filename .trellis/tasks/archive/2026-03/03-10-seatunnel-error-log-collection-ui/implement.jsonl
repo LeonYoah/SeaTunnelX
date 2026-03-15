@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": "docs/observability-remote-design.md", "reason": "Reuse existing observability product context for cluster diagnostics"}
+{"file": "internal/grpc/handlers.go", "reason": "Existing agent LogStream server handler and audit persistence path"}
+{"file": "internal/proto/agent/agent.proto", "reason": "Current agent gRPC contract including LogStream and monitor config"}
+{"file": "internal/apps/cluster/service.go", "reason": "Existing node log retrieval uses command-based single-file reading"}
+{"file": "frontend/components/common/cluster/ClusterDetail.tsx", "reason": "Existing node log dialog UX baseline"}
+{"file": "frontend/components/common/cluster/upgrade/ClusterUpgradeExecute.tsx", "reason": "Existing step/log split-pane product pattern"}
+{"file": "frontend/components/common/audit/AuditLogMain.tsx", "reason": "Existing list/filter page pattern for log-like data"}

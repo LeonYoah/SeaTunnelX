@@ -21,6 +21,11 @@ const nextConfig: NextConfig = {
   /* config options here */
   // Generate deployable Node server bundle in .next/standalone
   output: 'standalone',
+  experimental: {
+    // Allow larger request body for Next rewrite proxy (/api/*), needed by package upload.
+    // 允许 Next rewrite 代理处理更大的请求体（/api/*），用于安装包上传。
+    middlewareClientMaxBodySize: '1024mb',
+  },
   eslint: {
     // 只在构建时跳过 ESLint，开发时照常在编辑器里提示
     ignoreDuringBuilds: true,

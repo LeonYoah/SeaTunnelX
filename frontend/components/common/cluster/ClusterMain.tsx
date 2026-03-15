@@ -397,7 +397,7 @@ export function ClusterMain() {
       <ClusterDeployWizard
         open={isDeployWizardOpen}
         onOpenChange={setIsDeployWizardOpen}
-        onComplete={(clusterId) => {
+        onComplete={() => {
           loadClusters();
           toast.success(t('cluster.wizard.deploySuccess'));
         }}

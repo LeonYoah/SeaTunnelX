@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 ./.trellis/scripts/get_context.py)",
+      "Bash(python3 ./.trellis/scripts/get_developer.py 2>&1; python3 ./.trellis/scripts/task.py list 2>&1; git log --oneline -5 2>&1)",
+      "Bash(python3 ./.trellis/scripts/init_developer.py claude-agent 2>&1; python3 ./.trellis/scripts/get_context.py 2>&1)",
+      "Bash(python3 ./.trellis/scripts/init_developer.py claude-agent; echo \"EXIT: $?\")",
+      "Bash(python3 ./.trellis/scripts/task.py list 2>&1; echo \"EXIT: $?\")",
+      "Bash(python3 ./.trellis/scripts/get_developer.py 2>&1)",
+      "Bash(python3 ./.trellis/scripts/task.py list 2>&1)"
+    ]
+  }
+}

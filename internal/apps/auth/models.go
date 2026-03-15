@@ -20,6 +20,7 @@ package auth
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -39,6 +40,19 @@ var (
 // DefaultBcryptCost 默认 bcrypt 加密成本
 const DefaultBcryptCost = 10
 
+// DefaultLanguage 默认用户语言偏好
+const DefaultLanguage = "zh"
+
+// NormalizeLanguage 归一化用户语言偏好
+func NormalizeLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "en":
+		return "en"
+	default:
+		return DefaultLanguage
+	}
+}
+
 // User 用户模型
 // 用于存储系统用户信息，支持用户名密码认证和 OAuth 认证
 type User struct {
@@ -47,6 +61,7 @@ type User struct {
 	PasswordHash string    `json:"-" gorm:"column:password_hash;size:255"` // 密码哈希，OAuth 用户可为空
 	Nickname     string    `json:"nickname" gorm:"size:255"`
 	Email        string    `json:"email" gorm:"size:255;index"`
+	Language     string    `json:"language" gorm:"size:8;default:zh"`
 	AvatarURL    string    `json:"avatar_url" gorm:"column:avatar_url;size:255"` // 头像 URL
 	OAuthID      string    `json:"oauth_id" gorm:"size:255;index"`               // OAuth 提供商 ID，格式: provider:id
 	IsActive     bool      `json:"is_active" gorm:"default:true"`
@@ -151,6 +166,7 @@ type UserInfo struct {
 	Username    string    `json:"username"`
 	Nickname    string    `json:"nickname"`
 	Email       string    `json:"email"`
+	Language    string    `json:"language"`
 	AvatarURL   string    `json:"avatar_url"`
 	IsActive    bool      `json:"is_active"`
 	IsAdmin     bool      `json:"is_admin"`
@@ -165,6 +181,7 @@ func (u *User) ToUserInfo() *UserInfo {
 		Username:    u.Username,
 		Nickname:    u.Nickname,
 		Email:       u.Email,
+		Language:    NormalizeLanguage(u.Language),
 		AvatarURL:   u.AvatarURL,
 		IsActive:    u.IsActive,
 		IsAdmin:     u.IsAdmin,

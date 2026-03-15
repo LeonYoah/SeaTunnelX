@@ -120,3 +120,90 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Chunk upload and cluster config cleanup
+
+**Date**: 2026-03-10
+**Task**: Chunk upload and cluster config cleanup
+
+### Summary
+
+Implemented end-to-end package chunk upload (backend route/handler/service/tests + frontend service/hook/dialog real progress), refined cluster add/edit node defaults and i18n for JVM/ports, enhanced restart.sh build/restart mode matrix with help docs, and archived completed 03-09 add-node-role-jvm-json-override task.
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `926cfce` | (see git log) |
+| `2bd0f7b` | (see git log) |
+| `4e914f6` | (see git log) |
+| `19cdb76` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 4: 完成 diagnostics 中英文切换改造
+
+**Date**: 2026-03-15
+**Task**: 完成 diagnostics 中英文切换改造
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+| Feature | Description |
+|---------|-------------|
+| 语言偏好落库 | 个人中心 `profile.language` 支持保存 `zh/en`，前端 i18n 初始化优先读取用户资料语言。 |
+| Diagnostics 全域单语言输出 | 巡检中心、错误中心、诊断任务、HTML 报告统一由前端透传 `lang`，后端按单语言返回，不再依赖默认双语拼接。 |
+| 巡检中心 i18n 收尾 | 补齐巡检详情按钮、执行日志弹窗、自动巡检策略面板、自动巡检设置按钮等遗漏文案。 |
+| 双语切分缺陷修复 | 修复 `Check History` 中 `信息 0）` 这类由 `中文 / English` 文本被错误切分导致的残片显示问题，前后端都已修复。 |
+| 任务归档 | `03-15-inspection-center-language-switch` 已归档。 |
+
+**验证结果**:
+- `cd frontend && pnpm exec tsc --noEmit`
+- `cd frontend && pnpm test`
+- `cd frontend && pnpm lint --file "components/common/diagnostics/DiagnosticsWorkspace.tsx" --file "components/common/diagnostics/AutoPolicyConfigPanel.tsx" --file "components/common/diagnostics/DiagnosticsInspectionCenter.tsx" --file "components/common/diagnostics/InspectionDetailPage.tsx" --file "components/common/diagnostics/text-utils.ts" --file "components/common/diagnostics/__tests__/text-utils.test.ts"`
+- `go test ./internal/apps/auth ./internal/apps/diagnostics/...`
+- `go test ./internal/apps/diagnostics -run 'TestLocalizeDiagnosticText_BilingualSummaryWithInternalSeparators'`
+- `bash ./scripts/restart.sh`
+
+**说明**:
+- 仓库全量 `pnpm lint` 仍有历史存量问题，本次提交按定向 lint + typecheck + tests 通过推进。
+- 本地未提交噪音仅剩 `.tmp/` 与 `.trellis/.template-hashes.json`。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fca0a9` | (see git log) |
+| `8ddd9f6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

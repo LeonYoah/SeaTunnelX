@@ -38,8 +38,12 @@ export function PackageMain() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'online' | 'local'>('online');
 
-  const handleUpload = async (file: File, version: string) => {
-    await uploadPackage(file, version);
+  const handleUpload = async (
+    file: File,
+    version: string,
+    onProgress?: (percent: number) => void,
+  ) => {
+    await uploadPackage(file, version, onProgress);
     setUploadDialogOpen(false);
   };
 
@@ -203,7 +207,7 @@ export function PackageMain() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         onUpload={handleUpload}
-        existingVersions={packages?.versions || []}
+        existingLocalVersions={(packages?.local_packages || []).map((pkg) => pkg.version)}
       />
     </div>
   );

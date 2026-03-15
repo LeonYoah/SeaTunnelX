@@ -21,6 +21,28 @@ service AgentService {
   
   // 日志流 - Agent 向 Control Plane 推送日志
   rpc LogStream(stream LogEntry) returns (LogStreamResponse);
+
+  // 诊断日志游标查询 - Agent 启动时从 Control Plane 拉取历史游标，避免重复采集尾部错误
+  rpc GetDiagnosticsLogCursors(DiagnosticsCursorRequest) returns (DiagnosticsCursorResponse);
+}
+
+// DiagnosticsCursorRequest - 诊断日志游标查询请求
+message DiagnosticsCursorRequest {
+  string agent_id = 1; // Agent 唯一标识（config.yaml 中的固定 ID）
+}
+
+// DiagnosticsCursor - 单个日志文件的游标信息
+message DiagnosticsCursor {
+  string install_dir = 1;   // Seatunnel 安装目录
+  string role        = 2;   // 角色：master / worker
+  string source_file = 3;   // 日志文件绝对路径
+  int64  offset      = 4;   // 已处理到的偏移量
+  int64  last_occurred_at = 5; // 最近一条错误的发生时间（Unix 毫秒）
+}
+
+// DiagnosticsCursorResponse - 诊断日志游标查询响应
+message DiagnosticsCursorResponse {
+  repeated DiagnosticsCursor cursors = 1;
 }
 
 // ============================================================================

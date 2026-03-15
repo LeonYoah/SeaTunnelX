@@ -17,21 +17,14 @@
 
 'use client';
 
-/**
- * Add Node Dialog Component
- * 添加节点对话框组件
- *
- * Dialog for adding a node to a cluster with installation directory.
- * Supports process discovery to auto-fill install directory and role.
- * 用于向集群添加节点的对话框，包含安装目录配置。
- * 支持进程发现以自动填充安装目录和角色。
- */
-
-import {useState, useEffect} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {useTranslations} from 'next-intl';
+import {toast} from 'sonner';
+import {Cpu, Loader2, Search, Server} from 'lucide-react';
+
+import services from '@/lib/services';
 import {Button} from '@/components/ui/button';
-import {Input} from '@/components/ui/input';
-import {Label} from '@/components/ui/label';
+import {Checkbox} from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +33,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {Input} from '@/components/ui/input';
+import {Label} from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -47,86 +42,245 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {Loader2, Server, CheckCircle2, XCircle, AlertCircle, Search, Cpu} from 'lucide-react';
-import {toast} from 'sonner';
-import services from '@/lib/services';
-import {NodeRole, AddNodeRequest, DefaultPorts, DeploymentMode, PrecheckResult, PrecheckCheckItem} from '@/lib/services/cluster/types';
-import {HostInfo, AgentStatus} from '@/lib/services/host/types';
+import {Switch} from '@/components/ui/switch';
+import {AgentStatus, HostInfo} from '@/lib/services/host/types';
 import {DiscoveredProcess} from '@/lib/services/discovery/discovery.service';
+import {
+  AddNodeEntryRequest,
+  ClusterConfig,
+  DefaultPorts,
+  DeploymentMode,
+  NodeInfo,
+  NodeRole,
+  PrecheckCheckItem,
+  PrecheckResult,
+  buildNodeJVMOverride,
+  getClusterPortDefaultsForRole,
+  getClusterJVMConfig,
+  getClusterJVMValueForRole,
+} from '@/lib/services/cluster/types';
+import {buildResolvedClusterConfigFromConfigs} from './nodeConfigDefaults';
 
 interface AddNodeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   clusterId: number;
   deploymentMode: DeploymentMode;
+  clusterConfig?: ClusterConfig;
+  clusterInstallDir?: string;
+  existingNodes?: NodeInfo[];
   onSuccess: () => void;
 }
 
-/**
- * Add Node Dialog Component
- * 添加节点对话框组件
- */
+interface RoleFormState {
+  hazelcastPort: number;
+  apiPort: number;
+  workerPort: number;
+  jvmOverrideEnabled: boolean;
+  jvmHeapSize: number;
+}
+
+interface RolePrecheckResult {
+  role: NodeRole;
+  result: PrecheckResult;
+}
+
+const FALLBACK_JVM_HEAP: Record<NodeRole, number> = {
+  [NodeRole.MASTER]: 2,
+  [NodeRole.WORKER]: 2,
+  [NodeRole.MASTER_WORKER]: 2,
+};
+
+function getRoleTranslationKey(role: NodeRole): 'master' | 'worker' | 'masterWorker' {
+  if (role === NodeRole.MASTER) {
+    return 'master';
+  }
+  if (role === NodeRole.WORKER) {
+    return 'worker';
+  }
+  return 'masterWorker';
+}
+
+function getRoleConfigTitleKey(
+  role: NodeRole,
+): 'masterNodeConfig' | 'workerNodeConfig' | 'masterWorkerNodeConfig' {
+  if (role === NodeRole.MASTER) {
+    return 'masterNodeConfig';
+  }
+  if (role === NodeRole.WORKER) {
+    return 'workerNodeConfig';
+  }
+  return 'masterWorkerNodeConfig';
+}
+
+function getPrimaryPortLabelKey(
+  role: NodeRole,
+): 'hazelcastMasterPort' | 'hazelcastWorkerPort' {
+  return role === NodeRole.WORKER ? 'hazelcastWorkerPort' : 'hazelcastMasterPort';
+}
+
+function getPrimaryPortRequiredMessageKey(
+  role: NodeRole,
+): 'cluster.hazelcastPortRequired' | 'cluster.workerPortRequired' {
+  return role === NodeRole.WORKER ? 'cluster.workerPortRequired' : 'cluster.hazelcastPortRequired';
+}
+
+function resolveDefaultInstallDir(
+  clusterInstallDir?: string,
+  existingNodes?: NodeInfo[],
+): string {
+  if (clusterInstallDir?.trim()) {
+    return clusterInstallDir.trim();
+  }
+  const existingInstallDir = existingNodes?.find((node) => node.install_dir?.trim())?.install_dir;
+  if (existingInstallDir?.trim()) {
+    return existingInstallDir.trim();
+  }
+  return '/opt/seatunnel';
+}
+
+function getValidPortOrUndefined(value?: number): number | undefined {
+  return value && value > 0 ? value : undefined;
+}
+
+function buildDefaultRoleForm(
+  role: NodeRole,
+  clusterConfig?: ClusterConfig,
+  existingNodes?: NodeInfo[],
+): RoleFormState {
+  const clusterPortDefaults = getClusterPortDefaultsForRole(role, clusterConfig);
+  const existingRoleNode = existingNodes?.find((node) => node.role === role);
+
+  return {
+    hazelcastPort:
+      clusterPortDefaults.hazelcastPort ??
+      getValidPortOrUndefined(existingRoleNode?.hazelcast_port) ??
+      (role === NodeRole.WORKER
+        ? DefaultPorts.WORKER_HAZELCAST
+        : DefaultPorts.MASTER_HAZELCAST),
+    apiPort:
+      role === NodeRole.WORKER
+        ? 0
+        : clusterPortDefaults.apiPort ??
+          getValidPortOrUndefined(existingRoleNode?.api_port) ??
+          DefaultPorts.MASTER_API,
+    workerPort:
+      role === NodeRole.MASTER_WORKER
+        ? clusterPortDefaults.workerPort ??
+          getValidPortOrUndefined(existingRoleNode?.worker_port) ??
+          DefaultPorts.WORKER_HAZELCAST
+        : 0,
+    jvmOverrideEnabled: false,
+    jvmHeapSize:
+      getClusterJVMValueForRole(role, clusterConfig) ?? FALLBACK_JVM_HEAP[role],
+  };
+}
+
 export function AddNodeDialog({
   open,
   onOpenChange,
   clusterId,
   deploymentMode,
+  clusterConfig,
+  clusterInstallDir,
+  existingNodes = [],
   onSuccess,
 }: AddNodeDialogProps) {
   const t = useTranslations();
+  const isHybrid = deploymentMode === DeploymentMode.HYBRID;
+  const [resolvedClusterConfig, setResolvedClusterConfig] = useState<ClusterConfig | undefined>(
+    clusterConfig,
+  );
+  const defaultInstallDir = useMemo(
+    () => resolveDefaultInstallDir(clusterInstallDir, existingNodes),
+    [clusterInstallDir, existingNodes],
+  );
+
   const [loading, setLoading] = useState(false);
   const [loadingHosts, setLoadingHosts] = useState(false);
-
-  // Form state / 表单状态
-  const [hostId, setHostId] = useState<string>('');
-  const [role, setRole] = useState<NodeRole>(NodeRole.WORKER);
-  const [installDir, setInstallDir] = useState('/opt/seatunnel');
-
-  // Port configuration / 端口配置
-  const [hazelcastPort, setHazelcastPort] = useState<number>(DefaultPorts.WORKER_HAZELCAST);
-  const [apiPort, setApiPort] = useState<number>(DefaultPorts.MASTER_API);
-  const [workerPort, setWorkerPort] = useState<number>(DefaultPorts.WORKER_HAZELCAST);
-
-  // Available hosts / 可用主机
-  const [availableHosts, setAvailableHosts] = useState<HostInfo[]>([]);
-
-  // Precheck state / 预检查状态
   const [precheckLoading, setPrecheckLoading] = useState(false);
-  const [precheckResult, setPrecheckResult] = useState<PrecheckResult | null>(null);
-
-  // Process discovery state / 进程发现状态
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
+
+  const [hostId, setHostId] = useState('');
+  const [installDir, setInstallDir] = useState(defaultInstallDir);
+  const [selectedMaster, setSelectedMaster] = useState(false);
+  const [selectedWorker, setSelectedWorker] = useState(false);
+  const [availableHosts, setAvailableHosts] = useState<HostInfo[]>([]);
   const [discoveredProcesses, setDiscoveredProcesses] = useState<DiscoveredProcess[]>([]);
-  const [selectedProcess, setSelectedProcess] = useState<string>('');
+  const [selectedProcess, setSelectedProcess] = useState('');
+  const [precheckResults, setPrecheckResults] = useState<RolePrecheckResult[]>([]);
 
-  // Update default ports when role changes / 角色变化时更新默认端口
+  const [hybridForm, setHybridForm] = useState<RoleFormState>(
+    buildDefaultRoleForm(NodeRole.MASTER_WORKER, clusterConfig, existingNodes),
+  );
+  const [masterForm, setMasterForm] = useState<RoleFormState>(
+    buildDefaultRoleForm(NodeRole.MASTER, clusterConfig, existingNodes),
+  );
+  const [workerForm, setWorkerForm] = useState<RoleFormState>(
+    buildDefaultRoleForm(NodeRole.WORKER, clusterConfig, existingNodes),
+  );
+
+  const selectedRoles = useMemo(() => {
+    if (isHybrid) {
+      return [NodeRole.MASTER_WORKER];
+    }
+    return [
+      ...(selectedMaster ? [NodeRole.MASTER] : []),
+      ...(selectedWorker ? [NodeRole.WORKER] : []),
+    ];
+  }, [isHybrid, selectedMaster, selectedWorker]);
+
+  const resetForm = (effectiveClusterConfig?: ClusterConfig) => {
+    setHostId('');
+    setInstallDir(defaultInstallDir);
+    setSelectedMaster(false);
+    setSelectedWorker(false);
+    setPrecheckResults([]);
+    setDiscoveredProcesses([]);
+    setSelectedProcess('');
+    setHybridForm(
+      buildDefaultRoleForm(NodeRole.MASTER_WORKER, effectiveClusterConfig, existingNodes),
+    );
+    setMasterForm(buildDefaultRoleForm(NodeRole.MASTER, effectiveClusterConfig, existingNodes));
+    setWorkerForm(buildDefaultRoleForm(NodeRole.WORKER, effectiveClusterConfig, existingNodes));
+  };
+
   useEffect(() => {
-    if (role === NodeRole.MASTER) {
-      setHazelcastPort(DefaultPorts.MASTER_HAZELCAST);
-      setApiPort(DefaultPorts.MASTER_API);
-      if (deploymentMode === DeploymentMode.HYBRID) {
-        setWorkerPort(DefaultPorts.WORKER_HAZELCAST);
+    if (!open) {
+      return;
+    }
+    let cancelled = false;
+
+    const initialize = async () => {
+      let effectiveClusterConfig = clusterConfig;
+      if (!getClusterJVMConfig(clusterConfig)) {
+        const configsResult = await services.config.getClusterConfigsSafe(clusterId);
+        if (configsResult.success && configsResult.data) {
+          effectiveClusterConfig = buildResolvedClusterConfigFromConfigs(
+            clusterConfig,
+            deploymentMode,
+            configsResult.data,
+          );
+        }
       }
-    } else {
-      setHazelcastPort(DefaultPorts.WORKER_HAZELCAST);
-    }
-  }, [role, deploymentMode]);
 
-  /**
-   * Load available hosts
-   * 加载可用主机
-   */
-  useEffect(() => {
-    if (open) {
-      loadAvailableHosts();
-    }
+      if (cancelled) {
+        return;
+      }
+
+      setResolvedClusterConfig(effectiveClusterConfig);
+      resetForm(effectiveClusterConfig);
+      await loadAvailableHosts();
+    };
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, clusterId, clusterConfig, deploymentMode, defaultInstallDir, existingNodes]);
 
-  /**
-   * Load available hosts with Agent installed
-   * 加载已安装 Agent 的可用主机
-   */
   const loadAvailableHosts = async () => {
     setLoadingHosts(true);
     try {
@@ -147,26 +301,29 @@ export function AddNodeDialog({
     }
   };
 
-  /**
-   * Reset form
-   * 重置表单
-   */
-  const resetForm = () => {
-    setHostId('');
-    setRole(NodeRole.WORKER);
-    setInstallDir('/opt/seatunnel');
-    setHazelcastPort(DefaultPorts.WORKER_HAZELCAST);
-    setApiPort(DefaultPorts.MASTER_API);
-    setWorkerPort(DefaultPorts.WORKER_HAZELCAST);
-    setPrecheckResult(null);
-    setDiscoveredProcesses([]);
-    setSelectedProcess('');
+  const getRoleForm = (role: NodeRole) => {
+    switch (role) {
+      case NodeRole.MASTER:
+        return masterForm;
+      case NodeRole.WORKER:
+        return workerForm;
+      default:
+        return hybridForm;
+    }
   };
 
-  /**
-   * Handle process discovery
-   * 处理进程发现
-   */
+  const updateRoleForm = (role: NodeRole, patch: Partial<RoleFormState>) => {
+    if (role === NodeRole.MASTER) {
+      setMasterForm((prev) => ({...prev, ...patch}));
+      return;
+    }
+    if (role === NodeRole.WORKER) {
+      setWorkerForm((prev) => ({...prev, ...patch}));
+      return;
+    }
+    setHybridForm((prev) => ({...prev, ...patch}));
+  };
+
   const handleDiscoverProcesses = async () => {
     if (!hostId) {
       toast.error(t('cluster.hostRequired'));
@@ -178,7 +335,6 @@ export function AddNodeDialog({
     setSelectedProcess('');
     try {
       const result = await services.discovery.discoverProcesses(parseInt(hostId, 10));
-      
       if (result.success && result.processes) {
         setDiscoveredProcesses(result.processes);
         if (result.processes.length === 0) {
@@ -196,383 +352,501 @@ export function AddNodeDialog({
     }
   };
 
-  /**
-   * Handle process selection - auto-fill form
-   * 处理进程选择 - 自动填充表单
-   */
   const handleProcessSelect = (processKey: string) => {
     setSelectedProcess(processKey);
-    
     const process = discoveredProcesses.find(
-      p => `${p.pid}-${p.install_dir}` === processKey
+      (item) => `${item.pid}-${item.install_dir}` === processKey,
     );
-    
-    if (process) {
-      // Auto-fill install directory / 自动填充安装目录
-      setInstallDir(process.install_dir);
-      
-      // Auto-fill role based on discovered role / 根据发现的角色自动填充
-      if (process.role === 'master') {
-        setRole(NodeRole.MASTER);
-      } else if (process.role === 'worker') {
-        setRole(NodeRole.WORKER);
-      }
-      // For hybrid, keep current selection / 对于 hybrid，保持当前选择
-      
-      toast.success(t('discovery.processSelected'));
+    if (!process) {
+      return;
     }
+
+    setInstallDir(process.install_dir);
+    if (!isHybrid) {
+      if (process.role === 'master') {
+        setSelectedMaster(true);
+      }
+      if (process.role === 'worker') {
+        setSelectedWorker(true);
+      }
+    }
+    toast.success(t('discovery.processSelected'));
   };
 
-  /**
-   * Handle precheck
-   * 处理预检查
-   */
-  const handlePrecheck = async () => {
+  const validateBeforeSubmit = () => {
     if (!hostId) {
       toast.error(t('cluster.hostRequired'));
+      return false;
+    }
+    if (!installDir.trim()) {
+      toast.error(t('cluster.installDirRequired'));
+      return false;
+    }
+    if (selectedRoles.length === 0) {
+      toast.error(t('cluster.selectAtLeastOneRole'));
+      return false;
+    }
+
+    for (const role of selectedRoles) {
+      const form = getRoleForm(role);
+      if (!form.hazelcastPort || form.hazelcastPort <= 0) {
+        toast.error(t(getPrimaryPortRequiredMessageKey(role)));
+        return false;
+      }
+      if (form.jvmOverrideEnabled && (!form.jvmHeapSize || form.jvmHeapSize <= 0)) {
+        toast.error(t('cluster.jvmHeapSizeRequired'));
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const buildEntries = (): AddNodeEntryRequest[] => {
+    return selectedRoles.map((role) => {
+      const form = getRoleForm(role);
+      return {
+        role,
+        hazelcast_port: form.hazelcastPort,
+        api_port: role === NodeRole.WORKER ? undefined : form.apiPort || undefined,
+        overrides: form.jvmOverrideEnabled
+          ? buildNodeJVMOverride(role, form.jvmHeapSize)
+          : undefined,
+      };
+    });
+  };
+
+  const handlePrecheck = async () => {
+    if (!validateBeforeSubmit()) {
       return;
     }
 
-    if (!hazelcastPort || hazelcastPort <= 0) {
-      toast.error(t('cluster.hazelcastPortRequired'));
-      return;
-    }
+    const parsedHostId = parseInt(hostId, 10);
+    const entries = buildEntries();
 
     setPrecheckLoading(true);
-    setPrecheckResult(null);
+    setPrecheckResults([]);
     try {
-      const result = await services.cluster.precheckNodeSafe(clusterId, {
-        host_id: parseInt(hostId, 10),
-        role: role,
-        install_dir: installDir.trim() || '/opt/seatunnel',
-        hazelcast_port: hazelcastPort,
-        api_port: role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
-        worker_port: deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER ? workerPort : undefined,
-      });
+      const results = await Promise.all(
+        entries.map(async (entry) => {
+          const response = await services.cluster.precheckNodeSafe(clusterId, {
+            host_id: parsedHostId,
+            role: entry.role,
+            install_dir: installDir.trim(),
+            hazelcast_port: entry.hazelcast_port || 0,
+            api_port: entry.api_port,
+            worker_port: entry.worker_port,
+          });
+          if (!response.success || !response.data) {
+            throw new Error(response.error || t('cluster.precheckError'));
+          }
+          return {role: entry.role, result: response.data};
+        }),
+      );
 
-      if (result.success && result.data) {
-        setPrecheckResult(result.data);
-        if (result.data.success) {
-          toast.success(t('cluster.precheckPassed'));
-        } else {
-          toast.warning(t('cluster.precheckFailed'));
-        }
+      setPrecheckResults(results);
+      if (results.every((item) => item.result.success)) {
+        toast.success(t('cluster.precheckPassed'));
       } else {
-        toast.error(result.error || t('cluster.precheckError'));
+        toast.warning(t('cluster.precheckFailed'));
       }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('cluster.precheckError'),
+      );
     } finally {
       setPrecheckLoading(false);
     }
   };
 
-  /**
-   * Get status icon for precheck item
-   * 获取预检查项的状态图标
-   */
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'passed':
-        return <CheckCircle2 className='h-4 w-4 text-green-500' />;
-      case 'failed':
-        return <XCircle className='h-4 w-4 text-red-500' />;
-      case 'skipped':
-        return <AlertCircle className='h-4 w-4 text-yellow-500' />;
-      default:
-        return null;
-    }
-  };
-
-  /**
-   * Handle submit
-   * 处理提交
-   */
   const handleSubmit = async () => {
-    if (!hostId) {
-      toast.error(t('cluster.hostRequired'));
-      return;
-    }
-
-    if (!installDir.trim()) {
-      toast.error(t('cluster.installDirRequired'));
+    if (!validateBeforeSubmit()) {
       return;
     }
 
     setLoading(true);
     try {
-      const data: AddNodeRequest = {
+      const result = await services.cluster.addNodesSafe(clusterId, {
         host_id: parseInt(hostId, 10),
-        role: role,
         install_dir: installDir.trim(),
-        hazelcast_port: hazelcastPort,
-        api_port: role === NodeRole.MASTER && apiPort > 0 ? apiPort : undefined,
-        worker_port: deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER ? workerPort : undefined,
-      };
+        entries: buildEntries(),
+      });
 
-      const result = await services.cluster.addNodeSafe(clusterId, data);
-
-      if (result.success) {
-        resetForm();
-        onSuccess();
-      } else {
+      if (!result.success) {
         toast.error(result.error || t('cluster.addNodeError'));
+        return;
       }
+
+      resetForm();
+      onSuccess();
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Handle close
-   * 处理关闭
-   */
-  const handleClose = (open: boolean) => {
-    if (!open) {
+  const handleClose = (nextOpen: boolean) => {
+    if (!nextOpen) {
       resetForm();
     }
-    onOpenChange(open);
+    onOpenChange(nextOpen);
+  };
+
+  const renderStatusIcon = (status: string) => {
+    switch (status) {
+      case 'passed':
+        return <span className='text-green-600'>●</span>;
+      case 'failed':
+        return <span className='text-red-600'>●</span>;
+      default:
+        return <span className='text-amber-500'>●</span>;
+    }
+  };
+
+  const renderRoleConfig = (role: NodeRole) => {
+    const form = getRoleForm(role);
+    const roleLabel = t(`cluster.roles.${getRoleTranslationKey(role)}`);
+    const defaultHeap = getClusterJVMValueForRole(role, resolvedClusterConfig);
+
+    return (
+      <div key={role} className='rounded-lg border p-4 space-y-4'>
+        <div className='space-y-1'>
+          <h4 className='font-medium'>{t(`cluster.${getRoleConfigTitleKey(role)}`)}</h4>
+          <p className='text-xs text-muted-foreground'>
+            {role === NodeRole.MASTER_WORKER
+              ? t('cluster.hybridRoleFixedDescription')
+              : t('cluster.roleConfigDescription', {role: roleLabel})}
+          </p>
+        </div>
+
+        <div className='grid gap-4 md:grid-cols-3'>
+          <div className='space-y-1'>
+            <Label className='text-xs'>
+              {t(`cluster.${getPrimaryPortLabelKey(role)}`)}{' '}
+              <span className='text-destructive'>*</span>
+            </Label>
+            <Input
+              type='number'
+              value={form.hazelcastPort}
+              onChange={(e) =>
+                updateRoleForm(role, {
+                  hazelcastPort: parseInt(e.target.value, 10) || 0,
+                })
+              }
+            />
+          </div>
+
+          {role !== NodeRole.WORKER && (
+            <div className='space-y-1'>
+              <Label className='text-xs'>
+                {t('cluster.apiPort')} <span className='text-muted-foreground'>({t('common.optional')})</span>
+              </Label>
+              <Input
+                type='number'
+                value={form.apiPort || ''}
+                onChange={(e) =>
+                  updateRoleForm(role, {
+                    apiPort: parseInt(e.target.value, 10) || 0,
+                  })
+                }
+              />
+            </div>
+          )}
+        </div>
+
+        <div className='space-y-3 rounded-md bg-muted/40 p-3'>
+          <div className='flex items-center justify-between gap-4'>
+            <div className='space-y-1'>
+              <Label>{t('cluster.jvmOverrideTitle')}</Label>
+              <p className='text-xs text-muted-foreground'>
+                {form.jvmOverrideEnabled
+                  ? t('cluster.jvmOverrideEnabledHint')
+                  : defaultHeap
+                    ? t('cluster.jvmInheritDefault', {value: defaultHeap})
+                    : t('cluster.jvmNoClusterDefault')}
+              </p>
+            </div>
+            <Switch
+              checked={form.jvmOverrideEnabled}
+              onCheckedChange={(checked) => {
+                updateRoleForm(role, {
+                  jvmOverrideEnabled: checked,
+                  jvmHeapSize:
+                    checked && form.jvmHeapSize <= 0
+                      ? defaultHeap ?? FALLBACK_JVM_HEAP[role]
+                      : form.jvmHeapSize,
+                });
+              }}
+            />
+          </div>
+
+          {form.jvmOverrideEnabled && (
+            <div className='grid gap-2 md:max-w-xs'>
+              <Label className='text-xs'>
+                {t('cluster.jvmHeapSize')} <span className='text-destructive'>*</span>
+              </Label>
+              <Input
+                type='number'
+                min={1}
+                value={form.jvmHeapSize || ''}
+                onChange={(e) =>
+                  updateRoleForm(role, {
+                    jvmHeapSize: parseInt(e.target.value, 10) || 0,
+                  })
+                }
+              />
+              <p className='text-xs text-muted-foreground'>
+                {t('cluster.jvmHeapSizeHint')}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className='sm:max-w-[550px]'>
+      <DialogContent className='sm:max-w-[980px]'>
         <DialogHeader>
           <DialogTitle>{t('cluster.addNode')}</DialogTitle>
           <DialogDescription>{t('cluster.addNodeDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className='space-y-4 py-4'>
-          {/* Host Selection / 主机选择 */}
-          <div className='space-y-2'>
-            <Label htmlFor='host'>
-              {t('cluster.selectHost')} <span className='text-destructive'>*</span>
-            </Label>
-            {loadingHosts ? (
-              <div className='flex items-center gap-2 text-muted-foreground'>
-                <Loader2 className='h-4 w-4 animate-spin' />
-                {t('common.loading')}
+        <div className='max-h-[72vh] overflow-y-auto pr-1'>
+          <div className='space-y-5 py-1'>
+            <div className='grid gap-4 md:grid-cols-[1.1fr_0.9fr]'>
+              <div className='space-y-2'>
+                <Label>
+                  {t('cluster.selectHost')} <span className='text-destructive'>*</span>
+                </Label>
+                {loadingHosts ? (
+                  <div className='flex items-center gap-2 text-muted-foreground'>
+                    <Loader2 className='h-4 w-4 animate-spin' />
+                    {t('common.loading')}
+                  </div>
+                ) : availableHosts.length === 0 ? (
+                  <div className='rounded-md border p-4 text-sm text-muted-foreground'>
+                    {t('cluster.noAvailableHosts')}
+                  </div>
+                ) : (
+                  <div className='flex gap-2'>
+                    <Select
+                      value={hostId}
+                      onValueChange={(value) => {
+                        setHostId(value);
+                        setDiscoveredProcesses([]);
+                        setSelectedProcess('');
+                        setPrecheckResults([]);
+                      }}
+                    >
+                      <SelectTrigger className='flex-1'>
+                        <SelectValue placeholder={t('cluster.selectHostPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableHosts.map((host) => (
+                          <SelectItem key={host.id} value={host.id.toString()}>
+                            <div className='flex items-center gap-2'>
+                              <Server className='h-4 w-4' />
+                              <span>{host.name}</span>
+                              {host.ip_address && (
+                                <span className='text-muted-foreground'>({host.ip_address})</span>
+                              )}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant='outline'
+                      size='icon'
+                      onClick={handleDiscoverProcesses}
+                      disabled={!hostId || discoveryLoading}
+                      title={t('discovery.discoverProcesses')}
+                    >
+                      {discoveryLoading ? (
+                        <Loader2 className='h-4 w-4 animate-spin' />
+                      ) : (
+                        <Search className='h-4 w-4' />
+                      )}
+                    </Button>
+                  </div>
+                )}
+                <p className='text-xs text-muted-foreground'>
+                  {t('cluster.onlyAgentInstalledHosts')}
+                </p>
               </div>
-            ) : availableHosts.length === 0 ? (
-              <div className='text-sm text-muted-foreground p-4 border rounded-md'>
-                {t('cluster.noAvailableHosts')}
+
+              <div className='space-y-2'>
+                <Label>
+                  {t('cluster.installDir')} <span className='text-destructive'>*</span>
+                </Label>
+                <Input
+                  value={installDir}
+                  onChange={(e) => setInstallDir(e.target.value)}
+                  placeholder={t('cluster.installDirPlaceholder')}
+                />
+                <p className='text-xs text-muted-foreground'>
+                  {t('cluster.nodeInstallDirDescription')}
+                </p>
               </div>
-            ) : (
-              <div className='flex gap-2'>
-                <Select value={hostId} onValueChange={(value) => {
-                  setHostId(value);
-                  setDiscoveredProcesses([]);
-                  setSelectedProcess('');
-                }}>
-                  <SelectTrigger className='flex-1'>
-                    <SelectValue placeholder={t('cluster.selectHostPlaceholder')} />
+            </div>
+
+            {discoveredProcesses.length > 0 && (
+              <div className='space-y-2 rounded-lg border p-4'>
+                <Label>{t('discovery.discoveredProcesses')}</Label>
+                <Select value={selectedProcess} onValueChange={handleProcessSelect}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('discovery.selectProcess')} />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableHosts.map((host) => (
-                      <SelectItem key={host.id} value={host.id.toString()}>
+                    {discoveredProcesses.map((process) => (
+                      <SelectItem
+                        key={`${process.pid}-${process.install_dir}`}
+                        value={`${process.pid}-${process.install_dir}`}
+                      >
                         <div className='flex items-center gap-2'>
-                          <Server className='h-4 w-4' />
-                          <span>{host.name}</span>
-                          {host.ip_address && (
-                            <span className='text-muted-foreground'>({host.ip_address})</span>
-                          )}
+                          <Cpu className='h-4 w-4' />
+                          <span>PID: {process.pid}</span>
+                          <span className='text-muted-foreground'>|</span>
+                          <span className='capitalize'>{process.role}</span>
+                          <span className='text-muted-foreground'>|</span>
+                          <span className='max-w-[260px] truncate text-xs text-muted-foreground'>
+                            {process.install_dir}
+                          </span>
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant='outline'
-                  size='icon'
-                  onClick={handleDiscoverProcesses}
-                  disabled={!hostId || discoveryLoading}
-                  title={t('discovery.discoverProcesses')}
-                >
-                  {discoveryLoading ? (
-                    <Loader2 className='h-4 w-4 animate-spin' />
-                  ) : (
-                    <Search className='h-4 w-4' />
-                  )}
-                </Button>
+                <p className='text-xs text-muted-foreground'>
+                  {t('discovery.selectProcessHint')}
+                </p>
               </div>
             )}
-            <p className='text-xs text-muted-foreground'>
-              {t('cluster.onlyAgentInstalledHosts')}
-            </p>
-          </div>
 
-          {/* Discovered Processes / 发现的进程 */}
-          {discoveredProcesses.length > 0 && (
-            <div className='space-y-2'>
-              <Label>{t('discovery.discoveredProcesses')}</Label>
-              <Select value={selectedProcess} onValueChange={handleProcessSelect}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('discovery.selectProcess')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {discoveredProcesses.map((proc) => (
-                    <SelectItem 
-                      key={`${proc.pid}-${proc.install_dir}`} 
-                      value={`${proc.pid}-${proc.install_dir}`}
-                    >
-                      <div className='flex items-center gap-2'>
-                        <Cpu className='h-4 w-4' />
-                        <span>PID: {proc.pid}</span>
-                        <span className='text-muted-foreground'>|</span>
-                        <span className='capitalize'>{proc.role}</span>
-                        <span className='text-muted-foreground'>|</span>
-                        <span className='text-xs text-muted-foreground truncate max-w-[200px]'>
-                          {proc.install_dir}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className='text-xs text-muted-foreground'>
-                {t('discovery.selectProcessHint')}
-              </p>
-            </div>
-          )}
-
-          {/* Node Role / 节点角色 */}
-          <div className='space-y-2'>
-            <Label htmlFor='role'>
-              {t('cluster.nodeRole')} <span className='text-destructive'>*</span>
-            </Label>
-            <Select value={role} onValueChange={(value) => setRole(value as NodeRole)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NodeRole.MASTER}>
-                  {t('cluster.roles.master')}
-                </SelectItem>
-                <SelectItem value={NodeRole.WORKER}>
-                  {t('cluster.roles.worker')}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className='text-xs text-muted-foreground'>
-              {role === NodeRole.MASTER
-                ? t('cluster.masterRoleDescription')
-                : t('cluster.workerRoleDescription')}
-            </p>
-          </div>
-
-          {/* Installation Directory / 安装目录 */}
-          <div className='space-y-2'>
-            <Label htmlFor='installDir'>
-              {t('cluster.installDir')} <span className='text-destructive'>*</span>
-            </Label>
-            <Input
-              id='installDir'
-              value={installDir}
-              onChange={(e) => setInstallDir(e.target.value)}
-              placeholder={t('cluster.installDirPlaceholder')}
-            />
-            <p className='text-xs text-muted-foreground'>
-              {t('cluster.nodeInstallDirDescription')}
-            </p>
-          </div>
-
-          {/* Port Configuration / 端口配置 */}
-          <div className='space-y-3'>
-            <Label>{t('cluster.portConfig')}</Label>
-            
-            <div className='grid grid-cols-2 gap-4'>
+            <div className='space-y-3 rounded-lg border p-4'>
               <div className='space-y-1'>
-                <Label htmlFor='hazelcastPort' className='text-xs'>
-                  {t('cluster.hazelcastPort')} <span className='text-destructive'>*</span>
-                </Label>
-                <Input
-                  id='hazelcastPort'
-                  type='number'
-                  value={hazelcastPort}
-                  onChange={(e) => setHazelcastPort(parseInt(e.target.value, 10) || 0)}
-                  placeholder={role === NodeRole.MASTER ? '5801' : '5802'}
-                  required
-                />
+                <Label>{t('cluster.nodeRole')}</Label>
+                <p className='text-xs text-muted-foreground'>
+                  {isHybrid
+                    ? t('cluster.hybridRoleFixedDescription')
+                    : t('cluster.separatedRoleSelectionDescription')}
+                </p>
               </div>
 
-              {role === NodeRole.MASTER && (
-                <div className='space-y-1'>
-                  <Label htmlFor='apiPort' className='text-xs'>
-                    {t('cluster.apiPort')} <span className='text-muted-foreground'>({t('common.optional')})</span>
-                  </Label>
-                  <Input
-                    id='apiPort'
-                    type='number'
-                    value={apiPort || ''}
-                    onChange={(e) => setApiPort(parseInt(e.target.value, 10) || 0)}
-                    placeholder='8080'
-                  />
+              {isHybrid ? (
+                <div className='rounded-md bg-muted/50 px-3 py-2 text-sm font-medium'>
+                  {t('cluster.roles.masterWorker')}
                 </div>
-              )}
-
-              {deploymentMode === DeploymentMode.HYBRID && role === NodeRole.MASTER && (
-                <div className='space-y-1'>
-                  <Label htmlFor='workerPort' className='text-xs'>
-                    {t('cluster.workerPort')}
-                  </Label>
-                  <Input
-                    id='workerPort'
-                    type='number'
-                    value={workerPort}
-                    onChange={(e) => setWorkerPort(parseInt(e.target.value, 10) || 0)}
-                    placeholder='5802'
-                  />
+              ) : (
+                <div className='space-y-3'>
+                  <div className='flex flex-wrap gap-6'>
+                    <label className='flex items-center gap-2 text-sm'>
+                      <Checkbox
+                        checked={selectedMaster}
+                        onCheckedChange={(checked) => {
+                          setSelectedMaster(checked === true);
+                          setPrecheckResults([]);
+                        }}
+                      />
+                      <span>{t('cluster.roles.master')}</span>
+                    </label>
+                    <label className='flex items-center gap-2 text-sm'>
+                      <Checkbox
+                        checked={selectedWorker}
+                        onCheckedChange={(checked) => {
+                          setSelectedWorker(checked === true);
+                          setPrecheckResults([]);
+                        }}
+                      />
+                      <span>{t('cluster.roles.worker')}</span>
+                    </label>
+                  </div>
+                  {selectedMaster && selectedWorker && (
+                    <p className='text-xs text-muted-foreground'>
+                      {t('cluster.sameHostCreatesTwoNodes')}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
-            <p className='text-xs text-muted-foreground'>
-              {t('cluster.portConfigDescription')}
-            </p>
-          </div>
 
-          {/* Precheck Results / 预检查结果 */}
-          {precheckResult && (
-            <div className='space-y-2 p-3 border rounded-md bg-muted/50'>
-              <div className='flex items-center gap-2'>
-                {precheckResult.success ? (
-                  <CheckCircle2 className='h-5 w-5 text-green-500' />
-                ) : (
-                  <XCircle className='h-5 w-5 text-red-500' />
-                )}
-                <span className='font-medium text-sm'>
-                  {precheckResult.success ? t('cluster.precheckPassed') : t('cluster.precheckFailed')}
-                </span>
-              </div>
-              <div className='space-y-1'>
-                {precheckResult.checks.map((check: PrecheckCheckItem, index: number) => (
-                  <div key={index} className='flex items-start gap-2 text-xs'>
-                    {getStatusIcon(check.status)}
-                    <div>
-                      <span className='font-medium'>{t(`cluster.precheckItems.${check.name}`, {defaultValue: check.name})}: </span>
-                      <span className='text-muted-foreground'>{check.message}</span>
+            <div className='space-y-4'>
+              {selectedRoles.map((role) => renderRoleConfig(role))}
+            </div>
+
+            {precheckResults.length > 0 && (
+              <div className='space-y-3 rounded-lg border p-4'>
+                <div className='space-y-1'>
+                  <h4 className='font-medium'>{t('cluster.precheck')}</h4>
+                  <p className='text-xs text-muted-foreground'>
+                    {precheckResults.every((item) => item.result.success)
+                      ? t('cluster.precheckPassed')
+                      : t('cluster.precheckFailed')}
+                  </p>
+                </div>
+                {precheckResults.map(({role, result}) => (
+                  <div key={role} className='rounded-md bg-muted/40 p-3 space-y-2'>
+                    <div className='font-medium text-sm'>
+                      {t('cluster.precheckResultForRole', {
+                        role: t(`cluster.roles.${getRoleTranslationKey(role)}`),
+                      })}
+                    </div>
+                    <div className='space-y-1'>
+                      {result.checks.map((check: PrecheckCheckItem, index: number) => (
+                        <div key={`${role}-${index}`} className='flex items-start gap-2 text-xs'>
+                          {renderStatusIcon(check.status)}
+                          <div>
+                            <span className='font-medium'>
+                              {t(`cluster.precheckItems.${check.name}`, {
+                                defaultValue: check.name,
+                              })}
+                              :{' '}
+                            </span>
+                            <span className='text-muted-foreground'>{check.message}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         <DialogFooter className='gap-2 sm:gap-0'>
-          <Button variant='outline' onClick={() => handleClose(false)} disabled={loading || precheckLoading}>
+          <Button
+            variant='outline'
+            onClick={() => handleClose(false)}
+            disabled={loading || precheckLoading}
+          >
             {t('common.cancel')}
           </Button>
           <Button
             variant='secondary'
             onClick={handlePrecheck}
-            disabled={loading || precheckLoading || !hostId || !hazelcastPort}
+            disabled={
+              loading ||
+              precheckLoading ||
+              !hostId ||
+              selectedRoles.length === 0 ||
+              availableHosts.length === 0
+            }
           >
-            {precheckLoading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
+            {precheckLoading && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {t('cluster.precheck')}
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={loading || precheckLoading || !hostId || !hazelcastPort || availableHosts.length === 0}
+            disabled={
+              loading ||
+              precheckLoading ||
+              !hostId ||
+              selectedRoles.length === 0 ||
+              availableHosts.length === 0
+            }
           >
-            {loading && <Loader2 className='h-4 w-4 mr-2 animate-spin' />}
+            {loading && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
             {t('cluster.addNode')}
           </Button>
         </DialogFooter>

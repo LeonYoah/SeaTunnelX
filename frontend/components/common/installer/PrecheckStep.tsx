@@ -103,7 +103,7 @@ export function PrecheckStep({
 
   // Get overall status badge / 获取整体状态徽章
   const getOverallStatusBadge = () => {
-    if (!result) return null;
+    if (!result) {return null;}
     const config = statusConfig[result.overall_status];
     const Icon = config.icon;
     return (

@@ -54,7 +54,7 @@ function Dialog({children, ...props}: DialogProps) {
   );
 
   React.useEffect(() => {
-    if (props?.open !== undefined) setIsOpen(props.open);
+    if (props?.open !== undefined) {setIsOpen(props.open);}
   }, [props?.open]);
 
   const handleOpenChange = React.useCallback(

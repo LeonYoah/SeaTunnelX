@@ -70,6 +70,27 @@ export abstract class BaseService {
   }
 
   /**
+   * 带查询参数的POST请求
+   * @template T - 响应数据类型
+   * @param path - API路径
+   * @param data - 请求数据
+   * @param params - 查询参数
+   * @returns 响应数据
+   */
+  protected static async postWithParams<T>(
+    path: string,
+    data?: unknown,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
+    const response = await apiClient.post<ApiResponse<T>>(
+      this.getFullPath(path),
+      data,
+      {params},
+    );
+    return response.data.data;
+  }
+
+  /**
    * PUT请求
    * @template T - 响应数据类型
    * @param path - API路径
@@ -80,6 +101,27 @@ export abstract class BaseService {
     const response = await apiClient.put<ApiResponse<T>>(
       this.getFullPath(path),
       data,
+    );
+    return response.data.data;
+  }
+
+  /**
+   * 带查询参数的PUT请求
+   * @template T - 响应数据类型
+   * @param path - API路径
+   * @param data - 请求数据
+   * @param params - 查询参数
+   * @returns 响应数据
+   */
+  protected static async putWithParams<T>(
+    path: string,
+    data?: unknown,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
+    const response = await apiClient.put<ApiResponse<T>>(
+      this.getFullPath(path),
+      data,
+      {params},
     );
     return response.data.data;
   }

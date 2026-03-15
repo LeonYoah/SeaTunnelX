@@ -37,7 +37,7 @@ interface ContentRenderProps {
  * 递归获取代码内容的工具函数
  */
 const getCodeContent = (node: ReactNode): string => {
-  if (typeof node === 'string') return node;
+  if (typeof node === 'string') {return node;}
   if (Array.isArray(node)) {
     return node.map(getCodeContent).join('');
   }
@@ -164,14 +164,14 @@ const markdownComponents: Components = {
     const getLanguage = (): string => {
       if (className) {
         const match = className.match(/language-(\w+)/);
-        if (match) return match[1];
+        if (match) {return match[1];}
       }
 
       if (children && typeof children === 'object' && 'props' in children) {
         const childProps = (children as {props?: {className?: string}}).props;
         if (childProps?.className) {
           const match = childProps.className.match(/language-(\w+)/);
-          if (match) return match[1];
+          if (match) {return match[1];}
         }
       }
 
@@ -179,7 +179,7 @@ const markdownComponents: Components = {
        * 递归查找子元素中的语言标识符
        */
       const findLanguageInChildren = (element: unknown): string | null => {
-        if (!element || typeof element !== 'object') return null;
+        if (!element || typeof element !== 'object') {return null;}
 
         const elementWithProps = element as {
           props?: {className?: string; children?: unknown};
@@ -188,14 +188,14 @@ const markdownComponents: Components = {
         if (elementWithProps.props?.className) {
           const match =
             elementWithProps.props.className.match(/language-(\w+)/);
-          if (match) return match[1];
+          if (match) {return match[1];}
         }
 
         if (elementWithProps.props?.children) {
           if (Array.isArray(elementWithProps.props.children)) {
             for (const child of elementWithProps.props.children) {
               const result = findLanguageInChildren(child);
-              if (result) return result;
+              if (result) {return result;}
             }
           } else {
             return findLanguageInChildren(elementWithProps.props.children);

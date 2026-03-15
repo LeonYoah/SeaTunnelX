@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,11 +45,22 @@ import (
 // Common errors / 常见错误
 var (
 	ErrPackageNotFound        = errors.New("package not found / 安装包未找到")
+	ErrPackageAlreadyExists   = errors.New("package already exists / 安装包已存在")
+	ErrInvalidPackageVersion  = errors.New("invalid package version / 安装包版本不合法")
+	ErrInvalidPackageFile     = errors.New("invalid package file / 安装包文件不合法")
+	ErrInvalidPackagePath     = errors.New("invalid package path / 安装包路径不合法")
+	ErrPackageTooLarge        = errors.New("package too large / 安装包过大")
+	ErrInvalidUploadID        = errors.New("invalid upload id / 上传会话 ID 不合法")
+	ErrInvalidChunkIndex      = errors.New("invalid chunk index / 分片索引不合法")
+	ErrChunkOutOfOrder        = errors.New("chunk out of order / 分片顺序错误")
 	ErrInstallationNotFound   = errors.New("installation not found / 安装任务未找到")
 	ErrInstallationInProgress = errors.New("installation already in progress / 安装任务正在进行中")
 	ErrHostNotConnected       = errors.New("host agent not connected / 主机 Agent 未连接")
 	ErrAgentNotFound          = errors.New("agent not found / Agent 未找到")
 )
+
+var packageVersionRegexp = regexp.MustCompile(`^[0-9A-Za-z._+-]{1,64}$`)
+var uploadIDRegexp = regexp.MustCompile(`^[0-9A-Za-z_-]{8,128}$`)
 
 // AgentManager is the interface for communicating with agents
 // AgentManager 是与 Agent 通信的接口
@@ -123,6 +135,14 @@ type NodeStarter interface {
 	// StartNodeByClusterAndHostAndRole starts a node by cluster ID, host ID and role (for separated mode: same host can have master + worker)
 	// StartNodeByClusterAndHostAndRole 根据集群 ID、主机 ID 和角色启动节点（分离模式下同一主机可有 master+worker）
 	StartNodeByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (bool, string, error)
+}
+
+// NodeJVMResolver resolves cluster/node scoped JVM config for installation.
+// NodeJVMResolver 解析安装时需要的集群/节点级 JVM 配置。
+type NodeJVMResolver interface {
+	// ResolveNodeJVMByClusterAndHostAndRole resolves effective JVM config for one logical node.
+	// ResolveNodeJVMByClusterAndHostAndRole 解析一个逻辑节点的生效 JVM 配置。
+	ResolveNodeJVMByClusterAndHostAndRole(ctx context.Context, clusterID uint, hostID uint, role string) (*JVMConfig, error)
 }
 
 // ConfigInitializer is the interface for initializing cluster configs after installation
@@ -218,6 +238,10 @@ type Service struct {
 	// nodeStarter 用于启动集群节点
 	nodeStarter NodeStarter
 
+	// nodeJVMResolver is used to resolve node-level JVM overrides during installation
+	// nodeJVMResolver 用于在安装时解析节点级 JVM 覆盖
+	nodeJVMResolver NodeJVMResolver
+
 	// configInitializer is used to initialize cluster configs after installation
 	// configInitializer 用于安装完成后初始化集群配置
 	configInitializer ConfigInitializer
@@ -225,6 +249,41 @@ type Service struct {
 	// heartbeatTimeout is the timeout for agent heartbeat
 	// heartbeatTimeout 是 Agent 心跳超时时间
 	heartbeatTimeout time.Duration
+
+	// chunkUploadMu protects chunk upload state files
+	// chunkUploadMu 保护分片上传状态文件
+	chunkUploadMu sync.Mutex
+}
+
+// PackageChunkUploadRequest is the request for uploading a package chunk.
+// PackageChunkUploadRequest 表示安装包分片上传请求。
+type PackageChunkUploadRequest struct {
+	Version     string
+	UploadID    string
+	ChunkIndex  int
+	TotalChunks int
+	TotalSize   int64
+	FileName    string
+}
+
+// PackageChunkUploadResult is the result of package chunk upload.
+// PackageChunkUploadResult 表示安装包分片上传结果。
+type PackageChunkUploadResult struct {
+	UploadID       string       `json:"upload_id"`
+	Completed      bool         `json:"completed"`
+	ReceivedChunks int          `json:"received_chunks"`
+	TotalChunks    int          `json:"total_chunks"`
+	Package        *PackageInfo `json:"package,omitempty"`
+}
+
+type packageChunkUploadState struct {
+	Version       string    `json:"version"`
+	FileName      string    `json:"file_name"`
+	TotalChunks   int       `json:"total_chunks"`
+	TotalSize     int64     `json:"total_size"`
+	NextChunk     int       `json:"next_chunk"`
+	ReceivedBytes int64     `json:"received_bytes"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // NewService creates a new Service instance.
@@ -291,6 +350,12 @@ func (s *Service) SetNodeStatusUpdater(updater NodeStatusUpdater) {
 // SetNodeStarter 设置用于启动集群节点的节点启动器。
 func (s *Service) SetNodeStarter(starter NodeStarter) {
 	s.nodeStarter = starter
+}
+
+// SetNodeJVMResolver sets the resolver for node-level JVM config.
+// SetNodeJVMResolver 设置节点级 JVM 配置解析器。
+func (s *Service) SetNodeJVMResolver(resolver NodeJVMResolver) {
+	s.nodeJVMResolver = resolver
 }
 
 // SetConfigInitializer sets the config initializer for initializing cluster configs.
@@ -473,9 +538,16 @@ func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions
 	// 获取版本（从缓存、在线或备用列表）
 	versions := s.getVersions(ctx)
 
+	recommended := seatunnel.RecommendedVersion()
+	if len(versions) > 0 && versions[0] != "" {
+		// 默认按抓取到的最新版本作为推荐版本（versions 已按降序排序）
+		// By default, use the newest fetched version as the recommended version.
+		recommended = versions[0]
+	}
+
 	result := &AvailableVersions{
 		Versions:           versions,
-		RecommendedVersion: seatunnel.RecommendedVersion(),
+		RecommendedVersion: recommended,
 		LocalPackages:      make([]PackageInfo, 0),
 	}
 
@@ -523,7 +595,7 @@ func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions
 // GetPackageInfo 返回特定版本安装包的信息。
 func (s *Service) GetPackageInfo(ctx context.Context, version string) (*PackageInfo, error) {
 	// Check if local package exists / 检查本地安装包是否存在
-	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
+	fileName := packageFileName(version)
 	localPath := filepath.Join(s.packageDir, fileName)
 
 	info := &PackageInfo{
@@ -552,42 +624,224 @@ func (s *Service) GetPackageInfo(ctx context.Context, version string) (*PackageI
 // UploadPackage handles package file upload.
 // UploadPackage 处理安装包文件上传。
 func (s *Service) UploadPackage(ctx context.Context, version string, file *multipart.FileHeader) (*PackageInfo, error) {
-	// Open uploaded file / 打开上传的文件
+	if file == nil {
+		return nil, ErrInvalidPackageFile
+	}
+
 	src, err := file.Open()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
 	}
 	defer src.Close()
 
-	// Create destination file / 创建目标文件
-	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
-	destPath := filepath.Join(s.packageDir, fileName)
+	return s.savePackageFromReader(ctx, version, file.Filename, file.Size, src)
+}
 
-	dst, err := os.Create(destPath)
+// UploadPackageChunk handles package chunk upload.
+// UploadPackageChunk 处理安装包分片上传。
+func (s *Service) UploadPackageChunk(ctx context.Context, req *PackageChunkUploadRequest, file *multipart.FileHeader) (*PackageChunkUploadResult, error) {
+	if req == nil || file == nil {
+		return nil, ErrInvalidPackageFile
+	}
+
+	req.Version = strings.TrimSpace(req.Version)
+	req.UploadID = strings.TrimSpace(req.UploadID)
+	req.FileName = strings.TrimSpace(req.FileName)
+	if req.FileName == "" {
+		req.FileName = file.Filename
+	}
+
+	if !uploadIDRegexp.MatchString(req.UploadID) {
+		return nil, ErrInvalidUploadID
+	}
+	if req.ChunkIndex < 0 || req.TotalChunks <= 0 || req.ChunkIndex >= req.TotalChunks {
+		return nil, ErrInvalidChunkIndex
+	}
+	if err := validatePackageUploadInput(req.Version, req.FileName, req.TotalSize); err != nil {
+		return nil, err
+	}
+
+	s.chunkUploadMu.Lock()
+	defer s.chunkUploadMu.Unlock()
+
+	uploadDir, err := s.getChunkUploadDir(req.UploadID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create destination file: %w", err)
+		return nil, err
 	}
-	defer dst.Close()
-
-	// Copy file content / 复制文件内容
-	if _, err := io.Copy(dst, src); err != nil {
-		os.Remove(destPath) // Clean up on error / 出错时清理
-		return nil, fmt.Errorf("failed to save file: %w", err)
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create chunk upload dir: %w", err)
 	}
 
-	// Get file info / 获取文件信息
+	statePath := filepath.Join(uploadDir, "state.json")
+	chunkFilePath := filepath.Join(uploadDir, "chunk.tmp")
+
+	state, stateExists, err := loadChunkUploadState(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chunk upload state: %w", err)
+	}
+
+	if !stateExists {
+		if req.ChunkIndex != 0 {
+			return nil, ErrChunkOutOfOrder
+		}
+		state = &packageChunkUploadState{
+			Version:       req.Version,
+			FileName:      req.FileName,
+			TotalChunks:   req.TotalChunks,
+			TotalSize:     req.TotalSize,
+			NextChunk:     0,
+			ReceivedBytes: 0,
+			UpdatedAt:     time.Now(),
+		}
+	} else {
+		if state.Version != req.Version || state.FileName != req.FileName ||
+			state.TotalChunks != req.TotalChunks || state.TotalSize != req.TotalSize {
+			return nil, fmt.Errorf("%w: metadata mismatch", ErrInvalidChunkIndex)
+		}
+		if req.ChunkIndex < state.NextChunk {
+			return &PackageChunkUploadResult{
+				UploadID:       req.UploadID,
+				Completed:      false,
+				ReceivedChunks: state.NextChunk,
+				TotalChunks:    state.TotalChunks,
+			}, nil
+		}
+		if req.ChunkIndex > state.NextChunk {
+			return nil, ErrChunkOutOfOrder
+		}
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open uploaded chunk: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(chunkFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open chunk temp file: %w", err)
+	}
+	written, copyErr := io.Copy(dst, src)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return nil, fmt.Errorf("failed to append chunk: %w", copyErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("failed to close chunk temp file: %w", closeErr)
+	}
+
+	state.NextChunk++
+	state.ReceivedBytes += written
+	state.UpdatedAt = time.Now()
+
+	result := &PackageChunkUploadResult{
+		UploadID:       req.UploadID,
+		Completed:      false,
+		ReceivedChunks: state.NextChunk,
+		TotalChunks:    state.TotalChunks,
+	}
+
+	if state.NextChunk < state.TotalChunks {
+		if err := saveChunkUploadState(statePath, state); err != nil {
+			return nil, fmt.Errorf("failed to persist chunk upload state: %w", err)
+		}
+		return result, nil
+	}
+
+	// Last chunk: finalize package
+	// 最后一个分片：合并并落盘
+	if state.ReceivedBytes != state.TotalSize {
+		_ = os.RemoveAll(uploadDir)
+		return nil, fmt.Errorf("%w: size mismatch", ErrInvalidPackageFile)
+	}
+
+	merged, err := os.Open(chunkFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open merged chunk file: %w", err)
+	}
+	defer merged.Close()
+
+	info, err := s.savePackageFromReader(ctx, state.Version, state.FileName, state.TotalSize, merged)
+	if err != nil {
+		return nil, err
+	}
+
+	result.Completed = true
+	result.Package = info
+	_ = os.RemoveAll(uploadDir)
+	return result, nil
+}
+
+func validatePackageUploadInput(version, fileName string, fileSize int64) error {
+	version = strings.TrimSpace(version)
+	if !packageVersionRegexp.MatchString(version) {
+		return ErrInvalidPackageVersion
+	}
+	if fileSize <= 0 {
+		return ErrInvalidPackageFile
+	}
+	maxPackageSize := config.GetMaxPackageSize()
+	if maxPackageSize > 0 && fileSize > maxPackageSize {
+		return ErrPackageTooLarge
+	}
+	if !strings.HasSuffix(strings.ToLower(strings.TrimSpace(fileName)), ".tar.gz") {
+		return ErrInvalidPackageFile
+	}
+	return nil
+}
+
+func (s *Service) savePackageFromReader(ctx context.Context, version, fileName string, fileSize int64, src io.Reader) (*PackageInfo, error) {
+	version = strings.TrimSpace(version)
+	fileName = strings.TrimSpace(fileName)
+	if err := validatePackageUploadInput(version, fileName, fileSize); err != nil {
+		return nil, err
+	}
+
+	finalFileName := packageFileName(version)
+	destPath, err := normalizePathInDir(s.packageDir, filepath.Join(s.packageDir, finalFileName))
+	if err != nil {
+		return nil, ErrInvalidPackagePath
+	}
+	if _, err := os.Stat(destPath); err == nil {
+		return nil, ErrPackageAlreadyExists
+	}
+
+	tempFile, err := os.CreateTemp(s.tempDir, "package-upload-*.tmp")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp package file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	written, err := io.Copy(tempFile, src)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write package file: %w", err)
+	}
+	if written != fileSize {
+		return nil, fmt.Errorf("%w: expected=%d actual=%d", ErrInvalidPackageFile, fileSize, written)
+	}
+	if err := tempFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close package file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, destPath); err != nil {
+		return nil, fmt.Errorf("failed to move package file: %w", err)
+	}
+
 	fileInfo, err := os.Stat(destPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get file info: %w", err)
+		return nil, fmt.Errorf("failed to get package file info: %w", err)
 	}
 
-	// Calculate checksum / 计算校验和
 	checksum, _ := calculateChecksum(destPath)
-
 	uploadedAt := fileInfo.ModTime()
+	logger.InfoF(ctx, "[Installer] package saved: version=%s size=%d path=%s", version, fileInfo.Size(), destPath)
 	return &PackageInfo{
 		Version:      version,
-		FileName:     fileName,
+		FileName:     finalFileName,
 		FileSize:     fileInfo.Size(),
 		Checksum:     checksum,
 		IsLocal:      true,
@@ -597,10 +851,44 @@ func (s *Service) UploadPackage(ctx context.Context, version string, file *multi
 	}, nil
 }
 
+func (s *Service) getChunkUploadDir(uploadID string) (string, error) {
+	baseDir := filepath.Join(s.tempDir, "package-uploads")
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", err
+	}
+	return normalizePathInDir(baseDir, filepath.Join(baseDir, uploadID))
+}
+
+func loadChunkUploadState(path string) (*packageChunkUploadState, bool, error) {
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var state packageChunkUploadState
+	if err := json.Unmarshal(content, &state); err != nil {
+		return nil, false, err
+	}
+	return &state, true, nil
+}
+
+func saveChunkUploadState(path string, state *packageChunkUploadState) error {
+	if state == nil {
+		return ErrInvalidPackageFile
+	}
+	content, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0644)
+}
+
 // DeletePackage deletes a local package.
 // DeletePackage 删除本地安装包。
 func (s *Service) DeletePackage(ctx context.Context, version string) error {
-	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
+	fileName := packageFileName(version)
 	localPath := filepath.Join(s.packageDir, fileName)
 
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
@@ -1206,6 +1494,12 @@ func parseJavaVersionFromOutput(output string) int {
 // StartInstallation starts a new installation.
 // StartInstallation 开始新的安装。
 func (s *Service) StartInstallation(ctx context.Context, req *InstallationRequest) (*InstallationStatus, error) {
+	if req.InstallMode == "" {
+		req.InstallMode = InstallModeOnline
+	}
+
+	s.resolveInstallationJVM(ctx, req)
+
 	s.installMu.Lock()
 	defer s.installMu.Unlock()
 
@@ -1234,6 +1528,36 @@ func (s *Service) StartInstallation(ctx context.Context, req *InstallationReques
 	go s.runInstallation(context.Background(), req, status)
 
 	return status, nil
+}
+
+func (s *Service) resolveInstallationJVM(ctx context.Context, req *InstallationRequest) {
+	if s == nil || req == nil || req.JVM != nil || s.nodeJVMResolver == nil {
+		return
+	}
+	if strings.TrimSpace(req.ClusterID) == "" || strings.TrimSpace(req.HostID) == "" || strings.TrimSpace(string(req.NodeRole)) == "" {
+		return
+	}
+
+	clusterID, err := strconv.ParseUint(strings.TrimSpace(req.ClusterID), 10, 64)
+	if err != nil {
+		return
+	}
+	hostID, err := strconv.ParseUint(strings.TrimSpace(req.HostID), 10, 64)
+	if err != nil {
+		return
+	}
+
+	resolved, err := s.nodeJVMResolver.ResolveNodeJVMByClusterAndHostAndRole(ctx, uint(clusterID), uint(hostID), string(req.NodeRole))
+	if err != nil {
+		logger.WarnF(ctx, "[Installer] failed to resolve node JVM config: cluster=%d, host=%d, role=%s, err=%v", clusterID, hostID, req.NodeRole, err)
+		return
+	}
+	if resolved == nil {
+		return
+	}
+
+	req.JVM = resolved
+	logger.InfoF(ctx, "[Installer] resolved node JVM config for installation: cluster=%d, host=%d, role=%s", clusterID, hostID, req.NodeRole)
 }
 
 // GetInstallationStatus returns the current installation status.
@@ -1352,13 +1676,14 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 
 	logger.DebugF(ctx, "[Installer] 连接到 Agent / Connected to Agent: host=%d, agent=%s", hostID, agentID)
 
-	// For online mode, ensure package is downloaded to Control Plane first
-	// 对于在线模式，先确保安装包已下载到 Control Plane
-	if req.InstallMode == InstallModeOnline {
-		fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", req.Version)
-		localPath := filepath.Join(s.packageDir, fileName)
+	// For online/offline mode, resolve package on Control Plane and transfer to Agent
+	// 对于在线/离线模式，先在 Control Plane 上确定安装包并传输到 Agent
+	var localPackagePath string
 
-		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+	if req.InstallMode == InstallModeOnline {
+		localPackagePath = filepath.Join(s.packageDir, packageFileName(req.Version))
+
+		if _, err := os.Stat(localPackagePath); os.IsNotExist(err) {
 			// Package not found locally, need to download first
 			// 本地未找到安装包，需要先下载
 			logger.InfoF(ctx, "[Installer] 本地未找到安装包，开始下载 / Package not found locally, starting download: version=%s", req.Version)
@@ -1426,25 +1751,63 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 				time.Sleep(1 * time.Second)
 			}
 		} else {
-			logger.InfoF(ctx, "[Installer] 使用本地已有安装包 / Using existing local package: %s", localPath)
+			logger.InfoF(ctx, "[Installer] 使用本地已有安装包 / Using existing local package: %s", localPackagePath)
+		}
+	}
+
+	if req.InstallMode == InstallModeOffline {
+		localPackagePath, err = s.resolveOfflinePackagePath(req)
+		if err != nil {
+			s.installMu.Lock()
+			now := time.Now()
+			status.Status = StepStatusFailed
+			status.Error = err.Error()
+			status.EndTime = &now
+			s.installMu.Unlock()
+			return
 		}
 
+		if _, err := os.Stat(localPackagePath); err != nil {
+			logger.ErrorF(ctx, "[Installer] 离线安装包不存在 / Offline package not found: %s", localPackagePath)
+			s.installMu.Lock()
+			now := time.Now()
+			status.Status = StepStatusFailed
+			status.Error = fmt.Sprintf("Offline package not found: %s / 离线安装包不存在: %s", localPackagePath, localPackagePath)
+			status.EndTime = &now
+			s.installMu.Unlock()
+			return
+		}
+
+		logger.InfoF(ctx, "[Installer] 离线模式使用本地安装包 / Offline mode using local package: %s", localPackagePath)
+	}
+
+	if localPackagePath != "" {
 		// Transfer package to Agent via gRPC
 		// 通过 gRPC 传输安装包到 Agent
 		s.installMu.Lock()
 		status.Message = "Transferring package to Agent... / 正在传输安装包到 Agent..."
 		s.installMu.Unlock()
 
-		remotePath, err := s.TransferPackageToAgent(ctx, agentID, req.Version, status)
+		remotePath, err := s.transferPackageFileToAgent(ctx, agentID, req.Version, localPackagePath, status)
 		if err != nil {
-			// Transfer failed, fallback to mirror download
-			// 传输失败，回退到镜像源下载
-			logger.WarnF(ctx, "[Installer] 安装包传输失败，回退到镜像源下载 / Package transfer failed, fallback to mirror download: %v", err)
-			// Continue with mirror download mode
-			// 继续使用镜像源下载模式
+			if req.InstallMode == InstallModeOnline {
+				// Transfer failed, fallback to mirror download
+				// 传输失败，回退到镜像源下载
+				logger.WarnF(ctx, "[Installer] 安装包传输失败，回退到镜像源下载 / Package transfer failed, fallback to mirror download: %v", err)
+				// Continue with mirror download mode
+				// 继续使用镜像源下载模式
+			} else {
+				s.installMu.Lock()
+				now := time.Now()
+				status.Status = StepStatusFailed
+				status.Error = fmt.Sprintf("Failed to transfer offline package: %v / 传输离线安装包失败: %v", err, err)
+				status.EndTime = &now
+				s.installMu.Unlock()
+				return
+			}
 		} else {
-			// Transfer succeeded, update params to use local package
-			// 传输成功，更新参数使用本地安装包
+			// Transfer succeeded, update params to use package on Agent
+			// 传输成功，更新参数使用 Agent 本地安装包
 			logger.InfoF(ctx, "[Installer] 安装包传输成功 / Package transfer succeeded: remote_path=%s", remotePath)
 			req.PackagePath = remotePath
 		}
@@ -1936,9 +2299,49 @@ func createInitialSteps() []StepInfo {
 func getDownloadURLs(version string) map[MirrorSource]string {
 	urls := make(map[MirrorSource]string)
 	for mirror, baseURL := range MirrorURLs {
-		urls[mirror] = fmt.Sprintf("%s/%s/apache-seatunnel-%s-bin.tar.gz", baseURL, version, version)
+		urls[mirror] = fmt.Sprintf("%s/%s/%s", baseURL, version, packageFileName(version))
 	}
 	return urls
+}
+
+func packageFileName(version string) string {
+	return fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
+}
+
+func normalizePathInDir(baseDir, candidatePath string) (string, error) {
+	base := filepath.Clean(baseDir)
+	target := filepath.Clean(candidatePath)
+
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", ErrInvalidPackagePath
+	}
+	return target, nil
+}
+
+func (s *Service) resolveOfflinePackagePath(req *InstallationRequest) (string, error) {
+	expectedFileName := packageFileName(req.Version)
+	defaultPath := filepath.Join(s.packageDir, expectedFileName)
+
+	if strings.TrimSpace(req.PackagePath) == "" {
+		return defaultPath, nil
+	}
+
+	normalized, err := normalizePathInDir(s.packageDir, req.PackagePath)
+	if err != nil {
+		return "", ErrInvalidPackagePath
+	}
+	if !isSeaTunnelPackage(filepath.Base(normalized)) {
+		return "", ErrInvalidPackageFile
+	}
+	if filepath.Base(normalized) != expectedFileName {
+		return "", fmt.Errorf("%w: version mismatch", ErrInvalidPackagePath)
+	}
+
+	return normalized, nil
 }
 
 // isSeaTunnelPackage checks if a file name is a SeaTunnel package.
@@ -1983,11 +2386,15 @@ const PackageTransferChunkSize = 1024 * 1024
 // TransferPackageToAgent transfers a package to an Agent via gRPC
 // TransferPackageToAgent 通过 gRPC 将安装包传输到 Agent
 func (s *Service) TransferPackageToAgent(ctx context.Context, agentID string, version string, status *InstallationStatus) (remotePath string, err error) {
+	localPath := filepath.Join(s.packageDir, packageFileName(version))
+	return s.transferPackageFileToAgent(ctx, agentID, version, localPath, status)
+}
+
+func (s *Service) transferPackageFileToAgent(ctx context.Context, agentID string, version string, localPath string, status *InstallationStatus) (remotePath string, err error) {
 	logger.InfoF(ctx, "[Installer] 开始传输安装包到 Agent / Start transferring package to Agent: agent=%s, version=%s", agentID, version)
 
-	// Get local package path / 获取本地安装包路径
-	fileName := fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
-	localPath := filepath.Join(s.packageDir, fileName)
+	// Get file name / 获取文件名
+	fileName := filepath.Base(localPath)
 
 	// Check if package exists / 检查安装包是否存在
 	fileInfo, err := os.Stat(localPath)
