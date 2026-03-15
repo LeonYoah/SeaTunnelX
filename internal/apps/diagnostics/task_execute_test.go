@@ -22,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -635,49 +634,7 @@ func TestResolveDiagnosticErrorContext_fallsBackToLatestGroupWithinWindow(t *tes
 }
 
 func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T) {
-	tmpl, err := template.New("diagnostic-summary").Funcs(template.FuncMap{
-		"pair": func(zh, en string) template.HTML {
-			return renderDiagnosticLocalizedPair(zh, en)
-		},
-		"loc": func(value interface{}) template.HTML {
-			if value == nil {
-				return renderDiagnosticLocalizedText("-")
-			}
-			return renderDiagnosticLocalizedText(fmt.Sprint(value))
-		},
-		"formatTime": func(value interface{}) string {
-			switch typed := value.(type) {
-			case *time.Time:
-				return formatDiagnosticBundleTime(typed)
-			case time.Time:
-				return formatDiagnosticBundleTimeValue(typed)
-			default:
-				return "-"
-			}
-		},
-		"statusClass": func(status interface{}) string {
-			return diagnosticHTMLStatusClass(fmt.Sprint(status))
-		},
-		"toneClass": func(tone interface{}) string {
-			return diagnosticHTMLToneClass(fmt.Sprint(tone))
-		},
-		"formatBytes": func(size int64) string {
-			return formatDiagnosticBytes(size)
-		},
-		"formatMetricValue": func(unit string, value float64) string {
-			return formatDiagnosticMetricValue(unit, value)
-		},
-		"metricChartSVG": func(points []diagnosticPrometheusPoint, threshold float64, comparator string, unit string) template.HTML {
-			return renderDiagnosticMetricChart(points, threshold, comparator, unit)
-		},
-		"shortHash": func(value string) string {
-			value = strings.TrimSpace(value)
-			if len(value) <= 12 {
-				return value
-			}
-			return value[:12]
-		},
-	}).Parse(diagnosticBundleHTMLTemplate)
+	tmpl, err := newDiagnosticBundleHTMLTemplate(DiagnosticLanguageEN)
 	if err != nil {
 		t.Fatalf("parse template: %v", err)
 	}
@@ -809,24 +766,41 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 		},
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, payload); err != nil {
+	var enBuf bytes.Buffer
+	payload.Language = DiagnosticLanguageEN
+	if err := tmpl.Execute(&enBuf, payload); err != nil {
 		t.Fatalf("execute template: %v", err)
 	}
-	if !strings.Contains(buf.String(), "More Signals") {
-		t.Fatalf("expected rendered html to contain metrics evidence panel")
+
+	zhHTML, err := renderDiagnosticBundleHTMLDocument(payload, DiagnosticLanguageZH)
+	if err != nil {
+		t.Fatalf("render zh document: %v", err)
 	}
-	if !strings.Contains(buf.String(), "data-lang-button=\"zh\"") || !strings.Contains(buf.String(), "data-lang-button=\"en\"") {
-		t.Fatalf("expected rendered html to contain language toggles")
+
+	enHTML := enBuf.String()
+	if !strings.Contains(enHTML, "lang=\"en\"") || !strings.Contains(enHTML, "More Signals") {
+		t.Fatalf("expected english document to contain english metrics evidence panel")
 	}
-	if !strings.Contains(buf.String(), "data-inner-tab-group=\"evidence\"") || !strings.Contains(buf.String(), "data-inner-tab-group=\"appendix\"") {
+	if !strings.Contains(string(zhHTML), "lang=\"zh-CN\"") || !strings.Contains(string(zhHTML), "更多指标") {
+		t.Fatalf("expected chinese document to contain chinese metrics evidence panel")
+	}
+	if strings.Contains(enHTML, "data-lang-button=\"zh\"") || strings.Contains(enHTML, "data-lang-button=\"en\"") {
+		t.Fatalf("expected rendered html to remove language toggles")
+	}
+	if strings.Contains(enHTML, "lang-switch") || strings.Contains(enHTML, "i18n-zh") || strings.Contains(enHTML, "i18n-en") {
+		t.Fatalf("expected rendered html to remove bilingual toggle styles")
+	}
+	if !strings.Contains(enHTML, "data-inner-tab-group=\"evidence\"") || !strings.Contains(enHTML, "data-inner-tab-group=\"appendix\"") {
 		t.Fatalf("expected rendered html to contain nested inner tabs")
 	}
-	if strings.Contains(buf.String(), "借鉴 Allure categories") {
+	if strings.Contains(enHTML, "借鉴 Allure categories") {
 		t.Fatalf("expected rendered html to remove internal allure guidance copy")
 	}
-	if !strings.Contains(buf.String(), "Key Runtime Settings") || !strings.Contains(buf.String(), "connector-fake.jar") || !strings.Contains(buf.String(), "<svg") || !strings.Contains(buf.String(), "CPU") {
-		t.Fatalf("expected rendered html to contain config inventory details")
+	if !strings.Contains(enHTML, "Key Runtime Settings") || !strings.Contains(enHTML, "connector-fake.jar") || !strings.Contains(enHTML, "<svg") || !strings.Contains(enHTML, "CPU") {
+		t.Fatalf("expected english rendered html to contain config inventory details")
+	}
+	if !strings.Contains(string(zhHTML), "关键配置摘要") || !strings.Contains(string(zhHTML), "复制内容") {
+		t.Fatalf("expected chinese rendered html to contain localized config and copy labels")
 	}
 }
 

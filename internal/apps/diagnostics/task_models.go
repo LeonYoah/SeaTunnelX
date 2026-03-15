@@ -262,16 +262,16 @@ type DiagnosticPlanStep struct {
 // DefaultDiagnosticTaskSteps 返回诊断包采集 MVP 的固定步骤顺序。
 func DefaultDiagnosticTaskSteps() []DiagnosticPlanStep {
 	return []DiagnosticPlanStep{
-		{Sequence: 1, Code: DiagnosticStepCodeCollectErrorContext, Title: "汇总错误上下文", Description: "加载错误组、巡检结果和来源上下文。", NodeScoped: false, Required: true},
-		{Sequence: 2, Code: DiagnosticStepCodeCollectProcessEvents, Title: "收集进程事件", Description: "采集近期进程事件和自动拉起记录。", NodeScoped: false, Required: true},
-		{Sequence: 3, Code: DiagnosticStepCodeCollectAlertSnapshot, Title: "收集告警快照", Description: "采集相关告警状态与通知上下文。", NodeScoped: false, Required: true},
-		{Sequence: 4, Code: DiagnosticStepCodeCollectConfigSnapshot, Title: "收集配置快照", Description: "导出 Seatunnel 与相关运行配置快照。", NodeScoped: true, Required: true},
-		{Sequence: 5, Code: DiagnosticStepCodeCollectLogSample, Title: "收集日志样本", Description: "采集错误附近日志样本和近期运行日志片段。", NodeScoped: true, Required: false},
-		{Sequence: 6, Code: DiagnosticStepCodeCollectThreadDump, Title: "收集线程栈", Description: "对选中节点执行线程栈采集。", NodeScoped: true, Required: false},
-		{Sequence: 7, Code: DiagnosticStepCodeCollectJVMDump, Title: "收集 JVM Dump", Description: "对选中节点执行 JVM Dump 采集。", NodeScoped: true, Required: false},
-		{Sequence: 8, Code: DiagnosticStepCodeAssembleManifest, Title: "生成 Manifest", Description: "生成机器可读的诊断证据清单。", NodeScoped: false, Required: true},
-		{Sequence: 9, Code: DiagnosticStepCodeRenderHTMLSummary, Title: "生成诊断报告", Description: "渲染 index.html 诊断报告，便于离线查看与分享。", NodeScoped: false, Required: true},
-		{Sequence: 10, Code: DiagnosticStepCodeComplete, Title: "完成", Description: "标记诊断任务完成并输出入口索引。", NodeScoped: false, Required: true},
+		{Sequence: 1, Code: DiagnosticStepCodeCollectErrorContext, Title: bilingualText("汇总错误上下文", "Collect Error Context"), Description: bilingualText("加载错误组、巡检结果和来源上下文。", "Load error groups, inspection results, and source context."), NodeScoped: false, Required: true},
+		{Sequence: 2, Code: DiagnosticStepCodeCollectProcessEvents, Title: bilingualText("收集进程事件", "Collect Process Events"), Description: bilingualText("采集近期进程事件和自动拉起记录。", "Collect recent process events and auto-restart history."), NodeScoped: false, Required: true},
+		{Sequence: 3, Code: DiagnosticStepCodeCollectAlertSnapshot, Title: bilingualText("收集告警快照", "Collect Alert Snapshot"), Description: bilingualText("采集相关告警状态与通知上下文。", "Collect related alert states and notification context."), NodeScoped: false, Required: true},
+		{Sequence: 4, Code: DiagnosticStepCodeCollectConfigSnapshot, Title: bilingualText("收集配置快照", "Collect Config Snapshot"), Description: bilingualText("导出 Seatunnel 与相关运行配置快照。", "Export Seatunnel runtime config snapshots and related settings."), NodeScoped: true, Required: true},
+		{Sequence: 5, Code: DiagnosticStepCodeCollectLogSample, Title: bilingualText("收集日志样本", "Collect Log Sample"), Description: bilingualText("采集错误附近日志样本和近期运行日志片段。", "Collect nearby log samples and recent runtime log fragments."), NodeScoped: true, Required: false},
+		{Sequence: 6, Code: DiagnosticStepCodeCollectThreadDump, Title: bilingualText("收集线程栈", "Collect Thread Dump"), Description: bilingualText("对选中节点执行线程栈采集。", "Collect thread dumps on selected nodes."), NodeScoped: true, Required: false},
+		{Sequence: 7, Code: DiagnosticStepCodeCollectJVMDump, Title: bilingualText("收集 JVM Dump", "Collect JVM Dump"), Description: bilingualText("对选中节点执行 JVM Dump 采集。", "Collect JVM dumps on selected nodes."), NodeScoped: true, Required: false},
+		{Sequence: 8, Code: DiagnosticStepCodeAssembleManifest, Title: bilingualText("生成 Manifest", "Assemble Manifest"), Description: bilingualText("生成机器可读的诊断证据清单。", "Generate a machine-readable diagnostic evidence manifest."), NodeScoped: false, Required: true},
+		{Sequence: 9, Code: DiagnosticStepCodeRenderHTMLSummary, Title: bilingualText("生成诊断报告", "Render Diagnostic Report"), Description: bilingualText("渲染 index.html 诊断报告，便于离线查看与分享。", "Render the offline diagnostic report for viewing and sharing."), NodeScoped: false, Required: true},
+		{Sequence: 10, Code: DiagnosticStepCodeComplete, Title: bilingualText("完成", "Complete"), Description: bilingualText("标记诊断任务完成并输出入口索引。", "Mark the diagnostic task as completed and publish the entry index."), NodeScoped: false, Required: true},
 	}
 }
 

@@ -1,0 +1,13 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check-backend.md", "reason": "Backend check spec"}
+{"file": ".claude/commands/trellis/check-frontend.md", "reason": "Frontend check spec"}
+{"file": ".trellis/spec/frontend/api-and-services.md", "reason": "services and lang query propagation"}
+{"file": ".trellis/spec/frontend/ui-conventions.md", "reason": "i18n and diagnostics UI changes"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "persist user language preference"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "profile/lang validation and API errors"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "spec update and backend quality constraints"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "language preference crosses profile/frontend/backend/report generation"}
+{"file": "frontend/components/common/layout/ManagementBar.tsx", "reason": "profile dialog language setting and i18n consistency"}
+{"file": "frontend/lib/i18n/provider.tsx", "reason": "locale source and hydration behavior"}
+{"file": "internal/apps/auth/handler.go", "reason": "profile API contract to extend with language"}
+{"file": "internal/apps/diagnostics/task_execute.go", "reason": "offline report rendering and lang toggle removal"}

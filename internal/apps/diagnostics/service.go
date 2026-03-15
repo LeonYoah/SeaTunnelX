@@ -152,26 +152,26 @@ func (s *Service) GetWorkspaceBootstrap(ctx context.Context, req *WorkspaceBoots
 		Tabs: []*WorkspaceTab{
 			{
 				Key:         WorkspaceTabErrors,
-				Label:       "Error Center",
-				Description: "Track structured Seatunnel ERROR groups and related context.",
+				Label:       bilingualText("错误中心", "Error Center"),
+				Description: bilingualText("追踪结构化 Seatunnel ERROR 分组及其关联上下文。", "Track structured Seatunnel ERROR groups and related context."),
 			},
 			{
 				Key:         WorkspaceTabInspections,
-				Label:       "Inspections",
-				Description: "Run and review cluster inspections based on managed runtime signals.",
+				Label:       bilingualText("巡检中心", "Inspections"),
+				Description: bilingualText("基于受管运行时信号发起并查看集群巡检。", "Run and review cluster inspections based on managed runtime signals."),
 			},
 		},
 		ClusterOptions: make([]*ClusterOption, 0),
 		Boundaries: []*WorkspaceBoundary{
 			{
 				Key:         "errors",
-				Title:       "Error Evidence",
-				Description: "Diagnostics owns Seatunnel ERROR evidence and links to cluster / alert context.",
+				Title:       bilingualText("错误证据", "Error Evidence"),
+				Description: bilingualText("诊断中心负责维护 Seatunnel ERROR 证据，并关联集群 / 告警上下文。", "Diagnostics owns Seatunnel ERROR evidence and links to cluster / alert context."),
 			},
 			{
 				Key:         "inspection",
-				Title:       "Inspection Signals",
-				Description: "Diagnostics consumes monitoring, process events, and alert signals for inspections.",
+				Title:       bilingualText("巡检信号", "Inspection Signals"),
+				Description: bilingualText("诊断中心消费监控、进程事件与告警信号用于巡检。", "Diagnostics consumes monitoring, process events, and alert signals for inspections."),
 			},
 		},
 	}

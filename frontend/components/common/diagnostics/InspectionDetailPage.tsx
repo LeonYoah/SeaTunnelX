@@ -581,11 +581,13 @@ export default function InspectionDetailPage({
                   <Badge variant={getStatusVariant(bundleTask.status)}>
                     {getStatusLabel(bundleTask.status)}
                   </Badge>
-                  <Badge variant='outline'>任务 #{bundleTask.id}</Badge>
+                  <Badge variant='outline'>
+                    {t('inspections.taskLabel', {id: bundleTask.id})}
+                  </Badge>
                   {pollingBundle ? (
                     <span className='flex items-center gap-1 text-xs text-muted-foreground'>
                       <Loader2 className='h-3 w-3 animate-spin' />
-                      正在刷新...
+                      {t('inspections.refreshingLabel')}
                     </span>
                   ) : null}
                 </div>

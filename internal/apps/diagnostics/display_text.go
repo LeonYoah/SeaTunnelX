@@ -53,11 +53,28 @@ func renderDiagnosticLocalizedPair(zh, en string) template.HTML {
 	}
 }
 
+func renderDiagnosticLocalizedPairByLanguage(zh, en string, lang DiagnosticLanguage) template.HTML {
+	value := chooseDiagnosticLocalizedText(diagnosticLocalizedText{ZH: zh, EN: en}, lang)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "-"
+	}
+	return template.HTML(template.HTMLEscapeString(value))
+}
+
 func renderDiagnosticLocalizedText(value string) template.HTML {
 	if zh, en, ok := splitDiagnosticLocalizedText(value); ok {
 		return renderDiagnosticLocalizedPair(zh, en)
 	}
 	return template.HTML(template.HTMLEscapeString(strings.TrimSpace(value)))
+}
+
+func renderDiagnosticLocalizedTextByLanguage(value string, lang DiagnosticLanguage) template.HTML {
+	value = strings.TrimSpace(localizeDiagnosticText(value, lang))
+	if value == "" {
+		value = "-"
+	}
+	return template.HTML(template.HTMLEscapeString(value))
 }
 
 func splitDiagnosticLocalizedText(value string) (string, string, bool) {
@@ -68,21 +85,11 @@ func splitDiagnosticLocalizedText(value string) (string, string, bool) {
 	if zh, en, ok := diagnosticLocalizedLookup(trimmed); ok {
 		return zh, en, true
 	}
-	const separator = " / "
-	left, right, found := strings.Cut(trimmed, separator)
+	left, right, found := findDiagnosticLocalizedPair(trimmed)
 	if !found {
 		return trimmed, trimmed, false
 	}
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	if left == "" || right == "" || !looksLikeDiagnosticLocalizedPair(left, right) {
-		return trimmed, trimmed, false
-	}
 	return left, right, true
-}
-
-func looksLikeDiagnosticLocalizedPair(left, right string) bool {
-	return containsHanRune(left) && containsLatinRune(right)
 }
 
 func containsHanRune(value string) bool {
@@ -101,6 +108,70 @@ func containsLatinRune(value string) bool {
 		}
 	}
 	return false
+}
+
+func countHanRunes(value string) int {
+	count := 0
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			count++
+		}
+	}
+	return count
+}
+
+func countLatinRunes(value string) int {
+	count := 0
+	for _, r := range value {
+		if unicode.IsLetter(r) && r <= unicode.MaxASCII {
+			count++
+		}
+	}
+	return count
+}
+
+func findDiagnosticLocalizedPair(value string) (string, string, bool) {
+	const separator = " / "
+	bestScore := 0
+	bestLeft := ""
+	bestRight := ""
+	startIndex := 0
+	for startIndex < len(value) {
+		index := strings.Index(value[startIndex:], separator)
+		if index < 0 {
+			break
+		}
+		index += startIndex
+
+		left := strings.TrimSpace(value[:index])
+		right := strings.TrimSpace(value[index+len(separator):])
+		startIndex = index + len(separator)
+
+		if left == "" || right == "" {
+			continue
+		}
+
+		leftHan := countHanRunes(left)
+		leftLatin := countLatinRunes(left)
+		rightHan := countHanRunes(right)
+		rightLatin := countLatinRunes(right)
+
+		if leftHan == 0 || rightLatin == 0 {
+			continue
+		}
+
+		score := leftHan*2 - leftLatin + rightLatin*2 - rightHan
+		if score > bestScore {
+			bestScore = score
+			bestLeft = left
+			bestRight = right
+		}
+	}
+
+	if bestScore <= 0 || bestLeft == "" || bestRight == "" {
+		return "", "", false
+	}
+	return bestLeft, bestRight, true
 }
 
 func diagnosticLocalizedLookup(value string) (string, string, bool) {

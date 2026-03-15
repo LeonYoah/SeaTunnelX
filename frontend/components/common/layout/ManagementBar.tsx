@@ -84,12 +84,16 @@ const StaticIcons = {
 const ProfileButton = memo(() => {
   const themeUtils = useThemeUtils();
   const {user, isLoading, logout, checkAuthStatus} = useAuth();
-  const {locale, setLocale} = useLocale();
+  const {locale, syncLocale} = useLocale();
   const [mounted, setMounted] = useState(false);
   const [emailDraft, setEmailDraft] = useState('');
   const [savingEmail, setSavingEmail] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailSaved, setEmailSaved] = useState(false);
+  const [languageDraft, setLanguageDraft] = useState<Locale>('zh');
+  const [savingLanguage, setSavingLanguage] = useState(false);
+  const [languageError, setLanguageError] = useState<string | null>(null);
+  const [languageSaved, setLanguageSaved] = useState(false);
   const t = useTranslations('profile');
 
   useEffect(() => {
@@ -100,7 +104,24 @@ const ProfileButton = memo(() => {
     setEmailDraft(user?.email || '');
     setEmailError(null);
     setEmailSaved(false);
-  }, [user?.email, user?.id]);
+    const nextLanguage =
+      user?.language && locales.includes(user.language as Locale)
+        ? (user.language as Locale)
+        : locale;
+    setLanguageDraft(nextLanguage);
+    setLanguageError(null);
+    setLanguageSaved(false);
+  }, [locale, user?.email, user?.id, user?.language]);
+
+  useEffect(() => {
+    if (!mounted || !user?.language) {
+      return;
+    }
+    if (!locales.includes(user.language as Locale)) {
+      return;
+    }
+    syncLocale(user.language as Locale);
+  }, [mounted, syncLocale, user?.language]);
 
   const getTrustLevelText = (level: number): string => {
     switch (level) {
@@ -151,6 +172,33 @@ const ProfileButton = memo(() => {
       setEmailSaved(false);
     } finally {
       setSavingEmail(false);
+    }
+  };
+
+  const handleSaveLanguage = async () => {
+    if (!user) {
+      return;
+    }
+    const nextLanguage = languageDraft;
+    if (!locales.includes(nextLanguage)) {
+      setLanguageError(t('languageInvalid'));
+      return;
+    }
+
+    try {
+      setSavingLanguage(true);
+      setLanguageError(null);
+      await services.auth.updateProfile({language: nextLanguage});
+      syncLocale(nextLanguage);
+      await checkAuthStatus(true);
+      setLanguageSaved(true);
+    } catch (error) {
+      setLanguageError(
+        error instanceof Error ? error.message : t('languageSaveFailed'),
+      );
+      setLanguageSaved(false);
+    } finally {
+      setSavingLanguage(false);
     }
   };
 
@@ -298,20 +346,46 @@ const ProfileButton = memo(() => {
                 {locales.map((loc) => (
                   <button
                     key={loc}
-                    onClick={() => setLocale(loc as Locale)}
+                    onClick={() => {
+                      setLanguageDraft(loc as Locale);
+                      setLanguageError(null);
+                      setLanguageSaved(false);
+                    }}
                     className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
-                      locale === loc
+                      languageDraft === loc
                         ? 'bg-primary/10 text-primary border border-primary/30'
                         : 'bg-muted/50 hover:bg-muted/80'
                     }`}
+                    disabled={savingLanguage}
                   >
                     <Globe className='h-4 w-4' />
                     <span className='text-sm'>
                       {localeNames[loc as Locale]}
                     </span>
-                    {locale === loc && <Check className='h-3 w-3' />}
+                    {languageDraft === loc && <Check className='h-3 w-3' />}
                   </button>
                 ))}
+              </div>
+              <div className='mt-3 flex items-center gap-2'>
+                <Button
+                  size='sm'
+                  onClick={handleSaveLanguage}
+                  disabled={
+                    savingLanguage ||
+                    !user ||
+                    languageDraft === (user.language || locale)
+                  }
+                >
+                  {savingLanguage ? t('savingLanguage') : t('saveLanguage')}
+                </Button>
+                {languageError ? (
+                  <p className='text-xs text-destructive'>{languageError}</p>
+                ) : null}
+                {!languageError && languageSaved ? (
+                  <p className='text-xs text-emerald-600'>
+                    {t('languageSaved')}
+                  </p>
+                ) : null}
               </div>
             </div>
           )}

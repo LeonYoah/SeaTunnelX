@@ -19,6 +19,7 @@
 
 import {useCallback, useEffect, useState} from 'react';
 import {Loader2, Plus, Trash2} from 'lucide-react';
+import {useTranslations} from 'next-intl';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import type {
@@ -56,20 +57,13 @@ interface AutoPolicyConfigPanelProps {
   clusterOptions: DiagnosticsClusterOption[];
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  java_error: 'Java 错误',
-  prometheus: 'Prometheus 指标',
-  error_rate: '错误频率',
-  node_unhealthy: '节点异常',
-  alert_firing: '告警触发',
-  schedule: '定时巡检',
-};
-
 export function AutoPolicyConfigPanel({
   open,
   onOpenChange,
   clusterOptions,
 }: AutoPolicyConfigPanelProps) {
+  const t = useTranslations('diagnosticsCenter.autoPolicies');
+  const commonT = useTranslations('common');
   const [policies, setPolicies] = useState<InspectionAutoPolicy[]>([]);
   const [templates, setTemplates] = useState<InspectionConditionTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -93,6 +87,44 @@ export function AutoPolicyConfigPanel({
     log_sample_lines: 200,
   });
 
+  const getCategoryLabel = useCallback(
+    (category: string) => {
+      switch (category) {
+        case 'java_error':
+          return t('categories.javaError');
+        case 'prometheus':
+          return t('categories.prometheus');
+        case 'error_rate':
+          return t('categories.errorRate');
+        case 'node_unhealthy':
+          return t('categories.nodeUnhealthy');
+        case 'alert_firing':
+          return t('categories.alertFiring');
+        case 'schedule':
+          return t('categories.schedule');
+        default:
+          return category;
+      }
+    },
+    [t],
+  );
+
+  const getPolicyScopeLabel = useCallback(
+    (clusterId: number) =>
+      clusterId === 0
+        ? t('scopeGlobal')
+        : t('scopeCluster', {id: clusterId}),
+    [t],
+  );
+
+  const getAutoBundleModeLabel = useCallback(
+    (autoStartTask: boolean) =>
+      autoStartTask
+        ? t('autoBundleModeCreateAndStart')
+        : t('autoBundleModeCreateOnly'),
+    [t],
+  );
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -103,7 +135,7 @@ export function AutoPolicyConfigPanel({
       if (policiesResult.success && policiesResult.data) {
         setPolicies(policiesResult.data.items || []);
       } else {
-        toast.error(policiesResult.error || '加载策略列表失败');
+        toast.error(policiesResult.error || t('loadPoliciesError'));
       }
       if (templatesResult.success && templatesResult.data) {
         setTemplates(templatesResult.data);
@@ -111,7 +143,7 @@ export function AutoPolicyConfigPanel({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open) {
@@ -196,7 +228,7 @@ export function AutoPolicyConfigPanel({
 
   const handleSave = useCallback(async () => {
     if (!formName.trim()) {
-      toast.error('请输入策略名称');
+      toast.error(t('nameRequired'));
       return;
     }
     setSaving(true);
@@ -215,10 +247,10 @@ export function AutoPolicyConfigPanel({
           },
         );
         if (!result.success) {
-          toast.error(result.error || '更新策略失败');
+          toast.error(result.error || t('updateError'));
           return;
         }
-        toast.success('策略已更新');
+        toast.success(t('updateSuccess'));
       } else {
         const result = await services.diagnostics.createAutoPolicySafe({
           cluster_id: formClusterId,
@@ -231,10 +263,10 @@ export function AutoPolicyConfigPanel({
           task_options: formAutoCreateTask ? formTaskOptions : undefined,
         });
         if (!result.success) {
-          toast.error(result.error || '创建策略失败');
+          toast.error(result.error || t('createError'));
           return;
         }
-        toast.success('策略已创建');
+        toast.success(t('createSuccess'));
       }
       setFormOpen(false);
       void loadData();
@@ -243,12 +275,16 @@ export function AutoPolicyConfigPanel({
     }
   }, [
     editingPolicy,
+    formAutoCreateTask,
+    formAutoStartTask,
     formClusterId,
     formConditions,
     formCooldown,
     formEnabled,
     formName,
+    formTaskOptions,
     loadData,
+    t,
   ]);
 
   const handleDelete = useCallback(
@@ -257,16 +293,16 @@ export function AutoPolicyConfigPanel({
       try {
         const result = await services.diagnostics.deleteAutoPolicySafe(id);
         if (!result.success) {
-          toast.error(result.error || '删除策略失败');
+          toast.error(result.error || t('deleteError'));
           return;
         }
-        toast.success('策略已删除');
+        toast.success(t('deleteSuccess'));
         void loadData();
       } finally {
         setDeleting(null);
       }
     },
-    [loadData],
+    [loadData, t],
   );
 
   const handleToggleEnabled = useCallback(
@@ -276,12 +312,12 @@ export function AutoPolicyConfigPanel({
         {enabled: !policy.enabled},
       );
       if (!result.success) {
-        toast.error(result.error || '更新策略失败');
+        toast.error(result.error || t('updateError'));
         return;
       }
       void loadData();
     },
-    [loadData],
+    [loadData, t],
   );
 
   // Group templates by category
@@ -301,10 +337,8 @@ export function AutoPolicyConfigPanel({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className='max-w-2xl max-h-[80vh] overflow-y-auto'>
           <DialogHeader>
-            <DialogTitle>自动巡检策略</DialogTitle>
-            <DialogDescription>
-              配置自动巡检触发条件，满足条件时自动发起巡检。
-            </DialogDescription>
+            <DialogTitle>{t('title')}</DialogTitle>
+            <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
 
           {loading ? (
@@ -315,17 +349,17 @@ export function AutoPolicyConfigPanel({
             <div className='space-y-4'>
               <div className='flex items-center justify-between'>
                 <div className='text-sm text-muted-foreground'>
-                  共 {policies.length} 条策略
+                  {t('count', {count: policies.length})}
                 </div>
                 <Button size='sm' onClick={openCreateForm}>
                   <Plus className='mr-2 h-4 w-4' />
-                  新建策略
+                  {t('create')}
                 </Button>
               </div>
 
               {policies.length === 0 ? (
                 <div className='flex items-center justify-center rounded-lg border border-dashed p-8 text-sm text-muted-foreground'>
-                  暂无自动巡检策略
+                  {t('empty')}
                 </div>
               ) : (
                 <div className='space-y-3'>
@@ -340,20 +374,23 @@ export function AutoPolicyConfigPanel({
                             {policy.name}
                           </span>
                           <Badge variant='outline'>
-                            {policy.cluster_id === 0
-                              ? '全局'
-                              : `集群 #${policy.cluster_id}`}
+                            {getPolicyScopeLabel(policy.cluster_id)}
                           </Badge>
                         </div>
                         <div className='mt-1 text-xs text-muted-foreground space-y-1'>
                           <div>
-                            条件数：{(policy.conditions || []).length} | 冷却：
-                            {policy.cooldown_minutes} 分钟
+                            {t('conditionsSummary', {
+                              count: (policy.conditions || []).length,
+                              minutes: policy.cooldown_minutes,
+                            })}
                           </div>
                           {policy.auto_create_task ? (
                             <div>
-                              自动诊断包：
-                              {policy.auto_start_task ? '自动创建并执行' : '自动创建，手动执行'}
+                              {t('autoBundleSummary', {
+                                mode: getAutoBundleModeLabel(
+                                  policy.auto_start_task,
+                                ),
+                              })}
                             </div>
                           ) : null}
                         </div>
@@ -369,7 +406,7 @@ export function AutoPolicyConfigPanel({
                         size='sm'
                         onClick={() => openEditForm(policy)}
                       >
-                        编辑
+                        {commonT('edit')}
                       </Button>
                       <Button
                         variant='ghost'
@@ -397,23 +434,23 @@ export function AutoPolicyConfigPanel({
         <DialogContent className='max-w-2xl max-h-[85vh] overflow-y-auto'>
           <DialogHeader>
             <DialogTitle>
-              {editingPolicy ? '编辑策略' : '新建策略'}
+              {editingPolicy ? t('editTitle') : t('createTitle')}
             </DialogTitle>
           </DialogHeader>
 
           <div className='space-y-4'>
             <div className='space-y-2'>
-              <Label>策略名称</Label>
+              <Label>{t('nameLabel')}</Label>
               <Input
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder='例如：Java OOM 自动巡检'
+                placeholder={t('namePlaceholder')}
               />
             </div>
 
             {!editingPolicy ? (
               <div className='space-y-2'>
-                <Label>适用集群</Label>
+                <Label>{t('clusterLabel')}</Label>
                 <Select
                   value={String(formClusterId)}
                   onValueChange={(value) =>
@@ -421,28 +458,31 @@ export function AutoPolicyConfigPanel({
                   }
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder='请选择适用集群' />
+                    <SelectValue placeholder={t('clusterPlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='0'>全局策略（所有集群）</SelectItem>
+                    <SelectItem value='0'>{t('globalPolicyOption')}</SelectItem>
                     {clusterOptions.map((cluster) => (
                       <SelectItem
                         key={cluster.cluster_id}
                         value={String(cluster.cluster_id)}
                       >
-                        {cluster.cluster_name}（#{cluster.cluster_id}）
+                        {t('clusterOption', {
+                          name: cluster.cluster_name,
+                          id: cluster.cluster_id,
+                        })}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <div className='text-xs text-muted-foreground'>
-                  选择「全局策略」表示对所有集群生效；选择具体集群则仅对该集群生效。
+                  {t('clusterHint')}
                 </div>
               </div>
             ) : null}
 
             <div className='space-y-2'>
-              <Label>冷却时间（分钟）</Label>
+              <Label>{t('cooldownLabel')}</Label>
               <Input
                 type='number'
                 min={1}
@@ -455,7 +495,7 @@ export function AutoPolicyConfigPanel({
                 }
               />
               <div className='text-xs text-muted-foreground'>
-                同一策略触发后在冷却时间内不会重复触发
+                {t('cooldownHint')}
               </div>
             </div>
 
@@ -464,15 +504,15 @@ export function AutoPolicyConfigPanel({
                 checked={formEnabled}
                 onCheckedChange={setFormEnabled}
               />
-              <Label>启用策略</Label>
+              <Label>{t('enabledLabel')}</Label>
             </div>
 
             <div className='space-y-3 rounded-lg border bg-muted/10 p-4'>
               <div className='flex items-center justify-between'>
                 <div>
-                  <div className='font-medium'>自动生成诊断包和报告</div>
+                  <div className='font-medium'>{t('autoBundleTitle')}</div>
                   <div className='text-xs text-muted-foreground'>
-                    命中该策略并触发巡检后，自动创建一次诊断任务，用于收集线程栈、JVM Dump 和日志样本。
+                    {t('autoBundleHint')}
                   </div>
                 </div>
                 <Switch
@@ -485,9 +525,9 @@ export function AutoPolicyConfigPanel({
                 <div className='mt-3 grid gap-4 md:grid-cols-2'>
                   <div className='flex items-center justify-between rounded-lg border bg-background p-3'>
                     <div>
-                      <div className='font-medium'>采集线程 Dump</div>
+                      <div className='font-medium'>{t('includeThreadDump')}</div>
                       <div className='text-xs text-muted-foreground'>
-                        建议保持开启，用于分析线程状态和潜在死锁。
+                        {t('includeThreadDumpHint')}
                       </div>
                     </div>
                     <Switch
@@ -503,9 +543,9 @@ export function AutoPolicyConfigPanel({
 
                   <div className='flex items-center justify-between rounded-lg border bg-background p-3'>
                     <div>
-                      <div className='font-medium'>采集 JVM Dump</div>
+                      <div className='font-medium'>{t('includeJVMDump')}</div>
                       <div className='text-xs text-muted-foreground'>
-                        仅在内存问题（例如 OOM）等场景建议开启，Dump 文件较大。
+                        {t('includeJVMDumpHint')}
                       </div>
                     </div>
                     <Switch
@@ -520,7 +560,9 @@ export function AutoPolicyConfigPanel({
                   </div>
 
                   <div className='space-y-2'>
-                    <Label htmlFor='auto-policy-log-lines'>日志采样行数</Label>
+                    <Label htmlFor='auto-policy-log-lines'>
+                      {t('logSampleLinesLabel')}
+                    </Label>
                     <Input
                       id='auto-policy-log-lines'
                       type='number'
@@ -536,13 +578,13 @@ export function AutoPolicyConfigPanel({
                       }
                     />
                     <div className='text-xs text-muted-foreground'>
-                      控制每个关键步骤采样的日志行数，行数越多信息越完整，诊断包体积也会更大。
+                      {t('logSampleLinesHint')}
                     </div>
                   </div>
 
                   <div className='space-y-2'>
                     <Label htmlFor='auto-policy-jvm-space'>
-                      JVM Dump 最小剩余内存（MB）
+                      {t('jvmMinFreeMBLabel')}
                     </Label>
                     <Input
                       id='auto-policy-jvm-space'
@@ -560,7 +602,7 @@ export function AutoPolicyConfigPanel({
                       disabled={!formTaskOptions.include_jvm_dump}
                     />
                     <div className='text-xs text-muted-foreground'>
-                      仅在开启 JVM Dump 时生效，用于避免在可用空间过小的机器上生成 Dump。
+                      {t('jvmMinFreeMBHint')}
                     </div>
                   </div>
 
@@ -570,7 +612,7 @@ export function AutoPolicyConfigPanel({
                       onCheckedChange={setFormAutoStartTask}
                     />
                     <div className='text-sm text-muted-foreground'>
-                      自动开始执行诊断任务（关闭时仅自动创建任务，不会立即运行）
+                      {t('autoStartTaskLabel')}
                     </div>
                   </div>
                 </div>
@@ -578,7 +620,7 @@ export function AutoPolicyConfigPanel({
             </div>
 
             <div className='space-y-3'>
-              <Label>触发条件</Label>
+              <Label>{t('conditionsLabel')}</Label>
               {Object.entries(groupedTemplates).map(
                 ([category, categoryTemplates]) => (
                   <div
@@ -586,7 +628,7 @@ export function AutoPolicyConfigPanel({
                     className='rounded-lg border p-3 space-y-2'
                   >
                     <div className='text-sm font-medium'>
-                      {CATEGORY_LABELS[category] || category}
+                      {getCategoryLabel(category)}
                     </div>
                     {categoryTemplates.map((tpl) => {
                       const isChecked = formConditions.some(
@@ -624,7 +666,9 @@ export function AutoPolicyConfigPanel({
                               {tpl.default_threshold > 0 ? (
                                 <div className='space-y-1'>
                                   <Label className='text-xs'>
-                                    阈值（默认 {tpl.default_threshold}）
+                                    {t('thresholdLabel', {
+                                      value: tpl.default_threshold,
+                                    })}
                                   </Label>
                                   <Input
                                     type='number'
@@ -650,8 +694,10 @@ export function AutoPolicyConfigPanel({
                               {tpl.default_window_minutes > 0 ? (
                                 <div className='space-y-1'>
                                   <Label className='text-xs'>
-                                    窗口（默认{' '}
-                                    {tpl.default_window_minutes} 分钟）
+                                    {t('windowLabel', {
+                                      minutes:
+                                        tpl.default_window_minutes,
+                                    })}
                                   </Label>
                                   <Input
                                     type='number'
@@ -685,7 +731,7 @@ export function AutoPolicyConfigPanel({
               )}
               {templates.length === 0 ? (
                 <div className='text-sm text-muted-foreground'>
-                  暂无可用的条件模板
+                  {t('noTemplates')}
                 </div>
               ) : null}
             </div>
@@ -693,13 +739,13 @@ export function AutoPolicyConfigPanel({
 
           <DialogFooter>
             <Button variant='outline' onClick={() => setFormOpen(false)}>
-              取消
+              {commonT('cancel')}
             </Button>
             <Button onClick={() => void handleSave()} disabled={saving}>
               {saving ? (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               ) : null}
-              {editingPolicy ? '保存修改' : '创建策略'}
+              {editingPolicy ? t('saveEdit') : t('createConfirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

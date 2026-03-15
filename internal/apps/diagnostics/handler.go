@@ -50,6 +50,7 @@ func NewHandler(service *Service) *Handler {
 // GetWorkspaceBootstrap handles GET /api/v1/diagnostics/bootstrap
 // GetWorkspaceBootstrap 处理 GET /api/v1/diagnostics/bootstrap
 func (h *Handler) GetWorkspaceBootstrap(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	req := &WorkspaceBootstrapRequest{
 		Source:  strings.TrimSpace(c.Query("source")),
 		AlertID: strings.TrimSpace(c.Query("alert_id")),
@@ -71,7 +72,7 @@ func (h *Handler) GetWorkspaceBootstrap(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeWorkspaceBootstrapData(data, lang)})
 }
 
 // ListSeatunnelErrorGroups handles GET /api/v1/diagnostics/errors/groups.
@@ -144,6 +145,7 @@ func (h *Handler) GetSeatunnelErrorGroupDetail(c *gin.Context) {
 // StartInspection handles POST /api/v1/diagnostics/inspections.
 // StartInspection 处理 POST /api/v1/diagnostics/inspections。
 func (h *Handler) StartInspection(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	var req StartClusterInspectionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -160,12 +162,13 @@ func (h *Handler) StartInspection(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, Response{Data: data})
+	c.JSON(http.StatusCreated, Response{Data: localizeInspectionReportDetailData(data, lang)})
 }
 
 // ListInspectionReports handles GET /api/v1/diagnostics/inspections.
 // ListInspectionReports 处理 GET /api/v1/diagnostics/inspections。
 func (h *Handler) ListInspectionReports(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	filter, err := parseInspectionReportFilter(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -177,12 +180,13 @@ func (h *Handler) ListInspectionReports(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeInspectionReportsData(data, lang)})
 }
 
 // GetInspectionReportDetail handles GET /api/v1/diagnostics/inspections/:id.
 // GetInspectionReportDetail 处理 GET /api/v1/diagnostics/inspections/:id。
 func (h *Handler) GetInspectionReportDetail(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	reportID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -194,12 +198,13 @@ func (h *Handler) GetInspectionReportDetail(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeInspectionReportDetailData(data, lang)})
 }
 
 // CreateDiagnosticTask handles POST /api/v1/diagnostics/tasks.
 // CreateDiagnosticTask 处理 POST /api/v1/diagnostics/tasks。
 func (h *Handler) CreateDiagnosticTask(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	var req CreateDiagnosticTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -216,12 +221,13 @@ func (h *Handler) CreateDiagnosticTask(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, Response{Data: data})
+	c.JSON(http.StatusCreated, Response{Data: localizeDiagnosticTask(data, lang)})
 }
 
 // ListDiagnosticTasks handles GET /api/v1/diagnostics/tasks.
 // ListDiagnosticTasks 处理 GET /api/v1/diagnostics/tasks。
 func (h *Handler) ListDiagnosticTasks(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	filter, err := parseDiagnosticTaskFilter(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -233,17 +239,18 @@ func (h *Handler) ListDiagnosticTasks(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: &DiagnosticTaskListData{
+	c.JSON(http.StatusOK, Response{Data: localizeDiagnosticTaskListData(&DiagnosticTaskListData{
 		Items:    items,
 		Total:    total,
 		Page:     filter.Page,
 		PageSize: filter.PageSize,
-	}})
+	}, lang)})
 }
 
 // GetDiagnosticTaskDetail handles GET /api/v1/diagnostics/tasks/:id.
 // GetDiagnosticTaskDetail 处理 GET /api/v1/diagnostics/tasks/:id。
 func (h *Handler) GetDiagnosticTask(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	taskID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -255,12 +262,13 @@ func (h *Handler) GetDiagnosticTask(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeDiagnosticTask(data, lang)})
 }
 
 // ListDiagnosticTaskSteps handles GET /api/v1/diagnostics/tasks/:id/steps.
 // ListDiagnosticTaskSteps 处理 GET /api/v1/diagnostics/tasks/:id/steps。
 func (h *Handler) ListDiagnosticTaskSteps(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	taskID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -272,12 +280,13 @@ func (h *Handler) ListDiagnosticTaskSteps(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeDiagnosticTaskSteps(data, lang)})
 }
 
 // ListDiagnosticTaskLogs handles GET /api/v1/diagnostics/tasks/:id/logs.
 // ListDiagnosticTaskLogs 处理 GET /api/v1/diagnostics/tasks/:id/logs。
 func (h *Handler) ListDiagnosticTaskLogs(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	taskID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -296,17 +305,18 @@ func (h *Handler) ListDiagnosticTaskLogs(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: &DiagnosticTaskLogListData{
+	c.JSON(http.StatusOK, Response{Data: localizeDiagnosticTaskLogListData(&DiagnosticTaskLogListData{
 		Items:    items,
 		Total:    total,
 		Page:     filter.Page,
 		PageSize: filter.PageSize,
-	}})
+	}, lang)})
 }
 
 // StartDiagnosticTask handles POST /api/v1/diagnostics/tasks/:id/start.
 // StartDiagnosticTask 处理 POST /api/v1/diagnostics/tasks/:id/start。
 func (h *Handler) StartDiagnosticTask(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	taskID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -321,12 +331,13 @@ func (h *Handler) StartDiagnosticTask(c *gin.Context) {
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Data: data})
+	c.JSON(http.StatusOK, Response{Data: localizeDiagnosticTask(data, lang)})
 }
 
 // StreamDiagnosticTaskEvents handles GET /api/v1/diagnostics/tasks/:id/events/stream.
 // StreamDiagnosticTaskEvents 处理 GET /api/v1/diagnostics/tasks/:id/events/stream。
 func (h *Handler) StreamDiagnosticTaskEvents(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	taskID, err := parseUintQueryValue(c.Param("id"), "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error()})
@@ -352,6 +363,7 @@ func (h *Handler) StreamDiagnosticTaskEvents(c *gin.Context) {
 	c.Status(http.StatusOK)
 
 	writeEvent := func(event DiagnosticTaskEvent) bool {
+		event = localizeDiagnosticTaskEvent(event, lang)
 		payload, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %q\n\n", marshalErr.Error())
@@ -394,8 +406,9 @@ func (h *Handler) StreamDiagnosticTaskEvents(c *gin.Context) {
 // PreviewDiagnosticTaskHTML handles GET /api/v1/diagnostics/tasks/:id/html.
 // PreviewDiagnosticTaskHTML 处理 GET /api/v1/diagnostics/tasks/:id/html。
 func (h *Handler) PreviewDiagnosticTaskHTML(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	task, path, err := h.resolveDiagnosticTaskFile(c, func(task *DiagnosticTask) string {
-		return task.IndexPath
+		return resolveDiagnosticLocalizedHTMLPath(task.IndexPath, lang)
 	})
 	if err != nil {
 		h.writeDiagnosticTaskFileError(c, err)
@@ -520,6 +533,13 @@ func (h *Handler) writeDiagnosticTaskFileError(c *gin.Context, err error) {
 	default:
 		c.JSON(getDiagnosticsStatusCode(err), Response{ErrorMsg: err.Error()})
 	}
+}
+
+func diagnosticsLanguageFromRequest(c *gin.Context) DiagnosticLanguage {
+	if c == nil {
+		return DiagnosticLanguageZH
+	}
+	return normalizeDiagnosticLanguage(c.Query("lang"))
 }
 
 func parseErrorGroupFilter(c *gin.Context) (*SeatunnelErrorGroupFilter, error) {
@@ -763,8 +783,9 @@ func getDiagnosticsStatusCode(err error) int {
 // ListBuiltinConditionTemplates handles GET /api/v1/diagnostics/auto-policies/templates.
 // ListBuiltinConditionTemplates 处理 GET /api/v1/diagnostics/auto-policies/templates。
 func (h *Handler) ListBuiltinConditionTemplates(c *gin.Context) {
+	lang := diagnosticsLanguageFromRequest(c)
 	templates := h.service.ListBuiltinConditionTemplates()
-	c.JSON(http.StatusOK, Response{Data: templates})
+	c.JSON(http.StatusOK, Response{Data: localizeBuiltinConditionTemplates(templates, lang)})
 }
 
 // ListAutoPolicies handles GET /api/v1/diagnostics/auto-policies.

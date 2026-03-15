@@ -16,6 +16,7 @@
  */
 
 import {BaseService} from '../core/base.service';
+import {isLocale, saveLocale} from '@/lib/i18n/config';
 import {
   CallbackRequest,
   LoginRequest,
@@ -23,6 +24,12 @@ import {
   UpdateProfileRequest,
   UserInfoResponse,
 } from './types';
+
+function syncUserLocale(user?: {language?: string} | null): void {
+  if (user?.language && isLocale(user.language)) {
+    saveLocale(user.language);
+  }
+}
 
 /**
  * 认证服务
@@ -51,7 +58,9 @@ export class AuthService extends BaseService {
   static async loginWithCredentials(
     credentials: LoginRequest,
   ): Promise<LoginResponseData> {
-    return this.post<LoginResponseData>('/login', credentials);
+    const data = await this.post<LoginResponseData>('/login', credentials);
+    syncUserLocale(data);
+    return data;
   }
 
   /**
@@ -78,18 +87,22 @@ export class AuthService extends BaseService {
    * @returns 用户基本信息
    */
   static async getUserInfo(): Promise<UserInfoResponse['data']> {
-    return this.get<UserInfoResponse['data']>('/user-info');
+    const data = await this.get<UserInfoResponse['data']>('/user-info');
+    syncUserLocale(data);
+    return data;
   }
 
   /**
-   * 更新当前登录用户个人信息（目前仅邮箱）。
+   * 更新当前登录用户个人信息（邮箱、语言偏好）。
    * @param payload - 个人信息更新请求
    * @returns 更新后的用户信息
    */
   static async updateProfile(
     payload: UpdateProfileRequest,
   ): Promise<UserInfoResponse['data']> {
-    return this.put<UserInfoResponse['data']>('/profile', payload);
+    const data = await this.put<UserInfoResponse['data']>('/profile', payload);
+    syncUserLocale(data);
+    return data;
   }
 
   /**

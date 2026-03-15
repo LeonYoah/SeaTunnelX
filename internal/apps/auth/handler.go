@@ -70,7 +70,8 @@ type LogoutResponse struct {
 
 // UpdateProfileRequest 更新当前登录用户的个人信息请求。
 type UpdateProfileRequest struct {
-	Email string `json:"email" binding:"required,max=255"`
+	Email    string `json:"email" binding:"omitempty,max=255"`
+	Language string `json:"language" binding:"omitempty,oneof=zh en"`
 }
 
 // UpdateProfileResponse 更新当前登录用户的个人信息响应。
@@ -195,7 +196,7 @@ func GetUserInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, UserInfoResponse{Data: user.ToUserInfo()})
 }
 
-// UpdateProfile 更新当前登录用户的个人信息（目前支持邮箱）。
+// UpdateProfile 更新当前登录用户的个人信息（支持邮箱和语言偏好）。
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -216,12 +217,21 @@ func UpdateProfile(c *gin.Context) {
 	}
 
 	email := strings.TrimSpace(req.Email)
-	if email == "" {
-		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "邮箱不能为空 / Email is required"})
+	language := NormalizeLanguage(req.Language)
+	hasEmail := email != ""
+	hasLanguage := strings.TrimSpace(req.Language) != ""
+	if !hasEmail && !hasLanguage {
+		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "至少提供一个可更新字段 / At least one field is required"})
 		return
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "邮箱格式不正确 / Invalid email format"})
+	if hasEmail {
+		if _, err := mail.ParseAddress(email); err != nil {
+			c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "邮箱格式不正确 / Invalid email format"})
+			return
+		}
+	}
+	if hasLanguage && language == "" {
+		c.JSON(http.StatusBadRequest, UpdateProfileResponse{ErrorMsg: "语言不合法 / Invalid language"})
 		return
 	}
 
@@ -232,16 +242,29 @@ func UpdateProfile(c *gin.Context) {
 		return
 	}
 
+	updates := make(map[string]interface{}, 2)
+	if hasEmail {
+		updates["email"] = email
+	}
+	if hasLanguage {
+		updates["language"] = language
+	}
+
 	if err := db.GetDB(c.Request.Context()).
 		Model(user).
-		Update("email", email).Error; err != nil {
-		logger.ErrorF(c.Request.Context(), "[Auth] 更新个人邮箱失败: user_id=%d err=%v", userID, err)
+		Updates(updates).Error; err != nil {
+		logger.ErrorF(c.Request.Context(), "[Auth] 更新个人信息失败: user_id=%d err=%v", userID, err)
 		c.JSON(http.StatusInternalServerError, UpdateProfileResponse{ErrorMsg: ErrMsgInternalError})
 		return
 	}
 
-	user.Email = email
-	logger.InfoF(c.Request.Context(), "[Auth] 更新个人邮箱成功: user_id=%d", userID)
+	if hasEmail {
+		user.Email = email
+	}
+	if hasLanguage {
+		user.Language = language
+	}
+	logger.InfoF(c.Request.Context(), "[Auth] 更新个人信息成功: user_id=%d email_updated=%t language_updated=%t", userID, hasEmail, hasLanguage)
 	c.JSON(http.StatusOK, UpdateProfileResponse{Data: user.ToUserInfo()})
 }
 

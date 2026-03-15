@@ -39,6 +39,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   ReactNode,
 } from 'react';
 import {NextIntlClientProvider} from 'next-intl';
@@ -57,6 +58,7 @@ const messages: Record<Locale, Messages> = {
 interface LocaleContextType {
   locale: Locale;
   setLocale: (locale: Locale) => void;
+  syncLocale: (locale: Locale) => void;
 }
 
 const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
@@ -85,12 +87,34 @@ export function I18nProvider({children}: I18nProviderProps) {
     saveLocale(newLocale);
   }, []);
 
+  const syncLocale = useCallback((newLocale: Locale) => {
+    setLocaleState((current) => {
+      if (current === newLocale) {
+        return current;
+      }
+      return newLocale;
+    });
+    saveLocale(newLocale);
+  }, []);
+
   // 在 hydration 完成前使用默认语言，避免 hydration mismatch
   const currentLocale = isHydrated ? locale : defaultLocale;
   const currentMessages = messages[currentLocale];
 
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.documentElement.lang = currentLocale === 'en' ? 'en' : 'zh-CN';
+  }, [currentLocale]);
+
+  const contextValue = useMemo(
+    () => ({locale: currentLocale, setLocale, syncLocale}),
+    [currentLocale, setLocale, syncLocale],
+  );
+
   return (
-    <LocaleContext.Provider value={{locale: currentLocale, setLocale}}>
+    <LocaleContext.Provider value={contextValue}>
       <NextIntlClientProvider
         locale={currentLocale}
         messages={currentMessages}

@@ -179,7 +179,7 @@ export function DiagnosticsWorkspace() {
             <div className='flex flex-wrap gap-2'>
               <Button variant='outline' onClick={() => setAutoPolicyOpen(true)}>
                 <Settings className='mr-2 h-4 w-4' />
-                自动巡检设置
+                {t('autoPolicies.buttonLabel')}
               </Button>
               <Button variant='outline' onClick={() => void loadBootstrap()}>
                 <RefreshCw className='mr-2 h-4 w-4' />

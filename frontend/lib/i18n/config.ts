@@ -26,6 +26,10 @@ export const localeNames: Record<Locale, string> = {
   en: 'English',
 };
 
+export function isLocale(value: string): value is Locale {
+  return locales.includes(value as Locale);
+}
+
 /**
  * 获取浏览器语言偏好
  */
@@ -56,7 +60,7 @@ export function getSavedLocale(): Locale | null {
   }
 
   const saved = localStorage.getItem('locale');
-  if (saved && locales.includes(saved as Locale)) {
+  if (saved && isLocale(saved)) {
     return saved as Locale;
   }
 

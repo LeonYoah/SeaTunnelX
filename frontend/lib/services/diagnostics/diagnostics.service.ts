@@ -16,6 +16,7 @@
  */
 
 import {BaseService} from '../core/base.service';
+import {getCurrentLocale} from '@/lib/i18n/config';
 import type {
   CreateDiagnosticsTaskRequest,
   CreateInspectionAutoPolicyRequest,
@@ -52,6 +53,15 @@ function normalizeDiagnosticsTask(task: DiagnosticsTask): DiagnosticsTask {
   };
 }
 
+function withDiagnosticsLanguage(
+  params?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...(params || {}),
+    lang: getCurrentLocale(),
+  };
+}
+
 export class DiagnosticsService extends BaseService {
   protected static readonly basePath = '/diagnostics';
 
@@ -64,7 +74,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsWorkspaceBootstrapData> {
     return this.get<DiagnosticsWorkspaceBootstrapData>(
       '/bootstrap',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
   }
 
@@ -98,7 +108,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsErrorGroupListData> {
     return this.get<DiagnosticsErrorGroupListData>(
       '/errors/groups',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
   }
 
@@ -133,7 +143,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsErrorEventListData> {
     return this.get<DiagnosticsErrorEventListData>(
       '/errors/events',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
   }
 
@@ -173,10 +183,10 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsErrorGroupDetailData> {
     return this.get<DiagnosticsErrorGroupDetailData>(
       `/errors/groups/${groupId}`,
-      {
+      withDiagnosticsLanguage({
         event_limit: eventLimit,
         ...params,
-      },
+      }),
     );
   }
 
@@ -214,7 +224,11 @@ export class DiagnosticsService extends BaseService {
   static async startInspection(
     payload: StartDiagnosticsInspectionRequest,
   ): Promise<DiagnosticsInspectionReportDetailData> {
-    return this.post<DiagnosticsInspectionReportDetailData>('/inspections', payload);
+    return this.postWithParams<DiagnosticsInspectionReportDetailData>(
+      '/inspections',
+      payload,
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -248,7 +262,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsInspectionReportListData> {
     return this.get<DiagnosticsInspectionReportListData>(
       '/inspections',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
   }
 
@@ -281,7 +295,10 @@ export class DiagnosticsService extends BaseService {
   static async getInspectionReportDetail(
     reportId: number,
   ): Promise<DiagnosticsInspectionReportDetailData> {
-    return this.get<DiagnosticsInspectionReportDetailData>(`/inspections/${reportId}`);
+    return this.get<DiagnosticsInspectionReportDetailData>(
+      `/inspections/${reportId}`,
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -313,7 +330,11 @@ export class DiagnosticsService extends BaseService {
   static async createTask(
     payload: CreateDiagnosticsTaskRequest,
   ): Promise<DiagnosticsTask> {
-    const data = await this.post<DiagnosticsTask>('/tasks', payload);
+    const data = await this.postWithParams<DiagnosticsTask>(
+      '/tasks',
+      payload,
+      withDiagnosticsLanguage(),
+    );
     return normalizeDiagnosticsTask(data);
   }
 
@@ -347,7 +368,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsTaskListData> {
     const data = await this.get<DiagnosticsTaskListData>(
       '/tasks',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
     return {
       ...data,
@@ -381,7 +402,10 @@ export class DiagnosticsService extends BaseService {
    * 获取诊断任务详情。
    */
   static async getTask(taskId: number): Promise<DiagnosticsTask> {
-    const data = await this.get<DiagnosticsTask>(`/tasks/${taskId}`);
+    const data = await this.get<DiagnosticsTask>(
+      `/tasks/${taskId}`,
+      withDiagnosticsLanguage(),
+    );
     return normalizeDiagnosticsTask(data);
   }
 
@@ -411,7 +435,11 @@ export class DiagnosticsService extends BaseService {
    * 启动一条诊断任务。
    */
   static async startTask(taskId: number): Promise<DiagnosticsTask> {
-    const data = await this.post<DiagnosticsTask>(`/tasks/${taskId}/start`);
+    const data = await this.postWithParams<DiagnosticsTask>(
+      `/tasks/${taskId}/start`,
+      undefined,
+      withDiagnosticsLanguage(),
+    );
     return normalizeDiagnosticsTask(data);
   }
 
@@ -446,7 +474,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<DiagnosticsTaskLogListData> {
     const data = await this.get<DiagnosticsTaskLogListData>(
       `/tasks/${taskId}/logs`,
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
     return {
       ...data,
@@ -481,7 +509,7 @@ export class DiagnosticsService extends BaseService {
    * 获取诊断任务 SSE 地址。
    */
   static getTaskEventsUrl(taskId: number): string {
-    return `/api/v1${this.basePath}/tasks/${taskId}/events/stream`;
+    return `/api/v1${this.basePath}/tasks/${taskId}/events/stream?lang=${getCurrentLocale()}`;
   }
 
   /**
@@ -489,8 +517,13 @@ export class DiagnosticsService extends BaseService {
    * 获取诊断任务 HTML 摘要地址。
    */
   static getTaskHTMLUrl(taskId: number, download = false): string {
-    const query = download ? '?download=1' : '';
-    return `/api/v1${this.basePath}/tasks/${taskId}/html${query}`;
+    const query = new URLSearchParams({
+      lang: getCurrentLocale(),
+    });
+    if (download) {
+      query.set('download', '1');
+    }
+    return `/api/v1${this.basePath}/tasks/${taskId}/html?${query.toString()}`;
   }
 
   /**
@@ -508,7 +541,10 @@ export class DiagnosticsService extends BaseService {
    * 获取内置条件模板列表。
    */
   static async listBuiltinConditionTemplates(): Promise<InspectionConditionTemplate[]> {
-    return this.get<InspectionConditionTemplate[]>('/auto-policies/templates');
+    return this.get<InspectionConditionTemplate[]>(
+      '/auto-policies/templates',
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -540,7 +576,7 @@ export class DiagnosticsService extends BaseService {
   ): Promise<InspectionAutoPolicyListData> {
     return this.get<InspectionAutoPolicyListData>(
       '/auto-policies',
-      params as Record<string, unknown> | undefined,
+      withDiagnosticsLanguage(params as Record<string, unknown> | undefined),
     );
   }
 
@@ -573,7 +609,11 @@ export class DiagnosticsService extends BaseService {
   static async createAutoPolicy(
     payload: CreateInspectionAutoPolicyRequest,
   ): Promise<InspectionAutoPolicy> {
-    return this.post<InspectionAutoPolicy>('/auto-policies', payload);
+    return this.postWithParams<InspectionAutoPolicy>(
+      '/auto-policies',
+      payload,
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -603,7 +643,10 @@ export class DiagnosticsService extends BaseService {
    * 获取自动巡检策略详情。
    */
   static async getAutoPolicy(id: number): Promise<InspectionAutoPolicy> {
-    return this.get<InspectionAutoPolicy>(`/auto-policies/${id}`);
+    return this.get<InspectionAutoPolicy>(
+      `/auto-policies/${id}`,
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -636,7 +679,11 @@ export class DiagnosticsService extends BaseService {
     id: number,
     payload: UpdateInspectionAutoPolicyRequest,
   ): Promise<InspectionAutoPolicy> {
-    return this.put<InspectionAutoPolicy>(`/auto-policies/${id}`, payload);
+    return this.putWithParams<InspectionAutoPolicy>(
+      `/auto-policies/${id}`,
+      payload,
+      withDiagnosticsLanguage(),
+    );
   }
 
   /**
@@ -667,7 +714,7 @@ export class DiagnosticsService extends BaseService {
    * 删除自动巡检策略。
    */
   static async deleteAutoPolicy(id: number): Promise<void> {
-    await this.delete<void>(`/auto-policies/${id}`);
+    await this.delete<void>(`/auto-policies/${id}`, withDiagnosticsLanguage());
   }
 
   /**

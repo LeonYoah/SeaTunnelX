@@ -98,19 +98,6 @@ function getStatusVariant(
   }
 }
 
-function getTaskStatusLabel(status: string): string {
-  const map: Record<string, string> = {
-    pending: '等待中',
-    ready: '就绪',
-    running: '执行中',
-    succeeded: '已完成',
-    failed: '失败',
-    skipped: '已跳过',
-    cancelled: '已取消',
-  };
-  return map[status] ?? status;
-}
-
 function getSeverityVariant(
   severity: DiagnosticsInspectionFindingSeverity,
 ): 'default' | 'secondary' | 'outline' | 'destructive' {
@@ -153,6 +140,29 @@ export function DiagnosticsInspectionCenter({
 }: DiagnosticsInspectionCenterProps) {
   const t = useTranslations('diagnosticsCenter');
   const commonT = useTranslations('common');
+  const getTaskStatusLabel = useCallback(
+    (status: string): string => {
+      switch (status) {
+        case 'pending':
+          return t('tasks.status.pending');
+        case 'ready':
+          return t('tasks.status.ready');
+        case 'running':
+          return t('tasks.status.running');
+        case 'succeeded':
+          return t('inspections.status.completed');
+        case 'failed':
+          return t('tasks.status.failed');
+        case 'skipped':
+          return t('tasks.status.skipped');
+        case 'cancelled':
+          return t('tasks.status.cancelled');
+        default:
+          return status;
+      }
+    },
+    [t],
+  );
 
   const [statusFilter, setStatusFilter] = useState<
     'all' | DiagnosticsInspectionReportStatus
@@ -751,11 +761,13 @@ export function DiagnosticsInspectionCenter({
                           <Badge variant={getStatusVariant(bundleTask.status)}>
                             {getTaskStatusLabel(bundleTask.status)}
                           </Badge>
-                          <Badge variant='outline'>任务 #{bundleTask.id}</Badge>
+                          <Badge variant='outline'>
+                            {t('inspections.taskLabel', {id: bundleTask.id})}
+                          </Badge>
                           {pollingBundle ? (
                             <span className='flex items-center gap-1 text-xs text-muted-foreground'>
                               <Loader2 className='h-3 w-3 animate-spin' />
-                              正在刷新...
+                              {t('inspections.refreshingLabel')}
                             </span>
                           ) : null}
                         </div>
@@ -766,7 +778,7 @@ export function DiagnosticsInspectionCenter({
                             onClick={() => setExecLogDialogOpen(true)}
                           >
                             <FileText className='mr-2 h-4 w-4' />
-                            查看执行日志
+                            {t('inspections.detailPage.viewExecutionLogs')}
                           </Button>
                           {bundleTask.status === 'succeeded' ? (
                             <>
@@ -777,7 +789,7 @@ export function DiagnosticsInspectionCenter({
                                   rel='noopener noreferrer'
                                 >
                                   <ExternalLink className='mr-2 h-4 w-4' />
-                                  预览报告
+                                  {t('inspections.detailPage.previewReport')}
                                 </a>
                               </Button>
                               <Button asChild variant='outline' size='sm'>
@@ -786,7 +798,7 @@ export function DiagnosticsInspectionCenter({
                                   download
                                 >
                                   <Download className='mr-2 h-4 w-4' />
-                                  下载诊断包
+                                  {t('inspections.detailPage.downloadBundle')}
                                 </a>
                               </Button>
                               <Button
@@ -800,7 +812,7 @@ export function DiagnosticsInspectionCenter({
                                 ) : (
                                   <Package className='mr-2 h-4 w-4' />
                                 )}
-                                重新生成
+                                {t('inspections.detailPage.regenerate')}
                               </Button>
                             </>
                           ) : bundleTask.status === 'failed' ? (
@@ -815,7 +827,7 @@ export function DiagnosticsInspectionCenter({
                               ) : (
                                 <Package className='mr-2 h-4 w-4' />
                               )}
-                              重新生成
+                              {t('inspections.detailPage.regenerate')}
                             </Button>
                           ) : null}
                         </div>
@@ -957,14 +969,16 @@ export function DiagnosticsInspectionCenter({
       <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <DialogContent className='sm:max-w-md'>
           <DialogHeader>
-            <DialogTitle>确认生成诊断包</DialogTitle>
+            <DialogTitle>{t('inspections.detailPage.confirmBundleTitle')}</DialogTitle>
             <DialogDescription>
-              将采集时间范围内的错误日志、告警信息及指标数据，并可选采集线程 Dump 与 JVM Dump。
+              {t('inspections.detailPage.confirmBundleDescription')}
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-4 py-4'>
             <div className='space-y-2'>
-              <Label htmlFor='bundle-lookback'>时间范围（分钟）</Label>
+              <Label htmlFor='bundle-lookback'>
+                {t('inspections.detailPage.lookbackMinutes')}
+              </Label>
               <Input
                 id='bundle-lookback'
                 type='number'
@@ -980,15 +994,17 @@ export function DiagnosticsInspectionCenter({
                 onKeyDown={handleBundleInputKeyDown}
               />
               <p className='text-xs text-muted-foreground'>
-                默认与巡检时间范围一致，可在此按需调整，用于采集该时段内的现场证据。
+                {t('inspections.detailPage.bundleLookbackHint')}
               </p>
             </div>
             <div className='space-y-3'>
               <div className='flex items-center justify-between rounded-lg border p-3'>
                 <div>
-                  <div className='font-medium'>采集线程 Dump</div>
+                  <div className='font-medium'>
+                    {t('inspections.detailPage.includeThreadDump')}
+                  </div>
                   <div className='text-xs text-muted-foreground'>
-                    用于分析线程状态、死锁等问题。
+                    {t('inspections.detailPage.includeThreadDumpHint')}
                   </div>
                 </div>
                 <Switch
@@ -1003,9 +1019,11 @@ export function DiagnosticsInspectionCenter({
               </div>
               <div className='flex items-center justify-between rounded-lg border p-3'>
                 <div>
-                  <div className='font-medium'>采集 JVM Dump</div>
+                  <div className='font-medium'>
+                    {t('inspections.detailPage.includeJVMDump')}
+                  </div>
                   <div className='text-xs text-muted-foreground'>
-                    体积较大，仅在需深入分析内存时开启。
+                    {t('inspections.detailPage.includeJVMDumpHint')}
                   </div>
                 </div>
                 <Switch
@@ -1025,7 +1043,7 @@ export function DiagnosticsInspectionCenter({
                   size='sm'
                   onClick={() => setNodeScope('all')}
                 >
-                  全部节点
+                  {t('inspections.detailPage.allNodes')}
                 </Button>
                 <Button
                   type='button'
@@ -1033,7 +1051,7 @@ export function DiagnosticsInspectionCenter({
                   size='sm'
                   onClick={() => setNodeScope('related')}
                 >
-                  仅问题相关节点
+                  {t('inspections.detailPage.relatedNodes')}
                 </Button>
               </div>
             </div>
@@ -1043,7 +1061,7 @@ export function DiagnosticsInspectionCenter({
               variant='outline'
               onClick={() => setConfirmDialogOpen(false)}
             >
-              取消
+              {commonT('cancel')}
             </Button>
             <Button
               onClick={() => void handleCreateBundle()}
@@ -1052,7 +1070,7 @@ export function DiagnosticsInspectionCenter({
               {creatingBundle ? (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               ) : null}
-              确认生成
+              {t('inspections.detailPage.confirmCreate')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1062,9 +1080,9 @@ export function DiagnosticsInspectionCenter({
       <Dialog open={execLogDialogOpen} onOpenChange={setExecLogDialogOpen}>
         <DialogContent className='max-h-[85vh] overflow-hidden flex flex-col sm:max-w-2xl'>
           <DialogHeader>
-            <DialogTitle>执行日志</DialogTitle>
+            <DialogTitle>{t('inspections.detailPage.executionLogsTitle')}</DialogTitle>
             <DialogDescription>
-              诊断包生成步骤及执行状态
+              {t('inspections.detailPage.executionLogsDescription')}
             </DialogDescription>
           </DialogHeader>
           <div className='flex-1 overflow-y-auto space-y-3 py-2'>
@@ -1100,7 +1118,9 @@ export function DiagnosticsInspectionCenter({
                 {bundleTask.failure_reason}
               </div>
             ) : (
-              <p className='text-sm text-muted-foreground'>暂无执行步骤记录</p>
+              <p className='text-sm text-muted-foreground'>
+                {t('inspections.detailPage.noExecutionSteps')}
+              </p>
             )}
           </div>
         </DialogContent>

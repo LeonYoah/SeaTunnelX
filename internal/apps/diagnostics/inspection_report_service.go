@@ -223,7 +223,10 @@ func (s *Service) failInspectionReport(ctx context.Context, report *ClusterInspe
 	finishedAt := time.Now().UTC()
 	report.Status = InspectionReportStatusFailed
 	report.ErrorMessage = truncateString(strings.TrimSpace(cause.Error()), maxInspectionErrorMessageLength)
-	report.Summary = fmt.Sprintf("Cluster %d inspection failed", report.ClusterID)
+	report.Summary = bilingualText(
+		fmt.Sprintf("集群 %d 巡检失败", report.ClusterID),
+		fmt.Sprintf("Cluster %d inspection failed", report.ClusterID),
+	)
 	report.FinishedAt = &finishedAt
 	report.FindingTotal = 0
 	report.CriticalCount = 0

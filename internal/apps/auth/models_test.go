@@ -125,6 +125,43 @@ func TestProperty_PasswordStorageUsesBcrypt(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestNormalizeLanguage(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "english", input: "en", want: "en"},
+		{name: "english uppercase", input: "EN", want: "en"},
+		{name: "empty defaults zh", input: "", want: DefaultLanguage},
+		{name: "unknown defaults zh", input: "fr", want: DefaultLanguage},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeLanguage(tt.input); got != tt.want {
+				t.Fatalf("NormalizeLanguage(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUser_ToUserInfo_NormalizesLanguage(t *testing.T) {
+	user := &User{
+		ID:       1,
+		Username: "tester",
+		Language: "",
+	}
+
+	info := user.ToUserInfo()
+	if info == nil {
+		t.Fatal("expected user info")
+	}
+	if info.Language != DefaultLanguage {
+		t.Fatalf("expected normalized language %q, got %q", DefaultLanguage, info.Language)
+	}
+}
+
 // TestProperty_EmptyPasswordRejected 测试空密码被拒绝
 func TestProperty_EmptyPasswordRejected(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()

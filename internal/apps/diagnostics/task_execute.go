@@ -270,7 +270,8 @@ type diagnosticPrometheusSeriesSummary struct {
 }
 
 type diagnosticBundleHTMLPayload struct {
-	GeneratedAt time.Time `json:"generated_at"`
+	Language    DiagnosticLanguage `json:"language"`
+	GeneratedAt time.Time          `json:"generated_at"`
 	// Summary：聚焦一句话结论 + 少量关键指标
 	Health diagnosticBundleHTMLHealthSummary `json:"health"`
 	// 3.0 信息架构：结论、分类、时间线、关键信号
@@ -2072,64 +2073,32 @@ func (s *Service) executeRenderHTMLSummaryStep(ctx context.Context, task *Diagno
 		Message:  bilingualText("离线诊断报告", "Offline diagnostic report"),
 	}
 	payload := buildDiagnosticBundleHTMLPayload(task, state, bundleDir, append(cloneDiagnosticArtifacts(state.Artifacts), htmlArtifact))
-	tmpl, err := template.New("diagnostic-summary").Funcs(template.FuncMap{
-		"pair": func(zh, en string) template.HTML {
-			return renderDiagnosticLocalizedPair(zh, en)
-		},
-		"loc": func(value interface{}) template.HTML {
-			if value == nil {
-				return renderDiagnosticLocalizedText("-")
-			}
-			return renderDiagnosticLocalizedText(fmt.Sprint(value))
-		},
-		"formatTime": func(value interface{}) string {
-			switch typed := value.(type) {
-			case *time.Time:
-				return formatDiagnosticBundleTime(typed)
-			case time.Time:
-				return formatDiagnosticBundleTimeValue(typed)
-			default:
-				return "-"
-			}
-		},
-		"statusClass": func(status interface{}) string {
-			return diagnosticHTMLStatusClass(fmt.Sprint(status))
-		},
-		"toneClass": func(tone interface{}) string {
-			return diagnosticHTMLToneClass(fmt.Sprint(tone))
-		},
-		"formatBytes": func(size int64) string {
-			return formatDiagnosticBytes(size)
-		},
-		"formatMetricValue": func(unit string, value float64) string {
-			return formatDiagnosticMetricValue(unit, value)
-		},
-		"metricChartSVG": func(points []diagnosticPrometheusPoint, threshold float64, comparator string, unit string) template.HTML {
-			return renderDiagnosticMetricChart(points, threshold, comparator, unit)
-		},
-		"shortHash": func(value string) string {
-			value = strings.TrimSpace(value)
-			if len(value) <= 12 {
-				return value
-			}
-			return value[:12]
-		},
-	}).Parse(diagnosticBundleHTMLTemplate)
-	if err != nil {
-		return err
+	renderTargets := []struct {
+		Path string
+		Lang DiagnosticLanguage
+	}{
+		{Path: indexPath, Lang: DiagnosticLanguageZH},
+		{Path: filepath.Join(bundleDir, "index.zh.html"), Lang: DiagnosticLanguageZH},
+		{Path: filepath.Join(bundleDir, "index.en.html"), Lang: DiagnosticLanguageEN},
 	}
-	var buffer bytes.Buffer
-	if err := tmpl.Execute(&buffer, payload); err != nil {
-		return err
-	}
-	if err := os.WriteFile(indexPath, buffer.Bytes(), 0o644); err != nil {
-		return err
+	var primaryContent []byte
+	for _, target := range renderTargets {
+		content, err := renderDiagnosticBundleHTMLDocument(payload, target.Lang)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(target.Path, content, 0o644); err != nil {
+			return err
+		}
+		if target.Path == indexPath {
+			primaryContent = content
+		}
 	}
 	task.IndexPath = indexPath
 	if err := s.UpdateDiagnosticTask(ctx, task); err != nil {
 		return err
 	}
-	htmlArtifact.SizeBytes = int64(buffer.Len())
+	htmlArtifact.SizeBytes = int64(len(primaryContent))
 	state.Artifacts = append(state.Artifacts, htmlArtifact)
 	if task.ManifestPath != "" {
 		if err := writeDiagnosticBundleManifestFile(task.ManifestPath, task, state.Artifacts, state); err != nil {
@@ -4268,7 +4237,72 @@ func formatDiagnosticMetricValue(unit string, value float64) string {
 	}
 }
 
-func renderDiagnosticMetricChart(points []diagnosticPrometheusPoint, threshold float64, comparator string, unit string) template.HTML {
+func newDiagnosticBundleHTMLTemplate(lang DiagnosticLanguage) (*template.Template, error) {
+	lang = normalizeDiagnosticLanguage(string(lang))
+	return template.New("diagnostic-summary").Funcs(template.FuncMap{
+		"pair": func(zh, en string) template.HTML {
+			return renderDiagnosticLocalizedPairByLanguage(zh, en, lang)
+		},
+		"loc": func(value interface{}) template.HTML {
+			if value == nil {
+				return renderDiagnosticLocalizedTextByLanguage("-", lang)
+			}
+			return renderDiagnosticLocalizedTextByLanguage(fmt.Sprint(value), lang)
+		},
+		"formatTime": func(value interface{}) string {
+			switch typed := value.(type) {
+			case *time.Time:
+				return formatDiagnosticBundleTime(typed)
+			case time.Time:
+				return formatDiagnosticBundleTimeValue(typed)
+			default:
+				return "-"
+			}
+		},
+		"statusClass": func(status interface{}) string {
+			return diagnosticHTMLStatusClass(fmt.Sprint(status))
+		},
+		"toneClass": func(tone interface{}) string {
+			return diagnosticHTMLToneClass(fmt.Sprint(tone))
+		},
+		"formatBytes": func(size int64) string {
+			return formatDiagnosticBytes(size)
+		},
+		"formatMetricValue": func(unit string, value float64) string {
+			return formatDiagnosticMetricValue(unit, value)
+		},
+		"metricChartSVG": func(points []diagnosticPrometheusPoint, threshold float64, comparator string, unit string) template.HTML {
+			return renderDiagnosticMetricChart(points, threshold, comparator, unit, lang)
+		},
+		"shortHash": func(value string) string {
+			value = strings.TrimSpace(value)
+			if len(value) <= 12 {
+				return value
+			}
+			return value[:12]
+		},
+	}).Parse(diagnosticBundleHTMLTemplate)
+}
+
+func renderDiagnosticBundleHTMLDocument(payload *diagnosticBundleHTMLPayload, lang DiagnosticLanguage) ([]byte, error) {
+	tmpl, err := newDiagnosticBundleHTMLTemplate(lang)
+	if err != nil {
+		return nil, err
+	}
+	documentLang := normalizeDiagnosticLanguage(string(lang))
+	if payload == nil {
+		payload = &diagnosticBundleHTMLPayload{}
+	}
+	payloadCopy := *payload
+	payloadCopy.Language = documentLang
+	var buffer bytes.Buffer
+	if err := tmpl.Execute(&buffer, &payloadCopy); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func renderDiagnosticMetricChart(points []diagnosticPrometheusPoint, threshold float64, comparator string, unit string, lang DiagnosticLanguage) template.HTML {
 	if len(points) < 2 {
 		return ""
 	}
@@ -4337,9 +4371,16 @@ func renderDiagnosticMetricChart(points []diagnosticPrometheusPoint, threshold f
 	}
 	yTop := formatDiagnosticMetricValue(unit, maxValue)
 	yBottom := formatDiagnosticMetricValue(unit, minValue)
-	thresholdLabel := fmt.Sprintf("Threshold %s", formatDiagnosticMetricValue(unit, threshold))
+	thresholdLabel := chooseDiagnosticLocalizedText(diagnosticLocalizedText{
+		ZH: fmt.Sprintf("阈值 %s", formatDiagnosticMetricValue(unit, threshold)),
+		EN: fmt.Sprintf("Threshold %s", formatDiagnosticMetricValue(unit, threshold)),
+	}, lang)
+	ariaLabel := chooseDiagnosticLocalizedText(diagnosticLocalizedText{
+		ZH: "诊断指标图表",
+		EN: "diagnostic metric chart",
+	}, lang)
 	svg := fmt.Sprintf(
-		`<svg viewBox="0 0 %.0f %.0f" class="metric-chart" preserveAspectRatio="none" aria-label="diagnostic metric chart">
+		`<svg viewBox="0 0 %.0f %.0f" class="metric-chart" preserveAspectRatio="none" aria-label="%s">
 <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" class="metric-chart-axis" style="stroke:%s"/>
 <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" class="metric-chart-axis" style="stroke:%s"/>
 <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" class="metric-chart-grid" style="stroke:%s"/>
@@ -4353,7 +4394,7 @@ func renderDiagnosticMetricChart(points []diagnosticPrometheusPoint, threshold f
 <text x="%.2f" y="%.2f" class="metric-chart-label x-end">%s</text>
 <text x="%.2f" y="%.2f" class="metric-chart-label threshold-label">%s</text>
 </svg>`,
-		width, height,
+		width, height, template.HTMLEscapeString(ariaLabel),
 		leftPadding, topPadding, leftPadding, height-bottomPadding, axisColor,
 		leftPadding, height-bottomPadding, width-rightPadding, height-bottomPadding, axisColor,
 		leftPadding, topPadding+plotHeight/2, width-rightPadding, topPadding+plotHeight/2, gridColor,
@@ -4605,11 +4646,11 @@ func normalizeDiagnosticFileRole(role string) string {
 }
 
 const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{if eq .Language "en"}}en{{else}}zh-CN{{end}}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SeaTunnelX Diagnostic Report</title>
+  <title>{{pair "SeaTunnelX 诊断报告" "SeaTunnelX Diagnostic Report"}}</title>
   <style>
     :root {
       color-scheme: light;
@@ -5345,41 +5386,6 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       color: #0f172a;
       line-height: 1.35;
     }
-    .lang-switch {
-      display: inline-flex;
-      gap: 8px;
-      margin: 16px 0 18px;
-      padding: 4px;
-      border-radius: 999px;
-      background: #eff6ff;
-      border: 1px solid #dbeafe;
-    }
-    .lang-btn {
-      border: 0;
-      background: transparent;
-      color: #475569;
-      font-size: 12px;
-      font-weight: 700;
-      border-radius: 999px;
-      padding: 8px 12px;
-      cursor: pointer;
-      transition: all 0.18s ease;
-    }
-    .lang-btn.active {
-      background: #ffffff;
-      color: #1d4ed8;
-      box-shadow: 0 6px 16px rgba(37,99,235,0.16);
-    }
-    .i18n-zh,
-    .i18n-en {
-      display: none;
-    }
-    html[data-report-lang="zh"] .i18n-zh {
-      display: inline;
-    }
-    html[data-report-lang="en"] .i18n-en {
-      display: inline;
-    }
     .sidebar-meta {
       display: grid;
       gap: 10px;
@@ -5608,10 +5614,6 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       <div class="sidebar-brand">
         <div class="eyebrow">SeaTunnelX</div>
         <div class="title">{{pair "诊断报告" "Diagnostic Report"}}</div>
-      </div>
-      <div class="lang-switch" role="group" aria-label="Language">
-        <button type="button" class="lang-btn" data-lang-button="zh">中文</button>
-        <button type="button" class="lang-btn" data-lang-button="en">EN</button>
       </div>
       <div class="sidebar-meta">
         <div class="sidebar-meta-card">
@@ -6576,26 +6578,6 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       const defaultTab = 'tab-overview';
       const pages = Array.from(document.querySelectorAll('[data-tab-page]'));
       const links = Array.from(document.querySelectorAll('[data-tab-link]'));
-      const languageButtons = Array.from(document.querySelectorAll('[data-lang-button]'));
-      const storageKey = 'stx-diagnostic-report-lang';
-      function resolveInitialLanguage() {
-        const saved = window.localStorage ? window.localStorage.getItem(storageKey) : '';
-        if (saved === 'zh' || saved === 'en') {
-          return saved;
-        }
-        const browserLanguage = (navigator.language || '').toLowerCase();
-        return browserLanguage.startsWith('zh') ? 'zh' : 'en';
-      }
-      function applyLanguage(lang) {
-        const active = lang === 'en' ? 'en' : 'zh';
-        document.documentElement.setAttribute('data-report-lang', active);
-        languageButtons.forEach((button) => {
-          button.classList.toggle('active', button.dataset.langButton === active);
-        });
-        if (window.localStorage) {
-          window.localStorage.setItem(storageKey, active);
-        }
-      }
       function initInnerTabs() {
         const groups = Array.from(new Set(Array.from(document.querySelectorAll('[data-inner-tab-group]')).map((node) => node.dataset.innerTabGroup).filter(Boolean)));
         groups.forEach((group) => {
@@ -6680,11 +6662,7 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
         }
         window.scrollTo({top: 0, behavior: 'auto'});
       }
-      languageButtons.forEach((button) => {
-        button.addEventListener('click', () => applyLanguage(button.dataset.langButton));
-      });
       window.addEventListener('hashchange', applyTab);
-      applyLanguage(resolveInitialLanguage());
       initInnerTabs();
       initCopyButtons();
       applyTab();
