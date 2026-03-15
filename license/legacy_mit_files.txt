@@ -9,11 +9,7 @@
 # - New files must not be added here; new source files should use Apache 2.0.
 
 internal/apps/admin/err.go
-internal/apps/admin/logic.go
 internal/apps/admin/middlewares.go
-internal/apps/admin/routers.go
-internal/apps/dashboard/logic.go
-internal/apps/dashboard/routers.go
 internal/apps/health/routers.go
 internal/apps/oauth/config.go
 internal/apps/oauth/constants.go
@@ -21,33 +17,20 @@ internal/apps/oauth/err.go
 internal/apps/oauth/middlewares.go
 internal/apps/oauth/models.go
 internal/apps/oauth/routers.go
-internal/apps/oauth/tasks.go
 internal/apps/oauth/utils.go
-internal/apps/project/clickhouses.go
-internal/apps/project/constants.go
-internal/apps/project/err.go
-internal/apps/project/middlewares.go
-internal/apps/project/models.go
-internal/apps/project/routers.go
-internal/apps/project/utils.go
 internal/cmd/api.go
 internal/cmd/root.go
 internal/cmd/scheduler.go
 internal/cmd/worker.go
-internal/db/clickhouse.go
 internal/db/migrator/migrator.go
 internal/db/mysql.go
-internal/db/redis.go
 internal/logger/logger.go
 internal/logger/utils.go
 internal/otel_trace/propagator.go
 internal/otel_trace/trace.go
 internal/otel_trace/trace_provider.go
 internal/router/middlewares.go
-internal/task/constants.go
 internal/task/schedule/schedule.go
-internal/task/utils.go
-internal/task/worker/middlewares.go
 internal/task/worker/worker.go
 internal/utils/custom_type.go
 internal/utils/http_client.go
