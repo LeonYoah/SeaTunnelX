@@ -424,6 +424,36 @@ func (h *Handler) PreviewDiagnosticTaskHTML(c *gin.Context) {
 	c.File(path)
 }
 
+// PreviewDiagnosticTaskFile handles GET /api/v1/diagnostics/tasks/:id/files/*path.
+// PreviewDiagnosticTaskFile 处理 GET /api/v1/diagnostics/tasks/:id/files/*path。
+func (h *Handler) PreviewDiagnosticTaskFile(c *gin.Context) {
+	relativePath := strings.TrimPrefix(strings.TrimSpace(c.Param("path")), "/")
+	if relativePath == "" {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: "diagnostic bundle file path is required"})
+		return
+	}
+
+	_, path, err := h.resolveDiagnosticTaskFile(c, func(task *DiagnosticTask) string {
+		bundleDir := strings.TrimSpace(task.BundleDir)
+		if bundleDir == "" {
+			bundleDir = diagnosticTaskBundleDir(task.ID)
+		}
+		return filepath.Join(bundleDir, filepath.Clean(filepath.FromSlash(relativePath)))
+	})
+	if err != nil {
+		h.writeDiagnosticTaskFileError(c, err)
+		return
+	}
+
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html":
+		c.Header("Content-Type", "text/html; charset=utf-8")
+	case ".log", ".txt", ".json", ".yaml", ".yml", ".properties":
+		c.Header("Content-Type", "text/plain; charset=utf-8")
+	}
+	c.File(path)
+}
+
 // DownloadDiagnosticTaskBundle handles GET /api/v1/diagnostics/tasks/:id/bundle.
 // DownloadDiagnosticTaskBundle 处理 GET /api/v1/diagnostics/tasks/:id/bundle。
 func (h *Handler) DownloadDiagnosticTaskBundle(c *gin.Context) {

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -640,6 +641,20 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 	}
 
 	now := time.Now().UTC()
+	bundleDir := t.TempDir()
+	logDir := filepath.Join(bundleDir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	fullLogPath := filepath.Join(logDir, "host-1-master.log")
+	logLines := make([]string, 0, diagnosticHTMLLogPreviewLineLimit+5)
+	for index := 1; index <= diagnosticHTMLLogPreviewLineLimit+5; index++ {
+		logLines = append(logLines, fmt.Sprintf("line-%04d", index))
+	}
+	logContent := strings.Join(logLines, "\n")
+	if err := os.WriteFile(fullLogPath, []byte(logContent), 0o644); err != nil {
+		t.Fatalf("write full log: %v", err)
+	}
 	payload := &diagnosticBundleHTMLPayload{
 		GeneratedAt: now,
 		Health: diagnosticBundleHTMLHealthSummary{
@@ -703,6 +718,24 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 			}},
 			CollectionNotes: []string{"partial query failed"},
 		},
+		ErrorContext: buildDiagnosticBundleHTMLErrorPanel(bundleDir, 44, &SeatunnelErrorGroup{
+			Title:           "Sample Error Group",
+			ExceptionClass:  "java.lang.RuntimeException",
+			OccurrenceCount: 3,
+			FirstSeenAt:     now.Add(-10 * time.Minute),
+			LastSeenAt:      now,
+			SampleMessage:   "runtime failed",
+		}, nil, []diagnosticCollectedLogSample{{
+			HostID:      1,
+			HostName:    "host-1",
+			HostIP:      "127.0.0.1",
+			Role:        "master",
+			SourceFile:  "/opt/seatunnel/logs/master.log",
+			LocalPath:   fullLogPath,
+			WindowStart: now.Add(-5 * time.Minute),
+			WindowEnd:   now,
+			Content:     logContent,
+		}}),
 		ConfigSnapshot: &diagnosticBundleHTMLConfigPanel{
 			FileCount:          1,
 			KeyHighlightCount:  1,
@@ -799,14 +832,63 @@ func TestDiagnosticBundleHTMLTemplateParsesAndRendersMetricsPanels(t *testing.T)
 	if !strings.Contains(enHTML, "Key Runtime Settings") || !strings.Contains(enHTML, "connector-fake.jar") || !strings.Contains(enHTML, "<svg") || !strings.Contains(enHTML, "CPU") {
 		t.Fatalf("expected english rendered html to contain config inventory details")
 	}
-	if !strings.Contains(string(zhHTML), "关键配置摘要") || !strings.Contains(string(zhHTML), "复制内容") {
+	if !strings.Contains(string(zhHTML), "关键配置摘要") || !strings.Contains(string(zhHTML), "复制预览") {
 		t.Fatalf("expected chinese rendered html to contain localized config and copy labels")
+	}
+	if !strings.Contains(enHTML, "View Full Log") || !strings.Contains(enHTML, "Open in New Window") {
+		t.Fatalf("expected english rendered html to contain full log actions")
+	}
+	if !strings.Contains(enHTML, "/api/v1/diagnostics/tasks/44/files/logs/host-1-master.log") {
+		t.Fatalf("expected english rendered html to contain online preview file url")
+	}
+	if !strings.Contains(enHTML, "line-1000") || strings.Contains(enHTML, "line-1005") {
+		t.Fatalf("expected english rendered html to contain only preview log lines")
 	}
 }
 
 func TestFormatDiagnosticMetricValue_percent(t *testing.T) {
 	if got := formatDiagnosticMetricValue("percent", 12.345); got != "12.3%" {
 		t.Fatalf("expected percent metric formatting, got %s", got)
+	}
+}
+
+func TestBuildDiagnosticLogSampleFileName(t *testing.T) {
+	tests := []struct {
+		name       string
+		hostID     uint
+		hostName   string
+		sourcePath string
+		expected   string
+	}{
+		{
+			name:       "prefer sanitized host name when present",
+			hostID:     4,
+			hostName:   "prod node/01",
+			sourcePath: "/opt/seatunnel/logs/seatunnel-engine-server.log",
+			expected:   "prod-node-01-seatunnel-engine-server.log",
+		},
+		{
+			name:       "append log extension when source has no extension",
+			hostID:     7,
+			hostName:   "host-a",
+			sourcePath: "/opt/seatunnel/logs/stdout",
+			expected:   "host-a-stdout.log",
+		},
+		{
+			name:       "fallback to host id when host name is empty",
+			hostID:     9,
+			hostName:   "",
+			sourcePath: "",
+			expected:   "host-9-log-sample.log",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildDiagnosticLogSampleFileName(tt.hostID, tt.hostName, tt.sourcePath); got != tt.expected {
+				t.Fatalf("expected %q, got %q", tt.expected, got)
+			}
+		})
 	}
 }
 

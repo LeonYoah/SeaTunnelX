@@ -419,6 +419,7 @@ func Serve() {
 				diagnosticsRouter.GET("/tasks/:id/logs", diagnosticsHandler.ListDiagnosticTaskLogs)
 				diagnosticsRouter.GET("/tasks/:id/events/stream", diagnosticsHandler.StreamDiagnosticTaskEvents)
 				diagnosticsRouter.GET("/tasks/:id/html", diagnosticsHandler.PreviewDiagnosticTaskHTML)
+				diagnosticsRouter.GET("/tasks/:id/files/*path", diagnosticsHandler.PreviewDiagnosticTaskFile)
 				diagnosticsRouter.GET("/tasks/:id/bundle", diagnosticsHandler.DownloadDiagnosticTaskBundle)
 				diagnosticsRouter.GET("/errors/groups", diagnosticsHandler.ListSeatunnelErrorGroups)
 				diagnosticsRouter.GET("/errors/events", diagnosticsHandler.ListSeatunnelErrorEvents)

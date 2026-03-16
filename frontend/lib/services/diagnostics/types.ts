@@ -287,7 +287,6 @@ export interface DiagnosticsTaskOptions {
   include_thread_dump: boolean;
   include_jvm_dump: boolean;
   jvm_dump_min_free_mb?: number;
-  log_sample_lines?: number;
 }
 
 export interface DiagnosticsTaskNodeTarget {

@@ -130,7 +130,6 @@ const DEFAULT_BUNDLE_OPTIONS: DiagnosticsTaskOptions = {
   include_thread_dump: true,
   include_jvm_dump: false,
   jvm_dump_min_free_mb: 2048,
-  log_sample_lines: 200,
 };
 
 export default function InspectionDetailPage({

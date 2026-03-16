@@ -65,7 +65,6 @@ func (s *Service) CreateAutoPolicy(ctx context.Context, userID uint, req *Create
 			IncludeThreadDump: true,
 			IncludeJVMDump:    false,
 			JVMDumpMinFreeMB:  2048,
-			LogSampleLines:    200,
 		}.Normalize()
 	}
 
