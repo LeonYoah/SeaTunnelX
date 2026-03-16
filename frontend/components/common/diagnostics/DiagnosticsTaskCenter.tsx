@@ -66,7 +66,6 @@ const DEFAULT_TASK_OPTIONS: DiagnosticsTaskOptions = {
   include_thread_dump: true,
   include_jvm_dump: false,
   jvm_dump_min_free_mb: 2048,
-  log_sample_lines: 200,
 };
 
 const ACTIVE_TASK_STATUS: DiagnosticsTaskStatus[] = ['running'];
@@ -1424,30 +1423,6 @@ export function DiagnosticsTaskCenter({
                       setCreateOptions((current) => ({
                         ...current,
                         include_jvm_dump: checked,
-                      }))
-                    }
-                  />
-                </div>
-
-                <div className='space-y-2'>
-                  <Label htmlFor='diagnostics-task-log-lines'>
-                    {t('tasks.logSampleLines')}
-                  </Label>
-                  <Input
-                    id='diagnostics-task-log-lines'
-                    type='number'
-                    min={50}
-                    step={50}
-                    value={
-                      createOptions.log_sample_lines ||
-                      DEFAULT_TASK_OPTIONS.log_sample_lines
-                    }
-                    onChange={(event) =>
-                      setCreateOptions((current) => ({
-                        ...current,
-                        log_sample_lines:
-                          Number.parseInt(event.target.value, 10) ||
-                          DEFAULT_TASK_OPTIONS.log_sample_lines,
                       }))
                     }
                   />

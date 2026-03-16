@@ -207,15 +207,11 @@ type DiagnosticTaskOptions struct {
 	IncludeThreadDump bool `json:"include_thread_dump"`
 	IncludeJVMDump    bool `json:"include_jvm_dump"`
 	JVMDumpMinFreeMB  int  `json:"jvm_dump_min_free_mb,omitempty"`
-	LogSampleLines    int  `json:"log_sample_lines,omitempty"`
 }
 
 // Normalize fills default option values.
 // Normalize 填充采集选项默认值。
 func (o DiagnosticTaskOptions) Normalize() DiagnosticTaskOptions {
-	if o.LogSampleLines <= 0 {
-		o.LogSampleLines = 400
-	}
 	if o.JVMDumpMinFreeMB <= 0 {
 		o.JVMDumpMinFreeMB = 2048
 	}

@@ -49,7 +49,11 @@ import (
 var (
 	diagnosticDisplayTimezoneOnce sync.Once
 	diagnosticDisplayTimezone     *time.Location
+	diagnosticFileNameUnsafeChars = regexp.MustCompile(`[<>:"/\\|?*\s]+`)
+	diagnosticFileNameDashRuns    = regexp.MustCompile(`-+`)
 )
+
+const diagnosticHTMLLogPreviewLineLimit = 1000
 
 type diagnosticBundleArtifact struct {
 	StepCode   DiagnosticStepCode `json:"step_code"`
@@ -474,10 +478,14 @@ type diagnosticBundleHTMLProcessEvent struct {
 }
 
 type diagnosticBundleHTMLLogSample struct {
-	HostLabel   string `json:"host_label"`
-	SourceFile  string `json:"source_file"`
-	WindowLabel string `json:"window_label"`
-	Content     string `json:"content"`
+	HostLabel           string `json:"host_label"`
+	SourceFile          string `json:"source_file"`
+	WindowLabel         string `json:"window_label"`
+	PreviewContent      string `json:"preview_content"`
+	PreviewLineCount    int    `json:"preview_line_count"`
+	PreviewTruncated    bool   `json:"preview_truncated"`
+	FullLogRelativePath string `json:"full_log_relative_path,omitempty"`
+	FullLogPreviewURL   string `json:"full_log_preview_url,omitempty"`
 }
 
 type diagnosticBundleHTMLExecutionPanel struct {
@@ -1765,7 +1773,7 @@ func (s *Service) executeCollectLogSampleStep(ctx context.Context, task *Diagnos
 		candidates := buildDiagnosticLogCandidates(selected, state.ErrorEvents)
 		var nodeSuccess bool
 		for _, candidate := range candidates {
-			snippet, detail, err := s.collectDiagnosticWindowedLogSnippet(ctx, selected, candidate, window, task.Options.LogSampleLines)
+			snippet, detail, err := s.collectDiagnosticWindowedLogSnippet(ctx, selected, candidate, window)
 			if err != nil || strings.TrimSpace(snippet) == "" {
 				detail = firstNonEmptyString(detail, bilingualText("日志样本采集失败。", "Failed to collect log sample."))
 				_ = s.AppendDiagnosticStepLog(ctx, &DiagnosticStepLog{
@@ -1781,7 +1789,7 @@ func (s *Service) executeCollectLogSampleStep(ctx context.Context, task *Diagnos
 				})
 				continue
 			}
-			fileName := fmt.Sprintf("host-%d-%s.log", selected.HostID, filepath.Base(candidate))
+			fileName := buildDiagnosticLogSampleFileName(selected.HostID, selected.HostName, candidate)
 			localPath := filepath.Join(logDir, fileName)
 			if err := os.WriteFile(localPath, []byte(snippet), 0o644); err != nil {
 				return err
@@ -2765,7 +2773,7 @@ func buildDiagnosticBundleHTMLPayload(task *DiagnosticTask, state *diagnosticBun
 	// Evidence & 附录
 	payload.Cluster = buildDiagnosticBundleHTMLClusterSummary(state.ClusterSnapshot)
 	payload.Inspection = buildDiagnosticBundleHTMLInspectionPanel(state.InspectionDetail)
-	payload.ErrorContext = buildDiagnosticBundleHTMLErrorPanel(state.ErrorGroup, state.ErrorEvents, state.LogSamples)
+	payload.ErrorContext = buildDiagnosticBundleHTMLErrorPanel(bundleDir, task.ID, state.ErrorGroup, state.ErrorEvents, state.LogSamples)
 	payload.AlertSnapshot = buildDiagnosticBundleHTMLAlertPanel(state.AlertSnapshot)
 	payload.ProcessEvents = buildDiagnosticBundleHTMLProcessPanel(state.ProcessEvents)
 	payload.ConfigSnapshot = buildDiagnosticBundleHTMLConfigPanel(state.ConfigSnapshot)
@@ -2905,7 +2913,7 @@ func buildDiagnosticBundleHTMLInspectionPanel(detail *ClusterInspectionReportDet
 	}
 }
 
-func buildDiagnosticBundleHTMLErrorPanel(group *SeatunnelErrorGroup, events []*SeatunnelErrorEvent, logSamples []diagnosticCollectedLogSample) *diagnosticBundleHTMLErrorPanel {
+func buildDiagnosticBundleHTMLErrorPanel(bundleDir string, taskID uint, group *SeatunnelErrorGroup, events []*SeatunnelErrorEvent, logSamples []diagnosticCollectedLogSample) *diagnosticBundleHTMLErrorPanel {
 	if group == nil && len(events) == 0 && len(logSamples) == 0 {
 		return nil
 	}
@@ -2950,11 +2958,17 @@ func buildDiagnosticBundleHTMLErrorPanel(group *SeatunnelErrorGroup, events []*S
 	}
 	panel.RecentEventCount = len(panel.Events)
 	for _, item := range logSamples {
+		previewContent, previewTruncated, previewLineCount := buildDiagnosticLogPreview(item.Content, diagnosticHTMLLogPreviewLineLimit)
+		fullLogRelativePath := resolveDiagnosticBundleRelativePath(bundleDir, item.LocalPath)
 		panel.LogSamples = append(panel.LogSamples, diagnosticBundleHTMLLogSample{
-			HostLabel:   resolveDiagnosticHostLabel(item.HostName, item.HostID, item.HostIP),
-			SourceFile:  normalizeDiagnosticDisplayText(item.SourceFile),
-			WindowLabel: fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(item.WindowStart), formatDiagnosticBundleTimeValue(item.WindowEnd)),
-			Content:     normalizeDiagnosticDisplayText(item.Content),
+			HostLabel:           resolveDiagnosticHostLabel(item.HostName, item.HostID, item.HostIP),
+			SourceFile:          normalizeDiagnosticDisplayText(item.SourceFile),
+			WindowLabel:         fmt.Sprintf("%s ~ %s", formatDiagnosticBundleTimeValue(item.WindowStart), formatDiagnosticBundleTimeValue(item.WindowEnd)),
+			PreviewContent:      previewContent,
+			PreviewLineCount:    previewLineCount,
+			PreviewTruncated:    previewTruncated,
+			FullLogRelativePath: fullLogRelativePath,
+			FullLogPreviewURL:   buildDiagnosticTaskPreviewFileURL(taskID, fullLogRelativePath),
 		})
 	}
 	return panel
@@ -4484,7 +4498,7 @@ func buildDiagnosticLogCandidates(target DiagnosticTaskNodeTarget, errorEvents [
 
 var diagnosticLogTimestampPattern = regexp.MustCompile(`(?:\[[^\]]*\]\s+)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d{3})?)`)
 
-func (s *Service) collectDiagnosticWindowedLogSnippet(ctx context.Context, target DiagnosticTaskNodeTarget, candidate string, window diagnosticCollectionWindow, maxLines int) (string, string, error) {
+func (s *Service) collectDiagnosticWindowedLogSnippet(ctx context.Context, target DiagnosticTaskNodeTarget, candidate string, window diagnosticCollectionWindow) (string, string, error) {
 	if s.agentSender == nil {
 		return "", "agent sender is unavailable", fmt.Errorf("agent sender is unavailable")
 	}
@@ -4522,6 +4536,57 @@ func (s *Service) collectDiagnosticWindowedLogSnippet(ctx context.Context, targe
 		snippet = strings.TrimSpace(strings.Join(contents, "\n"))
 	}
 	return snippet, "", nil
+}
+
+func buildDiagnosticLogPreview(content string, maxLines int) (string, bool, int) {
+	normalized := normalizeDiagnosticDisplayText(content)
+	if normalized == "" || maxLines <= 0 {
+		return normalized, false, 0
+	}
+	lines := strings.Split(normalized, "\n")
+	if len(lines) <= maxLines {
+		return normalized, false, len(lines)
+	}
+	return strings.Join(lines[:maxLines], "\n"), true, maxLines
+}
+
+func sanitizeDiagnosticFileNameSegment(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	sanitized := diagnosticFileNameUnsafeChars.ReplaceAllString(trimmed, "-")
+	sanitized = diagnosticFileNameDashRuns.ReplaceAllString(sanitized, "-")
+	sanitized = strings.Trim(sanitized, ".-_")
+	return sanitized
+}
+
+func buildDiagnosticLogSampleFileName(hostID uint, hostName, sourcePath string) string {
+	baseName := strings.TrimSpace(filepath.Base(sourcePath))
+	if baseName == "" || baseName == "." || baseName == string(filepath.Separator) {
+		baseName = "log-sample.log"
+	}
+	fileNamePrefix := sanitizeDiagnosticFileNameSegment(hostName)
+	if fileNamePrefix == "" {
+		fileNamePrefix = fmt.Sprintf("host-%d", hostID)
+	}
+	fileName := fmt.Sprintf("%s-%s", fileNamePrefix, baseName)
+	if filepath.Ext(baseName) == "" {
+		return fileName + ".log"
+	}
+	return fileName
+}
+
+func buildDiagnosticTaskPreviewFileURL(taskID uint, relativePath string) string {
+	relativePath = strings.Trim(filepath.ToSlash(strings.TrimSpace(relativePath)), "/")
+	if taskID == 0 || relativePath == "" {
+		return ""
+	}
+	parts := strings.Split(relativePath, "/")
+	for index, part := range parts {
+		parts[index] = url.PathEscape(part)
+	}
+	return fmt.Sprintf("/api/v1/diagnostics/tasks/%d/files/%s", taskID, strings.Join(parts, "/"))
 }
 
 func diagnosticWindowDays(start, end time.Time) []time.Time {
@@ -5141,10 +5206,14 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
     }
     .copyable-actions {
       display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       justify-content: flex-end;
       margin-bottom: 8px;
     }
-    .copy-btn {
+    .copy-btn,
+    .log-action-btn,
+    .modal-close-btn {
       border: 1px solid #dbeafe;
       background: #eff6ff;
       color: #1d4ed8;
@@ -5154,8 +5223,14 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       font-weight: 700;
       cursor: pointer;
       transition: all 0.18s ease;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
-    .copy-btn:hover {
+    .copy-btn:hover,
+    .log-action-btn:hover,
+    .modal-close-btn:hover {
       background: #dbeafe;
     }
     .copy-btn.copied {
@@ -5181,6 +5256,76 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
     }
     .copy-btn.failed .label-failed {
       display: inline;
+    }
+    .log-preview-note {
+      margin-top: 10px;
+    }
+    .full-log-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.56);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 1000;
+    }
+    .full-log-modal.active {
+      display: flex;
+    }
+    .full-log-dialog {
+      width: min(1120px, 100%);
+      height: min(82vh, 920px);
+      background: #ffffff;
+      border-radius: 18px;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .full-log-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .full-log-header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .full-log-body {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      background: #0f172a;
+    }
+    .full-log-loading {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.82);
+      color: #e2e8f0;
+      font-size: 14px;
+      z-index: 1;
+    }
+    .full-log-loading.active {
+      display: flex;
+    }
+    .full-log-frame {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #ffffff;
     }
     details {
       border: 1px dashed var(--border);
@@ -5963,12 +6108,40 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
                 <div class="copyable-block">
                   <div class="copyable-actions">
                     <button type="button" class="copy-btn" data-copy-button>
-                      <span class="label-copy">{{pair "复制内容" "Copy"}}</span>
+                      <span class="label-copy">{{pair "复制预览" "Copy Preview"}}</span>
                       <span class="label-copied">{{pair "已复制" "Copied"}}</span>
                       <span class="label-failed">{{pair "复制失败" "Copy failed"}}</span>
                     </button>
+                    {{if .FullLogRelativePath}}
+                    <button
+                      type="button"
+                      class="log-action-btn"
+                      data-full-log-button
+                      data-log-relative-path="{{.FullLogRelativePath}}"
+                      data-log-preview-url="{{.FullLogPreviewURL}}"
+                      data-log-title="{{.HostLabel}} · {{.SourceFile}}"
+                    >
+                      {{pair "查看完整日志" "View Full Log"}}
+                    </button>
+                    <a
+                      class="log-action-btn"
+                      data-full-log-link
+                      data-log-relative-path="{{.FullLogRelativePath}}"
+                      data-log-preview-url="{{.FullLogPreviewURL}}"
+                      href="{{.FullLogRelativePath}}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {{pair "新窗口打开" "Open in New Window"}}
+                    </a>
+                    {{end}}
                   </div>
-                  <pre>{{.Content}}</pre>
+                  {{if .PreviewTruncated}}
+                  <div class="muted small log-preview-note">
+                    {{pair "当前仅展示前" "Showing first"}} {{.PreviewLineCount}} {{pair "行预览，完整日志请使用上方按钮查看。" "lines only. Use the actions above to open the full log."}}
+                  </div>
+                  {{end}}
+                  <pre>{{.PreviewContent}}</pre>
                 </div>
               </div>
               {{end}}
@@ -6573,6 +6746,41 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
     </div>
     </main>
   </div>
+  <div class="full-log-modal" id="full-log-modal" aria-hidden="true">
+    <div class="full-log-dialog" role="dialog" aria-modal="true" aria-labelledby="full-log-modal-title">
+      <div class="full-log-header">
+        <div>
+          <div class="eyebrow">SeaTunnelX</div>
+          <div class="entry-title" id="full-log-modal-title">{{pair "完整原始日志" "Full Raw Log"}}</div>
+        </div>
+        <div class="full-log-header-actions">
+          <a
+            class="log-action-btn"
+            id="full-log-modal-open"
+            href="#"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{pair "新窗口打开" "Open in New Window"}}
+          </a>
+          <button type="button" class="modal-close-btn" id="full-log-modal-close">
+            {{pair "关闭" "Close"}}
+          </button>
+        </div>
+      </div>
+      <div class="full-log-body">
+        <div class="full-log-loading active" id="full-log-modal-loading">
+          {{pair "正在加载完整日志..." "Loading full log..."}}
+        </div>
+        <iframe
+          class="full-log-frame"
+          id="full-log-modal-frame"
+          src="about:blank"
+          title="{{pair "完整原始日志" "Full Raw Log"}}"
+        ></iframe>
+      </div>
+    </div>
+  </div>
   <script>
     (function() {
       const defaultTab = 'tab-overview';
@@ -6648,6 +6856,78 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           });
         });
       }
+      function resolveFullLogSource(node) {
+        if (!node) {
+          return '';
+        }
+        const previewURL = (node.dataset.logPreviewUrl || '').trim();
+        const relativePath = (node.dataset.logRelativePath || '').trim();
+        if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+          return previewURL || relativePath;
+        }
+        return relativePath || previewURL;
+      }
+      function initFullLogActions() {
+        const modal = document.getElementById('full-log-modal');
+        const modalTitle = document.getElementById('full-log-modal-title');
+        const modalOpen = document.getElementById('full-log-modal-open');
+        const modalClose = document.getElementById('full-log-modal-close');
+        const modalFrame = document.getElementById('full-log-modal-frame');
+        const modalLoading = document.getElementById('full-log-modal-loading');
+        const links = Array.from(document.querySelectorAll('[data-full-log-link]'));
+        links.forEach((link) => {
+          const href = resolveFullLogSource(link);
+          if (href) {
+            link.setAttribute('href', href);
+          }
+        });
+        if (!modal || !modalTitle || !modalOpen || !modalClose || !modalFrame || !modalLoading) {
+          return;
+        }
+        const openModal = (src, title) => {
+          if (!src) {
+            return;
+          }
+          modalTitle.textContent = title || modalTitle.textContent;
+          modalOpen.setAttribute('href', src);
+          modal.classList.add('active');
+          modal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          modalLoading.classList.add('active');
+          modalFrame.setAttribute('src', src);
+        };
+        const closeModal = () => {
+          modal.classList.remove('active');
+          modal.setAttribute('aria-hidden', 'true');
+          document.body.style.overflow = '';
+          modalFrame.setAttribute('src', 'about:blank');
+          modalOpen.setAttribute('href', '#');
+          modalLoading.classList.add('active');
+        };
+        modalFrame.addEventListener('load', () => {
+          modalLoading.classList.remove('active');
+        });
+        modalClose.addEventListener('click', closeModal);
+        modal.addEventListener('click', (event) => {
+          if (event.target === modal) {
+            closeModal();
+          }
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && modal.classList.contains('active')) {
+            closeModal();
+          }
+        });
+        const buttons = Array.from(document.querySelectorAll('[data-full-log-button]'));
+        buttons.forEach((button) => {
+          button.addEventListener('click', () => {
+            openModal(
+              resolveFullLogSource(button),
+              (button.dataset.logTitle || '').trim()
+            );
+          });
+        });
+      }
       function applyTab() {
         const hash = (window.location.hash || '#' + defaultTab).replace(/^#/, '');
         const active = pages.some((page) => page.dataset.tabPage === hash) ? hash : defaultTab;
@@ -6665,6 +6945,7 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
       window.addEventListener('hashchange', applyTab);
       initInnerTabs();
       initCopyButtons();
+      initFullLogActions();
       applyTab();
     })();
   </script>

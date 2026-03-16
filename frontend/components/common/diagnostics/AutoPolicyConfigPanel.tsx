@@ -84,7 +84,6 @@ export function AutoPolicyConfigPanel({
     include_thread_dump: true,
     include_jvm_dump: false,
     jvm_dump_min_free_mb: 2048,
-    log_sample_lines: 200,
   });
 
   const getCategoryLabel = useCallback(
@@ -164,7 +163,6 @@ export function AutoPolicyConfigPanel({
       include_thread_dump: true,
       include_jvm_dump: false,
       jvm_dump_min_free_mb: 2048,
-      log_sample_lines: 200,
     });
     setFormOpen(true);
   }, []);
@@ -184,7 +182,6 @@ export function AutoPolicyConfigPanel({
           include_thread_dump: true,
           include_jvm_dump: false,
           jvm_dump_min_free_mb: 2048,
-          log_sample_lines: 200,
         },
       );
       setFormOpen(true);
@@ -557,29 +554,6 @@ export function AutoPolicyConfigPanel({
                         }))
                       }
                     />
-                  </div>
-
-                  <div className='space-y-2'>
-                    <Label htmlFor='auto-policy-log-lines'>
-                      {t('logSampleLinesLabel')}
-                    </Label>
-                    <Input
-                      id='auto-policy-log-lines'
-                      type='number'
-                      min={50}
-                      step={50}
-                      value={formTaskOptions.log_sample_lines ?? 200}
-                      onChange={(event) =>
-                        setFormTaskOptions((current: DiagnosticsTaskOptions) => ({
-                          ...current,
-                          log_sample_lines:
-                            Number.parseInt(event.target.value, 10) || 200,
-                        }))
-                      }
-                    />
-                    <div className='text-xs text-muted-foreground'>
-                      {t('logSampleLinesHint')}
-                    </div>
                   </div>
 
                   <div className='space-y-2'>
