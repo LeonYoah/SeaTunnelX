@@ -138,9 +138,17 @@ vi.mock('next-intl', () => ({
 }));
 
 // Mock useAuth hook
-const mockLoginWithCredentials = vi.fn();
-const mockLoginWithOAuth = vi.fn();
-const mockClearError = vi.fn();
+const {
+  mockLoginWithCredentials,
+  mockLoginWithOAuth,
+  mockClearError,
+  mockGetEnabledOAuthProviders,
+} = vi.hoisted(() => ({
+  mockLoginWithCredentials: vi.fn(),
+  mockLoginWithOAuth: vi.fn(),
+  mockClearError: vi.fn(),
+  mockGetEnabledOAuthProviders: vi.fn(),
+}));
 
 vi.mock('@/hooks/use-auth', () => ({
   useAuth: () => ({
@@ -153,9 +161,19 @@ vi.mock('@/hooks/use-auth', () => ({
   }),
 }));
 
+vi.mock('@/lib/services', () => ({
+  __esModule: true,
+  default: {
+    auth: {
+      getEnabledOAuthProviders: mockGetEnabledOAuthProviders,
+    },
+  },
+}));
+
 describe('LoginForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetEnabledOAuthProviders.mockResolvedValue(['github', 'google']);
   });
 
   describe('表单渲染 (Requirements 8.1, 8.2)', () => {
@@ -183,10 +201,33 @@ describe('LoginForm', () => {
       expect(screen.getByRole('button', {name: '登录'})).toBeInTheDocument();
     });
 
-    it('应该显示 OAuth 登录按钮（GitHub 和 Google）', () => {
+    it('应该显示已启用的 OAuth 登录按钮（GitHub 和 Google）', async () => {
       render(<LoginForm />);
-      expect(screen.getByRole('button', {name: /GitHub/})).toBeInTheDocument();
-      expect(screen.getByRole('button', {name: /Google/})).toBeInTheDocument();
+
+      expect(
+        await screen.findByRole('button', {name: /GitHub/}),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', {name: /Google/}),
+      ).toBeInTheDocument();
+    });
+
+    it('应该隐藏未启用的 OAuth 登录按钮', async () => {
+      mockGetEnabledOAuthProviders.mockResolvedValueOnce([]);
+
+      render(<LoginForm />);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByText('或使用以下方式登录'),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', {name: /GitHub/}),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByRole('button', {name: /Google/}),
+        ).not.toBeInTheDocument();
+      });
     });
 
     it('应该显示服务条款和隐私政策链接', () => {
@@ -315,7 +356,7 @@ describe('LoginForm', () => {
     it('点击 GitHub 按钮应该调用 loginWithOAuth', async () => {
       render(<LoginForm />);
 
-      const githubButton = screen.getByRole('button', {name: /GitHub/});
+      const githubButton = await screen.findByRole('button', {name: /GitHub/});
       fireEvent.click(githubButton);
 
       await waitFor(() => {
@@ -326,7 +367,7 @@ describe('LoginForm', () => {
     it('点击 Google 按钮应该调用 loginWithOAuth', async () => {
       render(<LoginForm />);
 
-      const googleButton = screen.getByRole('button', {name: /Google/});
+      const googleButton = await screen.findByRole('button', {name: /Google/});
       fireEvent.click(googleButton);
 
       await waitFor(() => {

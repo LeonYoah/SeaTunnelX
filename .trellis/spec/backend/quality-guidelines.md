@@ -49,6 +49,30 @@
 - **语言切换由前端驱动。** 语言偏好来源于个人中心 / 用户资料，前端在请求 diagnostics 等需要本地化输出的接口时负责透传 `lang`，后端负责按该语言返回结果。
 - **内部标识与用户文案分离。** 状态码、step code、template code 等内部字段保持稳定常量；展示名称、说明、推荐动作等用户文案再做本地化转换。
 
+### 部署会话 Cookie 约定
+
+- **私有化部署默认应将 `app.session_domain` 留空。** 这样浏览器会按当前访问 host 绑定 `seatunnel_session_id`，最适合 IP、内网域名和自定义域名混用场景。
+- **不要在示例配置里把 `app.session_domain` 固定写成 `localhost`。** 若实际通过 `10.x.x.x`、`192.168.x.x` 或企业域名访问，但 Cookie domain 仍是 `localhost`，常见现象是：
+  - `POST /api/v1/auth/login` 返回 200
+  - 浏览器未正确回传会话 Cookie
+  - 后续 `GET /api/v1/auth/user-info` 及其他受保护接口全部返回 `401`
+- **只有在访问入口固定为某个域名时才显式设置 `app.session_domain`**，例如 `stx.company.com`。
+- **`app.session_secure` 仅在浏览器始终通过 HTTPS 访问时设为 `true`。** 若仍通过 HTTP 调试或内网明文访问，设为 `true` 会导致浏览器不发送 Cookie。
+
+#### Good / Base / Bad
+
+- **Good**
+  - `app.session_domain: ""`
+  - 部署后通过 `http://10.0.0.5:8000` 或 `https://stx.company.com` 访问
+  - 登录成功后 `/api/v1/auth/user-info` 返回 200
+- **Base**
+  - `app.session_domain: "stx.company.com"`
+  - 确认所有用户都只通过该域名访问
+- **Bad**
+  - `app.session_domain: "localhost"`
+  - 实际通过 IP / 企业域名访问
+  - 现象：登录成功但后续接口持续 `401`
+
 ---
 
 ## 禁止模式

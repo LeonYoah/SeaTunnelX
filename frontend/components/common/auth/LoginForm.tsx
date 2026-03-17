@@ -55,6 +55,7 @@ import {
 } from '@/components/animate-ui/radix/dialog';
 import {SquareArrowUpRight, LoaderCircle, Github} from 'lucide-react';
 import {useAuth} from '@/hooks/use-auth';
+import services from '@/lib/services';
 import {cn} from '@/lib/utils';
 
 /**
@@ -102,6 +103,9 @@ export function LoginForm({className, ...props}: LoginFormProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isButtonLoading, setIsButtonLoading] = useState(false);
+  const [enabledOAuthProviders, setEnabledOAuthProviders] = useState<string[]>(
+    [],
+  );
   const [logoutMessage, setLogoutMessage] = useState('');
   const [validationError, setValidationError] = useState('');
   const {
@@ -130,10 +134,41 @@ export function LoginForm({className, ...props}: LoginFormProps) {
   }, [searchParams, t]);
 
   useEffect(() => {
+    let mounted = true;
+
+    const loadEnabledProviders = async () => {
+      try {
+        const providers = await services.auth.getEnabledOAuthProviders();
+        if (mounted) {
+          setEnabledOAuthProviders(
+            Array.isArray(providers)
+              ? providers.map((provider) => provider.toLowerCase())
+              : [],
+          );
+        }
+      } catch {
+        if (mounted) {
+          setEnabledOAuthProviders([]);
+        }
+      }
+    };
+
+    void loadEnabledProviders();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (isAuthenticated && user && !searchParams.get('logout') && !error) {
       router.push('/dashboard');
     }
   }, [isAuthenticated, user, router, searchParams, error]);
+
+  const showGitHubLogin = enabledOAuthProviders.includes('github');
+  const showGoogleLogin = enabledOAuthProviders.includes('google');
+  const hasEnabledOAuthProviders = showGitHubLogin || showGoogleLogin;
 
   /**
    * 验证表单输入
@@ -291,39 +326,54 @@ export function LoginForm({className, ...props}: LoginFormProps) {
               )}
             </Button>
 
-            {/* OAuth 登录分隔线 */}
-            <div className='relative'>
-              <div className='absolute inset-0 flex items-center'>
-                <span className='w-full border-t' />
-              </div>
-              <div className='relative flex justify-center text-xs uppercase'>
-                <span className='bg-background px-2 text-muted-foreground'>
-                  {t('auth.login.orLoginWith')}
-                </span>
-              </div>
-            </div>
+            {hasEnabledOAuthProviders ? (
+              <>
+                {/* OAuth 登录分隔线 */}
+                <div className='relative'>
+                  <div className='absolute inset-0 flex items-center'>
+                    <span className='w-full border-t' />
+                  </div>
+                  <div className='relative flex justify-center text-xs uppercase'>
+                    <span className='bg-background px-2 text-muted-foreground'>
+                      {t('auth.login.orLoginWith')}
+                    </span>
+                  </div>
+                </div>
 
-            {/* OAuth 登录按钮 */}
-            <div className='grid grid-cols-2 gap-4'>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => handleOAuthLogin('github')}
-                disabled={isButtonLoading}
-              >
-                <Github className='h-4 w-4' />
-                GitHub
-              </Button>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => handleOAuthLogin('google')}
-                disabled={isButtonLoading}
-              >
-                <GoogleIcon className='h-4 w-4' />
-                Google
-              </Button>
-            </div>
+                {/* OAuth 登录按钮 */}
+                <div
+                  className={cn(
+                    'grid gap-4',
+                    showGitHubLogin && showGoogleLogin
+                      ? 'grid-cols-2'
+                      : 'grid-cols-1',
+                  )}
+                >
+                  {showGitHubLogin ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={() => handleOAuthLogin('github')}
+                      disabled={isButtonLoading}
+                    >
+                      <Github className='h-4 w-4' />
+                      GitHub
+                    </Button>
+                  ) : null}
+                  {showGoogleLogin ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={() => handleOAuthLogin('google')}
+                      disabled={isButtonLoading}
+                    >
+                      <GoogleIcon className='h-4 w-4' />
+                      Google
+                    </Button>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
         </form>
 
