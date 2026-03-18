@@ -2142,6 +2142,10 @@ func (a *Agent) handleRemoveInstallDirCommand(ctx context.Context, cmd *pb.Comma
 		msg := fmt.Sprintf("install_dir is not allowed / 不允许的 install_dir: %s", clean)
 		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
 	}
+	if !a.isAllowedInstallDir(clean) {
+		msg := fmt.Sprintf("install_dir is outside allowed base dir / install_dir 超出允许目录: %s", clean)
+		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
+	}
 
 	if err := os.RemoveAll(clean); err != nil {
 		msg := fmt.Sprintf("failed to remove install dir / 删除安装目录失败: %v", err)
@@ -2151,6 +2155,24 @@ func (a *Agent) handleRemoveInstallDirCommand(ctx context.Context, cmd *pb.Comma
 	logger.InfoF(ctx, "[Agent] Removed install directory: %s / 已删除安装目录：%s", clean, clean)
 	reporter.Report(100, "Install directory removed / 安装目录已删除")
 	return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("Install directory removed: %s / 安装目录已删除：%s", clean, clean)), nil
+}
+
+func (a *Agent) isAllowedInstallDir(installDir string) bool {
+	allowedBase := config.DefaultSeaTunnelInstallDir
+	if a != nil && a.config != nil {
+		if configured := strings.TrimSpace(a.config.SeaTunnel.InstallDir); configured != "" {
+			allowedBase = configured
+		}
+	}
+
+	base := filepath.Clean(allowedBase)
+	if !filepath.IsAbs(base) {
+		return false
+	}
+	if installDir == base {
+		return true
+	}
+	return strings.HasPrefix(installDir, base+string(os.PathSeparator))
 }
 
 // isProcessAlive checks if a process with the given PID is alive
