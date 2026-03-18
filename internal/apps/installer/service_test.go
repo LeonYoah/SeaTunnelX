@@ -487,3 +487,23 @@ func TestService_UploadPackageChunk_OutOfOrder(t *testing.T) {
 		t.Fatalf("expected ErrChunkOutOfOrder, got: %v", err)
 	}
 }
+
+func TestService_StartDownload_RejectsInvalidVersion(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	ctx := context.Background()
+
+	_, err := service.StartDownload(ctx, &DownloadRequest{Version: "../evil", Mirror: MirrorAliyun})
+	if err == nil || !errors.Is(err, ErrInvalidPackageVersion) {
+		t.Fatalf("expected ErrInvalidPackageVersion, got: %v", err)
+	}
+}
+
+func TestService_CancelDownload_RejectsInvalidVersion(t *testing.T) {
+	service := NewService(t.TempDir(), nil)
+	ctx := context.Background()
+
+	_, err := service.CancelDownload(ctx, "../evil")
+	if err == nil || !errors.Is(err, ErrInvalidPackageVersion) {
+		t.Fatalf("expected ErrInvalidPackageVersion, got: %v", err)
+	}
+}
