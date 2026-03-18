@@ -18,15 +18,20 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	"github.com/seatunnel/seatunnelX/internal/config"
+	"github.com/seatunnel/seatunnelX/internal/db"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,4 +78,44 @@ func TestOAuthPendingStatesPersistAcrossCookieSessionRequests(t *testing.T) {
 	var got map[string]int64
 	require.NoError(t, json.Unmarshal(readResp.Body.Bytes(), &got))
 	require.Equal(t, map[string]int64{state: expiresAt}, got)
+}
+
+func TestFindOrCreateOAuthUserDoesNotLinkExistingUsername(t *testing.T) {
+	t.Setenv("GO_TEST", "1")
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "oauth_test.db")
+
+	config.Config.Database.Enabled = true
+	config.Config.Database.Type = db.DatabaseTypeSQLite
+	config.Config.Database.SQLitePath = dbPath
+
+	require.NoError(t, db.InitDatabase())
+	t.Cleanup(func() {
+		require.NoError(t, db.CloseDatabase())
+	})
+
+	require.NoError(t, db.DB(ctx).AutoMigrate(&auth.User{}))
+
+	existing := &auth.User{Username: "admin", PasswordHash: "hashed", IsActive: true}
+	require.NoError(t, db.DB(ctx).Create(existing).Error)
+
+	info := &OAuthUserInfo{
+		Provider:  string(ProviderGitHub),
+		ID:        "attacker-id",
+		Username:  "admin",
+		Name:      "attacker",
+		AvatarURL: "https://avatar.example/attacker.png",
+		Email:     "attacker@example.com",
+	}
+
+	user, err := findOrCreateOAuthUser(ctx, info)
+	require.NoError(t, err)
+	require.NotEqual(t, existing.ID, user.ID)
+	require.Equal(t, "admin_github_attacker-id", user.Username)
+	require.Equal(t, "github:attacker-id", user.OAuthID)
+
+	var unchanged auth.User
+	require.NoError(t, db.DB(ctx).First(&unchanged, existing.ID).Error)
+	require.Empty(t, unchanged.OAuthID)
 }

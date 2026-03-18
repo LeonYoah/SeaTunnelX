@@ -258,22 +258,11 @@ func findOrCreateOAuthUser(ctx context.Context, info *OAuthUserInfo) (*auth.User
 		return &user, nil
 	}
 
-	// 尝试通过用户名查找
-	tx = db.DB(ctx).Where("username = ?", info.Username).First(&user)
-	if tx.Error == nil {
-		// 用户名已存在，关联 OAuth
-		user.OAuthID = oauthID
-		user.AvatarURL = info.AvatarURL
-		if strings.TrimSpace(info.Email) != "" {
-			user.Email = strings.TrimSpace(info.Email)
-		}
-		db.DB(ctx).Save(&user)
-		return &user, nil
-	}
+	username := buildOAuthUsername(ctx, info)
 
 	// 创建新用户
 	user = auth.User{
-		Username:  info.Username,
+		Username:  username,
 		Nickname:  info.Name,
 		Email:     strings.TrimSpace(info.Email),
 		OAuthID:   oauthID,
@@ -286,6 +275,29 @@ func findOrCreateOAuthUser(ctx context.Context, info *OAuthUserInfo) (*auth.User
 	}
 
 	return &user, nil
+}
+
+func buildOAuthUsername(ctx context.Context, info *OAuthUserInfo) string {
+	base := strings.TrimSpace(info.Username)
+	if base == "" {
+		base = fmt.Sprintf("%s_user", info.Provider)
+	}
+
+	var count int64
+	tx := db.DB(ctx).Model(&auth.User{}).Where("username = ?", base).Count(&count)
+	if tx.Error != nil || count == 0 {
+		return base
+	}
+
+	suffix := strings.NewReplacer(":", "_", "@", "_", " ", "_").Replace(fmt.Sprintf("%s_%s", info.Provider, info.ID))
+	candidate := fmt.Sprintf("%s_%s", base, suffix)
+
+	tx = db.DB(ctx).Model(&auth.User{}).Where("username = ?", candidate).Count(&count)
+	if tx.Error != nil || count == 0 {
+		return candidate
+	}
+
+	return fmt.Sprintf("%s_%d", candidate, time.Now().UnixNano())
 }
 
 // GetEnabledProvidersHandler 获取启用的 OAuth 提供商列表
