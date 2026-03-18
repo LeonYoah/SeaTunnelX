@@ -65,6 +65,10 @@ var (
 	// ErrDependencyInUse indicates the dependency is used by other plugins
 	// ErrDependencyInUse 表示依赖被其他插件使用
 	ErrDependencyInUse = errors.New("dependency is used by other plugins / 依赖被其他插件使用")
+
+	// ErrInvalidPluginIdentifier indicates plugin metadata contains unsafe path characters
+	// ErrInvalidPluginIdentifier 表示插件元数据包含不安全的路径字符
+	ErrInvalidPluginIdentifier = errors.New("invalid plugin identifier / 无效的插件标识")
 )
 
 // InstalledPluginInfo represents information about an installed plugin.
@@ -144,7 +148,6 @@ func (m *Manager) GetConnectorsDir() string {
 func (m *Manager) GetLibDir() string {
 	return filepath.Join(m.seatunnelPath, "lib")
 }
-
 
 // ReceivePluginChunk receives a chunk of plugin file data.
 // ReceivePluginChunk 接收插件文件数据块。
@@ -329,6 +332,14 @@ func (m *Manager) UninstallPlugin(pluginName, version, installPath string, remov
 		return ErrInstallPathNotSet
 	}
 
+	if err := validatePluginIdentifier("plugin name", pluginName); err != nil {
+		return err
+	}
+
+	if err := validatePluginIdentifier("version", version); err != nil {
+		return err
+	}
+
 	// Remove connector jar / 删除连接器 jar
 	connectorFileName := fmt.Sprintf("connector-%s-%s.jar", pluginName, version)
 	connectorPath := filepath.Join(m.GetConnectorsDir(), connectorFileName)
@@ -341,6 +352,22 @@ func (m *Manager) UninstallPlugin(pluginName, version, installPath string, remov
 	// 注意：默认不删除依赖，因为它们可能被共享
 	// If removeDependencies is true, the caller should provide the list of dependencies to remove
 	// 如果 removeDependencies 为 true，调用者应提供要删除的依赖列表
+
+	return nil
+}
+
+func validatePluginIdentifier(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("%w: %s is empty", ErrInvalidPluginIdentifier, field)
+	}
+
+	if strings.ContainsAny(value, `/\\`) {
+		return fmt.Errorf("%w: %s contains path separator", ErrInvalidPluginIdentifier, field)
+	}
+
+	if value == "." || value == ".." {
+		return fmt.Errorf("%w: %s contains invalid path segment", ErrInvalidPluginIdentifier, field)
+	}
 
 	return nil
 }
