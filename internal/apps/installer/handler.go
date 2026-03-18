@@ -370,6 +370,10 @@ func (h *Handler) StartDownload(c *gin.Context) {
 			c.JSON(http.StatusOK, DownloadResponse{Data: task, ErrorMsg: "下载已在进行中 / Download already in progress"})
 			return
 		}
+		if errors.Is(err, ErrInvalidPackageVersion) {
+			c.JSON(http.StatusBadRequest, DownloadResponse{ErrorMsg: err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, DownloadResponse{ErrorMsg: err.Error()})
 		return
 	}
@@ -417,6 +421,10 @@ func (h *Handler) CancelDownload(c *gin.Context) {
 
 	task, err := h.service.CancelDownload(c.Request.Context(), version)
 	if err != nil {
+		if errors.Is(err, ErrInvalidPackageVersion) {
+			c.JSON(http.StatusBadRequest, DownloadResponse{ErrorMsg: err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, DownloadResponse{ErrorMsg: err.Error()})
 		return
 	}
