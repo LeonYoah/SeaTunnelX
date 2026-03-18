@@ -29,7 +29,7 @@ func TestRemoveManagedInstallDirRejectsUnmanagedDir(t *testing.T) {
 	targetDir := t.TempDir()
 
 	_, err := RemoveManagedInstallDir(targetDir)
-	if err == nil || !strings.Contains(err.Error(), "not a managed SeaTunnel installation") {
+	if err == nil || !strings.Contains(err.Error(), "please remove it manually") {
 		t.Fatalf("expected managed install validation error, got %v", err)
 	}
 	if _, statErr := os.Stat(targetDir); statErr != nil {
@@ -37,21 +37,17 @@ func TestRemoveManagedInstallDirRejectsUnmanagedDir(t *testing.T) {
 	}
 }
 
-func TestRemoveManagedInstallDirAllowsLegacyInstallDir(t *testing.T) {
+func TestRemoveManagedInstallDirRejectsLegacyLookingDirWithoutMarker(t *testing.T) {
 	targetDir := filepath.Join(t.TempDir(), "legacy-install")
-	startName, stopName := legacyScriptNames()
-	mustWriteFile(t, filepath.Join(targetDir, "bin", startName), "echo start")
-	mustWriteFile(t, filepath.Join(targetDir, "bin", stopName), "echo stop")
+	mustWriteFile(t, filepath.Join(targetDir, "bin", "seatunnel-cluster.sh"), "echo start")
+	mustWriteFile(t, filepath.Join(targetDir, "bin", "stop-seatunnel-cluster.sh"), "echo stop")
 
-	removedDir, err := RemoveManagedInstallDir(targetDir)
-	if err != nil {
-		t.Fatalf("RemoveManagedInstallDir returned error: %v", err)
+	_, err := RemoveManagedInstallDir(targetDir)
+	if err == nil || !strings.Contains(err.Error(), "please remove it manually") {
+		t.Fatalf("expected manual removal guidance, got %v", err)
 	}
-	if removedDir != targetDir {
-		t.Fatalf("expected removed dir %s, got %s", targetDir, removedDir)
-	}
-	if _, statErr := os.Stat(targetDir); !os.IsNotExist(statErr) {
-		t.Fatalf("expected legacy install dir removed, stat err=%v", statErr)
+	if _, statErr := os.Stat(targetDir); statErr != nil {
+		t.Fatalf("expected legacy-looking dir to remain, got %v", statErr)
 	}
 }
 

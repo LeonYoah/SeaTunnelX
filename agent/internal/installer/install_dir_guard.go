@@ -21,14 +21,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
 const managedInstallMarkerFileName = ".seatunnelx-managed"
 
 // RemoveManagedInstallDir removes a SeaTunnel installation directory after validating
-// that the path is a managed SeaTunnel install or a legacy install recognizable by scripts.
+// that the path is a SeaTunnelX-managed installation directory.
 func RemoveManagedInstallDir(installDir string) (string, error) {
 	clean, err := validateManagedInstallDir(installDir)
 	if err != nil {
@@ -67,10 +66,10 @@ func validateManagedInstallDir(installDir string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("install_dir must be a directory: %s", clean)
 	}
-	if hasManagedInstallMarker(clean) || looksLikeLegacySeaTunnelInstall(clean) {
+	if hasManagedInstallMarker(clean) {
 		return clean, nil
 	}
-	return "", fmt.Errorf("install_dir is not a managed SeaTunnel installation: %s", clean)
+	return "", fmt.Errorf("install_dir is not a managed SeaTunnel installation; for safety, please remove it manually: %s", clean)
 }
 
 func normalizeInstallDirPath(installDir string) (string, error) {
@@ -91,23 +90,5 @@ func normalizeInstallDirPath(installDir string) (string, error) {
 
 func hasManagedInstallMarker(installDir string) bool {
 	info, err := os.Stat(filepath.Join(installDir, managedInstallMarkerFileName))
-	return err == nil && !info.IsDir()
-}
-
-func looksLikeLegacySeaTunnelInstall(installDir string) bool {
-	startName, stopName := legacyScriptNames()
-	return fileExists(filepath.Join(installDir, "bin", startName)) &&
-		fileExists(filepath.Join(installDir, "bin", stopName))
-}
-
-func legacyScriptNames() (startName, stopName string) {
-	if runtime.GOOS == "windows" {
-		return "seatunnel-cluster.cmd", "stop-seatunnel-cluster.cmd"
-	}
-	return "seatunnel-cluster.sh", "stop-seatunnel-cluster.sh"
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }

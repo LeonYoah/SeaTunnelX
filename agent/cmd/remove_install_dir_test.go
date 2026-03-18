@@ -21,7 +21,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	pb "github.com/seatunnel/seatunnelX/agent"
@@ -55,21 +54,20 @@ func TestHandleRemoveInstallDirCommandRejectsUnmanagedDir(t *testing.T) {
 
 	resp, err := agent.handleRemoveInstallDirCommand(context.Background(), cmd, noopProgressReporter{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not a managed SeaTunnel installation")
+	assert.Contains(t, err.Error(), "please remove it manually")
 	assert.Equal(t, pb.CommandStatus_FAILED, resp.Status)
 
 	_, statErr := os.Stat(unmanagedDir)
 	assert.NoError(t, statErr)
 }
 
-func TestHandleRemoveInstallDirCommandAllowsLegacyCustomInstallDir(t *testing.T) {
+func TestHandleRemoveInstallDirCommandRejectsLegacyLookingCustomDir(t *testing.T) {
 	configuredBase := filepath.Join(t.TempDir(), "seatunnel")
 	require.NoError(t, os.MkdirAll(configuredBase, 0o755))
 
 	targetDir := filepath.Join(t.TempDir(), "custom", "seatunnel-2.3.13")
-	startName, stopName := testLegacyScriptNames()
-	mustWriteInstallFile(t, filepath.Join(targetDir, "bin", startName), "echo start")
-	mustWriteInstallFile(t, filepath.Join(targetDir, "bin", stopName), "echo stop")
+	mustWriteInstallFile(t, filepath.Join(targetDir, "bin", "seatunnel-cluster.sh"), "echo start")
+	mustWriteInstallFile(t, filepath.Join(targetDir, "bin", "stop-seatunnel-cluster.sh"), "echo stop")
 
 	agent := NewAgent(&config.Config{
 		SeaTunnel: config.SeaTunnelConfig{InstallDir: configuredBase},
@@ -81,11 +79,12 @@ func TestHandleRemoveInstallDirCommandAllowsLegacyCustomInstallDir(t *testing.T)
 	}
 
 	resp, err := agent.handleRemoveInstallDirCommand(context.Background(), cmd, noopProgressReporter{})
-	require.NoError(t, err)
-	assert.Equal(t, pb.CommandStatus_SUCCESS, resp.Status)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "please remove it manually")
+	assert.Equal(t, pb.CommandStatus_FAILED, resp.Status)
 
 	_, statErr := os.Stat(targetDir)
-	assert.True(t, os.IsNotExist(statErr))
+	assert.NoError(t, statErr)
 }
 
 func TestHandleRemoveInstallDirCommandAllowsMarkerManagedDir(t *testing.T) {
@@ -106,13 +105,6 @@ func TestHandleRemoveInstallDirCommandAllowsMarkerManagedDir(t *testing.T) {
 
 	_, statErr := os.Stat(targetDir)
 	assert.True(t, os.IsNotExist(statErr))
-}
-
-func testLegacyScriptNames() (string, string) {
-	if runtime.GOOS == "windows" {
-		return "seatunnel-cluster.cmd", "stop-seatunnel-cluster.cmd"
-	}
-	return "seatunnel-cluster.sh", "stop-seatunnel-cluster.sh"
 }
 
 func mustWriteInstallFile(t *testing.T, path, content string) {
