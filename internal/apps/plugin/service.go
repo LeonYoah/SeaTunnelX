@@ -213,7 +213,7 @@ func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirr
 		return nil, ErrInvalidMirror
 	}
 
-	plugins, sourceMirror, refreshedAt, source, cacheHit := s.getPlugins(ctx, version, mirror)
+	plugins, sourceMirror, refreshedAt, source, cacheHit := s.getPlugins(ctx, version)
 	s.ensureBundledSeedLoaded(ctx, version)
 	plugins = s.enrichPluginsWithDependencyState(ctx, version, plugins)
 
@@ -231,7 +231,7 @@ func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirr
 
 // getPlugins returns the plugin list, preferring persisted DB snapshots and falling back to Maven.
 // getPlugins 返回插件列表，优先使用数据库快照，不存在时回退到 Maven。
-func (s *Service) getPlugins(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, *time.Time, PluginListSource, bool) {
+func (s *Service) getPlugins(ctx context.Context, version string) ([]Plugin, MirrorSource, *time.Time, PluginListSource, bool) {
 	if persisted, sourceMirror, refreshedAt := s.loadPluginsFromCatalog(ctx, version); len(persisted) > 0 {
 		return persisted, sourceMirror, refreshedAt, PluginListSourceDatabase, false
 	}
@@ -240,10 +240,10 @@ func (s *Service) getPlugins(ctx context.Context, version string, mirror MirrorS
 	if fetcher == nil {
 		fetcher = s.fetchPluginsFromDocs
 	}
-	plugins, usedMirror, err := fetcher(ctx, version, mirror)
+	plugins, usedMirror, err := fetcher(ctx, version, MirrorSourceApache)
 	if err != nil {
 		fmt.Printf("[Plugin] Failed to fetch plugins from Maven: %v\n", err)
-		return []Plugin{}, mirror, nil, PluginListSourceRemote, false
+		return []Plugin{}, MirrorSourceApache, nil, PluginListSourceRemote, false
 	}
 	plugins = s.filterHiddenPluginsForVersion(version, plugins)
 	refreshedAt := time.Now()
@@ -442,7 +442,7 @@ func getArtifactID(name string) string {
 // RefreshPlugins forces a refresh of the plugin list from Maven repository.
 // RefreshPlugins 强制从 Maven 仓库刷新插件列表。
 func (s *Service) RefreshPlugins(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, error) {
-	plugins, usedMirror, err := s.fetchPluginsFromDocs(ctx, version, mirror)
+	plugins, usedMirror, err := s.fetchPluginsFromDocs(ctx, version, MirrorSourceApache)
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +476,7 @@ func (s *Service) getPluginInfoWithMirror(ctx context.Context, name string, vers
 	normalizedName := strings.ToLower(name)
 
 	// Resolve from DB snapshot or remote fetch / 从数据库快照或远端抓取中解析
-	fetchedPlugins, _, _, _, _ := s.getPlugins(ctx, version, mirror)
+	fetchedPlugins, _, _, _, _ := s.getPlugins(ctx, version)
 	for _, p := range fetchedPlugins {
 		if strings.ToLower(p.Name) == normalizedName {
 			enriched := s.enrichPluginsWithDependencyState(ctx, version, []Plugin{p})
@@ -784,7 +784,7 @@ func (s *Service) DownloadAllPlugins(ctx context.Context, version string, mirror
 	}
 
 	// Get all available plugins / 获取所有可用插件
-	plugins, _, _, _, _ := s.getPlugins(ctx, version, mirror)
+	plugins, _, _, _, _ := s.getPlugins(ctx, version)
 	if len(plugins) == 0 {
 		return nil, fmt.Errorf("no plugins found for version %s / 未找到版本 %s 的插件", version, version)
 	}

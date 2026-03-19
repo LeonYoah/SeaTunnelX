@@ -1,5 +1,4 @@
 {
-  "seatunnel_version": "2.3.12",
   "notes": [
     "This baseline follows user-confirmed rules for SeaTunnel 2.3.12.",
     "For 2.3.12+ on Zeta, plugin-specific dependencies are installed under plugins/<plugin-mapping value>.",
@@ -258,6 +257,13 @@
       "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.12/connector-v2"
     },
     {
+      "name": "fluss",
+      "display_name": "Fluss",
+      "artifact_id": "connector-fluss",
+      "group_id": "org.apache.seatunnel",
+      "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.13/connector-v2"
+    },
+    {
       "name": "google-firestore",
       "display_name": "Google Firestore",
       "artifact_id": "connector-google-firestore",
@@ -384,6 +390,13 @@
       "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.12/connector-v2"
     },
     {
+      "name": "hugegraph",
+      "display_name": "HugeGraph",
+      "artifact_id": "connector-hugegraph",
+      "group_id": "org.apache.seatunnel",
+      "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.13/connector-v2"
+    },
+    {
       "name": "iceberg",
       "display_name": "Iceberg",
       "artifact_id": "connector-iceberg",
@@ -405,6 +418,13 @@
       "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.12/connector-v2"
     },
     {
+      "name": "iotdb-v2",
+      "display_name": "IoTDBv2",
+      "artifact_id": "connector-iotdb-v2",
+      "group_id": "org.apache.seatunnel",
+      "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.13/connector-v2"
+    },
+    {
       "name": "jdbc",
       "display_name": "Jdbc",
       "artifact_id": "connector-jdbc",
@@ -424,6 +444,13 @@
       "artifact_id": "connector-kudu",
       "group_id": "org.apache.seatunnel",
       "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.12/connector-v2"
+    },
+    {
+      "name": "lance",
+      "display_name": "Lance",
+      "artifact_id": "connector-lance",
+      "group_id": "org.apache.seatunnel",
+      "doc_url": "https://seatunnel.apache.org/zh-CN/docs/2.3.13/connector-v2"
     },
     {
       "name": "maxcompute",
@@ -2139,45 +2166,6 @@
     {
       "plugin_name": "jdbc",
       "artifact_id": "connector-jdbc",
-      "profile_key": "redshift",
-      "profile_name": "Redshift",
-      "engine_scope": "zeta",
-      "target_dir": "plugins/connector-jdbc",
-      "applies_to": "*",
-      "include_versions": [],
-      "exclude_versions": [
-        "2.3.4",
-        "2.3.5",
-        "2.3.6",
-        "2.3.7",
-        "2.3.8",
-        "2.3.9",
-        "2.3.10",
-        "2.3.11",
-        "2.3.12"
-      ],
-      "doc_slug": "source/Jdbc",
-      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.12/connector-v2/source/Jdbc/",
-      "confidence": "manual",
-      "is_default": false,
-      "no_additional_dependencies": false,
-      "resolution_mode": "exact",
-      "baseline_version_used": "2.3.12",
-      "items": [
-        {
-          "group_id": "com.amazon.redshift",
-          "artifact_id": "redshift-jdbc42",
-          "version": "2.1.0.30",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        }
-      ]
-    },
-    {
-      "plugin_name": "jdbc",
-      "artifact_id": "connector-jdbc",
       "profile_key": "sap-hana",
       "profile_name": "SAP HANA",
       "engine_scope": "zeta",
@@ -2205,43 +2193,6 @@
           "group_id": "com.sap.cloud.db.jdbc",
           "artifact_id": "ngdbc",
           "version": "2.14.7",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        }
-      ]
-    },
-    {
-      "plugin_name": "jdbc",
-      "artifact_id": "connector-jdbc",
-      "profile_key": "sap-hana",
-      "profile_name": "SAP HANA",
-      "engine_scope": "zeta",
-      "target_dir": "plugins/connector-jdbc",
-      "applies_to": "*",
-      "include_versions": [],
-      "exclude_versions": [
-        "2.3.4",
-        "2.3.5",
-        "2.3.6",
-        "2.3.7",
-        "2.3.8",
-        "2.3.9",
-        "2.3.10"
-      ],
-      "doc_slug": "source/Jdbc",
-      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.12/connector-v2/source/Jdbc/",
-      "confidence": "manual",
-      "is_default": false,
-      "no_additional_dependencies": false,
-      "resolution_mode": "exact",
-      "baseline_version_used": "2.3.12",
-      "items": [
-        {
-          "group_id": "com.sap.cloud.db.jdbc",
-          "artifact_id": "ngdbc",
-          "version": "2.23.10",
           "target_dir": "plugins/connector-jdbc",
           "required": true,
           "source_url": "",
@@ -2392,72 +2343,6 @@
           "group_id": "com.oceanbase",
           "artifact_id": "oceanbase-client",
           "version": "2.4.3",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        }
-      ]
-    },
-    {
-      "plugin_name": "jdbc",
-      "artifact_id": "connector-jdbc",
-      "profile_key": "oceanbase",
-      "profile_name": "OceanBase",
-      "engine_scope": "zeta",
-      "target_dir": "plugins/connector-jdbc",
-      "applies_to": "*",
-      "include_versions": [
-        "2.3.8"
-      ],
-      "exclude_versions": [],
-      "doc_slug": "source/Jdbc",
-      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.12/connector-v2/source/Jdbc/",
-      "confidence": "manual",
-      "is_default": false,
-      "no_additional_dependencies": false,
-      "resolution_mode": "exact",
-      "baseline_version_used": "2.3.12",
-      "items": [
-        {
-          "group_id": "com.oceanbase",
-          "artifact_id": "oceanbase-client",
-          "version": "2.4.11",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        }
-      ]
-    },
-    {
-      "plugin_name": "jdbc",
-      "artifact_id": "connector-jdbc",
-      "profile_key": "oceanbase",
-      "profile_name": "OceanBase",
-      "engine_scope": "zeta",
-      "target_dir": "plugins/connector-jdbc",
-      "applies_to": "*",
-      "include_versions": [],
-      "exclude_versions": [
-        "2.3.4",
-        "2.3.5",
-        "2.3.6",
-        "2.3.7",
-        "2.3.8"
-      ],
-      "doc_slug": "source/Jdbc",
-      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.12/connector-v2/source/Jdbc/",
-      "confidence": "manual",
-      "is_default": false,
-      "no_additional_dependencies": false,
-      "resolution_mode": "exact",
-      "baseline_version_used": "2.3.12",
-      "items": [
-        {
-          "group_id": "com.oceanbase",
-          "artifact_id": "oceanbase-client",
-          "version": "2.4.12",
           "target_dir": "plugins/connector-jdbc",
           "required": true,
           "source_url": "",
@@ -2818,42 +2703,6 @@
           "required": true,
           "source_url": "",
           "note": ""
-        },
-        {
-          "group_id": "software.amazon.awssdk",
-          "artifact_id": "dsql",
-          "version": "2.31.30",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        },
-        {
-          "group_id": "software.amazon.awssdk",
-          "artifact_id": "auth",
-          "version": "2.31.30",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        },
-        {
-          "group_id": "software.amazon.awssdk",
-          "artifact_id": "regions",
-          "version": "2.31.30",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
-        },
-        {
-          "group_id": "software.amazon.awssdk",
-          "artifact_id": "sts",
-          "version": "2.31.30",
-          "target_dir": "plugins/connector-jdbc",
-          "required": true,
-          "source_url": "",
-          "note": ""
         }
       ]
     },
@@ -2914,7 +2763,76 @@
           "note": ""
         }
       ]
+    },
+    {
+      "plugin_name": "jdbc",
+      "artifact_id": "connector-jdbc",
+      "profile_key": "redshift",
+      "profile_name": "Redshift",
+      "engine_scope": "zeta",
+      "target_dir": "plugins/connector-jdbc",
+      "applies_to": "*",
+      "include_versions": [
+        "2.3.13"
+      ],
+      "exclude_versions": [],
+      "doc_slug": "source/Jdbc",
+      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.13/connector-v2/source/Jdbc/",
+      "confidence": "manual",
+      "is_default": false,
+      "no_additional_dependencies": false,
+      "resolution_mode": "exact",
+      "baseline_version_used": "2.3.13",
+      "items": [
+        {
+          "group_id": "com.amazon.redshift",
+          "artifact_id": "redshift-jdbc42",
+          "version": "2.1.0.30",
+          "target_dir": "plugins/connector-jdbc",
+          "required": true,
+          "source_url": "",
+          "note": ""
+        }
+      ]
+    },
+    {
+      "plugin_name": "jdbc",
+      "artifact_id": "connector-jdbc",
+      "profile_key": "sap-hana",
+      "profile_name": "SAP HANA",
+      "engine_scope": "zeta",
+      "target_dir": "plugins/connector-jdbc",
+      "applies_to": "*",
+      "include_versions": [
+        "2.3.11",
+        "2.3.12",
+        "2.3.13"
+      ],
+      "exclude_versions": [],
+      "doc_slug": "source/Jdbc",
+      "doc_source_url": "https://seatunnel.apache.org/docs/2.3.13/connector-v2/source/Jdbc/",
+      "confidence": "manual",
+      "is_default": false,
+      "no_additional_dependencies": false,
+      "resolution_mode": "exact",
+      "baseline_version_used": "2.3.13",
+      "items": [
+        {
+          "group_id": "com.sap.cloud.db.jdbc",
+          "artifact_id": "ngdbc",
+          "version": "2.23.10",
+          "target_dir": "plugins/connector-jdbc",
+          "required": true,
+          "source_url": "",
+          "note": ""
+        }
+      ]
     }
   ],
-  "template_version": "2.3.12"
+  "template_version": "2.3.12",
+  "template_name": "seatunnel-plugins",
+  "reviewed_versions": [
+    "2.3.12",
+    "2.3.13"
+  ]
 }

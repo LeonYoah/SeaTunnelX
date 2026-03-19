@@ -861,8 +861,8 @@
     "goToClusterDetail": "请前往集群详情页面管理已安装插件",
     "totalPlugins": "插件总数",
     "totalConnectors": "插件总数",
-    "catalogSourceMirror": "来源镜像",
     "catalogRefreshedAt": "最近刷新",
+    "catalogSourceHint": "加载、刷新插件只会从官方 Maven 获取；下载时会使用当前选择的镜像源。",
     "selectedCount": "已选择",
     "searchPlaceholder": "按名称或描述搜索插件",
     "noPluginsFound": "未找到插件",
@@ -2674,7 +2674,7 @@
     "checksum": "Checksum",
     "connectorNames": "额外 connector 名称",
     "connectorNamesPlaceholder": "可选，逗号分隔；默认复用当前集群 connector",
-    "connectorInfo": "Connector / Lib 清单",
+    "connectorInfo": "插件资产清单",
     "connectorCount": "Connector 数量",
     "libraryCount": "Lib 数量",
     "configConflicts": "配置差异数",
@@ -2689,7 +2689,7 @@
     "draftChangedNoticeTitle": "升级输入已变更，当前预检查结果已过期。",
     "draftChangedNoticeDescription": "你刚修改了目标版本、目标安装目录或其他升级输入。下方问题列表和节点清单仍然基于上一次预检查结果，请重新运行预检查后再继续。",
     "precheckSummary": "预检查摘要",
-    "precheckSummaryDescription": "展示升级包、连接器、配置与节点目标的当前状态。",
+    "precheckSummaryDescription": "展示升级包、插件资产、配置与节点目标的当前状态。",
     "loadingPrepare": "正在加载升级准备信息...",
     "readyToPlan": "可继续",
     "blocked": "存在阻断",
@@ -2826,6 +2826,11 @@
     "fileAppliedFromNew": "已整份采用新版本配置作为处理中间结果",
     "applyOldFile": "整份采用旧版本",
     "applyNewFile": "整份采用新版本",
-    "removedLineLabel": "当前结果不保留这一行"
+    "removedLineLabel": "当前结果不保留这一行",
+    "pluginDependencyCount": "隔离依赖数",
+    "pluginUpgradeBehaviorTitle": "升级时的插件处理规则",
+    "pluginUpgradeBehaviorDescription": "升级前请先在本地准备目标版本的插件包。执行升级时会切换到目标版本的 connector JAR，并按本地已准备的目标版本插件包增量叠加 lib 与 plugins 目录依赖；目标安装包自带的同名基础 JAR 会保留，不会被替换。",
+    "upgradeSmokeCheckTitle": "升级后可用性验证",
+    "upgradeSmokeCheckDescription": "集群重启并恢复健康后，系统会自动执行一次 seatunnel.sh 模板任务验证。若验证失败，只记录告警，不阻塞升级成功。"
   }
 }

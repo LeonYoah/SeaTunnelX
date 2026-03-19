@@ -30,7 +30,7 @@ import (
 func (a *Agent) handleManagedUpgradeCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	subCommand := strings.TrimSpace(cmd.Parameters["sub_command"])
 	if subCommand == "" {
-		err := fmt.Errorf("legacy destructive upgrade path is disabled; use managed upgrade sub_command primitives / 旧的破坏式升级路径已禁用，请使用受管升级 sub_command 原语")
+		err := fmt.Errorf("旧的破坏式升级路径已禁用，请使用受管升级 sub_command 原语")
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}
 
@@ -65,6 +65,13 @@ func (a *Agent) handleManagedUpgradeCommand(ctx context.Context, cmd *pb.Command
 			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 		}
 		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("lib_dir=%s/lib", installDir)), nil
+	case "sync_plugins_manifest":
+		installDir := getParamString(cmd.Parameters, "install_dir", "")
+		keepFiles := splitCSV(cmd.Parameters["keep_files"])
+		if err := a.installerManager.SyncPluginsManifest(installDir, keepFiles); err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("plugins_dir=%s/plugins", installDir)), nil
 	case "apply_merged_config":
 		installDir := getParamString(cmd.Parameters, "install_dir", "")
 		configType := getParamString(cmd.Parameters, "config_type", "")
@@ -106,13 +113,23 @@ func (a *Agent) handleManagedUpgradeCommand(ctx context.Context, cmd *pb.Command
 				return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 			}
 			if status.PID == 0 {
-				err := fmt.Errorf("process %s is not running / 进程 %s 未运行", processName, processName)
+				err := fmt.Errorf("进程 %s 未运行", processName)
 				return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 			}
 		}
 		return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("install_dir=%s", installDir)), nil
+	case "run_smoke_test_template":
+		installDir := getParamString(cmd.Parameters, "install_dir", "")
+		output, err := a.installerManager.RunSmokeTestTemplate(ctx, installDir)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		if strings.TrimSpace(output) == "" {
+			return executor.CreateSuccessResponse(cmd.CommandId, fmt.Sprintf("install_dir=%s", installDir)), nil
+		}
+		return executor.CreateSuccessResponse(cmd.CommandId, output), nil
 	default:
-		err := fmt.Errorf("unsupported managed upgrade sub_command: %s / 不支持的受管升级子命令: %s", subCommand, subCommand)
+		err := fmt.Errorf("不支持的受管升级子命令: %s", subCommand)
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}
 }

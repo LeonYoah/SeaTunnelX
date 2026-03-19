@@ -70,6 +70,7 @@ type stubPluginProvider struct {
 	installed    []pluginapp.InstalledPlugin
 	local        []pluginapp.LocalPlugin
 	dependencies map[string][]pluginapp.PluginDependency
+	requested    map[string][]string
 }
 
 func (s *stubPluginProvider) ListInstalledPlugins(ctx context.Context, clusterID uint) ([]pluginapp.InstalledPlugin, error) {
@@ -80,7 +81,11 @@ func (s *stubPluginProvider) ListLocalPlugins() ([]pluginapp.LocalPlugin, error)
 	return s.local, nil
 }
 
-func (s *stubPluginProvider) GetPluginDependencies(ctx context.Context, pluginName string) ([]pluginapp.PluginDependency, error) {
+func (s *stubPluginProvider) GetPluginDependenciesForVersion(ctx context.Context, pluginName, version string) ([]pluginapp.PluginDependency, error) {
+	if s.requested == nil {
+		s.requested = make(map[string][]string)
+	}
+	s.requested[pluginName] = append(s.requested[pluginName], version)
 	return s.dependencies[pluginName], nil
 }
 
@@ -347,6 +352,137 @@ func TestService_CreatePlanFromRequest_persistsReadyPlan(t *testing.T) {
 	}
 	if len(persisted.Snapshot.NodeTargets) != 1 {
 		t.Fatalf("expected 1 node target, got %d", len(persisted.Snapshot.NodeTargets))
+	}
+}
+
+func TestService_CreatePlanFromRequest_splitsPluginDependencyManifest(t *testing.T) {
+	database := openTestDB(t)
+	repo := NewRepository(database)
+	service := newPlanningService(t, repo)
+	packagePath := createTestPackage(t, map[string]string{
+		"config/seatunnel.yaml": "seatunnel: default",
+	})
+	service.SetPackageProvider(&stubPackageProvider{info: &installerapp.PackageInfo{
+		Version:   "2.3.12",
+		FileName:  "apache-seatunnel-2.3.12-bin.tar.gz",
+		IsLocal:   true,
+		LocalPath: packagePath,
+		FileSize:  4096,
+		Checksum:  "abc123",
+	}})
+	service.SetPluginProvider(&stubPluginProvider{
+		local: []pluginapp.LocalPlugin{{
+			Name:          "jdbc",
+			Version:       "2.3.12",
+			Category:      pluginapp.PluginCategoryConnector,
+			ConnectorPath: "/tmp/connector-jdbc-2.3.12.jar",
+			DownloadedAt:  time.Now(),
+		}},
+		dependencies: map[string][]pluginapp.PluginDependency{
+			"jdbc": {
+				{
+					GroupID:    "org.example",
+					ArtifactID: "jdbc-extra",
+					Version:    "1.0.0",
+					TargetDir:  "lib",
+				},
+				{
+					GroupID:    "org.example",
+					ArtifactID: "oracle-extra",
+					Version:    "2.0.0",
+					TargetDir:  "plugins/connector-jdbc",
+				},
+			},
+		},
+	})
+
+	result, err := service.CreatePlanFromRequest(context.Background(), &CreatePlanRequest{
+		PrecheckRequest: PrecheckRequest{
+			ClusterID:      1,
+			TargetVersion:  "2.3.12",
+			ConnectorNames: []string{"jdbc"},
+		},
+	}, 7)
+	if err != nil {
+		t.Fatalf("CreatePlanFromRequest returned error: %v", err)
+	}
+	if result == nil || result.Plan == nil {
+		t.Fatalf("expected plan to be created")
+	}
+	if got := len(result.Plan.Snapshot.ConnectorManifest.Libraries); got != 1 {
+		t.Fatalf("expected 1 lib dependency, got %d", got)
+	}
+	if got := len(result.Plan.Snapshot.ConnectorManifest.PluginDeps); got != 1 {
+		t.Fatalf("expected 1 isolated dependency, got %d", got)
+	}
+	pluginDep := result.Plan.Snapshot.ConnectorManifest.PluginDeps[0]
+	if pluginDep.TargetDir != "plugins/connector-jdbc" {
+		t.Fatalf("expected plugin target dir to be preserved, got %q", pluginDep.TargetDir)
+	}
+	if pluginDep.RelativePath != "connector-jdbc/oracle-extra-2.0.0.jar" {
+		t.Fatalf("expected plugin relative path to be generated, got %q", pluginDep.RelativePath)
+	}
+}
+
+func TestService_CreatePlanFromRequest_usesTargetPluginVersionForDependencies(t *testing.T) {
+	database := openTestDB(t)
+	repo := NewRepository(database)
+	service := newPlanningService(t, repo)
+	packagePath := createTestPackage(t, map[string]string{
+		"config/seatunnel.yaml": "seatunnel: default",
+	})
+	service.SetPackageProvider(&stubPackageProvider{info: &installerapp.PackageInfo{
+		Version:   "2.3.12",
+		FileName:  "apache-seatunnel-2.3.12-bin.tar.gz",
+		IsLocal:   true,
+		LocalPath: packagePath,
+		FileSize:  4096,
+		Checksum:  "abc123",
+	}})
+
+	pluginProvider := &stubPluginProvider{
+		installed: []pluginapp.InstalledPlugin{{
+			PluginName: "jdbc",
+			Version:    "2.3.11",
+			Status:     pluginapp.PluginStatusInstalled,
+		}},
+		local: []pluginapp.LocalPlugin{{
+			Name:          "jdbc",
+			Version:       "2.3.12",
+			Category:      pluginapp.PluginCategoryConnector,
+			ConnectorPath: "/tmp/connector-jdbc-2.3.12.jar",
+			DownloadedAt:  time.Now(),
+		}},
+		dependencies: map[string][]pluginapp.PluginDependency{
+			"jdbc": {{
+				GroupID:    "org.example",
+				ArtifactID: "oracle-extra",
+				Version:    "2.0.0",
+				TargetDir:  "plugins/connector-jdbc",
+			}},
+		},
+	}
+	service.SetPluginProvider(pluginProvider)
+
+	result, err := service.CreatePlanFromRequest(context.Background(), &CreatePlanRequest{
+		PrecheckRequest: PrecheckRequest{
+			ClusterID:      1,
+			TargetVersion:  "2.3.12",
+			ConnectorNames: []string{"jdbc"},
+		},
+	}, 7)
+	if err != nil {
+		t.Fatalf("CreatePlanFromRequest returned error: %v", err)
+	}
+	if result == nil || result.Plan == nil {
+		t.Fatalf("expected plan to be created")
+	}
+	gotVersions := pluginProvider.requested["jdbc"]
+	if len(gotVersions) == 0 {
+		t.Fatalf("expected dependency lookup to be recorded")
+	}
+	if gotVersions[len(gotVersions)-1] != "2.3.12" {
+		t.Fatalf("expected dependency lookup to use target plugin version 2.3.12, got %+v", gotVersions)
 	}
 }
 

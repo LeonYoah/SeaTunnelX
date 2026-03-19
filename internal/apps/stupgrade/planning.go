@@ -58,7 +58,7 @@ type PackageProvider interface {
 type PluginProvider interface {
 	ListInstalledPlugins(ctx context.Context, clusterID uint) ([]pluginapp.InstalledPlugin, error)
 	ListLocalPlugins() ([]pluginapp.LocalPlugin, error)
-	GetPluginDependencies(ctx context.Context, pluginName string) ([]pluginapp.PluginDependency, error)
+	GetPluginDependenciesForVersion(ctx context.Context, pluginName, version string) ([]pluginapp.PluginDependency, error)
 	GetPluginArtifactID(pluginName string) string
 	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error
 }
@@ -336,13 +336,15 @@ func (s *Service) buildConnectorManifest(ctx context.Context, clusterID uint, ta
 		ReplacementMode: "package_overlay",
 		Connectors:      make([]ConnectorArtifact, 0),
 		Libraries:       make([]LibraryArtifact, 0),
+		PluginDeps:      make([]PluginDependencyArtifact, 0),
 	}
 	issues := make([]BlockingIssue, 0)
 
-	requiredConnectors, err := s.resolveRequiredConnectors(ctx, clusterID, connectorNames)
+	installedPlugins, err := s.pluginProvider.ListInstalledPlugins(ctx, clusterID)
 	if err != nil {
 		return manifest, nil, err
 	}
+	requiredConnectors := resolveRequiredConnectors(installedPlugins, connectorNames)
 	localPlugins, err := s.pluginProvider.ListLocalPlugins()
 	if err != nil {
 		return manifest, nil, err
@@ -376,7 +378,7 @@ func (s *Service) buildConnectorManifest(ctx context.Context, clusterID uint, ta
 			Required:   true,
 		})
 
-		dependencies, err := s.pluginProvider.GetPluginDependencies(ctx, connectorName)
+		dependencies, err := s.pluginProvider.GetPluginDependenciesForVersion(ctx, connectorName, targetVersion)
 		if err != nil {
 			return manifest, nil, err
 		}
@@ -385,11 +387,32 @@ func (s *Service) buildConnectorManifest(ctx context.Context, clusterID uint, ta
 			if strings.TrimSpace(version) == "" {
 				version = targetVersion
 			}
+			fileName := fmt.Sprintf("%s-%s.jar", dependency.ArtifactID, version)
+			targetDir := strings.TrimSpace(dependency.TargetDir)
+			if strings.HasPrefix(targetDir, "plugins/") {
+				relativePath := strings.TrimPrefix(targetDir, "plugins/")
+				relativePath = strings.TrimPrefix(relativePath, "/")
+				if relativePath != "" {
+					relativePath = fmt.Sprintf("%s/%s", relativePath, fileName)
+				} else {
+					relativePath = fileName
+				}
+				manifest.PluginDeps = append(manifest.PluginDeps, PluginDependencyArtifact{
+					GroupID:      dependency.GroupID,
+					ArtifactID:   dependency.ArtifactID,
+					Version:      version,
+					FileName:     fileName,
+					Source:       AssetSourceLocalPlugin,
+					TargetDir:    targetDir,
+					RelativePath: relativePath,
+				})
+				continue
+			}
 			manifest.Libraries = append(manifest.Libraries, LibraryArtifact{
 				GroupID:    dependency.GroupID,
 				ArtifactID: dependency.ArtifactID,
 				Version:    version,
-				FileName:   fmt.Sprintf("%s-%s.jar", dependency.ArtifactID, version),
+				FileName:   fileName,
 				Source:     AssetSourceLocalPlugin,
 				Scope:      dependency.TargetDir,
 			})
@@ -405,22 +428,24 @@ func (s *Service) buildConnectorManifest(ctx context.Context, clusterID uint, ta
 		}
 		return manifest.Libraries[i].ArtifactID < manifest.Libraries[j].ArtifactID
 	})
+	sort.Slice(manifest.PluginDeps, func(i, j int) bool {
+		if manifest.PluginDeps[i].RelativePath == manifest.PluginDeps[j].RelativePath {
+			return manifest.PluginDeps[i].ArtifactID < manifest.PluginDeps[j].ArtifactID
+		}
+		return manifest.PluginDeps[i].RelativePath < manifest.PluginDeps[j].RelativePath
+	})
 	return manifest, issues, nil
 }
 
-func (s *Service) resolveRequiredConnectors(ctx context.Context, clusterID uint, connectorNames []string) ([]string, error) {
+func resolveRequiredConnectors(installedPlugins []pluginapp.InstalledPlugin, connectorNames []string) []string {
 	if len(connectorNames) > 0 {
-		return dedupeSortedStrings(connectorNames), nil
-	}
-	installedPlugins, err := s.pluginProvider.ListInstalledPlugins(ctx, clusterID)
-	if err != nil {
-		return nil, err
+		return dedupeSortedStrings(connectorNames)
 	}
 	required := make([]string, 0, len(installedPlugins))
 	for _, installedPlugin := range installedPlugins {
 		required = append(required, installedPlugin.PluginName)
 	}
-	return dedupeSortedStrings(required), nil
+	return dedupeSortedStrings(required)
 }
 
 func (s *Service) buildConfigMergePlan(ctx context.Context, clusterID uint, targetVersion, packagePath string) (ConfigMergePlan, []BlockingIssue, error) {
@@ -559,7 +584,7 @@ func blockingIssue(category CheckCategory, code, message string, metadata map[st
 	return BlockingIssue{
 		Category: category,
 		Code:     code,
-		Message:  message,
+		Message:  normalizeUserVisibleText(message),
 		Blocking: true,
 		Metadata: metadata,
 	}

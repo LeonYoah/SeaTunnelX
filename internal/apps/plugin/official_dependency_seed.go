@@ -6,8 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -15,8 +14,10 @@ import (
 var officialDependencySeedFS embed.FS
 
 type officialDependencySeedFile struct {
-	SeatunnelVersion   string                              `json:"seatunnel_version"`
+	RequestedVersion   string                              `json:"-"`
+	TemplateName       string                              `json:"template_name"`
 	TemplateVersion    string                              `json:"template_version"`
+	ReviewedVersions   []string                            `json:"reviewed_versions"`
 	Notes              []string                            `json:"notes"`
 	HiddenPlugins      []string                            `json:"hidden_plugins"`
 	Catalog            []officialDependencySeedCatalog     `json:"catalog"`
@@ -88,28 +89,22 @@ func (s *Service) ensureBundledSeedLoaded(ctx context.Context, version string) {
 }
 
 func loadOfficialDependencySeed(version string) (*officialDependencySeedFile, error) {
-	path := filepath.Join("seed", fmt.Sprintf("seatunnel-%s.json", version))
-	content, err := officialDependencySeedFS.ReadFile(path)
+	content, err := officialDependencySeedFS.ReadFile("seed/seatunnel-plugins.json")
 	if err != nil {
-		fallbackPath := filepath.Join("seed", "seatunnel-2.3.12.json")
-		content, err = officialDependencySeedFS.ReadFile(fallbackPath)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	var seed officialDependencySeedFile
 	if err := json.Unmarshal(content, &seed); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(seed.TemplateVersion) == "" {
-		seed.TemplateVersion = seed.SeatunnelVersion
-	}
-	seed.SeatunnelVersion = version
+	normalizeOfficialDependencySeed(&seed)
+	seed.RequestedVersion = version
 	return &seed, nil
 }
 
 func (s *Service) loadOfficialDependencySeedIntoDB(ctx context.Context, seed *officialDependencySeedFile) error {
 	catalogByName := make(map[string]officialDependencySeedCatalog, len(seed.Catalog))
+	keepKeys := make(map[string]struct{})
 	for _, item := range seed.Catalog {
 		catalogByName[item.Name] = item
 	}
@@ -120,24 +115,25 @@ func (s *Service) loadOfficialDependencySeedIntoDB(ctx context.Context, seed *of
 			continue
 		}
 		profile := PluginDependencyProfile{
-			SeatunnelVersion:         seed.SeatunnelVersion,
+			SeatunnelVersion:         seed.RequestedVersion,
 			PluginName:               item,
 			ArtifactID:               catalog.ArtifactID,
 			ProfileKey:               "default",
 			ProfileName:              "Default",
 			EngineScope:              "zeta",
 			SourceKind:               PluginDependencyProfileSourceOfficialSeed,
-			BaselineVersionUsed:      seed.TemplateVersion,
-			ResolutionMode:           defaultSeedResolutionMode(seed.TemplateVersion, seed.SeatunnelVersion),
-			TargetDir:                defaultPluginDependencyTargetDir(seed.SeatunnelVersion, catalog.ArtifactID),
+			BaselineVersionUsed:      resolvedSeedBaselineVersion(seed, seed.RequestedVersion),
+			ResolutionMode:           defaultSeedResolutionMode(seed, seed.RequestedVersion),
+			TargetDir:                defaultPluginDependencyTargetDir(seed.RequestedVersion, catalog.ArtifactID),
 			AppliesTo:                "*",
 			DocSourceURL:             catalog.DocURL,
 			Confidence:               "manual",
 			IsDefault:                true,
 			NoAdditionalDependencies: true,
-			ContentHash:              hashOfficialSeedValue(seed.SeatunnelVersion, item, "default", "not_required"),
+			ContentHash:              hashOfficialSeedValue(seed.RequestedVersion, item, "default", "not_required"),
 			Items:                    []PluginDependencyProfileItem{},
 		}
+		keepKeys[profile.PluginName+":"+profile.ProfileKey+":"+profile.EngineScope] = struct{}{}
 		if err := s.repo.UpsertDependencyProfile(ctx, &profile); err != nil {
 			return err
 		}
@@ -148,9 +144,9 @@ func (s *Service) loadOfficialDependencySeedIntoDB(ctx context.Context, seed *of
 		for _, item := range spec.Items {
 			targetDir := strings.TrimSpace(item.TargetDir)
 			if targetDir == "" {
-				targetDir = firstNonEmpty(spec.TargetDir, defaultPluginDependencyTargetDir(seed.SeatunnelVersion, spec.ArtifactID))
+				targetDir = firstNonEmpty(spec.TargetDir, defaultPluginDependencyTargetDir(seed.RequestedVersion, spec.ArtifactID))
 			}
-			targetDir = adjustSeedTargetDirForVersion(targetDir, seed.SeatunnelVersion)
+			targetDir = adjustSeedTargetDirForVersion(targetDir, seed.RequestedVersion)
 			items = append(items, PluginDependencyProfileItem{
 				GroupID:    item.GroupID,
 				ArtifactID: item.ArtifactID,
@@ -161,20 +157,20 @@ func (s *Service) loadOfficialDependencySeedIntoDB(ctx context.Context, seed *of
 				Note:       item.Note,
 			})
 		}
-		if !seedProfileAppliesToRequestedVersion(spec, seed.SeatunnelVersion) {
+		if !seedProfileAppliesToRequestedVersion(spec, seed.RequestedVersion) {
 			continue
 		}
 		profile := PluginDependencyProfile{
-			SeatunnelVersion:         seed.SeatunnelVersion,
+			SeatunnelVersion:         seed.RequestedVersion,
 			PluginName:               spec.PluginName,
 			ArtifactID:               spec.ArtifactID,
 			ProfileKey:               spec.ProfileKey,
 			ProfileName:              firstNonEmpty(spec.ProfileName, spec.ProfileKey),
 			EngineScope:              spec.EngineScope,
 			SourceKind:               PluginDependencyProfileSourceOfficialSeed,
-			BaselineVersionUsed:      firstNonEmpty(spec.BaselineVersionUsed, seed.TemplateVersion),
-			ResolutionMode:           seedProfileResolutionMode(spec, seed.TemplateVersion, seed.SeatunnelVersion),
-			TargetDir:                adjustSeedTargetDirForVersion(firstNonEmpty(spec.TargetDir, defaultPluginDependencyTargetDir(seed.SeatunnelVersion, spec.ArtifactID)), seed.SeatunnelVersion),
+			BaselineVersionUsed:      resolvedSeedProfileBaselineVersion(spec, seed, seed.RequestedVersion),
+			ResolutionMode:           seedProfileResolutionMode(spec, seed, seed.RequestedVersion),
+			TargetDir:                adjustSeedTargetDirForVersion(firstNonEmpty(spec.TargetDir, defaultPluginDependencyTargetDir(seed.RequestedVersion, spec.ArtifactID)), seed.RequestedVersion),
 			AppliesTo:                firstNonEmpty(spec.AppliesTo, "*"),
 			IncludeVersions:          strings.Join(spec.IncludeVersions, ","),
 			ExcludedVersions:         strings.Join(spec.ExcludeVersions, ","),
@@ -183,29 +179,122 @@ func (s *Service) loadOfficialDependencySeedIntoDB(ctx context.Context, seed *of
 			Confidence:               spec.Confidence,
 			IsDefault:                spec.IsDefault,
 			NoAdditionalDependencies: spec.NoAdditionalDependencies,
-			ContentHash:              hashOfficialSeedValue(seed.SeatunnelVersion, spec.PluginName, spec.ProfileKey, spec.DocSourceURL),
+			ContentHash:              hashOfficialSeedValue(seed.RequestedVersion, spec.PluginName, spec.ProfileKey, spec.DocSourceURL),
 			Items:                    items,
 		}
+		keepKeys[profile.PluginName+":"+profile.ProfileKey+":"+profile.EngineScope] = struct{}{}
 		if err := s.repo.UpsertDependencyProfile(ctx, &profile); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return s.repo.DeleteStaleDependencyProfiles(ctx, seed.RequestedVersion, PluginDependencyProfileSourceOfficialSeed, keepKeys)
 }
 
-func defaultSeedResolutionMode(templateVersion, requestedVersion string) DependencyResolutionMode {
-	if strings.TrimSpace(templateVersion) == strings.TrimSpace(requestedVersion) {
+func normalizeOfficialDependencySeed(seed *officialDependencySeedFile) {
+	if seed == nil {
+		return
+	}
+	if strings.TrimSpace(seed.TemplateName) == "" {
+		seed.TemplateName = "seatunnel-plugins"
+	}
+	seed.ReviewedVersions = normalizeSeedReviewedVersions(seed.ReviewedVersions)
+	if strings.TrimSpace(seed.TemplateVersion) == "" {
+		if len(seed.ReviewedVersions) > 0 {
+			seed.TemplateVersion = seed.ReviewedVersions[0]
+		}
+	}
+	if strings.TrimSpace(seed.TemplateVersion) != "" {
+		found := false
+		for _, item := range seed.ReviewedVersions {
+			if strings.TrimSpace(item) == strings.TrimSpace(seed.TemplateVersion) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			seed.ReviewedVersions = append(seed.ReviewedVersions, strings.TrimSpace(seed.TemplateVersion))
+			seed.ReviewedVersions = normalizeSeedReviewedVersions(seed.ReviewedVersions)
+		}
+	}
+}
+
+func normalizeSeedReviewedVersions(versions []string) []string {
+	unique := make(map[string]struct{}, len(versions))
+	result := make([]string, 0, len(versions))
+	for _, item := range versions {
+		version := strings.TrimSpace(item)
+		if version == "" {
+			continue
+		}
+		if _, exists := unique[version]; exists {
+			continue
+		}
+		unique[version] = struct{}{}
+		result = append(result, version)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return comparePluginVersions(result[i], result[j]) < 0
+	})
+	return result
+}
+
+func seedHasExactVersion(seed *officialDependencySeedFile, requestedVersion string) bool {
+	requestedVersion = strings.TrimSpace(requestedVersion)
+	if seed == nil || requestedVersion == "" {
+		return false
+	}
+	for _, item := range seed.ReviewedVersions {
+		if strings.TrimSpace(item) == requestedVersion {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvedSeedBaselineVersion(seed *officialDependencySeedFile, requestedVersion string) string {
+	requestedVersion = strings.TrimSpace(requestedVersion)
+	if seed == nil {
+		return requestedVersion
+	}
+	if seedHasExactVersion(seed, requestedVersion) {
+		return requestedVersion
+	}
+	best := ""
+	for _, item := range seed.ReviewedVersions {
+		version := strings.TrimSpace(item)
+		if version == "" {
+			continue
+		}
+		if comparePluginVersions(version, requestedVersion) <= 0 && (best == "" || comparePluginVersions(version, best) > 0) {
+			best = version
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return strings.TrimSpace(seed.TemplateVersion)
+}
+
+func defaultSeedResolutionMode(seed *officialDependencySeedFile, requestedVersion string) DependencyResolutionMode {
+	if seedHasExactVersion(seed, requestedVersion) {
 		return DependencyResolutionModeExact
 	}
 	return DependencyResolutionModeFallback
 }
 
-func seedProfileResolutionMode(spec officialDependencySeedProfileSpec, templateVersion, requestedVersion string) DependencyResolutionMode {
-	if spec.ResolutionMode != "" && strings.TrimSpace(templateVersion) == strings.TrimSpace(requestedVersion) {
+func resolvedSeedProfileBaselineVersion(spec officialDependencySeedProfileSpec, seed *officialDependencySeedFile, requestedVersion string) string {
+	if value := strings.TrimSpace(spec.BaselineVersionUsed); value != "" && value != strings.TrimSpace(seed.TemplateVersion) {
+		return value
+	}
+	return resolvedSeedBaselineVersion(seed, requestedVersion)
+}
+
+func seedProfileResolutionMode(spec officialDependencySeedProfileSpec, seed *officialDependencySeedFile, requestedVersion string) DependencyResolutionMode {
+	if spec.ResolutionMode != "" && seedHasExactVersion(seed, requestedVersion) {
 		return spec.ResolutionMode
 	}
-	return defaultSeedResolutionMode(templateVersion, requestedVersion)
+	return defaultSeedResolutionMode(seed, requestedVersion)
 }
 
 func seedProfileAppliesToRequestedVersion(spec officialDependencySeedProfileSpec, requestedVersion string) bool {

@@ -80,6 +80,39 @@ func TestInstallerManager_SyncLibManifest_preservesExistingFiles(t *testing.T) {
 	}
 }
 
+func TestInstallerManager_SyncPluginsManifest_preservesExistingFiles(t *testing.T) {
+	manager := NewInstallerManager()
+	installDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(installDir, "plugins", "connector-jdbc", "ojdbc8.jar"), "jdbc")
+	mustWriteFile(t, filepath.Join(installDir, "plugins", "connector-hive", "hive-jdbc.jar"), "hive")
+
+	if err := manager.SyncPluginsManifest(installDir, []string{"connector-jdbc/ojdbc8.jar"}); err != nil {
+		t.Fatalf("SyncPluginsManifest returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "plugins", "connector-jdbc", "ojdbc8.jar")); err != nil {
+		t.Fatalf("expected jdbc isolated dependency to remain: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "plugins", "connector-hive", "hive-jdbc.jar")); err != nil {
+		t.Fatalf("expected bundled isolated dependency to remain: %v", err)
+	}
+}
+
+func TestInstallerManager_RunSmokeTestTemplate_executesTemplateJob(t *testing.T) {
+	manager := NewInstallerManager()
+	installDir := t.TempDir()
+	mustWriteExecutable(t, filepath.Join(installDir, "bin", "seatunnel-cluster.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	mustWriteExecutable(t, filepath.Join(installDir, "bin", "seatunnel.sh"), "#!/usr/bin/env bash\necho smoke-ok\n")
+	mustWriteFile(t, filepath.Join(installDir, "config", "v2.batch.config.template"), "env {}")
+
+	output, err := manager.RunSmokeTestTemplate(context.Background(), installDir)
+	if err != nil {
+		t.Fatalf("RunSmokeTestTemplate returned error: %v", err)
+	}
+	if output != "smoke-ok" {
+		t.Fatalf("expected smoke output, got %q", output)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -87,5 +120,15 @@ func mustWriteFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write %s: %v", path, err)
+	}
+}
+
+func mustWriteExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create dir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		t.Fatalf("failed to write executable %s: %v", path, err)
 	}
 }

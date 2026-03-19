@@ -31,6 +31,11 @@
 - 需要**本地重启 / 发布前后端服务**时，优先使用仓库根目录 `./scripts/restart.sh`。
   - 原因：该脚本已包含后端构建、前端 `next build`、standalone 组装、PM2 重启与保存。
   - **不要**在执行 `./scripts/restart.sh` 之前再额外跑一次 `pnpm run pack:standalone`，除非你是在单独排查前端 standalone 构建问题。
+- TypeScript 类型检查默认可复用增量缓存：`frontend/tsconfig.json` 已启用 `"incremental": true`。
+  - 常规检查可直接运行：`cd frontend && pnpm exec tsc --noEmit`
+  - **不要**在日常开发时主动删除 `frontend/tsconfig.tsbuildinfo`，否则会退回冷启动全量检查。
+  - 2026-03-20 实测：冷启动约 **49.8s**，紧接着的增量复跑约 **9~12s**。
+  - 仅在怀疑类型缓存脏了、结果异常时，才手动删除 `tsconfig.tsbuildinfo` 后重跑一次全量检查。
 
 ## 注释约定
 

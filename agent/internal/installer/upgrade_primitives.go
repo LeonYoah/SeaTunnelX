@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -73,6 +74,12 @@ func (m *InstallerManager) SyncConnectorsManifest(installDir string, keepFiles [
 // SyncLibManifest prepares the lib directory while preserving package-bundled assets.
 func (m *InstallerManager) SyncLibManifest(installDir string, keepFiles []string) error {
 	return syncManifestDir(filepath.Join(installDir, "lib"), keepFiles)
+}
+
+// SyncPluginsManifest 根据 manifest 准备 plugins 目录，但保留安装包自带内容。
+// SyncPluginsManifest prepares the plugins directory while preserving package-bundled assets.
+func (m *InstallerManager) SyncPluginsManifest(installDir string, keepFiles []string) error {
+	return syncManifestDir(filepath.Join(installDir, "plugins"), keepFiles)
 }
 
 // RestoreInstallDir 从备份恢复安装目录。
@@ -129,6 +136,41 @@ func (m *InstallerManager) VerifyInstallLayout(installDir string) error {
 	return nil
 }
 
+// RunSmokeTestTemplate 在升级后的安装目录中执行模板任务，验证集群可用性。
+// RunSmokeTestTemplate executes the bundled template job under the upgraded install directory.
+func (m *InstallerManager) RunSmokeTestTemplate(ctx context.Context, installDir string) (string, error) {
+	if installDir == "" {
+		return "", fmt.Errorf("install_dir is required")
+	}
+	if err := m.VerifyInstallLayout(installDir); err != nil {
+		return "", err
+	}
+
+	scriptPath := filepath.Join(installDir, "bin", "seatunnel.sh")
+	configPath := filepath.Join(installDir, "config", "v2.batch.config.template")
+	if _, err := os.Stat(scriptPath); err != nil {
+		return "", fmt.Errorf("smoke test script is missing: %w", err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		return "", fmt.Errorf("smoke test config is missing: %w", err)
+	}
+
+	smokeCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(smokeCtx, "bash", "-lc", "./bin/seatunnel.sh -c config/v2.batch.config.template")
+	cmd.Dir = installDir
+	output, err := cmd.CombinedOutput()
+	summary := summarizeCommandOutput(string(output))
+	if err != nil {
+		if summary != "" {
+			return "", fmt.Errorf("模板任务执行失败: %w; 输出: %s", err, summary)
+		}
+		return "", fmt.Errorf("模板任务执行失败: %w", err)
+	}
+	return summary, nil
+}
+
 func syncManifestDir(dir string, keepFiles []string) error {
 	if dir == "" {
 		return fmt.Errorf("target dir is required")
@@ -143,6 +185,18 @@ func syncManifestDir(dir string, keepFiles []string) error {
 	// 升级时必须保留目标安装包自带的 connectors/lib 资产，因此这里明确禁止做破坏式清理。
 	_ = keepFiles
 	return nil
+}
+
+func summarizeCommandOutput(output string) string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return ""
+	}
+	const maxLen = 1200
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[len(trimmed)-maxLen:]
 }
 
 func copyDirFiltered(src, dst string, skipTopLevel map[string]struct{}) error {

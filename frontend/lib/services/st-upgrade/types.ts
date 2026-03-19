@@ -49,6 +49,7 @@ export type StepCode =
   | 'DISTRIBUTE_PACKAGE'
   | 'SYNC_LIB'
   | 'SYNC_CONNECTORS'
+  | 'SYNC_PLUGINS'
   | 'MERGE_CONFIG'
   | 'STOP_CLUSTER'
   | 'SWITCH_VERSION'
@@ -113,11 +114,24 @@ export interface LibraryArtifact {
   scope?: string;
 }
 
+export interface PluginDependencyArtifact {
+  group_id: string;
+  artifact_id: string;
+  version: string;
+  file_name: string;
+  local_path: string;
+  checksum?: string;
+  source: AssetSource;
+  target_dir: string;
+  relative_path: string;
+}
+
 export interface ConnectorManifest {
   version: string;
   replacement_mode: string;
   connectors: ConnectorArtifact[];
   libraries: LibraryArtifact[];
+  plugin_dependencies: PluginDependencyArtifact[];
 }
 
 export interface ConfigConflict {

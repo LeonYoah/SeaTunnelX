@@ -457,3 +457,29 @@ func (r *Repository) UpsertDependencyProfile(ctx context.Context, profile *Plugi
 		return tx.db.WithContext(ctx).Create(&items).Error
 	})
 }
+
+// DeleteStaleDependencyProfiles removes official profiles that are no longer present in the latest seed for one version.
+// DeleteStaleDependencyProfiles 删除某个版本中最新 seed 已不存在的官方依赖画像。
+func (r *Repository) DeleteStaleDependencyProfiles(ctx context.Context, seatunnelVersion string, sourceKind PluginDependencyProfileSource, keepKeys map[string]struct{}) error {
+	return r.Transaction(ctx, func(tx *Repository) error {
+		var profiles []PluginDependencyProfile
+		if err := tx.db.WithContext(ctx).
+			Where("seatunnel_version = ? AND source_kind = ?", seatunnelVersion, sourceKind).
+			Find(&profiles).Error; err != nil {
+			return err
+		}
+		for _, profile := range profiles {
+			key := profile.PluginName + ":" + profile.ProfileKey + ":" + profile.EngineScope
+			if _, ok := keepKeys[key]; ok {
+				continue
+			}
+			if err := tx.db.WithContext(ctx).Where("profile_id = ?", profile.ID).Delete(&PluginDependencyProfileItem{}).Error; err != nil {
+				return err
+			}
+			if err := tx.db.WithContext(ctx).Delete(&PluginDependencyProfile{}, profile.ID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

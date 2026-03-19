@@ -110,7 +110,7 @@ func (s *Service) executeTask(ctx context.Context, taskID uint) (*UpgradeTask, e
 	if err := s.executePlanSteps(ctx, task, plan, backupPaths, nodesByKey, nodesByClusterNodeID); err != nil {
 		rollbackEligible := canRollbackTask(task.Steps)
 		task.Status = ExecutionStatusFailed
-		task.FailureReason = err.Error()
+		task.FailureReason = normalizeUserVisibleText(err.Error())
 		if rollbackEligible {
 			task.RollbackStatus = ExecutionStatusRollbackRunning
 			if updateErr := s.UpdateTask(ctx, task); updateErr != nil {
@@ -119,7 +119,7 @@ func (s *Service) executeTask(ctx context.Context, taskID uint) (*UpgradeTask, e
 			rollbackErr := s.rollbackTask(ctx, task, plan, backupPaths, nodesByKey, nodesByClusterNodeID)
 			if rollbackErr != nil {
 				task.RollbackStatus = ExecutionStatusRollbackFailed
-				task.RollbackReason = rollbackErr.Error()
+				task.RollbackReason = normalizeUserVisibleText(rollbackErr.Error())
 				_ = s.finalizeNodeExecutionsRollbackFailed(ctx, task, rollbackErr.Error())
 				_ = s.recordFailureClosureStep(ctx, task, fmt.Sprintf("upgrade failed at %s: %s; rollback failed: %s / 升级在 %s 失败：%s；回滚失败：%s", task.FailureStep, task.FailureReason, rollbackErr.Error(), task.FailureStep, task.FailureReason, rollbackErr.Error()))
 			} else {
@@ -128,7 +128,7 @@ func (s *Service) executeTask(ctx context.Context, taskID uint) (*UpgradeTask, e
 			}
 		} else {
 			task.RollbackStatus = ExecutionStatusSkipped
-			_ = s.finalizeNodeExecutionsFailed(ctx, task, err.Error())
+			_ = s.finalizeNodeExecutionsFailed(ctx, task, normalizeUserVisibleText(err.Error()))
 			_ = s.recordFailureClosureStep(ctx, task, fmt.Sprintf("upgrade failed before rollback point: %s / 升级在回滚点之前失败：%s", err.Error(), err.Error()))
 		}
 		completedAt := time.Now()
@@ -154,6 +154,7 @@ func (s *Service) executeTask(ctx context.Context, taskID uint) (*UpgradeTask, e
 func (s *Service) executePlanSteps(ctx context.Context, task *UpgradeTask, plan UpgradePlanSnapshot, backupPaths map[string]string, nodesByKey map[string]*UpgradeNodeExecution, nodesByClusterNodeID map[uint]*UpgradeNodeExecution) error {
 	connectorKeepFiles := collectConnectorFileNames(plan.ConnectorManifest.Connectors)
 	libraryKeepFiles := collectLibraryFileNames(plan.ConnectorManifest.Libraries)
+	pluginKeepFiles := collectPluginDependencyPaths(plan.ConnectorManifest.PluginDeps)
 
 	for i := range task.Steps {
 		step := &task.Steps[i]
@@ -174,7 +175,15 @@ func (s *Service) executePlanSteps(ctx context.Context, task *UpgradeTask, plan 
 			successMessage = fmt.Sprintf("package %s passed checksum gate / 安装包 %s 通过 checksum 门禁", plan.TargetVersion, plan.TargetVersion)
 		case StepCodePrecheckConnector:
 			stepErr = s.markPlanCheckStep(plan.ConnectorManifest.Version != "", "connector manifest is missing / connector 清单缺失")
-			successMessage = fmt.Sprintf("connector manifest ready with %d connectors and %d libs / connector 清单已就绪，包含 %d 个 connector、%d 个 lib", len(plan.ConnectorManifest.Connectors), len(plan.ConnectorManifest.Libraries), len(plan.ConnectorManifest.Connectors), len(plan.ConnectorManifest.Libraries))
+			successMessage = fmt.Sprintf(
+				"plugin manifest ready with %d connectors, %d libs and %d isolated dependencies / 插件清单已就绪，包含 %d 个 connector、%d 个 lib、%d 个隔离依赖",
+				len(plan.ConnectorManifest.Connectors),
+				len(plan.ConnectorManifest.Libraries),
+				len(plan.ConnectorManifest.PluginDeps),
+				len(plan.ConnectorManifest.Connectors),
+				len(plan.ConnectorManifest.Libraries),
+				len(plan.ConnectorManifest.PluginDeps),
+			)
 		case StepCodeBackup:
 			stepErr = s.executeBackupStep(ctx, task, step, plan.NodeTargets, backupPaths, nodesByKey)
 			successMessage = fmt.Sprintf("backed up %d node targets / 已完成 %d 个节点目标的备份", len(plan.NodeTargets), len(plan.NodeTargets))
@@ -187,6 +196,9 @@ func (s *Service) executePlanSteps(ctx context.Context, task *UpgradeTask, plan 
 		case StepCodeSyncConnectors:
 			stepErr = s.executeSyncConnectorsStep(ctx, task, step, plan, connectorKeepFiles, nodesByKey)
 			successMessage = fmt.Sprintf("synchronized %d connectors on %d node targets / 已在 %d 个节点目标上同步 %d 个 connector", len(plan.ConnectorManifest.Connectors), len(plan.NodeTargets), len(plan.NodeTargets), len(plan.ConnectorManifest.Connectors))
+		case StepCodeSyncPlugins:
+			stepErr = s.executeSyncPluginsStep(ctx, task, step, plan.NodeTargets, pluginKeepFiles, nodesByKey)
+			successMessage = fmt.Sprintf("synchronized %d isolated dependencies on %d node targets / 已在 %d 个节点目标上同步 %d 个隔离依赖", len(pluginKeepFiles), len(plan.NodeTargets), len(plan.NodeTargets), len(pluginKeepFiles))
 		case StepCodeMergeConfig:
 			stepErr = s.executeMergeConfigStep(ctx, task, step, plan, nodesByKey)
 			successMessage = fmt.Sprintf("applied %d merged config files / 已应用 %d 个合并后的配置文件", len(plan.ConfigMergePlan.Files), len(plan.ConfigMergePlan.Files))
@@ -202,6 +214,8 @@ func (s *Service) executePlanSteps(ctx context.Context, task *UpgradeTask, plan 
 		case StepCodeHealthCheck:
 			stepErr = s.executeHealthCheckStep(ctx, task, step, plan.NodeTargets, nodesByKey)
 			successMessage = fmt.Sprintf("health checks passed on %d node targets / %d 个节点目标健康检查通过", len(plan.NodeTargets), len(plan.NodeTargets))
+		case StepCodeSmokeTest:
+			successMessage, stepErr = s.executeSmokeTestStep(ctx, task, step, plan.NodeTargets, nodesByKey)
 		case StepCodeComplete:
 			successMessage = "upgrade workflow completed / 升级工作流执行完成"
 		default:
@@ -234,7 +248,7 @@ func (s *Service) rollbackTask(ctx context.Context, task *UpgradeTask, plan Upgr
 	restartStep := rollbackSteps[StepCodeRollbackRestart]
 	verifyStep := rollbackSteps[StepCodeRollbackVerify]
 	if prepareStep == nil || restoreStep == nil || restartStep == nil || verifyStep == nil {
-		return fmt.Errorf("rollback steps are not fully initialized / 回滚步骤未完整初始化")
+		return fmt.Errorf("回滚步骤未完整初始化")
 	}
 
 	if err := s.startStep(ctx, task, prepareStep); err != nil {
@@ -418,7 +432,7 @@ func (s *Service) executeDistributePackageStep(ctx context.Context, task *Upgrad
 		node := nodesByKey[nodeExecutionKey(target.HostID, target.Role)]
 		agentID, connected := s.agentCommandSender.GetAgentByHostID(target.HostID)
 		if !connected || agentID == "" {
-			err := fmt.Errorf("host %d agent is not connected / 主机 %d 的 Agent 未连接", target.HostID, target.HostID)
+			err := fmt.Errorf("主机 %d 的 Agent 未连接", target.HostID)
 			_ = s.failNodeStep(ctx, step, node, ExecutionStatusFailed, err, "")
 			return err
 		}
@@ -478,7 +492,7 @@ func (s *Service) executeSyncConnectorsStep(ctx context.Context, task *UpgradeTa
 		node := nodesByKey[nodeExecutionKey(target.HostID, target.Role)]
 		agentID, connected := s.agentCommandSender.GetAgentByHostID(target.HostID)
 		if !connected || agentID == "" {
-			err := fmt.Errorf("host %d agent is not connected / 主机 %d 的 Agent 未连接", target.HostID, target.HostID)
+			err := fmt.Errorf("主机 %d 的 Agent 未连接", target.HostID)
 			_ = s.failNodeStep(ctx, step, node, ExecutionStatusFailed, err, "")
 			return err
 		}
@@ -505,6 +519,28 @@ func (s *Service) executeSyncConnectorsStep(ctx context.Context, task *UpgradeTa
 			return err
 		}
 		if err := s.finishNodeStep(ctx, step, node, ExecutionStatusRunning, fmt.Sprintf("connector manifest synchronized for %s / %s 的 connector 清单已同步", target.TargetInstallDir, target.TargetInstallDir), manifestSummary); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) executeSyncPluginsStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, nodeTargets []NodeTarget, keepFiles []string, nodesByKey map[string]*UpgradeNodeExecution) error {
+	for _, target := range nodeTargets {
+		node := nodesByKey[nodeExecutionKey(target.HostID, target.Role)]
+		commandSummary := fmt.Sprintf("upgrade sync_plugins_manifest install_dir=%s keep_files=%s", target.TargetInstallDir, strings.Join(keepFiles, ","))
+		if err := s.beginNodeStep(ctx, step, node, ExecutionStatusRunning, fmt.Sprintf("synchronizing isolated dependencies in %s / 正在同步 %s 的隔离依赖", target.TargetInstallDir, target.TargetInstallDir), commandSummary); err != nil {
+			return err
+		}
+		if _, err := s.runManagedCommand(ctx, target.HostID, map[string]string{
+			"sub_command": "sync_plugins_manifest",
+			"install_dir": target.TargetInstallDir,
+			"keep_files":  strings.Join(keepFiles, ","),
+		}); err != nil {
+			_ = s.failNodeStep(ctx, step, node, ExecutionStatusFailed, err, commandSummary)
+			return err
+		}
+		if err := s.finishNodeStep(ctx, step, node, ExecutionStatusRunning, fmt.Sprintf("isolated dependency manifest synchronized for %s / %s 的隔离依赖清单已同步", target.TargetInstallDir, target.TargetInstallDir), commandSummary); err != nil {
 			return err
 		}
 	}
@@ -589,6 +625,55 @@ func (s *Service) executeHealthCheckStep(ctx context.Context, task *UpgradeTask,
 	return nil
 }
 
+func (s *Service) executeSmokeTestStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, nodeTargets []NodeTarget, nodesByKey map[string]*UpgradeNodeExecution) (string, error) {
+	target, ok := selectSmokeTestTarget(nodeTargets)
+	if !ok {
+		message := "未找到可执行升级后可用性验证的节点，已跳过该校验（不阻塞升级）"
+		if err := s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelWarn, LogEventTypeNote, message, ""); err != nil {
+			return "", err
+		}
+		return message, nil
+	}
+
+	node := nodesByKey[nodeExecutionKey(target.HostID, target.Role)]
+	commandSummary := fmt.Sprintf("upgrade run_smoke_test_template install_dir=%s", target.TargetInstallDir)
+	startMessage := fmt.Sprintf("running post-upgrade smoke test in %s / 正在对 %s 执行升级后可用性验证", target.TargetInstallDir, target.TargetInstallDir)
+	if err := s.beginNodeStep(ctx, step, node, ExecutionStatusRunning, startMessage, commandSummary); err != nil {
+		return "", err
+	}
+
+	output, err := s.runManagedCommand(ctx, target.HostID, map[string]string{
+		"sub_command": "run_smoke_test_template",
+		"install_dir": target.TargetInstallDir,
+	})
+	if err != nil {
+		nodeMessage := fmt.Sprintf("smoke test reported warning on %s / %s 的可用性验证出现告警", target.HostName, target.HostName)
+		if finishErr := s.finishNodeStep(ctx, step, node, ExecutionStatusRunning, nodeMessage, commandSummary); finishErr != nil {
+			return "", finishErr
+		}
+		warningDetail := fmt.Sprintf("post-upgrade smoke test warned on %s: %s / %s 的升级后可用性验证告警：%s", target.HostName, err.Error(), target.HostName, err.Error())
+		if logErr := s.appendNodeLog(ctx, step, node, LogLevelWarn, LogEventTypeNote, warningDetail, commandSummary); logErr != nil {
+			return "", logErr
+		}
+		if logErr := s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelWarn, LogEventTypeNote, warningDetail, commandSummary); logErr != nil {
+			return "", logErr
+		}
+		return "已完成升级后可用性验证（有告警，不阻塞升级）", nil
+	}
+
+	successMessage := fmt.Sprintf("smoke test passed on %s / %s 的可用性验证通过", target.HostName, target.HostName)
+	if err := s.finishNodeStep(ctx, step, node, ExecutionStatusRunning, successMessage, commandSummary); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(output) != "" {
+		outputMessage := fmt.Sprintf("post-upgrade smoke test output: %s / 升级后可用性验证输出：%s", output, output)
+		if err := s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeNote, outputMessage, commandSummary); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("已完成升级后可用性验证，执行节点：%s", target.HostName), nil
+}
+
 func (s *Service) executeClusterLifecycleStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, operation clusterapp.OperationType, nodesByClusterNodeID map[uint]*UpgradeNodeExecution, nodeSuccessStatus ExecutionStatus) error {
 	commandSummary := fmt.Sprintf("cluster.%s cluster_id=%d", operation, task.ClusterID)
 	for _, node := range task.NodeExecutions {
@@ -656,7 +741,7 @@ func (s *Service) finalizeNodeExecutionsSuccess(ctx context.Context, task *Upgra
 		node := &task.NodeExecutions[i]
 		node.Status = ExecutionStatusSucceeded
 		node.CurrentStep = StepCodeComplete
-		node.Message = fmt.Sprintf("upgrade to %s completed / 已完成升级到 %s", task.TargetVersion, task.TargetVersion)
+		node.Message = normalizeUserVisibleText(fmt.Sprintf("upgrade to %s completed / 已完成升级到 %s", task.TargetVersion, task.TargetVersion))
 		node.Error = ""
 		now := time.Now()
 		node.CompletedAt = &now
@@ -675,8 +760,8 @@ func (s *Service) finalizeNodeExecutionsFailed(ctx context.Context, task *Upgrad
 		}
 		node.Status = ExecutionStatusFailed
 		node.CurrentStep = task.FailureStep
-		node.Message = fmt.Sprintf("upgrade failed at %s / 升级在 %s 失败", task.FailureStep, task.FailureStep)
-		node.Error = reason
+		node.Message = normalizeUserVisibleText(fmt.Sprintf("upgrade failed at %s / 升级在 %s 失败", task.FailureStep, task.FailureStep))
+		node.Error = normalizeUserVisibleText(reason)
 		now := time.Now()
 		node.CompletedAt = &now
 		if err := s.UpdateNodeExecution(ctx, node); err != nil {
@@ -694,8 +779,8 @@ func (s *Service) finalizeNodeExecutionsRollbackFailed(ctx context.Context, task
 		}
 		node.Status = ExecutionStatusRollbackFailed
 		node.CurrentStep = task.CurrentStep
-		node.Message = "rollback failed / 回滚失败"
-		node.Error = reason
+		node.Message = normalizeUserVisibleText("rollback failed / 回滚失败")
+		node.Error = normalizeUserVisibleText(reason)
 		now := time.Now()
 		node.CompletedAt = &now
 		if err := s.UpdateNodeExecution(ctx, node); err != nil {
@@ -723,7 +808,7 @@ func (s *Service) restoreClusterMetadata(ctx context.Context, clusterID uint, no
 func (s *Service) runManagedCommand(ctx context.Context, hostID uint, params map[string]string) (string, error) {
 	agentID, connected := s.agentCommandSender.GetAgentByHostID(hostID)
 	if !connected || agentID == "" {
-		return "", fmt.Errorf("host %d agent is not connected / 主机 %d 的 Agent 未连接", hostID, hostID)
+		return "", fmt.Errorf("主机 %d 的 Agent 未连接", hostID)
 	}
 	success, output, err := s.agentCommandSender.SendCommand(ctx, agentID, "upgrade", params)
 	if err != nil {
@@ -750,7 +835,7 @@ func (s *Service) startStep(ctx context.Context, task *UpgradeTask, step *Upgrad
 	step.StartedAt = &now
 	step.CompletedAt = nil
 	step.Error = ""
-	step.Message = fmt.Sprintf("%s is running / %s 执行中", step.Code, step.Code)
+	step.Message = normalizeUserVisibleText(fmt.Sprintf("%s is running / %s 执行中", step.Code, step.Code))
 	if err := s.UpdateTaskStep(ctx, step); err != nil {
 		return err
 	}
@@ -769,34 +854,34 @@ func (s *Service) startStep(ctx context.Context, task *UpgradeTask, step *Upgrad
 	if err := s.UpdateTask(ctx, task); err != nil {
 		return err
 	}
-	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelInfo, LogEventTypeStarted, fmt.Sprintf("%s started / %s 开始执行", step.Code, step.Code), "")
+	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelInfo, LogEventTypeStarted, normalizeUserVisibleText(fmt.Sprintf("%s started / %s 开始执行", step.Code, step.Code)), "")
 }
 
 func (s *Service) finishStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, message string) error {
 	now := time.Now()
 	step.Status = ExecutionStatusSucceeded
 	step.CompletedAt = &now
-	step.Message = message
+	step.Message = normalizeUserVisibleText(message)
 	if err := s.UpdateTaskStep(ctx, step); err != nil {
 		return err
 	}
-	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelInfo, LogEventTypeSuccess, message, "")
+	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelInfo, LogEventTypeSuccess, normalizeUserVisibleText(message), "")
 }
 
 func (s *Service) failStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, err error) error {
 	now := time.Now()
 	step.Status = ExecutionStatusFailed
 	step.CompletedAt = &now
-	step.Error = err.Error()
-	step.Message = fmt.Sprintf("%s failed / %s 执行失败", step.Code, step.Code)
+	step.Error = normalizeUserVisibleText(err.Error())
+	step.Message = normalizeUserVisibleText(fmt.Sprintf("%s failed / %s 执行失败", step.Code, step.Code))
 	task.CurrentStep = step.Code
 	task.FailureStep = step.Code
 	if IsRollbackStep(step.Code) {
 		task.RollbackStatus = ExecutionStatusRollbackFailed
-		task.RollbackReason = err.Error()
+		task.RollbackReason = normalizeUserVisibleText(err.Error())
 	} else {
 		task.Status = ExecutionStatusFailed
-		task.FailureReason = err.Error()
+		task.FailureReason = normalizeUserVisibleText(err.Error())
 	}
 	if updateErr := s.UpdateTaskStep(ctx, step); updateErr != nil {
 		return updateErr
@@ -804,7 +889,7 @@ func (s *Service) failStep(ctx context.Context, task *UpgradeTask, step *Upgrade
 	if updateErr := s.UpdateTask(ctx, task); updateErr != nil {
 		return updateErr
 	}
-	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelError, LogEventTypeFailed, err.Error(), "")
+	return s.appendTaskLog(ctx, task.ID, uintPtr(step.ID), nil, step.Code, LogLevelError, LogEventTypeFailed, normalizeUserVisibleText(err.Error()), "")
 }
 
 func (s *Service) beginNodeStep(ctx context.Context, step *UpgradeTaskStep, node *UpgradeNodeExecution, status ExecutionStatus, message, commandSummary string) error {
@@ -815,7 +900,7 @@ func (s *Service) beginNodeStep(ctx context.Context, step *UpgradeTaskStep, node
 	node.TaskStepID = uintPtr(step.ID)
 	node.CurrentStep = step.Code
 	node.Status = status
-	node.Message = message
+	node.Message = normalizeUserVisibleText(message)
 	node.Error = ""
 	if node.StartedAt == nil {
 		node.StartedAt = &now
@@ -824,7 +909,7 @@ func (s *Service) beginNodeStep(ctx context.Context, step *UpgradeTaskStep, node
 	if err := s.UpdateNodeExecution(ctx, node); err != nil {
 		return err
 	}
-	return s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeStarted, message, commandSummary)
+	return s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeStarted, normalizeUserVisibleText(message), commandSummary)
 }
 
 func (s *Service) finishNodeStep(ctx context.Context, step *UpgradeTaskStep, node *UpgradeNodeExecution, status ExecutionStatus, message, commandSummary string) error {
@@ -834,7 +919,7 @@ func (s *Service) finishNodeStep(ctx context.Context, step *UpgradeTaskStep, nod
 	node.TaskStepID = uintPtr(step.ID)
 	node.CurrentStep = step.Code
 	node.Status = status
-	node.Message = message
+	node.Message = normalizeUserVisibleText(message)
 	node.Error = ""
 	if isTerminalNodeStatus(status) {
 		now := time.Now()
@@ -845,7 +930,7 @@ func (s *Service) finishNodeStep(ctx context.Context, step *UpgradeTaskStep, nod
 	if err := s.UpdateNodeExecution(ctx, node); err != nil {
 		return err
 	}
-	return s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeSuccess, message, commandSummary)
+	return s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeSuccess, normalizeUserVisibleText(message), commandSummary)
 }
 
 func (s *Service) failNodeStep(ctx context.Context, step *UpgradeTaskStep, node *UpgradeNodeExecution, status ExecutionStatus, err error, commandSummary string) error {
@@ -856,13 +941,13 @@ func (s *Service) failNodeStep(ctx context.Context, step *UpgradeTaskStep, node 
 	node.TaskStepID = uintPtr(step.ID)
 	node.CurrentStep = step.Code
 	node.Status = status
-	node.Message = fmt.Sprintf("%s failed on %s / %s 在 %s 上失败", step.Code, node.HostName, step.Code, node.HostName)
-	node.Error = err.Error()
+	node.Message = normalizeUserVisibleText(fmt.Sprintf("%s failed on %s / %s 在 %s 上失败", step.Code, node.HostName, step.Code, node.HostName))
+	node.Error = normalizeUserVisibleText(err.Error())
 	node.CompletedAt = &now
 	if updateErr := s.UpdateNodeExecution(ctx, node); updateErr != nil {
 		return updateErr
 	}
-	return s.appendNodeLog(ctx, step, node, LogLevelError, LogEventTypeFailed, err.Error(), commandSummary)
+	return s.appendNodeLog(ctx, step, node, LogLevelError, LogEventTypeFailed, normalizeUserVisibleText(err.Error()), commandSummary)
 }
 
 func (s *Service) appendTaskLog(ctx context.Context, taskID uint, stepID *uint, nodeID *uint, stepCode StepCode, level LogLevel, eventType LogEventType, message, commandSummary string) error {
@@ -887,7 +972,7 @@ func (s *Service) appendStructuredLog(ctx context.Context, taskID uint, stepID *
 		StepCode:        stepCode,
 		Level:           level,
 		EventType:       eventType,
-		Message:         message,
+		Message:         normalizeUserVisibleText(message),
 		CommandSummary:  commandSummary,
 		Metadata:        metadata,
 	})
@@ -902,6 +987,37 @@ func buildNodeExecutionIndexes(nodes []UpgradeNodeExecution) (map[string]*Upgrad
 		byClusterNodeID[node.ClusterNodeID] = node
 	}
 	return byKey, byClusterNodeID
+}
+
+func selectSmokeTestTarget(nodeTargets []NodeTarget) (NodeTarget, bool) {
+	if len(nodeTargets) == 0 {
+		return NodeTarget{}, false
+	}
+
+	bestIndex := -1
+	bestRank := 100
+	for i, target := range nodeTargets {
+		rank := smokeTestRoleRank(target.Role)
+		if rank < bestRank {
+			bestRank = rank
+			bestIndex = i
+		}
+	}
+	if bestIndex < 0 {
+		return NodeTarget{}, false
+	}
+	return nodeTargets[bestIndex], true
+}
+
+func smokeTestRoleRank(role string) int {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "master", "master_worker", "master-worker", "hybrid":
+		return 0
+	case "worker":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func isTerminalNodeStatus(status ExecutionStatus) bool {
@@ -937,6 +1053,16 @@ func collectLibraryFileNames(libraries []LibraryArtifact) []string {
 	for _, library := range libraries {
 		if library.FileName != "" {
 			files = append(files, library.FileName)
+		}
+	}
+	return dedupeSortedStrings(files)
+}
+
+func collectPluginDependencyPaths(dependencies []PluginDependencyArtifact) []string {
+	files := make([]string, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		if strings.TrimSpace(dependency.RelativePath) != "" {
+			files = append(files, dependency.RelativePath)
 		}
 	}
 	return dedupeSortedStrings(files)

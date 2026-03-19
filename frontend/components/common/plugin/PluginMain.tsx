@@ -145,7 +145,6 @@ export function PluginMain() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshingConnectors, setRefreshingConnectors] = useState(false);
-  const [catalogSourceMirror, setCatalogSourceMirror] = useState<string>('');
   const [catalogRefreshedAt, setCatalogRefreshedAt] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
@@ -214,8 +213,7 @@ export function PluginMain() {
    * 加载可用插件列表
    */
   const buildAvailableQueryKey = useCallback(
-    (version: string, mirror: MirrorSource) =>
-      `${version || 'default'}:${mirror}`,
+    (version: string) => `${version || 'default'}`,
     [],
   );
 
@@ -244,7 +242,7 @@ export function PluginMain() {
   const loadPlugins = useCallback(
     async (options?: {force?: boolean}) => {
       const requestVersion = selectedVersion || recommendedVersion || '';
-      const queryKey = buildAvailableQueryKey(requestVersion, selectedMirror);
+      const queryKey = buildAvailableQueryKey(requestVersion);
 
       if (!options?.force && lastLoadedAvailableQueryRef.current === queryKey) {
         return;
@@ -262,11 +260,9 @@ export function PluginMain() {
 
         setPlugins(result.plugins || []);
         setTotal(result.total || (result.plugins || []).length);
-        setCatalogSourceMirror(result.catalog_source_mirror || '');
         setCatalogRefreshedAt(result.catalog_refreshed_at || '');
         lastLoadedAvailableQueryRef.current = buildAvailableQueryKey(
           result.version || requestVersion,
-          selectedMirror,
         );
 
         if (result.version && result.version !== selectedVersion) {
@@ -488,11 +484,9 @@ export function PluginMain() {
         .then((result) => {
           setPlugins(result.plugins || []);
           setTotal(result.total || (result.plugins || []).length);
-          setCatalogSourceMirror(result.catalog_source_mirror || '');
           setCatalogRefreshedAt(result.catalog_refreshed_at || '');
           lastLoadedAvailableQueryRef.current = buildAvailableQueryKey(
             result.version || requestVersion,
-            selectedMirror,
           );
           toast.success(t('plugin.refreshConnectorsSuccess'));
         })
@@ -879,11 +873,9 @@ export function PluginMain() {
             {activeTab === 'available' && (
               <div className='mt-3 space-y-1 text-xs text-muted-foreground'>
                 <div>
-                  {t('plugin.catalogSourceMirror')}: {catalogSourceMirror || '-'}
-                </div>
-                <div>
                   {t('plugin.catalogRefreshedAt')}: {formatCatalogRefreshedAt(catalogRefreshedAt)}
                 </div>
+                <div>{t('plugin.catalogSourceHint')}</div>
               </div>
             )}
           </CardContent>

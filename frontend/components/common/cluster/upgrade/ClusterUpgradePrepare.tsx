@@ -518,13 +518,30 @@ export function ClusterUpgradePrepare({clusterId}: ClusterUpgradePrepareProps) {
                     <SummaryCard
                       icon={<PlugZap className='h-4 w-4 text-primary' />}
                       title={t('connectorInfo')}
-                      description={`${precheck.connector_manifest?.connectors.length || 0} / ${precheck.connector_manifest?.libraries.length || 0}`}
+                      description={`${precheck.connector_manifest?.connectors.length || 0} / ${precheck.connector_manifest?.libraries.length || 0} / ${precheck.connector_manifest?.plugin_dependencies.length || 0}`}
                       lines={[
                         `${t('connectorCount')}: ${precheck.connector_manifest?.connectors.length || 0}`,
                         `${t('libraryCount')}: ${precheck.connector_manifest?.libraries.length || 0}`,
+                        `${t('pluginDependencyCount')}: ${precheck.connector_manifest?.plugin_dependencies.length || 0}`,
                         `${t('configConflicts')}: ${precheck.config_merge_plan?.conflict_count || 0}`,
                       ]}
                     />
+                  </div>
+
+                  <div className='rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground'>
+                    <p className='font-medium text-foreground'>
+                      {t('pluginUpgradeBehaviorTitle')}
+                    </p>
+                    <p className='mt-2'>
+                      {t('pluginUpgradeBehaviorDescription')}
+                    </p>
+                    <p className='mt-3'>
+                      <span className='font-medium text-foreground'>
+                        {t('upgradeSmokeCheckTitle')}
+                      </span>
+                      {' · '}
+                      {t('upgradeSmokeCheckDescription')}
+                    </p>
                   </div>
                 </>
               )}

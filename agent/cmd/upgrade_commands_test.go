@@ -19,9 +19,12 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	pb "github.com/seatunnel/seatunnelX/agent"
+	"github.com/seatunnel/seatunnelX/agent/internal/installer"
 )
 
 func TestAgent_handleManagedUpgradeCommand_requiresSubCommand(t *testing.T) {
@@ -29,5 +32,47 @@ func TestAgent_handleManagedUpgradeCommand_requiresSubCommand(t *testing.T) {
 	_, err := agent.handleManagedUpgradeCommand(context.Background(), &pb.CommandRequest{CommandId: "test"}, nil)
 	if err == nil {
 		t.Fatal("expected missing sub_command to be rejected")
+	}
+}
+
+func TestAgent_handleManagedUpgradeCommand_runsSmokeTestTemplate(t *testing.T) {
+	installDir := t.TempDir()
+	mustWriteExecutableForAgentTest(t, filepath.Join(installDir, "bin", "seatunnel-cluster.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	mustWriteExecutableForAgentTest(t, filepath.Join(installDir, "bin", "seatunnel.sh"), "#!/usr/bin/env bash\necho smoke-ok\n")
+	mustWriteFileForAgentTest(t, filepath.Join(installDir, "config", "v2.batch.config.template"), "env {}")
+
+	agent := &Agent{installerManager: installer.NewInstallerManager()}
+	resp, err := agent.handleManagedUpgradeCommand(context.Background(), &pb.CommandRequest{
+		CommandId: "test",
+		Parameters: map[string]string{
+			"sub_command": "run_smoke_test_template",
+			"install_dir": installDir,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("expected smoke test command to succeed, got %v", err)
+	}
+	if resp == nil || resp.Status != pb.CommandStatus_SUCCESS {
+		t.Fatalf("expected successful response, got %+v", resp)
+	}
+}
+
+func mustWriteFileForAgentTest(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create dir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write file %s: %v", path, err)
+	}
+}
+
+func mustWriteExecutableForAgentTest(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create dir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+		t.Fatalf("failed to write executable %s: %v", path, err)
 	}
 }

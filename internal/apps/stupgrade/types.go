@@ -84,6 +84,7 @@ const (
 	StepCodeDistributePackage StepCode = "DISTRIBUTE_PACKAGE"
 	StepCodeSyncLib           StepCode = "SYNC_LIB"
 	StepCodeSyncConnectors    StepCode = "SYNC_CONNECTORS"
+	StepCodeSyncPlugins       StepCode = "SYNC_PLUGINS"
 	StepCodeMergeConfig       StepCode = "MERGE_CONFIG"
 	StepCodeStopCluster       StepCode = "STOP_CLUSTER"
 	StepCodeSwitchVersion     StepCode = "SWITCH_VERSION"
@@ -181,13 +182,28 @@ type LibraryArtifact struct {
 	Scope      string      `json:"scope,omitempty"`
 }
 
-// ConnectorManifest 描述目标版本的 connector / lib 叠加清单。
-// ConnectorManifest describes the managed connector and lib overlay manifest of the target version.
+// PluginDependencyArtifact 描述升级中需同步的 plugins 隔离依赖。
+// PluginDependencyArtifact describes an isolated dependency under plugins/ that should be synchronized during upgrade.
+type PluginDependencyArtifact struct {
+	GroupID      string      `json:"group_id"`
+	ArtifactID   string      `json:"artifact_id"`
+	Version      string      `json:"version"`
+	FileName     string      `json:"file_name"`
+	LocalPath    string      `json:"local_path"`
+	Checksum     string      `json:"checksum,omitempty"`
+	Source       AssetSource `json:"source"`
+	TargetDir    string      `json:"target_dir"`
+	RelativePath string      `json:"relative_path"`
+}
+
+// ConnectorManifest 描述目标版本的 connector / lib / plugins 叠加清单。
+// ConnectorManifest describes the managed connector / lib / isolated dependency overlay manifest of the target version.
 type ConnectorManifest struct {
-	Version         string              `json:"version"`
-	ReplacementMode string              `json:"replacement_mode"`
-	Connectors      []ConnectorArtifact `json:"connectors"`
-	Libraries       []LibraryArtifact   `json:"libraries"`
+	Version         string                     `json:"version"`
+	ReplacementMode string                     `json:"replacement_mode"`
+	Connectors      []ConnectorArtifact        `json:"connectors"`
+	Libraries       []LibraryArtifact          `json:"libraries"`
+	PluginDeps      []PluginDependencyArtifact `json:"plugin_dependencies"`
 }
 
 // ConfigConflict 描述单个三方合并冲突。
@@ -368,17 +384,19 @@ type StepLogFilter struct {
 func DefaultExecutionSteps() []PlanStep {
 	return []PlanStep{
 		{Sequence: 1, Code: StepCodePrecheckPackage, Title: "安装包预检查", Description: "检查目标安装包、checksum 与架构匹配。", Required: true},
-		{Sequence: 2, Code: StepCodePrecheckConnector, Title: "连接器预检查", Description: "检查 connector / lib 清单是否齐全。", Required: true},
+		{Sequence: 2, Code: StepCodePrecheckConnector, Title: "插件预检查", Description: "检查 connector / lib / plugins 清单是否齐全。", Required: true},
 		{Sequence: 3, Code: StepCodeBackup, Title: "确认回滚基线", Description: "确认旧版本目录仍被保留，可作为双目录升级的回滚基线。", Required: true},
 		{Sequence: 4, Code: StepCodeDistributePackage, Title: "分发安装包", Description: "将目标安装包准备到所有目标节点。", Required: true},
 		{Sequence: 5, Code: StepCodeSyncLib, Title: "同步 Lib", Description: "保留目标安装包自带 lib，并叠加平台管理依赖。", Required: true},
 		{Sequence: 6, Code: StepCodeSyncConnectors, Title: "同步 Connector", Description: "保留目标安装包自带 connector，并叠加平台管理 connector。", Required: true},
-		{Sequence: 7, Code: StepCodeMergeConfig, Title: "应用配置", Description: "应用已确认的三方合并配置。", Required: true},
-		{Sequence: 8, Code: StepCodeStopCluster, Title: "停止集群", Description: "停止当前集群进程并进入切换窗口。", Required: true},
-		{Sequence: 9, Code: StepCodeSwitchVersion, Title: "切换版本", Description: "切换到目标版本目录或 current 指针。", Required: true},
-		{Sequence: 10, Code: StepCodeStartCluster, Title: "启动集群", Description: "启动切换后的目标版本。", Required: true},
-		{Sequence: 11, Code: StepCodeHealthCheck, Title: "健康检查", Description: "校验节点与集群服务健康状态。", Required: true},
-		{Sequence: 12, Code: StepCodeComplete, Title: "完成", Description: "标记升级成功并收尾清理。", Required: true},
+		{Sequence: 7, Code: StepCodeSyncPlugins, Title: "同步隔离依赖", Description: "保留目标安装包自带资产，并叠加 plugins 目录中的隔离依赖。", Required: true},
+		{Sequence: 8, Code: StepCodeMergeConfig, Title: "应用配置", Description: "应用已确认的三方合并配置。", Required: true},
+		{Sequence: 9, Code: StepCodeStopCluster, Title: "停止集群", Description: "停止当前集群进程并进入切换窗口。", Required: true},
+		{Sequence: 10, Code: StepCodeSwitchVersion, Title: "切换版本", Description: "切换到目标版本目录或 current 指针。", Required: true},
+		{Sequence: 11, Code: StepCodeStartCluster, Title: "启动集群", Description: "启动切换后的目标版本。", Required: true},
+		{Sequence: 12, Code: StepCodeHealthCheck, Title: "健康检查", Description: "校验节点与集群服务健康状态。", Required: true},
+		{Sequence: 13, Code: StepCodeSmokeTest, Title: "可用性验证", Description: "执行升级后的模板任务验证；失败只记录告警，不阻塞升级。", Required: true},
+		{Sequence: 14, Code: StepCodeComplete, Title: "完成", Description: "标记升级成功并收尾清理。", Required: true},
 	}
 }
 
@@ -388,7 +406,7 @@ func DefaultRollbackSteps(startSequence int) []PlanStep {
 	sequence := startSequence
 	steps := []PlanStep{
 		{Sequence: sequence, Code: StepCodeRollbackPrepare, Title: "回滚准备", Description: "冻结失败现场并准备回滚。", Required: true},
-		{Sequence: sequence + 1, Code: StepCodeRollbackRestore, Title: "恢复快照", Description: "恢复旧版本安装、配置与 connector 快照。", Required: true},
+		{Sequence: sequence + 1, Code: StepCodeRollbackRestore, Title: "恢复快照", Description: "恢复旧版本安装、配置与插件资产快照。", Required: true},
 		{Sequence: sequence + 2, Code: StepCodeRollbackRestart, Title: "回滚重启", Description: "重新拉起旧版本集群。", Required: true},
 		{Sequence: sequence + 3, Code: StepCodeRollbackVerify, Title: "回滚校验", Description: "校验旧版本恢复后的健康状态。", Required: true},
 		{Sequence: sequence + 4, Code: StepCodeFailed, Title: "失败收口", Description: "记录原始失败根因与回滚结果。", Required: true},

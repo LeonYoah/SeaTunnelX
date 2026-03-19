@@ -114,6 +114,8 @@ type stubAgentCommandSender struct {
 	commands             []agentCommandRecord
 	failTargetHealthOnce bool
 	failedInstallDir     string
+	failSmokeTestOnce    bool
+	smokeFailureHostID   uint
 }
 
 func (s *stubAgentCommandSender) GetAgentByHostID(hostID uint) (string, bool) {
@@ -138,6 +140,8 @@ func (s *stubAgentCommandSender) SendCommand(ctx context.Context, agentID string
 		return true, fmt.Sprintf("connectors_dir=%s/connectors", copied["install_dir"]), nil
 	case "sync_lib_manifest":
 		return true, fmt.Sprintf("lib_dir=%s/lib", copied["install_dir"]), nil
+	case "sync_plugins_manifest":
+		return true, fmt.Sprintf("plugins_dir=%s/plugins", copied["install_dir"]), nil
 	case "apply_merged_config":
 		return true, `{"success":true}`, nil
 	case "switch_install_dir":
@@ -150,6 +154,12 @@ func (s *stubAgentCommandSender) SendCommand(ctx context.Context, agentID string
 			return false, "health check failed", nil
 		}
 		return true, "health_ok", nil
+	case "run_smoke_test_template":
+		if s.failSmokeTestOnce && (s.smokeFailureHostID == 0 || s.smokeFailureHostID == copiedHostID(agentID, s.agents)) {
+			s.failSmokeTestOnce = false
+			return false, "template smoke test failed", nil
+		}
+		return true, "smoke_ok", nil
 	default:
 		return false, fmt.Sprintf("unsupported sub_command: %s", subCommand), nil
 	}
@@ -208,6 +218,9 @@ func TestService_ExecutePlan_success(t *testing.T) {
 	}
 	if hasSubCommand(agentSender.commands, "backup_install_dir") {
 		t.Fatalf("expected double-directory upgrade to skip backup_install_dir command, got %+v", agentSender.commands)
+	}
+	if !hasSubCommand(agentSender.commands, "run_smoke_test_template") {
+		t.Fatalf("expected managed smoke test command, got %+v", agentSender.commands)
 	}
 	logs, total, err := service.ListStepLogs(context.Background(), &StepLogFilter{TaskID: task.ID, Page: 1, PageSize: 200})
 	if err != nil {
@@ -432,6 +445,133 @@ func TestService_ExecutePlan_failureTriggersRollback(t *testing.T) {
 	}
 }
 
+func TestService_ExecutePlan_syncsPluginsManifestWhenPresent(t *testing.T) {
+	database := openTestDB(t)
+	repo := NewRepository(database)
+	clusterOperator := &stubClusterOperator{}
+	agentSender := &stubAgentCommandSender{agents: map[uint]string{101: "agent-node-a"}}
+	service := newExecutionService(t, repo, clusterOperator, agentSender)
+
+	plan, err := service.CreatePlan(context.Background(), UpgradePlanSnapshot{
+		ClusterID:     1,
+		SourceVersion: "2.3.11",
+		TargetVersion: "2.3.12",
+		GeneratedAt:   time.Now(),
+		PackageManifest: PackageManifest{
+			Version:   "2.3.12",
+			FileName:  "apache-seatunnel-2.3.12-bin.tar.gz",
+			LocalPath: "/tmp/apache-seatunnel-2.3.12-bin.tar.gz",
+			Checksum:  "abc123",
+			Source:    AssetSourceLocalPackage,
+		},
+		ConnectorManifest: ConnectorManifest{
+			Version:         "2.3.12",
+			ReplacementMode: "package_overlay",
+			Connectors:      []ConnectorArtifact{},
+			Libraries:       []LibraryArtifact{},
+			PluginDeps: []PluginDependencyArtifact{{
+				GroupID:      "org.example",
+				ArtifactID:   "oracle-extra",
+				Version:      "2.0.0",
+				FileName:     "oracle-extra-2.0.0.jar",
+				Source:       AssetSourceLocalPlugin,
+				TargetDir:    "plugins/connector-jdbc",
+				RelativePath: "connector-jdbc/oracle-extra-2.0.0.jar",
+			}},
+		},
+		ConfigMergePlan: ConfigMergePlan{
+			Ready:       true,
+			Files:       []ConfigMergeFile{},
+			GeneratedAt: time.Now(),
+		},
+		NodeTargets: []NodeTarget{{
+			ClusterNodeID:    11,
+			HostID:           101,
+			HostName:         "node-a",
+			HostIP:           "10.0.0.1",
+			Role:             string(clusterapp.NodeRoleMasterWorker),
+			Arch:             "amd64",
+			SourceVersion:    "2.3.11",
+			TargetVersion:    "2.3.12",
+			SourceInstallDir: "/opt/seatunnel-2.3.11",
+			TargetInstallDir: "/opt/seatunnel-2.3.12",
+		}},
+		Steps: DefaultExecutionSteps(),
+	}, 7, PlanStatusReady, 0)
+	if err != nil {
+		t.Fatalf("CreatePlan returned error: %v", err)
+	}
+
+	task, err := service.ExecutePlan(context.Background(), plan.ID, 7)
+	if err != nil {
+		t.Fatalf("ExecutePlan returned error: %v", err)
+	}
+	if task.Status != ExecutionStatusSucceeded {
+		t.Fatalf("expected task status succeeded, got %s", task.Status)
+	}
+	if !hasSubCommand(agentSender.commands, "sync_plugins_manifest") {
+		t.Fatalf("expected sync_plugins_manifest command, got %+v", agentSender.commands)
+	}
+}
+
+func TestService_ExecutePlan_smokeTestWarningDoesNotBlock(t *testing.T) {
+	database := openTestDB(t)
+	repo := NewRepository(database)
+	clusterOperator := &stubClusterOperator{}
+	agentSender := &stubAgentCommandSender{
+		agents:            map[uint]string{101: "agent-node-a"},
+		failSmokeTestOnce: true,
+	}
+	service := newExecutionService(t, repo, clusterOperator, agentSender)
+
+	planID := mustCreateReadyPlan(t, service)
+	task, err := service.ExecutePlan(context.Background(), planID, 7)
+	if err != nil {
+		t.Fatalf("ExecutePlan returned error: %v", err)
+	}
+	if task.Status != ExecutionStatusSucceeded {
+		t.Fatalf("expected task status succeeded, got %s", task.Status)
+	}
+	if task.RollbackStatus != ExecutionStatusPending {
+		t.Fatalf("expected rollback status pending, got %s", task.RollbackStatus)
+	}
+
+	var smokeStep *UpgradeTaskStep
+	for i := range task.Steps {
+		if task.Steps[i].Code == StepCodeSmokeTest {
+			smokeStep = &task.Steps[i]
+			break
+		}
+	}
+	if smokeStep == nil {
+		t.Fatal("expected smoke test step to exist")
+	}
+	if smokeStep.Status != ExecutionStatusSucceeded {
+		t.Fatalf("expected smoke step succeeded, got %s", smokeStep.Status)
+	}
+	if !strings.Contains(smokeStep.Message, "告警") {
+		t.Fatalf("expected smoke step message to mention warning, got %q", smokeStep.Message)
+	}
+
+	logs, total, err := service.ListStepLogs(context.Background(), &StepLogFilter{TaskID: task.ID, StepCode: StepCodeSmokeTest, Page: 1, PageSize: 200})
+	if err != nil {
+		t.Fatalf("ListStepLogs returned error: %v", err)
+	}
+	if total == 0 {
+		t.Fatal("expected smoke test logs to be persisted")
+	}
+	foundWarn := false
+	for _, logEntry := range logs {
+		if logEntry.Level == LogLevelWarn && strings.Contains(logEntry.Message, "告警") {
+			foundWarn = true
+			break
+		}
+	}
+	if !foundWarn {
+		t.Fatalf("expected smoke test warning log, got %+v", logs)
+	}
+}
+
 func TestService_SubscribeTaskEvents_receivesExecutionUpdates(t *testing.T) {
 	database := openTestDB(t)
 	repo := NewRepository(database)
@@ -540,4 +680,13 @@ func hasSubCommand(commands []agentCommandRecord, subCommand string) bool {
 		}
 	}
 	return false
+}
+
+func copiedHostID(agentID string, agents map[uint]string) uint {
+	for hostID, currentAgentID := range agents {
+		if currentAgentID == agentID {
+			return hostID
+		}
+	}
+	return 0
 }

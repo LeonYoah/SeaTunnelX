@@ -861,8 +861,8 @@
     "goToClusterDetail": "Go to cluster detail page to manage installed plugins",
     "totalPlugins": "Total Plugins",
     "totalConnectors": "Total Plugins",
-    "catalogSourceMirror": "Source Mirror",
     "catalogRefreshedAt": "Last Refreshed",
+    "catalogSourceHint": "Loading and refreshing plugins always use the official Maven repository; downloads use the currently selected mirror.",
     "selectedCount": "selected",
     "searchPlaceholder": "Search plugins by name or description",
     "noPluginsFound": "No plugins found",
@@ -2674,7 +2674,7 @@
     "checksum": "Checksum",
     "connectorNames": "Additional connectors",
     "connectorNamesPlaceholder": "Optional, comma separated; current cluster connectors are reused by default",
-    "connectorInfo": "Connector / Lib Manifest",
+    "connectorInfo": "Plugin Asset Manifest",
     "connectorCount": "Connector Count",
     "libraryCount": "Lib Count",
     "configConflicts": "Config Differences",
@@ -2689,7 +2689,7 @@
     "draftChangedNoticeTitle": "Upgrade input has changed, so the current precheck result is outdated.",
     "draftChangedNoticeDescription": "You just changed the target version, target install directory, or other upgrade inputs. The issue list and node target list below are still based on the previous precheck result. Please rerun precheck before continuing.",
     "precheckSummary": "Precheck Summary",
-    "precheckSummaryDescription": "Shows the current state of package, connectors, config, and node targets.",
+    "precheckSummaryDescription": "Shows the current state of the package, plugin assets, config, and node targets.",
     "loadingPrepare": "Loading upgrade preparation data...",
     "readyToPlan": "Ready",
     "blocked": "Blocked",
@@ -2826,6 +2826,11 @@
     "fileAppliedFromNew": "Applied the new-version file into the middle result",
     "applyOldFile": "Use Old File",
     "applyNewFile": "Use New File",
-    "removedLineLabel": "This line is not kept in the final result"
+    "removedLineLabel": "This line is not kept in the final result",
+    "pluginDependencyCount": "Isolated Dependency Count",
+    "pluginUpgradeBehaviorTitle": "Plugin handling during upgrade",
+    "pluginUpgradeBehaviorDescription": "Prepare the target-version plugin package locally before running upgrade. During upgrade, connector JARs switch to the target version, while dependencies under lib and plugins are incrementally overlaid from the locally prepared target-version plugin package. Package-bundled base JARs with the same name are preserved and not replaced.",
+    "upgradeSmokeCheckTitle": "Post-upgrade smoke check",
+    "upgradeSmokeCheckDescription": "After the cluster restarts and becomes healthy, the system runs a template seatunnel.sh job once. If it fails, the result is recorded as a warning only and does not block a successful upgrade."
   }
 }

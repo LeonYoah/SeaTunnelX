@@ -145,8 +145,8 @@ func TestListAvailablePluginsFetchesRemoteAndPersistsCatalog(t *testing.T) {
 	disableSeedAutoLoad(service, "9.9.9")
 
 	service.SetPluginFetcher(func(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error) {
-		if mirror != MirrorSourceAliyun {
-			t.Fatalf("expected mirror to be passed through, got %q", mirror)
+		if mirror != MirrorSourceApache {
+			t.Fatalf("expected catalog fetch to use apache, got %q", mirror)
 		}
 		return []Plugin{{
 			Name:        "hive",
@@ -156,7 +156,7 @@ func TestListAvailablePluginsFetchesRemoteAndPersistsCatalog(t *testing.T) {
 			Description: "Hive connector",
 			GroupID:     "org.apache.seatunnel",
 			ArtifactID:  "connector-hive",
-		}}, MirrorSourceAliyun, nil
+		}}, MirrorSourceApache, nil
 	})
 
 	result, err := service.ListAvailablePlugins(ctx, "9.9.9", MirrorSourceAliyun)
@@ -166,8 +166,8 @@ func TestListAvailablePluginsFetchesRemoteAndPersistsCatalog(t *testing.T) {
 	if result.Source != PluginListSourceRemote {
 		t.Fatalf("expected source=remote, got %q", result.Source)
 	}
-	if result.CatalogSourceMirror != string(MirrorSourceAliyun) {
-		t.Fatalf("expected response source mirror=aliyun, got %q", result.CatalogSourceMirror)
+	if result.CatalogSourceMirror != string(MirrorSourceApache) {
+		t.Fatalf("expected response source mirror=apache, got %q", result.CatalogSourceMirror)
 	}
 	if result.CatalogRefreshedAt == nil {
 		t.Fatalf("expected response refreshed_at")
@@ -183,8 +183,8 @@ func TestListAvailablePluginsFetchesRemoteAndPersistsCatalog(t *testing.T) {
 	if entries[0].Source != PluginCatalogSourceRemote {
 		t.Fatalf("expected persisted source=remote, got %q", entries[0].Source)
 	}
-	if entries[0].SourceMirror != string(MirrorSourceAliyun) {
-		t.Fatalf("expected persisted source_mirror=aliyun, got %q", entries[0].SourceMirror)
+	if entries[0].SourceMirror != string(MirrorSourceApache) {
+		t.Fatalf("expected persisted source_mirror=apache, got %q", entries[0].SourceMirror)
 	}
 	if entries[0].RefreshedAt == nil {
 		t.Fatalf("expected persisted refreshed_at")
@@ -466,6 +466,71 @@ func TestGetOfficialDependenciesReturnsUnknownForAmbiguousProfiles(t *testing.T)
 	}
 }
 
+func TestGetOfficialDependenciesTreatsHiveJdbcAsHiveAlias(t *testing.T) {
+	service, repo := newTestPluginService(t)
+	ctx := context.Background()
+	disableSeedAutoLoad(service, "2.3.13")
+
+	if err := repo.UpsertDependencyProfile(ctx, &PluginDependencyProfile{
+		SeatunnelVersion:    "2.3.13",
+		PluginName:          "jdbc",
+		ArtifactID:          "connector-jdbc",
+		ProfileKey:          "hive",
+		EngineScope:         "zeta",
+		SourceKind:          PluginDependencyProfileSourceOfficialSeed,
+		BaselineVersionUsed: "2.3.13",
+		ResolutionMode:      DependencyResolutionModeExact,
+		TargetDir:           "plugins/connector-jdbc",
+		Confidence:          "manual",
+		IsDefault:           false,
+		Items: []PluginDependencyProfileItem{{
+			GroupID:    "org.apache.hive",
+			ArtifactID: "hive-jdbc",
+			Version:    "3.1.3",
+			TargetDir:  "plugins/connector-jdbc",
+			Required:   true,
+		}},
+	}); err != nil {
+		t.Fatalf("failed to seed hive profile: %v", err)
+	}
+	if err := repo.UpsertDependencyProfile(ctx, &PluginDependencyProfile{
+		SeatunnelVersion:    "2.3.12",
+		PluginName:          "jdbc",
+		ArtifactID:          "connector-jdbc",
+		ProfileKey:          "hivejdbc",
+		EngineScope:         "zeta",
+		SourceKind:          PluginDependencyProfileSourceRuntimeAnalyzed,
+		BaselineVersionUsed: "2.3.12",
+		ResolutionMode:      DependencyResolutionModeRuntime,
+		TargetDir:           "plugins/connector-jdbc",
+		Confidence:          "medium",
+		IsDefault:           false,
+		Items: []PluginDependencyProfileItem{{
+			GroupID:    "org.apache.hive",
+			ArtifactID: "hive-jdbc",
+			Version:    "3.1.3",
+			TargetDir:  "plugins/connector-jdbc",
+			Required:   true,
+		}},
+	}); err != nil {
+		t.Fatalf("failed to seed hivejdbc runtime profile: %v", err)
+	}
+
+	result, err := service.GetOfficialDependencies(ctx, "jdbc", "2.3.13", "")
+	if err != nil {
+		t.Fatalf("GetOfficialDependencies returned error: %v", err)
+	}
+	if len(result.Profiles) != 1 {
+		t.Fatalf("expected 1 selected profile after alias merge, got %d", len(result.Profiles))
+	}
+	if result.Profiles[0].ProfileKey != "hive" {
+		t.Fatalf("expected selected profile key hive, got %q", result.Profiles[0].ProfileKey)
+	}
+	if result.Profiles[0].SeatunnelVersion != "2.3.13" {
+		t.Fatalf("expected exact 2.3.13 hive profile, got %q", result.Profiles[0].SeatunnelVersion)
+	}
+}
+
 func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 	service, _ := newTestPluginService(t)
 	ctx := context.Background()
@@ -481,7 +546,7 @@ func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 			name:           "mysql keeps pinned version",
 			version:        "2.3.13",
 			profileKey:     "mysql",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"mysql-connector-java": "8.0.27",
 			},
@@ -490,7 +555,7 @@ func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 			name:           "oracle uses three locked artifacts",
 			version:        "2.3.13",
 			profileKey:     "oracle",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"ojdbc8":      "12.2.0.1",
 				"xdb6":        "12.2.0.1",
@@ -510,7 +575,7 @@ func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 			name:           "redshift new range",
 			version:        "2.3.13",
 			profileKey:     "redshift",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"redshift-jdbc42": "2.1.0.30",
 			},
@@ -528,7 +593,7 @@ func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 			name:           "sap hana new range",
 			version:        "2.3.13",
 			profileKey:     "sap-hana",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"ngdbc": "2.23.10",
 			},
@@ -537,22 +602,18 @@ func TestGetOfficialDependenciesUsesJdbcProfileMatrix(t *testing.T) {
 			name:           "duckdb starts at 2.3.13",
 			version:        "2.3.13",
 			profileKey:     "duckdb",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"duckdb_jdbc": "1.3.1.0",
 			},
 		},
 		{
-			name:           "aws dsql includes aws sdk helpers",
+			name:           "aws dsql keeps only postgres driver",
 			version:        "2.3.13",
 			profileKey:     "aws-dsql",
-			expectedStatus: PluginDependencyStatusReadyFallback,
+			expectedStatus: PluginDependencyStatusReadyExact,
 			expectedItems: map[string]string{
 				"postgresql": "42.4.3",
-				"dsql":       "2.31.30",
-				"auth":       "2.31.30",
-				"regions":    "2.31.30",
-				"sts":        "2.31.30",
 			},
 		},
 	}

@@ -38,6 +38,14 @@ import type {
   UpgradePlanRecord,
   UpgradeTask,
 } from './types';
+import {
+  sanitizePrecheckResult,
+  sanitizeTaskListData,
+  sanitizeTaskLogsData,
+  sanitizeTaskStepsData,
+  sanitizeUpgradePlanRecord,
+  sanitizeUpgradeTask,
+} from './normalize';
 
 export class StUpgradeService extends BaseService {
   protected static readonly basePath = '/st-upgrade';
@@ -62,25 +70,32 @@ export class StUpgradeService extends BaseService {
   }
 
   static async runPrecheck(payload: PrecheckRequest): Promise<PrecheckResult> {
-    return this.postWithAcceptedStatuses<PrecheckResult>(
+    const result = await this.postWithAcceptedStatuses<PrecheckResult>(
       '/precheck',
       payload,
       [200, 409],
     );
+    return sanitizePrecheckResult(result) || result;
   }
 
   static async createPlan(
     payload: CreatePlanRequest,
   ): Promise<CreatePlanResult> {
-    return this.postWithAcceptedStatuses<CreatePlanResult>(
+    const result = await this.postWithAcceptedStatuses<CreatePlanResult>(
       '/plan',
       payload,
       [201, 409],
     );
+    return {
+      ...result,
+      precheck: sanitizePrecheckResult(result.precheck) || result.precheck,
+      plan: sanitizeUpgradePlanRecord(result.plan) || result.plan,
+    };
   }
 
   static async getPlan(planId: number): Promise<UpgradePlanRecord> {
-    return this.get<UpgradePlanRecord>(`/plans/${planId}`);
+    const result = await this.get<UpgradePlanRecord>(`/plans/${planId}`);
+    return sanitizeUpgradePlanRecord(result) || result;
   }
 
   static async executePlan(payload: ExecutePlanRequest): Promise<UpgradeTask> {
@@ -92,28 +107,34 @@ export class StUpgradeService extends BaseService {
       '/tasks',
       query as Record<string, unknown> | undefined,
     );
+    const sanitized = sanitizeTaskListData(result);
     return {
-      ...result,
-      items: Array.isArray(result.items) ? result.items : [],
+      ...(sanitized || result),
+      items: Array.isArray((sanitized || result).items)
+        ? (sanitized || result).items
+        : [],
     };
   }
 
   static async getTask(taskId: number): Promise<UpgradeTask> {
-    return this.get<UpgradeTask>(`/tasks/${taskId}`);
+    const result = await this.get<UpgradeTask>(`/tasks/${taskId}`);
+    return sanitizeUpgradeTask(result) || result;
   }
 
   static async getTaskSteps(taskId: number): Promise<TaskStepsData> {
-    return this.get<TaskStepsData>(`/tasks/${taskId}/steps`);
+    const result = await this.get<TaskStepsData>(`/tasks/${taskId}/steps`);
+    return sanitizeTaskStepsData(result) || result;
   }
 
   static async getTaskLogs(
     taskId: number,
     query?: TaskLogsQuery,
   ): Promise<TaskLogsData> {
-    return this.get<TaskLogsData>(
+    const result = await this.get<TaskLogsData>(
       `/tasks/${taskId}/logs`,
       query as Record<string, unknown> | undefined,
     );
+    return sanitizeTaskLogsData(result) || result;
   }
 
   static getTaskEventsUrl(taskId: number): string {

@@ -97,7 +97,7 @@ var officialDependencyDocSpecs = map[string][]officialDependencyDocSpec{
 		{
 			PluginName:  "jdbc",
 			ArtifactID:  "connector-jdbc",
-			ProfileKey:  "hivejdbc",
+			ProfileKey:  "hive",
 			EngineScope: "zeta",
 			DocSlug:     "source/HiveJdbc",
 			TargetDir:   "plugins/connector-jdbc",
@@ -426,19 +426,20 @@ func resolveEffectiveDependencyVersion(requestedVersion string, item PluginDepen
 func selectBestProfiles(profiles []PluginDependencyProfile, requestedVersion string, profileKeys []string) []PluginDependencyProfile {
 	requested := make(map[string]struct{}, len(profileKeys))
 	for _, key := range profileKeys {
-		requested[key] = struct{}{}
+		requested[canonicalProfileKey(key)] = struct{}{}
 	}
 	grouped := make(map[string][]PluginDependencyProfile)
 	for _, profile := range profiles {
+		profileKey := canonicalProfileKey(profile.ProfileKey)
 		if len(requested) > 0 {
-			if _, ok := requested[profile.ProfileKey]; !ok {
+			if _, ok := requested[profileKey]; !ok {
 				continue
 			}
 		}
 		if !profileAppliesToVersion(profile, requestedVersion) {
 			continue
 		}
-		grouped[profile.ProfileKey] = append(grouped[profile.ProfileKey], profile)
+		grouped[profileKey] = append(grouped[profileKey], profile)
 	}
 	result := make([]PluginDependencyProfile, 0, len(grouped))
 	for _, candidates := range grouped {
@@ -524,7 +525,7 @@ func normalizeProfileKeys(profileKeys []string) []string {
 	seen := make(map[string]struct{}, len(profileKeys))
 	result := make([]string, 0, len(profileKeys))
 	for _, key := range profileKeys {
-		normalized := strings.ToLower(strings.TrimSpace(key))
+		normalized := canonicalProfileKey(key)
 		if normalized == "" {
 			continue
 		}
@@ -536,6 +537,16 @@ func normalizeProfileKeys(profileKeys []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func canonicalProfileKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "hivejdbc":
+		return "hive"
+	default:
+		return normalized
+	}
 }
 
 func profileAppliesToVersion(profile PluginDependencyProfile, version string) bool {
@@ -645,9 +656,10 @@ func filterOfficialDependencySpecs(pluginName, profileKey string) []officialDepe
 	if profileKey == "" {
 		return specs
 	}
+	profileKey = canonicalProfileKey(profileKey)
 	filtered := make([]officialDependencyDocSpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.ProfileKey == profileKey {
+		if canonicalProfileKey(spec.ProfileKey) == profileKey {
 			filtered = append(filtered, spec)
 		}
 	}
