@@ -990,7 +990,7 @@ func (s *Service) executeCollectConfigSnapshotStep(ctx context.Context, task *Di
 		Files:              make([]diagnosticConfigSnapshotFile, 0, len(task.SelectedNodes)*6),
 		KeyHighlights:      make([]diagnosticConfigKeyHighlight, 0, len(task.SelectedNodes)*4),
 		FilePreviews:       make([]diagnosticConfigFilePreview, 0, len(task.SelectedNodes)*4),
-		DirectoryManifests: make([]diagnosticDirectoryManifest, 0, len(task.SelectedNodes)*3),
+		DirectoryManifests: make([]diagnosticDirectoryManifest, 0, len(task.SelectedNodes)*4),
 		ConfigChanges:      make([]diagnosticConfigChangeRecord, 0),
 		CollectionNotes:    make([]diagnosticConfigSnapshotNote, 0, len(task.SelectedNodes)),
 	}
@@ -1050,7 +1050,7 @@ func (s *Service) executeCollectConfigSnapshotStep(ctx context.Context, task *Di
 			}
 			nodeSuccess = true
 		}
-		for _, inventoryDir := range []string{"config", "lib", "connectors"} {
+		for _, inventoryDir := range []string{"config", "lib", "connectors", "plugins"} {
 			manifest, detail, err := s.pullDiagnosticDirectoryManifest(ctx, selected, filepath.Join(selected.InstallDir, inventoryDir))
 			if err != nil || manifest == nil {
 				summary.CollectionNotes = append(summary.CollectionNotes, diagnosticConfigSnapshotNote{
@@ -6320,7 +6320,7 @@ const diagnosticBundleHTMLTemplate = `<!DOCTYPE html>
           {{if .ConfigSnapshot.DirectoryManifests}}
           <div class="subsection">
             <details>
-              <summary>{{pair "目录清单（配置 / 依赖 / 连接器）" "Directory inventories"}}</summary>
+              <summary>{{pair "目录清单（配置 / 共享依赖 / 连接器 / 隔离依赖）" "Directory inventories"}}</summary>
               <div class="list" style="margin-top: 12px;">
                 {{range .ConfigSnapshot.DirectoryManifests}}
                 <div class="entry">
