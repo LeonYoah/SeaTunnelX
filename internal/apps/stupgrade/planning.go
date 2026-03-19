@@ -60,7 +60,7 @@ type PluginProvider interface {
 	ListLocalPlugins() ([]pluginapp.LocalPlugin, error)
 	GetPluginDependencies(ctx context.Context, pluginName string) ([]pluginapp.PluginDependency, error)
 	GetPluginArtifactID(pluginName string) string
-	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error
+	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error
 }
 
 // ConfigProvider 定义升级预检查所需的配置读取能力。

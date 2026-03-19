@@ -21,6 +21,7 @@
  */
 
 import { BaseService } from '../core/base.service';
+import apiClient from '../core/api-client';
 import type {
   Plugin,
   InstalledPlugin,
@@ -32,6 +33,11 @@ import type {
   PluginInstallStatus,
   PluginDependencyConfig,
   AddDependencyRequest,
+  UploadDependencyRequest,
+  DisableDependencyRequest,
+  PluginDependencyDisable,
+  OfficialDependenciesResponse,
+  AnalyzeOfficialDependenciesRequest,
 } from './types';
 
 // Import DownloadAllPluginsProgress type / 导入下载所有插件进度类型
@@ -68,6 +74,19 @@ export class PluginService extends BaseService {
     if (version) {params.version = version;}
     if (mirror) {params.mirror = mirror;}
     return this.get<AvailablePluginsResponse>('/plugins', params);
+  }
+
+  static async refreshAvailablePlugins(
+    version?: string,
+    mirror?: MirrorSource,
+  ): Promise<AvailablePluginsResponse> {
+    return this.post<AvailablePluginsResponse>(
+      '/plugins/refresh',
+      {
+        version,
+        mirror,
+      },
+    );
   }
 
   /**
@@ -110,12 +129,14 @@ export class PluginService extends BaseService {
     clusterId: number,
     pluginName: string,
     version: string,
-    mirror?: MirrorSource
+    mirror?: MirrorSource,
+    profileKeys?: string[],
   ): Promise<InstalledPlugin> {
     const request: InstallPluginRequest = {
       plugin_name: pluginName,
       version,
       mirror,
+      profile_keys: profileKeys,
     };
     return this.post<InstalledPlugin>(`/clusters/${clusterId}/plugins`, request);
   }
@@ -171,11 +192,12 @@ export class PluginService extends BaseService {
   static async downloadPlugin(
     pluginName: string,
     version: string,
-    mirror?: MirrorSource
+    mirror?: MirrorSource,
+    profileKeys?: string[],
   ): Promise<PluginDownloadProgress> {
     return this.post<PluginDownloadProgress>(
       `/plugins/${encodeURIComponent(pluginName)}/download`,
-      { version, mirror }
+      { version, mirror, profile_keys: profileKeys }
     );
   }
 
@@ -188,11 +210,16 @@ export class PluginService extends BaseService {
    */
   static async getDownloadStatus(
     pluginName: string,
-    version: string
+    version: string,
+    profileKeys?: string[],
   ): Promise<PluginDownloadProgress> {
+    const params: Record<string, string | string[]> = {version};
+    if (profileKeys && profileKeys.length > 0) {
+      params.profile_keys = profileKeys;
+    }
     return this.get<PluginDownloadProgress>(
       `/plugins/${encodeURIComponent(pluginName)}/download/status`,
-      { version }
+      params,
     );
   }
 
@@ -270,9 +297,15 @@ export class PluginService extends BaseService {
    * @param pluginName - Plugin name / 插件名称
    * @returns List of dependencies / 依赖列表
    */
-  static async listDependencies(pluginName: string): Promise<PluginDependencyConfig[]> {
+  static async listDependencies(
+    pluginName: string,
+    version?: string,
+  ): Promise<PluginDependencyConfig[]> {
+    const params: Record<string, string> = {};
+    if (version) {params.version = version;}
     return this.get<PluginDependencyConfig[]>(
-      `/plugins/${encodeURIComponent(pluginName)}/dependencies`
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies`,
+      params,
     );
   }
 
@@ -293,6 +326,36 @@ export class PluginService extends BaseService {
     );
   }
 
+  static async uploadDependency(
+    pluginName: string,
+    request: UploadDependencyRequest,
+  ): Promise<PluginDependencyConfig> {
+    const formData = new FormData();
+    formData.append('file', request.file);
+    if (request.seatunnel_version) {formData.append('seatunnel_version', request.seatunnel_version);}
+    if (request.group_id) {formData.append('group_id', request.group_id);}
+    if (request.artifact_id) {formData.append('artifact_id', request.artifact_id);}
+    if (request.version) {formData.append('version', request.version);}
+    if (request.target_dir) {formData.append('target_dir', request.target_dir);}
+
+    const response = await apiClient.post<{error_msg: string; data: PluginDependencyConfig | null}>(
+      `${this.basePath}/plugins/${encodeURIComponent(pluginName)}/dependencies/upload`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      },
+    );
+    if (response.data.error_msg) {
+      throw new Error(response.data.error_msg);
+    }
+    if (!response.data.data) {
+      throw new Error('上传依赖返回为空 / Empty upload dependency response');
+    }
+    return response.data.data;
+  }
+
   /**
    * Delete a dependency from a plugin
    * 删除插件的依赖
@@ -302,6 +365,59 @@ export class PluginService extends BaseService {
   static async deleteDependency(pluginName: string, depId: number): Promise<void> {
     await this.delete<unknown>(
       `/plugins/${encodeURIComponent(pluginName)}/dependencies/${depId}`
+    );
+  }
+
+  static async disableOfficialDependency(
+    pluginName: string,
+    request: DisableDependencyRequest,
+  ): Promise<PluginDependencyDisable> {
+    return this.post<PluginDependencyDisable>(
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies/disables`,
+      request,
+    );
+  }
+
+  static async enableOfficialDependency(
+    pluginName: string,
+    disableId: number,
+  ): Promise<void> {
+    await this.delete<unknown>(
+      `/plugins/${encodeURIComponent(pluginName)}/dependencies/disables/${disableId}`,
+    );
+  }
+
+  // ==================== Official Dependency Baseline 官方依赖基线 ====================
+
+  /**
+   * Get official dependencies for a plugin/version
+   * 获取插件在指定版本下的官方依赖
+   */
+  static async getOfficialDependencies(
+    pluginName: string,
+    version?: string,
+    profileKey?: string
+  ): Promise<OfficialDependenciesResponse> {
+    const params: Record<string, string> = {};
+    if (version) {params.version = version;}
+    if (profileKey) {params.profile_key = profileKey;}
+    return this.get<OfficialDependenciesResponse>(
+      `/plugins/${encodeURIComponent(pluginName)}/official-dependencies`,
+      params,
+    );
+  }
+
+  /**
+   * Analyze official dependencies from upstream docs
+   * 在线分析上游官方文档中的依赖
+   */
+  static async analyzeOfficialDependencies(
+    pluginName: string,
+    request: AnalyzeOfficialDependenciesRequest
+  ): Promise<OfficialDependenciesResponse> {
+    return this.post<OfficialDependenciesResponse>(
+      `/plugins/${encodeURIComponent(pluginName)}/official-dependencies/analyze`,
+      request,
     );
   }
 }

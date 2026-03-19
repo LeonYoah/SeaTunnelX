@@ -66,23 +66,42 @@ var MirrorURLs = map[MirrorSource]string{
 // PluginDependency represents a dependency of a plugin.
 // PluginDependency 表示插件的依赖项。
 type PluginDependency struct {
-	GroupID    string `json:"group_id"`    // Maven groupId
-	ArtifactID string `json:"artifact_id"` // Maven artifactId
-	Version    string `json:"version"`     // 版本号 / Version
-	TargetDir  string `json:"target_dir"`  // 目标目录 (connectors/ 或 lib/) / Target directory
+	GroupID          string                 `json:"group_id"`                     // Maven groupId
+	ArtifactID       string                 `json:"artifact_id"`                  // Maven artifactId
+	Version          string                 `json:"version"`                      // 版本号 / Version
+	TargetDir        string                 `json:"target_dir"`                   // 目标目录 (connectors/、lib/ 或 plugins/<mapping>) / Target directory
+	SourceType       PluginDependencySource `json:"source_type,omitempty"`        // 依赖来源 / Dependency source
+	OriginalFileName string                 `json:"original_file_name,omitempty"` // 原始上传文件名 / Original uploaded file name
+	StoredPath       string                 `json:"-"`                            // 控制面存储路径（仅服务端内部使用）/ Stored path (server-side only)
 }
+
+// PluginDependencySource represents the source type of an effective dependency.
+// PluginDependencySource 表示依赖来源类型。
+type PluginDependencySource string
+
+const (
+	PluginDependencySourceMaven    PluginDependencySource = "maven"
+	PluginDependencySourceUpload   PluginDependencySource = "upload"
+	PluginDependencySourceOfficial PluginDependencySource = "official"
+)
 
 // PluginDependencyConfig represents a user-configured dependency for a plugin (GORM model).
 // PluginDependencyConfig 表示用户为插件配置的依赖项（GORM 模型）。
 type PluginDependencyConfig struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	PluginName string    `gorm:"size:100;not null;index:idx_plugin_dep,unique" json:"plugin_name"` // 插件名称 / Plugin name
-	GroupID    string    `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"group_id"`    // Maven groupId
-	ArtifactID string    `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"artifact_id"` // Maven artifactId
-	Version    string    `gorm:"size:50" json:"version"`                                           // 版本号（可选，留空则使用插件版本）/ Version (optional, use plugin version if empty)
-	TargetDir  string    `gorm:"size:20;not null;default:lib" json:"target_dir"`                   // 目标目录 (lib) / Target directory
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID               uint                   `gorm:"primaryKey" json:"id"`
+	PluginName       string                 `gorm:"size:100;not null;index:idx_plugin_dep,unique" json:"plugin_name"`                 // 插件名称 / Plugin name
+	SeatunnelVersion string                 `gorm:"size:50;not null;default:'';index:idx_plugin_dep,unique" json:"seatunnel_version"` // SeaTunnel 版本 / SeaTunnel version
+	GroupID          string                 `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"group_id"`                    // Maven groupId / 分组标识
+	ArtifactID       string                 `gorm:"size:200;not null;index:idx_plugin_dep,unique" json:"artifact_id"`                 // Maven artifactId
+	Version          string                 `gorm:"size:80;not null;index:idx_plugin_dep,unique" json:"version"`                      // 版本号 / Version
+	TargetDir        string                 `gorm:"size:120;not null;default:lib;index:idx_plugin_dep,unique" json:"target_dir"`      // 目标目录 / Target directory
+	SourceType       PluginDependencySource `gorm:"size:20;not null;default:maven;index:idx_plugin_dep,unique" json:"source_type"`    // 来源类型 / Source type
+	OriginalFileName string                 `gorm:"size:255" json:"original_file_name,omitempty"`                                     // 原始文件名 / Original uploaded file name
+	StoredPath       string                 `gorm:"size:1024" json:"-"`                                                               // 控制面存储路径 / Stored path
+	FileSize         int64                  `gorm:"not null;default:0" json:"file_size,omitempty"`                                    // 文件大小 / File size
+	Checksum         string                 `gorm:"size:128" json:"checksum,omitempty"`                                               // 文件摘要 / File checksum
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
 }
 
 // TableName returns the table name for PluginDependencyConfig.
@@ -91,19 +110,43 @@ func (PluginDependencyConfig) TableName() string {
 	return "plugin_dependency_configs"
 }
 
+// PluginDependencyDisable represents one disabled official dependency entry for a plugin/version.
+// PluginDependencyDisable 表示插件某个版本下被用户禁用的一条官方依赖。
+type PluginDependencyDisable struct {
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	PluginName       string    `gorm:"size:100;not null;index:idx_plugin_dep_disable,unique" json:"plugin_name"`
+	SeatunnelVersion string    `gorm:"size:50;not null;default:'';index:idx_plugin_dep_disable,unique" json:"seatunnel_version"`
+	GroupID          string    `gorm:"size:200;not null;index:idx_plugin_dep_disable,unique" json:"group_id"`
+	ArtifactID       string    `gorm:"size:200;not null;index:idx_plugin_dep_disable,unique" json:"artifact_id"`
+	Version          string    `gorm:"size:80;not null;index:idx_plugin_dep_disable,unique" json:"version"`
+	TargetDir        string    `gorm:"size:120;not null;index:idx_plugin_dep_disable,unique" json:"target_dir"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// TableName returns the table name for PluginDependencyDisable.
+// TableName 返回 PluginDependencyDisable 的表名。
+func (PluginDependencyDisable) TableName() string {
+	return "plugin_dependency_disables"
+}
+
 // Plugin represents a SeaTunnel plugin.
 // Plugin 表示一个 SeaTunnel 插件。
 type Plugin struct {
-	Name         string             `json:"name"`                   // 插件名称 / Plugin name
-	DisplayName  string             `json:"display_name"`           // 显示名称 / Display name
-	Category     PluginCategory     `json:"category"`               // 分类 / Category
-	Version      string             `json:"version"`                // 版本号（与 SeaTunnel 主版本一致）/ Version
-	Description  string             `json:"description"`            // 描述 / Description
-	GroupID      string             `json:"group_id"`               // Maven groupId
-	ArtifactID   string             `json:"artifact_id"`            // Maven artifactId
-	Dependencies []PluginDependency `json:"dependencies,omitempty"` // 依赖库列表 / Dependencies
-	Icon         string             `json:"icon,omitempty"`         // 图标 URL / Icon URL
-	DocURL       string             `json:"doc_url,omitempty"`      // 文档链接 / Documentation URL
+	Name                      string                   `json:"name"`                                  // 插件名称 / Plugin name
+	DisplayName               string                   `json:"display_name"`                          // 显示名称 / Display name
+	Category                  PluginCategory           `json:"category"`                              // 分类 / Category
+	Version                   string                   `json:"version"`                               // 版本号（与 SeaTunnel 主版本一致）/ Version
+	Description               string                   `json:"description"`                           // 描述 / Description
+	GroupID                   string                   `json:"group_id"`                              // Maven groupId
+	ArtifactID                string                   `json:"artifact_id"`                           // Maven artifactId
+	Dependencies              []PluginDependency       `json:"dependencies,omitempty"`                // 依赖库列表 / Dependencies
+	Icon                      string                   `json:"icon,omitempty"`                        // 图标 URL / Icon URL
+	DocURL                    string                   `json:"doc_url,omitempty"`                     // 文档链接 / Documentation URL
+	DependencyStatus          PluginDependencyStatus   `json:"dependency_status,omitempty"`           // 依赖状态 / Dependency status
+	DependencyCount           int                      `json:"dependency_count,omitempty"`            // 生效依赖数量 / Effective dependency count
+	DependencyBaselineVersion string                   `json:"dependency_baseline_version,omitempty"` // 依赖基线版本 / Dependency baseline version
+	DependencyResolutionMode  DependencyResolutionMode `json:"dependency_resolution_mode,omitempty"`  // 依赖解析模式 / Dependency resolution mode
 }
 
 // InstalledPlugin represents a plugin installed on a cluster (GORM model).
@@ -144,9 +187,10 @@ type PluginFilter struct {
 // InstallPluginRequest represents a request to install a plugin.
 // InstallPluginRequest 表示安装插件的请求。
 type InstallPluginRequest struct {
-	PluginName string       `json:"plugin_name" binding:"required"` // 插件名称 / Plugin name
-	Version    string       `json:"version" binding:"required"`     // 版本号 / Version
-	Mirror     MirrorSource `json:"mirror,omitempty"`               // 镜像源 / Mirror source
+	PluginName  string       `json:"plugin_name" binding:"required"` // 插件名称 / Plugin name
+	Version     string       `json:"version" binding:"required"`     // 版本号 / Version
+	Mirror      MirrorSource `json:"mirror,omitempty"`               // 镜像源 / Mirror source
+	ProfileKeys []string     `json:"profile_keys,omitempty"`         // 选中的依赖画像 / Selected dependency profiles
 }
 
 // PluginInstallStatus represents the installation status of a plugin.
@@ -164,17 +208,19 @@ type PluginInstallStatus struct {
 type PluginListSource string
 
 const (
-	PluginListSourceCache  PluginListSource = "cache"
-	PluginListSourceRemote PluginListSource = "remote"
+	PluginListSourceDatabase PluginListSource = "database"
+	PluginListSourceRemote   PluginListSource = "remote"
 )
 
 type AvailablePluginsResponse struct {
-	Plugins  []Plugin         `json:"plugins"`   // 插件列表 / Plugin list
-	Total    int              `json:"total"`     // 总数 / Total count
-	Version  string           `json:"version"`   // SeaTunnel 版本 / SeaTunnel version
-	Mirror   string           `json:"mirror"`    // 当前镜像源 / Current mirror
-	Source   PluginListSource `json:"source"`    // 数据来源 / Data source
-	CacheHit bool             `json:"cache_hit"` // 是否命中缓存 / Whether cache was hit
+	Plugins             []Plugin         `json:"plugins"`                         // 插件列表 / Plugin list
+	Total               int              `json:"total"`                           // 总数 / Total count
+	Version             string           `json:"version"`                         // SeaTunnel 版本 / SeaTunnel version
+	Mirror              string           `json:"mirror"`                          // 当前请求镜像源 / Requested mirror
+	Source              PluginListSource `json:"source"`                          // 数据来源 / Data source
+	CacheHit            bool             `json:"cache_hit"`                       // 是否命中缓存 / Whether cache was hit
+	CatalogSourceMirror string           `json:"catalog_source_mirror,omitempty"` // 目录实际来源镜像 / Catalog source mirror
+	CatalogRefreshedAt  *time.Time       `json:"catalog_refreshed_at,omitempty"`  // 最近刷新时间 / Catalog refreshed at
 }
 
 // ==================== Plugin Download Types 插件下载类型 ====================
@@ -214,9 +260,10 @@ type PluginDownloadTask struct {
 // PluginDownloadRequest represents a request to download/install a plugin.
 // PluginDownloadRequest 表示下载/安装插件的请求。
 type PluginDownloadRequest struct {
-	PluginName string       `json:"plugin_name" binding:"required"` // 插件名称 / Plugin name
-	Version    string       `json:"version" binding:"required"`     // 版本号 / Version
-	Mirror     MirrorSource `json:"mirror,omitempty"`               // 镜像源 / Mirror source
+	PluginName  string       `json:"plugin_name" binding:"required"` // 插件名称 / Plugin name
+	Version     string       `json:"version" binding:"required"`     // 版本号 / Version
+	Mirror      MirrorSource `json:"mirror,omitempty"`               // 镜像源 / Mirror source
+	ProfileKeys []string     `json:"profile_keys,omitempty"`         // 选中的依赖画像 / Selected dependency profiles
 }
 
 // AvailableVersionsResponse represents the response for listing available versions.
@@ -232,10 +279,34 @@ type AvailableVersionsResponse struct {
 // AddDependencyRequest represents a request to add a dependency to a plugin.
 // AddDependencyRequest 表示为插件添加依赖的请求。
 type AddDependencyRequest struct {
-	PluginName string `json:"plugin_name"`                    // 插件名称（从 URL 获取）/ Plugin name (from URL)
-	GroupID    string `json:"group_id" binding:"required"`    // Maven groupId
-	ArtifactID string `json:"artifact_id" binding:"required"` // Maven artifactId
-	Version    string `json:"version" binding:"required"`     // 版本号（必填）/ Version (required)
+	PluginName       string `json:"plugin_name"`                    // 插件名称（从 URL 获取）/ Plugin name (from URL)
+	SeatunnelVersion string `json:"seatunnel_version,omitempty"`    // SeaTunnel 版本（用于推导默认 target_dir）/ SeaTunnel version
+	GroupID          string `json:"group_id" binding:"required"`    // Maven groupId
+	ArtifactID       string `json:"artifact_id" binding:"required"` // Maven artifactId
+	Version          string `json:"version" binding:"required"`     // 版本号（必填）/ Version (required)
+	TargetDir        string `json:"target_dir,omitempty"`           // 目标目录（可选）/ Target directory
+}
+
+// UploadDependencyRequest represents a request to upload a custom dependency jar.
+// UploadDependencyRequest 表示上传自定义依赖 Jar 的请求。
+type UploadDependencyRequest struct {
+	PluginName       string `json:"plugin_name"`                 // 插件名称（从 URL 获取）/ Plugin name (from URL)
+	SeatunnelVersion string `json:"seatunnel_version,omitempty"` // SeaTunnel 版本 / SeaTunnel version
+	GroupID          string `json:"group_id,omitempty"`          // 分组（可选）/ Group ID (optional)
+	ArtifactID       string `json:"artifact_id"`                 // 依赖名 / Artifact ID
+	Version          string `json:"version"`                     // 依赖版本 / Version
+	TargetDir        string `json:"target_dir,omitempty"`        // 目标目录 / Target directory
+}
+
+// DisableDependencyRequest represents a request to disable one official dependency item.
+// DisableDependencyRequest 表示禁用一条官方依赖的请求。
+type DisableDependencyRequest struct {
+	PluginName       string `json:"plugin_name"`                 // 插件名称（从 URL 获取）/ Plugin name (from URL)
+	SeatunnelVersion string `json:"seatunnel_version,omitempty"` // SeaTunnel 版本 / SeaTunnel version
+	GroupID          string `json:"group_id" binding:"required"`
+	ArtifactID       string `json:"artifact_id" binding:"required"`
+	Version          string `json:"version" binding:"required"`
+	TargetDir        string `json:"target_dir" binding:"required"`
 }
 
 // UpdateDependencyRequest represents a request to update a dependency.
@@ -251,4 +322,130 @@ type UpdateDependencyRequest struct {
 type PluginDependencyResponse struct {
 	PluginName   string                   `json:"plugin_name"`  // 插件名称 / Plugin name
 	Dependencies []PluginDependencyConfig `json:"dependencies"` // 依赖列表 / Dependencies
+}
+
+// PluginDependencyStatus represents lightweight dependency readiness shown in plugin marketplace.
+// PluginDependencyStatus 表示插件市场展示的轻量依赖状态。
+type PluginDependencyStatus string
+
+const (
+	PluginDependencyStatusReadyExact      PluginDependencyStatus = "ready_exact"
+	PluginDependencyStatusReadyFallback   PluginDependencyStatus = "ready_fallback"
+	PluginDependencyStatusRuntimeAnalyzed PluginDependencyStatus = "runtime_analyzed"
+	PluginDependencyStatusNotRequired     PluginDependencyStatus = "not_required"
+	PluginDependencyStatusUnknown         PluginDependencyStatus = "unknown"
+)
+
+// DependencyResolutionMode represents how effective dependencies are resolved.
+// DependencyResolutionMode 表示生效依赖的解析模式。
+type DependencyResolutionMode string
+
+const (
+	DependencyResolutionModeExact    DependencyResolutionMode = "exact"
+	DependencyResolutionModeFallback DependencyResolutionMode = "fallback"
+	DependencyResolutionModeRuntime  DependencyResolutionMode = "runtime"
+	DependencyResolutionModeNone     DependencyResolutionMode = "none"
+)
+
+// PluginCatalogSource represents the source of catalog entries.
+// PluginCatalogSource 表示插件目录项来源。
+type PluginCatalogSource string
+
+const (
+	PluginCatalogSourceSeed   PluginCatalogSource = "seed"
+	PluginCatalogSourceRemote PluginCatalogSource = "remote"
+)
+
+// PluginCatalogEntry stores discovered connector metadata in DB.
+// PluginCatalogEntry 持久化存储发现到的连接器元数据。
+type PluginCatalogEntry struct {
+	ID               uint                `gorm:"primaryKey" json:"id"`
+	SeatunnelVersion string              `gorm:"size:50;not null;index:idx_plugin_catalog_version_name,unique" json:"seatunnel_version"`
+	PluginName       string              `gorm:"size:120;not null;index:idx_plugin_catalog_version_name,unique" json:"plugin_name"`
+	DisplayName      string              `gorm:"size:200;not null" json:"display_name"`
+	ArtifactID       string              `gorm:"size:200;not null" json:"artifact_id"`
+	GroupID          string              `gorm:"size:200;not null" json:"group_id"`
+	Category         PluginCategory      `gorm:"size:50;not null" json:"category"`
+	Description      string              `gorm:"type:text" json:"description"`
+	DocURL           string              `gorm:"size:500" json:"doc_url"`
+	Source           PluginCatalogSource `gorm:"size:20;not null;default:remote" json:"source"`
+	SourceMirror     string              `gorm:"size:30" json:"source_mirror"`
+	RefreshedAt      *time.Time          `json:"refreshed_at"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at"`
+}
+
+func (PluginCatalogEntry) TableName() string { return "plugin_catalog_entries" }
+
+// PluginDependencyProfileSource represents the source kind of official dependency profile.
+// PluginDependencyProfileSource 表示官方依赖画像来源类型。
+type PluginDependencyProfileSource string
+
+const (
+	PluginDependencyProfileSourceOfficialSeed    PluginDependencyProfileSource = "official_seed"
+	PluginDependencyProfileSourceRuntimeAnalyzed PluginDependencyProfileSource = "runtime_analyzed"
+)
+
+// PluginDependencyProfile stores one official dependency profile for a plugin/version.
+// PluginDependencyProfile 存储插件某个版本的一份官方依赖画像。
+type PluginDependencyProfile struct {
+	ID                       uint                          `gorm:"primaryKey" json:"id"`
+	SeatunnelVersion         string                        `gorm:"size:50;not null;index:idx_plugin_dep_profile_unique,unique" json:"seatunnel_version"`
+	PluginName               string                        `gorm:"size:120;not null;index:idx_plugin_dep_profile_unique,unique;index" json:"plugin_name"`
+	ArtifactID               string                        `gorm:"size:200;not null" json:"artifact_id"`
+	ProfileKey               string                        `gorm:"size:120;not null;default:default;index:idx_plugin_dep_profile_unique,unique" json:"profile_key"`
+	ProfileName              string                        `gorm:"size:200" json:"profile_name"`
+	EngineScope              string                        `gorm:"size:50;not null;default:zeta;index:idx_plugin_dep_profile_unique,unique" json:"engine_scope"`
+	SourceKind               PluginDependencyProfileSource `gorm:"size:30;not null;index:idx_plugin_dep_profile_unique,unique" json:"source_kind"`
+	BaselineVersionUsed      string                        `gorm:"size:50" json:"baseline_version_used"`
+	ResolutionMode           DependencyResolutionMode      `gorm:"size:20;not null;default:exact" json:"resolution_mode"`
+	TargetDir                string                        `gorm:"size:120;not null;default:lib" json:"target_dir"`
+	AppliesTo                string                        `gorm:"size:255;not null;default:*" json:"applies_to"`
+	IncludeVersions          string                        `gorm:"size:500" json:"include_versions"`
+	ExcludedVersions         string                        `gorm:"size:500" json:"excluded_versions"`
+	DocSlug                  string                        `gorm:"size:255" json:"doc_slug"`
+	DocSourceURL             string                        `gorm:"size:500" json:"doc_source_url"`
+	Confidence               string                        `gorm:"size:20;not null;default:medium" json:"confidence"`
+	IsDefault                bool                          `gorm:"not null" json:"is_default"`
+	NoAdditionalDependencies bool                          `gorm:"not null;default:false" json:"no_additional_dependencies"`
+	ContentHash              string                        `gorm:"size:128" json:"content_hash"`
+	CreatedAt                time.Time                     `json:"created_at"`
+	UpdatedAt                time.Time                     `json:"updated_at"`
+	Items                    []PluginDependencyProfileItem `gorm:"foreignKey:ProfileID;constraint:OnDelete:CASCADE" json:"items,omitempty"`
+}
+
+func (PluginDependencyProfile) TableName() string { return "plugin_dependency_profiles" }
+
+// PluginDependencyProfileItem stores one dependency item under a profile.
+// PluginDependencyProfileItem 存储画像中的单条依赖项。
+type PluginDependencyProfileItem struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	ProfileID  uint      `gorm:"not null;index:idx_plugin_dep_profile_item_unique,unique" json:"profile_id"`
+	GroupID    string    `gorm:"size:200;not null;index:idx_plugin_dep_profile_item_unique,unique" json:"group_id"`
+	ArtifactID string    `gorm:"size:200;not null;index:idx_plugin_dep_profile_item_unique,unique" json:"artifact_id"`
+	Version    string    `gorm:"size:80;not null;index:idx_plugin_dep_profile_item_unique,unique" json:"version"`
+	TargetDir  string    `gorm:"size:120;not null;index:idx_plugin_dep_profile_item_unique,unique" json:"target_dir"`
+	Required   bool      `gorm:"not null;default:true" json:"required"`
+	SourceURL  string    `gorm:"size:500" json:"source_url"`
+	Note       string    `gorm:"type:text" json:"note"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	Disabled   bool      `gorm:"-" json:"disabled"`
+	DisableID  *uint     `gorm:"-" json:"disable_id,omitempty"`
+}
+
+func (PluginDependencyProfileItem) TableName() string { return "plugin_dependency_profile_items" }
+
+// OfficialDependenciesResponse contains resolved official dependency information for one plugin.
+// OfficialDependenciesResponse 表示单个插件解析后的官方依赖信息。
+type OfficialDependenciesResponse struct {
+	PluginName               string                    `json:"plugin_name"`
+	SeatunnelVersion         string                    `json:"seatunnel_version"`
+	DependencyStatus         PluginDependencyStatus    `json:"dependency_status"`
+	DependencyCount          int                       `json:"dependency_count"`
+	BaselineVersionUsed      string                    `json:"baseline_version_used,omitempty"`
+	DependencyResolutionMode DependencyResolutionMode  `json:"dependency_resolution_mode"`
+	Profiles                 []PluginDependencyProfile `json:"profiles"`
+	EffectiveDependencies    []PluginDependency        `json:"effective_dependencies"`
+	DisabledDependencies     []PluginDependencyDisable `json:"disabled_dependencies,omitempty"`
 }

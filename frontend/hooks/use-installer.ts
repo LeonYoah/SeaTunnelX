@@ -403,7 +403,7 @@ export function useInstallation(
 
 // ==================== useInstallWizard Hook ====================
 
-export type WizardStep = 'precheck' | 'config' | 'install' | 'complete';
+export type WizardStep = 'precheck' | 'config' | 'plugins' | 'install' | 'complete';
 
 interface InstallWizardConfig {
   version: string;
@@ -449,6 +449,7 @@ const defaultConfig: InstallWizardConfig = {
     install_connectors: false,
     connectors: [],
     selected_plugins: [],
+    selected_plugin_profiles: {},
   },
 };
 

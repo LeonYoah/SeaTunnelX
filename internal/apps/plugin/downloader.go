@@ -23,12 +23,14 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -46,18 +48,25 @@ var (
 // DownloadProgress represents the progress of a download task.
 // DownloadProgress 表示下载任务的进度。
 type DownloadProgress struct {
-	PluginName      string     `json:"plugin_name"`        // 插件名称 / Plugin name
-	Version         string     `json:"version"`            // 版本号 / Version
-	Status          string     `json:"status"`             // 状态: pending/downloading/completed/failed / Status
-	Progress        int        `json:"progress"`           // 进度 (0-100) / Progress
-	CurrentStep     string     `json:"current_step"`       // 当前步骤 / Current step
-	DownloadedBytes int64      `json:"downloaded_bytes"`   // 已下载字节 / Downloaded bytes
-	TotalBytes      int64      `json:"total_bytes"`        // 总字节 / Total bytes
-	Speed           int64      `json:"speed"`              // 下载速度 (bytes/s) / Download speed
-	Message         string     `json:"message,omitempty"`  // 消息 / Message
-	Error           string     `json:"error,omitempty"`    // 错误信息 / Error message
-	StartTime       time.Time  `json:"start_time"`         // 开始时间 / Start time
-	EndTime         *time.Time `json:"end_time,omitempty"` // 结束时间 / End time
+	PluginName          string     `json:"plugin_name"`                     // 插件名称 / Plugin name
+	Version             string     `json:"version"`                         // 版本号 / Version
+	Status              string     `json:"status"`                          // 状态: pending/downloading/completed/failed / Status
+	Progress            int        `json:"progress"`                        // 进度 (0-100) / Progress
+	CurrentStep         string     `json:"current_step"`                    // 当前步骤 / Current step
+	CurrentArtifact     string     `json:"current_artifact,omitempty"`      // 当前下载条目 / Current downloading artifact
+	CurrentArtifactKind string     `json:"current_artifact_kind,omitempty"` // connector / dependency
+	DownloadedBytes     int64      `json:"downloaded_bytes"`                // 已下载字节 / Downloaded bytes
+	TotalBytes          int64      `json:"total_bytes"`                     // 总字节 / Total bytes
+	Speed               int64      `json:"speed"`                           // 下载速度 (bytes/s) / Download speed
+	Message             string     `json:"message,omitempty"`               // 消息 / Message
+	Error               string     `json:"error,omitempty"`                 // 错误信息 / Error message
+	StartTime           time.Time  `json:"start_time"`                      // 开始时间 / Start time
+	EndTime             *time.Time `json:"end_time,omitempty"`              // 结束时间 / End time
+	ConnectorCount      int        `json:"connector_count,omitempty"`       // 连接器总数 / Total connectors
+	ConnectorCompleted  int        `json:"connector_completed,omitempty"`   // 已完成连接器 / Completed connectors
+	DependencyCount     int        `json:"dependency_count,omitempty"`      // 依赖总数 / Total dependencies
+	DependencyCompleted int        `json:"dependency_completed,omitempty"`  // 已完成依赖 / Completed dependencies
+	SelectedProfileKeys []string   `json:"selected_profile_keys,omitempty"` // 选中的画像 / Selected profiles
 }
 
 // ProgressCallback is a callback function for reporting download progress.
@@ -85,6 +94,18 @@ type Downloader struct {
 	cancelFuncs map[string]context.CancelFunc
 	cancelMu    sync.Mutex
 }
+
+type localPluginMetadata struct {
+	Name                string             `json:"name"`
+	Version             string             `json:"version"`
+	ArtifactID          string             `json:"artifact_id"`
+	SelectedProfileKeys []string           `json:"selected_profile_keys,omitempty"`
+	AttachedConnectors  []string           `json:"attached_connectors,omitempty"`
+	Dependencies        []PluginDependency `json:"dependencies,omitempty"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+var connectorFilenamePattern = regexp.MustCompile(`^(connector-.+)-(\d+\.\d+\.\d+(?:[-A-Za-z0-9._]+)?)\.jar$`)
 
 // NewDownloader creates a new Downloader instance.
 // NewDownloader 创建一个新的 Downloader 实例。
@@ -209,11 +230,69 @@ func getArtifactIDForPath(name string) string {
 	return fmt.Sprintf("connector-%s", name)
 }
 
-// GetLibPath returns the path for a dependency library file.
-// GetLibPath 返回依赖库文件的路径。
-// Path format: plugins_dir/${version}/lib/${artifactId}-${version}.jar
+// GetDependencyPath returns the path for a dependency file under the requested target dir.
+// GetDependencyPath 返回指定 target_dir 下的依赖文件路径。
+func (d *Downloader) GetDependencyPath(artifactID, version, pluginVersion, targetDir string) string {
+	normalized, err := normalizePluginTargetDir(targetDir)
+	if err != nil {
+		normalized = "lib"
+	}
+	return filepath.Join(d.pluginsDir, pluginVersion, filepath.FromSlash(normalized), fmt.Sprintf("%s-%s.jar", artifactID, version))
+}
+
+// GetLibPath returns the legacy lib directory path for a dependency file.
+// GetLibPath 返回依赖库文件在传统 lib 目录下的路径。
 func (d *Downloader) GetLibPath(artifactID, version, pluginVersion string) string {
-	return filepath.Join(d.pluginsDir, pluginVersion, "lib", fmt.Sprintf("%s-%s.jar", artifactID, version))
+	return d.GetDependencyPath(artifactID, version, pluginVersion, "lib")
+}
+
+func (d *Downloader) getMetadataPath(pluginName, version string) string {
+	return filepath.Join(d.pluginsDir, version, "metadata", fmt.Sprintf("%s.json", pluginName))
+}
+
+func (d *Downloader) writePluginMetadata(plugin *Plugin, selectedProfileKeys []string) error {
+	if plugin == nil {
+		return nil
+	}
+	metadataPath := d.getMetadataPath(plugin.Name, plugin.Version)
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0755); err != nil {
+		return err
+	}
+	attachedConnectors := make([]string, 0)
+	dependencies := make([]PluginDependency, 0)
+	for _, dep := range plugin.Dependencies {
+		if strings.TrimSpace(dep.TargetDir) == "connectors" {
+			attachedConnectors = append(attachedConnectors, dep.ArtifactID)
+			continue
+		}
+		dependencies = append(dependencies, dep)
+	}
+	payload := localPluginMetadata{
+		Name:                plugin.Name,
+		Version:             plugin.Version,
+		ArtifactID:          plugin.ArtifactID,
+		SelectedProfileKeys: append([]string(nil), selectedProfileKeys...),
+		AttachedConnectors:  attachedConnectors,
+		Dependencies:        dependencies,
+		UpdatedAt:           time.Now(),
+	}
+	content, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(metadataPath, content, 0644)
+}
+
+func (d *Downloader) readPluginMetadata(pluginName, version string) (*localPluginMetadata, error) {
+	content, err := os.ReadFile(d.getMetadataPath(pluginName, version))
+	if err != nil {
+		return nil, err
+	}
+	var payload localPluginMetadata
+	if err := json.Unmarshal(content, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
 }
 
 // IsConnectorDownloaded checks if a connector is already downloaded.
@@ -260,8 +339,8 @@ func (d *Downloader) ReadPluginFileByArtifactID(artifactID, version string) ([]b
 
 // IsDependencyDownloaded checks if a dependency is already downloaded.
 // IsDependencyDownloaded 检查依赖是否已下载。
-func (d *Downloader) IsDependencyDownloaded(artifactID, depVersion, pluginVersion string) bool {
-	path := d.GetLibPath(artifactID, depVersion, pluginVersion)
+func (d *Downloader) IsDependencyDownloaded(artifactID, depVersion, pluginVersion, targetDir string) bool {
+	path := d.GetDependencyPath(artifactID, depVersion, pluginVersion, targetDir)
 	_, err := os.Stat(path)
 	return err == nil
 }
@@ -286,6 +365,27 @@ func (d *Downloader) ListActiveDownloads() []*DownloadProgress {
 		result = append(result, p)
 	}
 	return result
+}
+
+// UpsertActiveDownload stores or updates an active download progress entry.
+// UpsertActiveDownload 存储或更新活动下载进度。
+func (d *Downloader) UpsertActiveDownload(progress *DownloadProgress) {
+	if progress == nil {
+		return
+	}
+	key := fmt.Sprintf("%s:%s", progress.PluginName, progress.Version)
+	d.downloadsMu.Lock()
+	d.activeDownloads[key] = progress
+	d.downloadsMu.Unlock()
+}
+
+// ClearActiveDownload removes an active download progress entry.
+// ClearActiveDownload 删除活动下载进度。
+func (d *Downloader) ClearActiveDownload(name, version string) {
+	key := fmt.Sprintf("%s:%s", name, version)
+	d.downloadsMu.Lock()
+	delete(d.activeDownloads, key)
+	d.downloadsMu.Unlock()
 }
 
 // CancelDownload cancels an active download.
@@ -332,14 +432,28 @@ func (d *Downloader) DownloadConnector(ctx context.Context, plugin *Plugin, mirr
 		d.cancelMu.Unlock()
 	}()
 
+	// Ensure artifact_id is set / 确保 artifact_id 已设置
+	artifactID := plugin.ArtifactID
+	if artifactID == "" {
+		// Fallback to mapping if artifact_id is not set / 如果 artifact_id 未设置则使用映射
+		artifactID = getArtifactIDForPath(plugin.Name)
+		fmt.Printf("[Download] Warning: plugin.ArtifactID is empty for %s, using fallback: %s\n", plugin.Name, artifactID)
+	}
+
 	// Initialize progress / 初始化进度
 	progress := &DownloadProgress{
-		PluginName:  plugin.Name,
-		Version:     plugin.Version,
-		Status:      "downloading",
-		Progress:    0,
-		CurrentStep: "Downloading connector / 下载连接器",
-		StartTime:   time.Now(),
+		PluginName:          plugin.Name,
+		Version:             plugin.Version,
+		Status:              "downloading",
+		Progress:            0,
+		CurrentStep:         "Downloading connector / 下载连接器",
+		CurrentArtifact:     artifactID,
+		CurrentArtifactKind: "connector",
+		StartTime:           time.Now(),
+		ConnectorCount:      1,
+		ConnectorCompleted:  0,
+		DependencyCount:     len(plugin.Dependencies),
+		DependencyCompleted: 0,
 	}
 
 	d.downloadsMu.Lock()
@@ -362,19 +476,9 @@ func (d *Downloader) DownloadConnector(ctx context.Context, plugin *Plugin, mirr
 	// Example: org/apache/seatunnel/connector-jdbc/2.3.12/connector-jdbc-2.3.12.jar
 	groupPath := strings.ReplaceAll(plugin.GroupID, ".", "/")
 
-	// Ensure artifact_id is set / 确保 artifact_id 已设置
-	artifactID := plugin.ArtifactID
-	if artifactID == "" {
-		// Fallback to mapping if artifact_id is not set / 如果 artifact_id 未设置则使用映射
-		artifactID = getArtifactIDForPath(plugin.Name)
-		fmt.Printf("[Download] Warning: plugin.ArtifactID is empty for %s, using fallback: %s\n", plugin.Name, artifactID)
-	}
-
 	jarName := fmt.Sprintf("%s-%s.jar", artifactID, plugin.Version)
-	jarURL := fmt.Sprintf("%s/%s/%s/%s/%s", baseURL, groupPath, artifactID, plugin.Version, jarName)
-	sha1URL := jarURL + ".sha1"
-
-	fmt.Printf("[Download] URL: %s\n", jarURL)
+	urls := d.buildArtifactURLs(baseURL, groupPath, artifactID, plugin.Version, jarName, mirror)
+	fmt.Printf("[Download] URLs: %v\n", urls)
 
 	// Create target directory / 创建目标目录
 	// Use artifact_id directly for file path / 直接使用 artifact_id 作为文件路径
@@ -390,7 +494,8 @@ func (d *Downloader) DownloadConnector(ctx context.Context, plugin *Plugin, mirr
 	}
 
 	// Download the jar file / 下载 jar 文件
-	if err := d.downloadFile(downloadCtx, jarURL, targetPath, progress, callback); err != nil {
+	_, sha1URL, err := d.downloadArtifactWithFallback(downloadCtx, urls, targetPath, progress, callback)
+	if err != nil {
 		progress.Status = "failed"
 		progress.Error = err.Error()
 		now := time.Now()
@@ -403,6 +508,8 @@ func (d *Downloader) DownloadConnector(ctx context.Context, plugin *Plugin, mirr
 
 	// Verify checksum / 验证校验和
 	progress.CurrentStep = "Verifying checksum / 验证校验和"
+	progress.CurrentArtifact = artifactID
+	progress.CurrentArtifactKind = "connector"
 	if callback != nil {
 		callback(progress)
 	}
@@ -424,6 +531,9 @@ func (d *Downloader) DownloadConnector(ctx context.Context, plugin *Plugin, mirr
 	progress.Status = "completed"
 	progress.Progress = 100
 	progress.CurrentStep = "Completed / 完成"
+	progress.CurrentArtifact = artifactID
+	progress.CurrentArtifactKind = "connector"
+	progress.ConnectorCompleted = 1
 	now := time.Now()
 	progress.EndTime = &now
 	if callback != nil {
@@ -446,12 +556,6 @@ func (d *Downloader) DownloadDependencies(ctx context.Context, plugin *Plugin, m
 		baseURL = MirrorURLs[MirrorSourceApache]
 	}
 
-	// Create lib directory / 创建 lib 目录
-	libDir := filepath.Join(d.pluginsDir, plugin.Version, "lib")
-	if err := os.MkdirAll(libDir, 0755); err != nil {
-		return fmt.Errorf("failed to create lib directory: %w", err)
-	}
-
 	for i, dep := range plugin.Dependencies {
 		select {
 		case <-ctx.Done():
@@ -459,18 +563,20 @@ func (d *Downloader) DownloadDependencies(ctx context.Context, plugin *Plugin, m
 		default:
 		}
 
+		targetDir, err := normalizePluginTargetDir(dep.TargetDir)
+		if err != nil {
+			return fmt.Errorf("invalid dependency target dir for %s: %w", dep.ArtifactID, err)
+		}
+		if err := os.MkdirAll(filepath.Join(d.pluginsDir, plugin.Version, filepath.FromSlash(targetDir)), 0755); err != nil {
+			return fmt.Errorf("failed to create dependency directory: %w", err)
+		}
+
 		// Check if already downloaded / 检查是否已下载
-		if d.IsDependencyDownloaded(dep.ArtifactID, dep.Version, plugin.Version) {
+		if d.IsDependencyDownloaded(dep.ArtifactID, dep.Version, plugin.Version, targetDir) {
 			continue
 		}
 
-		// Build Maven URL / 构建 Maven URL
-		groupPath := strings.ReplaceAll(dep.GroupID, ".", "/")
-		jarName := fmt.Sprintf("%s-%s.jar", dep.ArtifactID, dep.Version)
-		jarURL := fmt.Sprintf("%s/%s/%s/%s/%s", baseURL, groupPath, dep.ArtifactID, dep.Version, jarName)
-		sha1URL := jarURL + ".sha1"
-
-		targetPath := d.GetLibPath(dep.ArtifactID, dep.Version, plugin.Version)
+		targetPath := d.GetDependencyPath(dep.ArtifactID, dep.Version, plugin.Version, targetDir)
 
 		// Create progress for this dependency / 为此依赖创建进度
 		progress := &DownloadProgress{
@@ -481,49 +587,196 @@ func (d *Downloader) DownloadDependencies(ctx context.Context, plugin *Plugin, m
 			CurrentStep: fmt.Sprintf("Downloading dependency %d/%d: %s / 下载依赖 %d/%d: %s",
 				i+1, len(plugin.Dependencies), dep.ArtifactID,
 				i+1, len(plugin.Dependencies), dep.ArtifactID),
-			StartTime: time.Now(),
+			StartTime:           time.Now(),
+			ConnectorCount:      1,
+			ConnectorCompleted:  1,
+			DependencyCount:     len(plugin.Dependencies),
+			DependencyCompleted: i,
+			CurrentArtifact:     dep.ArtifactID,
+			CurrentArtifactKind: "dependency",
 		}
 
 		if callback != nil {
 			callback(progress)
 		}
 
-		// Download the dependency / 下载依赖
-		if err := d.downloadFile(ctx, jarURL, targetPath, progress, callback); err != nil {
-			// Log warning but continue with other dependencies / 记录警告但继续下载其他依赖
-			progress.Message = fmt.Sprintf("Warning: failed to download %s: %v", dep.ArtifactID, err)
-			if callback != nil {
-				callback(progress)
+		switch dep.SourceType {
+		case PluginDependencySourceUpload:
+			if err := d.copyUploadedDependency(targetPath, dep.StoredPath); err != nil {
+				progress.Message = fmt.Sprintf("Warning: failed to copy uploaded dependency %s: %v", dep.ArtifactID, err)
+				if callback != nil {
+					callback(progress)
+				}
+				continue
 			}
-			continue
+		default:
+			// Build Maven URL / 构建 Maven URL
+			groupPath := strings.ReplaceAll(dep.GroupID, ".", "/")
+			jarName := fmt.Sprintf("%s-%s.jar", dep.ArtifactID, dep.Version)
+			urls := d.buildArtifactURLs(baseURL, groupPath, dep.ArtifactID, dep.Version, jarName, mirror)
+
+			// Download the dependency / 下载依赖
+			_, sha1URL, err := d.downloadArtifactWithFallback(ctx, urls, targetPath, progress, callback)
+			if err != nil {
+				// Log warning but continue with other dependencies / 记录警告但继续下载其他依赖
+				progress.Message = fmt.Sprintf("Warning: failed to download %s: %v", dep.ArtifactID, err)
+				if callback != nil {
+					callback(progress)
+				}
+				continue
+			}
+
+			// Verify checksum (optional for dependencies) / 验证校验和（依赖可选）
+			if err := d.verifyChecksum(ctx, targetPath, sha1URL); err != nil {
+				// Log warning but don't fail / 记录警告但不失败
+				progress.Message = fmt.Sprintf("Warning: checksum verification failed for %s", dep.ArtifactID)
+				if callback != nil {
+					callback(progress)
+				}
+			}
 		}
 
-		// Verify checksum (optional for dependencies) / 验证校验和（依赖可选）
-		if err := d.verifyChecksum(ctx, targetPath, sha1URL); err != nil {
-			// Log warning but don't fail / 记录警告但不失败
-			progress.Message = fmt.Sprintf("Warning: checksum verification failed for %s", dep.ArtifactID)
-			if callback != nil {
-				callback(progress)
-			}
+		progress.DependencyCompleted = i + 1
+		progress.Progress = ((i + 1) * 100) / len(plugin.Dependencies)
+		progress.CurrentStep = fmt.Sprintf("Dependency %d/%d completed: %s / 依赖 %d/%d 已完成: %s",
+			i+1, len(plugin.Dependencies), dep.ArtifactID,
+			i+1, len(plugin.Dependencies), dep.ArtifactID)
+		progress.CurrentArtifact = dep.ArtifactID
+		progress.CurrentArtifactKind = "dependency"
+		if callback != nil {
+			callback(progress)
 		}
 	}
 
 	return nil
 }
 
+func (d *Downloader) copyUploadedDependency(targetPath, storedPath string) error {
+	storedPath = strings.TrimSpace(storedPath)
+	if storedPath == "" {
+		return fmt.Errorf("stored path is empty / 上传依赖的存储路径为空")
+	}
+	src, err := os.Open(storedPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+	dst, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = os.Remove(targetPath)
+		return err
+	}
+	return nil
+}
+
+func (d *Downloader) buildArtifactURLs(baseURL, groupPath, artifactID, version, jarName string, mirror MirrorSource) []string {
+	primary := fmt.Sprintf("%s/%s/%s/%s/%s", baseURL, groupPath, artifactID, version, jarName)
+	urls := []string{primary}
+	if mirror != MirrorSourceApache {
+		if apacheBase := MirrorURLs[MirrorSourceApache]; apacheBase != "" {
+			apacheURL := fmt.Sprintf("%s/%s/%s/%s/%s", apacheBase, groupPath, artifactID, version, jarName)
+			if apacheURL != primary {
+				urls = append(urls, apacheURL)
+			}
+		}
+	}
+	return urls
+}
+
+func (d *Downloader) downloadArtifactWithFallback(ctx context.Context, urls []string, targetPath string, progress *DownloadProgress, callback ProgressCallback) (string, string, error) {
+	var lastErr error
+	for _, jarURL := range urls {
+		if err := d.downloadFile(ctx, jarURL, targetPath, progress, callback); err != nil {
+			lastErr = err
+			if !errors.Is(err, ErrFileNotFound) {
+				return "", "", err
+			}
+			continue
+		}
+		return jarURL, jarURL + ".sha1", nil
+	}
+	if lastErr == nil {
+		lastErr = ErrFileNotFound
+	}
+	return "", "", lastErr
+}
+
 // DownloadPlugin downloads a plugin and all its dependencies.
 // DownloadPlugin 下载插件及其所有依赖。
-func (d *Downloader) DownloadPlugin(ctx context.Context, plugin *Plugin, mirror MirrorSource, callback ProgressCallback) error {
-	// Download connector first / 首先下载连接器
-	if err := d.DownloadConnector(ctx, plugin, mirror, callback); err != nil {
-		return fmt.Errorf("failed to download connector: %w", err)
+func (d *Downloader) DownloadPlugin(ctx context.Context, plugin *Plugin, mirror MirrorSource, selectedProfileKeys []string, connectorReady, dependenciesReady bool, callback ProgressCallback) error {
+	if plugin == nil {
+		return fmt.Errorf("plugin is nil / 插件为空")
 	}
 
-	// Download dependencies / 下载依赖
-	if err := d.DownloadDependencies(ctx, plugin, mirror, callback); err != nil {
-		return fmt.Errorf("failed to download dependencies: %w", err)
+	if !connectorReady {
+		if err := d.DownloadConnector(ctx, plugin, mirror, callback); err != nil {
+			return fmt.Errorf("failed to download connector: %w", err)
+		}
 	}
 
+	if !dependenciesReady {
+		progress := &DownloadProgress{
+			PluginName:          plugin.Name,
+			Version:             plugin.Version,
+			Status:              "downloading",
+			Progress:            50,
+			CurrentStep:         "Preparing dependency download / 准备下载依赖",
+			CurrentArtifactKind: "dependency",
+			StartTime:           time.Now(),
+			ConnectorCount:      1,
+			ConnectorCompleted:  1,
+			DependencyCount:     len(plugin.Dependencies),
+			DependencyCompleted: 0,
+			SelectedProfileKeys: append([]string(nil), selectedProfileKeys...),
+		}
+		d.UpsertActiveDownload(progress)
+		defer d.ClearActiveDownload(plugin.Name, plugin.Version)
+		dependencyCallback := func(depProgress *DownloadProgress) {
+			if depProgress == nil {
+				return
+			}
+			progress.Status = depProgress.Status
+			progress.DownloadedBytes = depProgress.DownloadedBytes
+			progress.TotalBytes = depProgress.TotalBytes
+			progress.Speed = depProgress.Speed
+			progress.Message = depProgress.Message
+			progress.Error = depProgress.Error
+			progress.DependencyCount = depProgress.DependencyCount
+			progress.DependencyCompleted = depProgress.DependencyCompleted
+			progress.CurrentStep = depProgress.CurrentStep
+			progress.CurrentArtifact = depProgress.CurrentArtifact
+			progress.CurrentArtifactKind = depProgress.CurrentArtifactKind
+			progress.Progress = 50 + depProgress.Progress/2
+			if depProgress.EndTime != nil {
+				progress.EndTime = depProgress.EndTime
+			}
+			d.UpsertActiveDownload(progress)
+			if callback != nil {
+				callback(progress)
+			}
+		}
+		if err := d.DownloadDependencies(ctx, plugin, mirror, dependencyCallback); err != nil {
+			progress.Status = "failed"
+			progress.Error = err.Error()
+			now := time.Now()
+			progress.EndTime = &now
+			d.UpsertActiveDownload(progress)
+			return fmt.Errorf("failed to download dependencies: %w", err)
+		}
+	}
+
+	if err := d.writePluginMetadata(plugin, selectedProfileKeys); err != nil {
+		return fmt.Errorf("failed to write plugin metadata: %w", err)
+	}
 	return nil
 }
 
@@ -685,6 +938,8 @@ func (d *Downloader) verifyChecksum(ctx context.Context, filePath, sha1URL strin
 // ListLocalPlugins 返回本地已下载的插件列表。
 func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 	var plugins []LocalPlugin
+	metadataByVersion := make(map[string]map[string]*localPluginMetadata)
+	attachedArtifactsByVersion := make(map[string]map[string]struct{})
 
 	// Walk through plugins directory / 遍历插件目录
 	entries, err := os.ReadDir(d.pluginsDir)
@@ -701,6 +956,30 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 		}
 
 		version := entry.Name()
+		metadataDir := filepath.Join(d.pluginsDir, version, "metadata")
+		if metadataEntries, metaErr := os.ReadDir(metadataDir); metaErr == nil {
+			metadataByVersion[version] = make(map[string]*localPluginMetadata)
+			attachedArtifactsByVersion[version] = make(map[string]struct{})
+			for _, metaEntry := range metadataEntries {
+				if metaEntry.IsDir() || !strings.HasSuffix(metaEntry.Name(), ".json") {
+					continue
+				}
+				content, readErr := os.ReadFile(filepath.Join(metadataDir, metaEntry.Name()))
+				if readErr != nil {
+					continue
+				}
+				var payload localPluginMetadata
+				if json.Unmarshal(content, &payload) != nil {
+					continue
+				}
+				metadataByVersion[version][payload.Name] = &payload
+				for _, artifactID := range payload.AttachedConnectors {
+					if strings.TrimSpace(artifactID) != "" {
+						attachedArtifactsByVersion[version][artifactID] = struct{}{}
+					}
+				}
+			}
+		}
 		connectorsDir := filepath.Join(d.pluginsDir, version, "connectors")
 
 		// List connector jars / 列出连接器 jar
@@ -714,12 +993,10 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 				continue
 			}
 
-			// Parse plugin name from filename / 从文件名解析插件名称
-			// Handles multiple formats:
-			// - connector-{name}-{version}.jar (standard)
-			// - connector-cdc-{database}-{version}.jar (CDC connectors)
-			// - connector-file-{type}-{version}.jar (file connectors)
-			name := parsePluginNameFromFilename(connEntry.Name(), version)
+			name, artifactID, embeddedVersion := parseConnectorFilename(connEntry.Name(), version)
+			if embeddedVersion != "" && embeddedVersion != version {
+				continue
+			}
 
 			info, _ := connEntry.Info()
 			var size int64
@@ -734,6 +1011,7 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 
 			plugins = append(plugins, LocalPlugin{
 				Name:          name,
+				ArtifactID:    artifactID,
 				Version:       version,
 				Category:      category,
 				ConnectorPath: filepath.Join(connectorsDir, connEntry.Name()),
@@ -743,24 +1021,52 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 		}
 	}
 
-	return plugins, nil
+	filtered := make([]LocalPlugin, 0, len(plugins))
+	for i := range plugins {
+		var metadata *localPluginMetadata
+		if items := metadataByVersion[plugins[i].Version]; items != nil {
+			metadata = items[plugins[i].Name]
+		}
+		if metadata == nil {
+			if attached := attachedArtifactsByVersion[plugins[i].Version]; attached != nil {
+				if _, ok := attached[plugins[i].ArtifactID]; ok {
+					continue
+				}
+			}
+			filtered = append(filtered, plugins[i])
+			continue
+		}
+		if strings.TrimSpace(metadata.ArtifactID) != "" {
+			plugins[i].ArtifactID = metadata.ArtifactID
+		}
+		plugins[i].SelectedProfileKeys = append([]string(nil), metadata.SelectedProfileKeys...)
+		plugins[i].AttachedConnectors = append([]string(nil), metadata.AttachedConnectors...)
+		plugins[i].Dependencies = append([]PluginDependency(nil), metadata.Dependencies...)
+		filtered = append(filtered, plugins[i])
+	}
+
+	return filtered, nil
 }
 
 // parsePluginNameFromFilename extracts the plugin name from a jar filename.
 // parsePluginNameFromFilename 从 jar 文件名中提取插件名称。
-// Now simplified: just remove "connector-" prefix and version suffix.
-// 现在简化了：只移除 "connector-" 前缀和版本后缀。
-func parsePluginNameFromFilename(filename, version string) string {
-	// Remove .jar suffix and version / 移除 .jar 后缀和版本号
-	name := strings.TrimSuffix(filename, fmt.Sprintf("-%s.jar", version))
-
-	// Standard format: connector-{name} -> {name}
-	// 标准格式：connector-{name} -> {name}
-	if strings.HasPrefix(name, "connector-") {
-		return strings.TrimPrefix(name, "connector-")
+// Returns plugin name, artifact ID and embedded version.
+// 返回插件名称、artifact ID 和文件名内嵌版本。
+func parseConnectorFilename(filename, fallbackVersion string) (string, string, string) {
+	if matches := connectorFilenamePattern.FindStringSubmatch(filename); len(matches) == 3 {
+		artifactID := matches[1]
+		return strings.TrimPrefix(artifactID, "connector-"), artifactID, matches[2]
 	}
 
-	return name
+	artifactID := strings.TrimSuffix(filename, fmt.Sprintf("-%s.jar", fallbackVersion))
+	if strings.HasSuffix(artifactID, ".jar") {
+		artifactID = strings.TrimSuffix(artifactID, ".jar")
+	}
+	name := artifactID
+	if strings.HasPrefix(name, "connector-") {
+		name = strings.TrimPrefix(name, "connector-")
+	}
+	return name, artifactID, ""
 }
 
 // determinePluginCategory determines the category of a plugin from its name.
@@ -789,16 +1095,22 @@ func (d *Downloader) DeleteLocalPlugin(name, version string) error {
 		return fmt.Errorf("failed to delete connector: %w", err)
 	}
 
+	_ = os.Remove(d.getMetadataPath(name, version))
+
 	return nil
 }
 
 // LocalPlugin represents a locally downloaded plugin.
 // LocalPlugin 表示本地已下载的插件。
 type LocalPlugin struct {
-	Name          string         `json:"name"`           // 插件名称 / Plugin name
-	Version       string         `json:"version"`        // 版本号 / Version
-	Category      PluginCategory `json:"category"`       // 插件分类 / Plugin category
-	ConnectorPath string         `json:"connector_path"` // 连接器路径 / Connector path
-	Size          int64          `json:"size"`           // 文件大小 / File size
-	DownloadedAt  time.Time      `json:"downloaded_at"`  // 下载时间 / Downloaded at
+	Name                string             `json:"name"`                            // 插件名称 / Plugin name
+	ArtifactID          string             `json:"artifact_id"`                     // Maven artifact ID / Maven artifact ID
+	Version             string             `json:"version"`                         // 版本号 / Version
+	Category            PluginCategory     `json:"category"`                        // 插件分类 / Plugin category
+	ConnectorPath       string             `json:"connector_path"`                  // 连接器路径 / Connector path
+	Size                int64              `json:"size"`                            // 文件大小 / File size
+	DownloadedAt        time.Time          `json:"downloaded_at"`                   // 下载时间 / Downloaded at
+	SelectedProfileKeys []string           `json:"selected_profile_keys,omitempty"` // 选中的画像 / Selected profiles
+	AttachedConnectors  []string           `json:"attached_connectors,omitempty"`   // 自动附带的连接器 / Attached connectors
+	Dependencies        []PluginDependency `json:"dependencies,omitempty"`          // 自动附带的依赖 / Auto attached dependencies
 }

@@ -15,19 +15,10 @@
  * limitations under the License.
  */
 
-/**
- * Install Plugin Dialog Component
- * 安装插件对话框组件
- *
- * Shows cluster list with install action. SeaTunnel plugins are not dynamically
- * loaded, so enable/disable is not used.
- * 显示集群列表及安装操作。SeaTunnel 插件非动态加载，无启用/禁用。
- */
-
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useTranslations } from 'next-intl';
+import {useState, useEffect, useCallback, useMemo} from 'react';
+import {useTranslations} from 'next-intl';
 import {
   Dialog,
   DialogContent,
@@ -35,10 +26,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
+import {Button} from '@/components/ui/button';
+import {Badge} from '@/components/ui/badge';
+import {Card, CardContent} from '@/components/ui/card';
+import {Progress} from '@/components/ui/progress';
+import {ScrollArea} from '@/components/ui/scroll-area';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Table,
   TableBody,
@@ -55,56 +57,124 @@ import {
   Info,
   CloudDownload,
   Trash2,
+  Layers3,
 } from 'lucide-react';
-import { toast } from 'sonner';
-import type { Plugin, PluginDownloadProgress, InstalledPlugin } from '@/lib/services/plugin';
-import { PluginService } from '@/lib/services/plugin';
-import { ClusterService } from '@/lib/services/cluster';
-import type { ClusterInfo } from '@/lib/services/cluster';
+import {toast} from 'sonner';
+import type {
+  InstalledPlugin,
+  Plugin,
+  PluginDependency,
+  PluginDownloadProgress,
+} from '@/lib/services/plugin';
+import {PluginService} from '@/lib/services/plugin';
+import {ClusterService} from '@/lib/services/cluster';
+import {ClusterStatus} from '@/lib/services/cluster';
+import type {ClusterInfo} from '@/lib/services/cluster';
 
 interface InstallPluginDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   plugin: Plugin;
   version: string;
+  selectedProfileKeys?: string[];
+  attachedConnectors?: string[];
+  dependencies?: PluginDependency[];
 }
 
-// Cluster plugin status info / 集群插件状态信息
 interface ClusterPluginStatus {
   cluster: ClusterInfo;
   installedPlugin: InstalledPlugin | null;
+  versionMismatchPlugin: InstalledPlugin | null;
   loading: boolean;
 }
 
-/**
- * Install Plugin Dialog Component
- * 安装插件对话框组件
- */
+interface PendingRestartCluster {
+  id: number;
+  name: string;
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function getDependencyFileName(dep: PluginDependency): string {
+  if (dep.original_file_name?.trim()) {
+    return dep.original_file_name.trim();
+  }
+  const artifact = dep.artifact_id?.trim() || 'dependency';
+  const version = dep.version?.trim();
+  return version ? `${artifact}-${version}.jar` : `${artifact}.jar`;
+}
+
 export function InstallPluginDialog({
   open,
   onOpenChange,
   plugin,
   version,
+  selectedProfileKeys = [],
+  attachedConnectors = [],
+  dependencies = [],
 }: InstallPluginDialogProps) {
   const t = useTranslations();
-
-  // State / 状态
   const [clusterStatuses, setClusterStatuses] = useState<ClusterPluginStatus[]>([]);
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [downloading, setDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<PluginDownloadProgress | null>(null);
+  const [downloadProgress, setDownloadProgress] =
+    useState<PluginDownloadProgress | null>(null);
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Track which cluster is being operated / 跟踪正在操作的集群
   const [operatingClusterId, setOperatingClusterId] = useState<number | null>(null);
+  const [pendingRestartCluster, setPendingRestartCluster] =
+    useState<PendingRestartCluster | null>(null);
+  const [restartingClusterId, setRestartingClusterId] = useState<number | null>(null);
 
-  /**
-   * Check download status
-   * 检查下载状态
-   */
+  const combinedAttachedConnectors = useMemo(
+    () =>
+      dedupeStrings([
+        ...attachedConnectors,
+        ...dependencies
+          .filter((item) => item.target_dir === 'connectors')
+          .map((item) => item.artifact_id),
+      ]),
+    [attachedConnectors, dependencies],
+  );
+  const extraDependencies = useMemo(
+    () => dependencies.filter((item) => item.target_dir !== 'connectors'),
+    [dependencies],
+  );
+  const dependencyTargetDirs = useMemo(
+    () => dedupeStrings(extraDependencies.map((item) => item.target_dir)),
+    [extraDependencies],
+  );
+  const dependencyNote = useMemo(() => {
+    if (dependencyTargetDirs.length === 0) {
+      return t('plugin.installNoteNoDependencies');
+    }
+    return t('plugin.installNoteDependencies', {
+      dirs: dependencyTargetDirs.join(' / '),
+    });
+  }, [dependencyTargetDirs, t]);
+  const requiresClusterRestart = useMemo(
+    () => extraDependencies.some((item) => item.target_dir === 'lib'),
+    [extraDependencies],
+  );
+  const downloadProgressTitle = useMemo(() => {
+    if (downloadProgress?.current_artifact_kind === 'dependency') {
+      return t('plugin.downloadingDependency');
+    }
+    if (downloadProgress?.current_artifact_kind === 'connector') {
+      return t('plugin.downloadingConnector');
+    }
+    return t('plugin.downloading');
+  }, [downloadProgress?.current_artifact_kind, t]);
+
   const checkDownloadStatus = useCallback(async () => {
     try {
-      const status = await PluginService.getDownloadStatus(plugin.name, version);
+      const status = await PluginService.getDownloadStatus(
+        plugin.name,
+        version,
+        selectedProfileKeys,
+      );
       setDownloadProgress(status);
       if (status.status === 'completed') {
         setIsDownloaded(true);
@@ -116,109 +186,104 @@ export function InstallPluginDialog({
         setError(status.error || t('plugin.downloadFailed'));
       }
     } catch {
-      // If status check fails, assume not downloaded / 如果状态检查失败，假设未下载
       setIsDownloaded(false);
     }
-  }, [plugin.name, version, t]);
+  }, [plugin.name, selectedProfileKeys, t, version]);
 
-  /**
-   * Load clusters and check plugin status for each
-   * 加载集群列表并检查每个集群的插件状态
-   */
   const loadClusters = useCallback(async () => {
     setLoadingClusters(true);
     setError(null);
     try {
-      const result = await ClusterService.getClusters({ current: 1, size: 100 });
-      // Filter clusters that are online/running / 过滤在线/运行中的集群
+      const result = await ClusterService.getClusters({current: 1, size: 100});
       const availableClusters = result.clusters.filter(
-        (c: ClusterInfo) => c.status === 'running' || c.status === 'stopped'
+        (c: ClusterInfo) =>
+          c.status === ClusterStatus.RUNNING || c.status === ClusterStatus.STOPPED,
       );
 
-      // Initialize cluster statuses / 初始化集群状态
       const statuses: ClusterPluginStatus[] = availableClusters.map((cluster: ClusterInfo) => ({
         cluster,
         installedPlugin: null,
+        versionMismatchPlugin: null,
         loading: true,
       }));
       setClusterStatuses(statuses);
 
-      // Check plugin status for each cluster / 检查每个集群的插件状态
       const updatedStatuses = await Promise.all(
         availableClusters.map(async (cluster: ClusterInfo) => {
           try {
             const installedPlugins = await PluginService.listInstalledPlugins(cluster.id);
             const installedPlugin = installedPlugins.find(
-              (p: InstalledPlugin) => p.plugin_name === plugin.name
+              (item: InstalledPlugin) =>
+                item.plugin_name === plugin.name && item.version === version,
             );
+            const versionMismatchPlugin = installedPlugin
+              ? null
+              : installedPlugins.find(
+                  (item: InstalledPlugin) => item.plugin_name === plugin.name,
+                ) || null;
             return {
               cluster,
               installedPlugin: installedPlugin || null,
+              versionMismatchPlugin,
               loading: false,
             };
           } catch {
             return {
               cluster,
               installedPlugin: null,
+              versionMismatchPlugin: null,
               loading: false,
             };
           }
-        })
+        }),
       );
       setClusterStatuses(updatedStatuses);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('cluster.loadError');
+    } catch (loadError) {
+      const errorMsg = loadError instanceof Error ? loadError.message : t('cluster.loadError');
       setError(errorMsg);
       setClusterStatuses([]);
     } finally {
       setLoadingClusters(false);
     }
-  }, [plugin.name, t]);
+  }, [plugin.name, t, version]);
 
-  /**
-   * Load available clusters and check download status
-   * 加载可用集群列表并检查下载状态
-   */
   useEffect(() => {
     if (open) {
       void loadClusters();
-      checkDownloadStatus();
+      void checkDownloadStatus();
     }
-  }, [open, checkDownloadStatus, loadClusters]);
+  }, [checkDownloadStatus, loadClusters, open]);
 
-  /**
-   * Poll download status while downloading
-   * 下载时轮询下载状态
-   */
   useEffect(() => {
-    if (!downloading) {return;}
-
-    const interval = setInterval(checkDownloadStatus, 1000);
+    if (!downloading) {
+      return undefined;
+    }
+    const interval = setInterval(() => {
+      void checkDownloadStatus();
+    }, 1000);
     return () => clearInterval(interval);
-  }, [downloading, checkDownloadStatus]);
+  }, [checkDownloadStatus, downloading]);
 
-  /**
-   * Handle download plugin
-   * 处理下载插件
-   */
   const handleDownload = async () => {
     setDownloading(true);
     setError(null);
     try {
-      await PluginService.downloadPlugin(plugin.name, version);
-      toast.info(t('plugin.downloadStarted', { name: plugin.display_name || plugin.name }));
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('plugin.downloadFailed');
+      await PluginService.downloadPlugin(
+        plugin.name,
+        version,
+        undefined,
+        selectedProfileKeys,
+      );
+      toast.info(t('plugin.downloadStarted', {name: plugin.display_name || plugin.name}));
+    } catch (downloadError) {
+      const errorMsg =
+        downloadError instanceof Error ? downloadError.message : t('plugin.downloadFailed');
       setError(errorMsg);
       toast.error(errorMsg);
       setDownloading(false);
     }
   };
 
-  /**
-   * Handle install plugin to cluster
-   * 处理安装插件到集群
-   */
   const handleInstall = async (clusterId: number) => {
     if (!isDownloaded) {
       toast.error(t('plugin.downloadFirst'));
@@ -227,169 +292,358 @@ export function InstallPluginDialog({
 
     setOperatingClusterId(clusterId);
     try {
-      await PluginService.installPlugin(clusterId, plugin.name, version);
-      toast.success(t('plugin.installSuccess', { name: plugin.display_name || plugin.name }));
-      // Refresh cluster status / 刷新集群状态
+      await PluginService.installPlugin(
+        clusterId,
+        plugin.name,
+        version,
+        undefined,
+        selectedProfileKeys,
+      );
+      toast.success(t('plugin.installSuccess', {name: plugin.display_name || plugin.name}));
       await refreshClusterStatus(clusterId);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('plugin.installFailed');
+
+      const targetCluster = clusterStatuses.find((item) => item.cluster.id === clusterId)?.cluster;
+      if (requiresClusterRestart && targetCluster) {
+        if (targetCluster.status === ClusterStatus.RUNNING) {
+          setPendingRestartCluster({
+            id: targetCluster.id,
+            name: targetCluster.name,
+          });
+        } else {
+          toast.info(
+            t('plugin.restartClusterOnNextStartHint', {
+              cluster: targetCluster.name,
+            }),
+          );
+        }
+      }
+    } catch (installError) {
+      const errorMsg =
+        installError instanceof Error ? installError.message : t('plugin.installFailed');
       toast.error(errorMsg);
     } finally {
       setOperatingClusterId(null);
     }
   };
 
-  /**
-   * Handle uninstall plugin from cluster
-   * 处理从集群卸载插件
-   */
+  const handleConfirmClusterRestart = async () => {
+    if (!pendingRestartCluster) {
+      return;
+    }
+    setRestartingClusterId(pendingRestartCluster.id);
+    try {
+      const result = await ClusterService.restartClusterSafe(pendingRestartCluster.id);
+      if (result.success) {
+        toast.success(
+          t('plugin.restartClusterAfterInstallSuccess', {
+            cluster: pendingRestartCluster.name,
+          }),
+        );
+        setPendingRestartCluster(null);
+      } else {
+        toast.error(
+          result.error ||
+            t('plugin.restartClusterAfterInstallFailed', {
+              cluster: pendingRestartCluster.name,
+            }),
+        );
+      }
+    } catch (restartError) {
+      const errorMsg =
+        restartError instanceof Error
+          ? restartError.message
+          : t('plugin.restartClusterAfterInstallFailed', {
+              cluster: pendingRestartCluster.name,
+            });
+      toast.error(errorMsg);
+    } finally {
+      setRestartingClusterId(null);
+    }
+  };
+
   const handleUninstall = async (clusterId: number) => {
     setOperatingClusterId(clusterId);
     try {
       await PluginService.uninstallPlugin(clusterId, plugin.name);
       toast.success(t('plugin.uninstallSuccess'));
       await refreshClusterStatus(clusterId);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('plugin.uninstallFailed');
+    } catch (uninstallError) {
+      const errorMsg =
+        uninstallError instanceof Error
+          ? uninstallError.message
+          : t('plugin.uninstallFailed');
       toast.error(errorMsg);
     } finally {
       setOperatingClusterId(null);
     }
   };
 
-  /**
-   * Refresh single cluster status
-   * 刷新单个集群状态
-   */
   const refreshClusterStatus = async (clusterId: number) => {
     try {
       const installedPlugins = await PluginService.listInstalledPlugins(clusterId);
       const installedPlugin = installedPlugins.find(
-        (p: InstalledPlugin) => p.plugin_name === plugin.name
+        (item: InstalledPlugin) =>
+          item.plugin_name === plugin.name && item.version === version,
       );
+      const versionMismatchPlugin = installedPlugin
+        ? null
+        : installedPlugins.find(
+            (item: InstalledPlugin) => item.plugin_name === plugin.name,
+          ) || null;
       setClusterStatuses((prev) =>
-        prev.map((cs) =>
-          cs.cluster.id === clusterId
-            ? { ...cs, installedPlugin: installedPlugin || null }
-            : cs
-        )
+        prev.map((status) =>
+          status.cluster.id === clusterId
+            ? {
+                ...status,
+                installedPlugin: installedPlugin || null,
+                versionMismatchPlugin,
+              }
+            : status,
+        ),
       );
     } catch {
-      // Ignore refresh errors / 忽略刷新错误
+      // ignore
     }
   };
 
-  /**
-   * Handle dialog close
-   * 处理对话框关闭
-   */
   const handleClose = () => {
     if (!downloading && !operatingClusterId) {
       setError(null);
       setDownloadProgress(null);
+      setPendingRestartCluster(null);
       onOpenChange(false);
     }
   };
 
-  /**
-   * Get status badge for installed plugin (installed or not; no enable/disable)
-   * 获取已安装插件的状态徽章（仅已安装/未安装，无启用禁用）
-   */
-  const getStatusBadge = (installedPlugin: InstalledPlugin | null) => {
+  const getStatusBadge = (
+    installedPlugin: InstalledPlugin | null,
+    hasVersionMismatch: boolean,
+  ) => {
     if (!installedPlugin) {
+      if (hasVersionMismatch) {
+        return <Badge variant='secondary'>{t('plugin.versionMismatch')}</Badge>;
+      }
       return (
-        <Badge variant="outline" className="text-muted-foreground">
+        <Badge variant='outline' className='text-muted-foreground'>
           {t('plugin.notInstalled')}
         </Badge>
       );
     }
-    return (
-      <Badge variant="default">
-        {t('plugin.installedLabel')}
-      </Badge>
-    );
+    return <Badge variant='default'>{t('plugin.installedLabel')}</Badge>;
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[650px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Download className="h-5 w-5" />
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className='w-[96vw] max-w-[96vw] sm:max-w-[920px] max-h-[88vh] overflow-hidden p-0 gap-0'>
+        <DialogHeader className='px-6 pt-6 pb-4 shrink-0'>
+          <DialogTitle className='flex items-center gap-2'>
+            <Download className='h-5 w-5' />
             {t('plugin.managePlugin')}
           </DialogTitle>
           <DialogDescription>{t('plugin.managePluginDesc')}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          {/* Plugin info / 插件信息 */}
-          <Card className="bg-muted/50">
-            <CardContent className="pt-4 pb-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{plugin.display_name || plugin.name}</span>
-                <Badge variant="secondary">v{version}</Badge>
+        <ScrollArea className='max-h-[calc(88vh-92px)]'>
+          <div className='space-y-4 px-6 pb-6'>
+          <Card className='bg-muted/50'>
+            <CardContent className='pt-4 pb-4 space-y-3'>
+              <div className='flex items-center justify-between gap-4'>
+                <div>
+                  <div className='font-medium'>{plugin.display_name || plugin.name}</div>
+                  <p className='text-sm text-muted-foreground'>{plugin.name}</p>
+                </div>
+                <Badge variant='secondary'>v{version}</Badge>
               </div>
-              <p className="text-sm text-muted-foreground">{plugin.name}</p>
+              {selectedProfileKeys.length > 0 && (
+                <div className='flex flex-wrap gap-2'>
+                  <span className='text-xs text-muted-foreground'>
+                    {t('plugin.selectedProfiles')}
+                  </span>
+                  {selectedProfileKeys.map((key) => (
+                    <Badge key={key} variant='outline'>
+                      {key}
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Download section / 下载区域 */}
           {!isDownloaded && (
-            <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-                    <AlertCircle className="h-4 w-4" />
-                    <span className="text-sm">{t('plugin.downloadFirst')}</span>
+            <Card className='border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950'>
+              <CardContent className='pt-4 pb-4 space-y-3'>
+                <div className='flex items-center justify-between gap-4'>
+                  <div className='flex items-center gap-2 text-amber-800 dark:text-amber-200'>
+                    <AlertCircle className='h-4 w-4' />
+                    <span className='text-sm'>{t('plugin.downloadFirst')}</span>
                   </div>
-                  <Button size="sm" onClick={handleDownload} disabled={downloading}>
+                  <Button size='sm' onClick={handleDownload} disabled={downloading}>
                     {downloading ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className='h-4 w-4 mr-2 animate-spin' />
                     ) : (
-                      <CloudDownload className="h-4 w-4 mr-2" />
+                      <CloudDownload className='h-4 w-4 mr-2' />
                     )}
                     {t('plugin.download')}
                   </Button>
                 </div>
-                {/* Download progress / 下载进度 */}
                 {downloading && downloadProgress && (
-                  <div className="mt-3 space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span>{downloadProgress.current_step || t('plugin.downloading')}</span>
+                  <div className='space-y-2'>
+                    <div className='flex items-center justify-between text-sm'>
+                      <span>{downloadProgressTitle}</span>
                       <span>{downloadProgress.progress}%</span>
                     </div>
-                    <Progress value={downloadProgress.progress} className="h-2" />
+                    {downloadProgress.current_artifact && (
+                      <div className='text-xs text-muted-foreground'>
+                        {downloadProgress.current_artifact_kind === 'dependency'
+                          ? t('plugin.currentDownloadingDependency', {
+                              artifact: downloadProgress.current_artifact,
+                            })
+                          : t('plugin.currentDownloadingConnector', {
+                              artifact: downloadProgress.current_artifact,
+                            })}
+                      </div>
+                    )}
+                    <Progress value={downloadProgress.progress} className='h-2' />
+                    <div className='flex flex-wrap gap-3 text-xs text-muted-foreground'>
+                      <span>
+                        {t('plugin.connectorProgress', {
+                          completed: downloadProgress.connector_completed || 0,
+                          total: downloadProgress.connector_count || 0,
+                        })}
+                      </span>
+                      <span>
+                        {t('plugin.dependencyProgress', {
+                          completed: downloadProgress.dependency_completed || 0,
+                          total: downloadProgress.dependency_count || 0,
+                        })}
+                      </span>
+                    </div>
                   </div>
                 )}
               </CardContent>
             </Card>
           )}
 
-          {/* Error display / 错误显示 */}
           {error && (
-            <Card className="border-destructive bg-destructive/10">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center gap-2 text-destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <span className="text-sm">{error}</span>
+            <Card className='border-destructive bg-destructive/10'>
+              <CardContent className='pt-4 pb-4'>
+                <div className='flex items-center gap-2 text-destructive'>
+                  <AlertCircle className='h-4 w-4' />
+                  <span className='text-sm'>{error}</span>
                 </div>
               </CardContent>
             </Card>
           )}
 
-          {/* Cluster list / 集群列表 */}
-          <div className="space-y-2">
-            <div className="text-sm font-medium">{t('plugin.clusterList')}</div>
+          <Card>
+            <CardContent className='pt-4 pb-4 space-y-4'>
+              <div>
+                <div className='flex items-center gap-2 text-sm font-medium'>
+                  <Layers3 className='h-4 w-4' />
+                  {t('plugin.automaticInstallContent')}
+                </div>
+                <p className='mt-1 text-xs text-muted-foreground'>
+                  {t('plugin.automaticInstallContentDesc')}
+                </p>
+              </div>
+
+              <div className='space-y-2'>
+                <div className='text-sm font-medium'>{t('plugin.attachedConnectors')}</div>
+                {combinedAttachedConnectors.length === 0 ? (
+                  <p className='text-sm text-muted-foreground'>
+                    {t('plugin.noAttachedConnectors')}
+                  </p>
+                ) : (
+                  <div className='flex flex-wrap gap-2'>
+                    {combinedAttachedConnectors.map((artifact) => (
+                      <Badge key={artifact} variant='secondary'>
+                        {artifact}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className='space-y-2'>
+                <div className='flex items-center justify-between gap-3'>
+                  <div className='text-sm font-medium'>{t('plugin.extraDependencies')}</div>
+                  {dependencyTargetDirs.length > 0 && (
+                    <div className='flex flex-wrap gap-2'>
+                      {dependencyTargetDirs.map((targetDir) => (
+                        <Badge key={targetDir} variant='outline' className='max-w-[240px] whitespace-normal break-all'>
+                          {targetDir}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {extraDependencies.length === 0 ? (
+                  <p className='text-sm text-muted-foreground'>
+                    {t('plugin.noExtraDependencies')}
+                  </p>
+                ) : (
+                  <div className='overflow-x-auto rounded-lg border'>
+                    <Table className='min-w-[760px]'>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{t('plugin.source')}</TableHead>
+                          <TableHead>{t('plugin.groupId')}</TableHead>
+                          <TableHead>{t('plugin.artifactId')}</TableHead>
+                          <TableHead>{t('plugin.version')}</TableHead>
+                          <TableHead>{t('plugin.targetDir')}</TableHead>
+                          <TableHead>{t('plugin.fileName')}</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {extraDependencies.map((dep, index) => (
+                          <TableRow key={`${dep.group_id}:${dep.artifact_id}:${index}`}>
+                            <TableCell>
+                              <Badge variant={dep.source_type === 'upload' ? 'default' : 'secondary'}>
+                                {dep.source_type === 'upload'
+                                  ? t('plugin.sourceUpload')
+                                  : t('plugin.sourceMaven')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className='font-mono text-xs whitespace-nowrap'>
+                              {dep.group_id}
+                            </TableCell>
+                            <TableCell className='font-mono text-xs whitespace-nowrap'>
+                              {dep.artifact_id}
+                            </TableCell>
+                            <TableCell className='font-mono text-xs whitespace-nowrap'>
+                              {dep.version}
+                            </TableCell>
+                            <TableCell className='min-w-[220px] align-top'>
+                              <Badge variant='outline' className='text-xs whitespace-normal break-all text-left'>
+                                {dep.target_dir}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className='text-xs break-all'>
+                              {getDependencyFileName(dep)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className='space-y-2'>
+            <div className='text-sm font-medium'>{t('plugin.clusterList')}</div>
             {loadingClusters ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className='flex items-center justify-center py-8'>
+                <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
               </div>
             ) : clusterStatuses.length === 0 ? (
-              <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-                    <AlertCircle className="h-4 w-4" />
-                    <span className="text-sm">{t('plugin.noClustersAvailable')}</span>
+              <Card className='border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950'>
+                <CardContent className='pt-4 pb-4'>
+                  <div className='flex items-center gap-2 text-amber-800 dark:text-amber-200'>
+                    <AlertCircle className='h-4 w-4' />
+                    <span className='text-sm'>{t('plugin.noClustersAvailable')}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -400,65 +654,86 @@ export function InstallPluginDialog({
                     <TableHead>{t('cluster.name')}</TableHead>
                     <TableHead>{t('cluster.status')}</TableHead>
                     <TableHead>{t('plugin.installStatus')}</TableHead>
-                    <TableHead className="text-right">{t('common.actions')}</TableHead>
+                    <TableHead className='text-right'>{t('common.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {clusterStatuses.map(({ cluster, installedPlugin, loading }) => {
+                  {clusterStatuses.map(({cluster, installedPlugin, versionMismatchPlugin, loading}) => {
                     const isOperating = operatingClusterId === cluster.id;
-                    const isInstalled = !!installedPlugin;
-
+                    const installed = Boolean(installedPlugin);
+                    const clusterVersionMismatch =
+                      Boolean(cluster.version) && cluster.version !== version;
+                    const hasVersionMismatch =
+                      clusterVersionMismatch || Boolean(versionMismatchPlugin);
                     return (
                       <TableRow key={cluster.id}>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Server className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">{cluster.name}</span>
+                          <div className='flex items-center gap-2'>
+                            <Server className='h-4 w-4 text-muted-foreground' />
+                            <span className='font-medium'>{cluster.name}</span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge
-                            variant={cluster.status === 'running' ? 'default' : 'secondary'}
-                          >
+                          <Badge variant={cluster.status === 'running' ? 'default' : 'secondary'}>
                             {t(`cluster.statuses.${cluster.status}`)}
                           </Badge>
                         </TableCell>
                         <TableCell>
                           {loading ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <Loader2 className='h-4 w-4 animate-spin' />
                           ) : (
-                            getStatusBadge(installedPlugin)
+                            <div className='space-y-1'>
+                              {getStatusBadge(installedPlugin, hasVersionMismatch)}
+                              {hasVersionMismatch && (
+                                <div className='text-xs text-muted-foreground'>
+                                  {versionMismatchPlugin
+                                    ? t('plugin.versionMismatchInstalledHint', {
+                                        clusterVersion: cluster.version || '-',
+                                        installedVersion:
+                                          versionMismatchPlugin.version,
+                                      })
+                                    : t('plugin.versionMismatchClusterHint', {
+                                        clusterVersion: cluster.version || '-',
+                                        pluginVersion: version,
+                                      })}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className='text-right'>
                           {loading ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : !isInstalled ? (
+                            <Loader2 className='h-4 w-4 animate-spin' />
+                          ) : hasVersionMismatch ? (
+                            <Button size='sm' variant='outline' disabled>
+                              {t('plugin.install')}
+                            </Button>
+                          ) : !installed ? (
                             <Button
-                              size="sm"
-                              variant="outline"
+                              size='sm'
+                              variant='outline'
                               onClick={() => handleInstall(cluster.id)}
                               disabled={!isDownloaded || isOperating}
                             >
                               {isOperating ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                <Loader2 className='h-4 w-4 mr-1 animate-spin' />
                               ) : (
-                                <Download className="h-4 w-4 mr-1" />
+                                <Download className='h-4 w-4 mr-1' />
                               )}
                               {t('plugin.install')}
                             </Button>
                           ) : (
                             <Button
-                              size="sm"
-                              variant="outline"
+                              size='sm'
+                              variant='outline'
                               onClick={() => handleUninstall(cluster.id)}
                               disabled={isOperating}
-                              className="text-destructive hover:text-destructive"
+                              className='text-destructive hover:text-destructive'
                             >
                               {isOperating ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                <Loader2 className='h-4 w-4 mr-1 animate-spin' />
                               ) : (
-                                <Trash2 className="h-4 w-4 mr-1" />
+                                <Trash2 className='h-4 w-4 mr-1' />
                               )}
                               {t('plugin.uninstall')}
                             </Button>
@@ -472,19 +747,64 @@ export function InstallPluginDialog({
             )}
           </div>
 
-          {/* Install note / 安装说明 */}
-          <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-start gap-2">
-                <Info className="h-4 w-4 text-blue-600 mt-0.5" />
-                <p className="text-xs text-blue-800 dark:text-blue-200">
-                  {t('plugin.installNote')}
+          <Card className='bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800'>
+            <CardContent className='pt-4 pb-4'>
+              <div className='flex items-start gap-2'>
+                <Info className='h-4 w-4 text-blue-600 mt-0.5' />
+                <p className='text-xs text-blue-800 dark:text-blue-200'>
+                  {t('plugin.installNoteDynamic', {
+                    connectorDir: 'connectors/',
+                    dependencyMessage: dependencyNote,
+                  })}
                 </p>
               </div>
             </CardContent>
           </Card>
         </div>
-      </DialogContent>
-    </Dialog>
+        </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={Boolean(pendingRestartCluster)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && restartingClusterId === null) {
+            setPendingRestartCluster(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('plugin.restartClusterAfterInstallTitle')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRestartCluster
+                ? t('plugin.restartClusterAfterInstallPrompt', {
+                    cluster: pendingRestartCluster.name,
+                  })
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restartingClusterId !== null}>
+              {t('common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmClusterRestart();
+              }}
+              disabled={restartingClusterId !== null}
+            >
+              {restartingClusterId !== null ? (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              ) : null}
+              {t('plugin.restartClusterAfterInstallAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

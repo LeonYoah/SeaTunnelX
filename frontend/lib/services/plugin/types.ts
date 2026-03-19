@@ -40,6 +40,39 @@ export type PluginStatus = 'available' | 'installed' | 'enabled' | 'disabled';
  */
 export type MirrorSource = 'apache' | 'aliyun' | 'huaweicloud';
 
+/**
+ * Available plugin list source
+ * 可用插件列表来源
+ */
+export type PluginListSource = 'database' | 'remote';
+
+/**
+ * Official dependency status
+ * 官方依赖状态
+ */
+export type PluginDependencyStatus =
+  | 'ready_exact'
+  | 'ready_fallback'
+  | 'runtime_analyzed'
+  | 'not_required'
+  | 'unknown';
+
+/**
+ * Dependency resolution mode
+ * 依赖解析模式
+ */
+export type DependencyResolutionMode =
+  | 'exact'
+  | 'fallback'
+  | 'runtime'
+  | 'none';
+
+/**
+ * Dependency source type
+ * 依赖来源类型
+ */
+export type PluginDependencySource = 'maven' | 'upload' | 'official';
+
 // ==================== Plugin Types 插件类型 ====================
 
 /**
@@ -50,7 +83,9 @@ export interface PluginDependency {
   group_id: string;
   artifact_id: string;
   version: string;
-  target_dir: string; // connectors/ or lib/
+  target_dir: string; // connectors/ or lib/ or plugins/<mapping>
+  source_type?: PluginDependencySource;
+  original_file_name?: string;
 }
 
 /**
@@ -68,6 +103,10 @@ export interface Plugin {
   dependencies?: PluginDependency[];
   icon?: string;
   doc_url?: string;
+  dependency_status?: PluginDependencyStatus;
+  dependency_count?: number;
+  dependency_baseline_version?: string;
+  dependency_resolution_mode?: DependencyResolutionMode;
 }
 
 /**
@@ -100,6 +139,7 @@ export interface InstallPluginRequest {
   plugin_name: string;
   version: string;
   mirror?: MirrorSource;
+  profile_keys?: string[];
 }
 
 /**
@@ -126,8 +166,10 @@ export interface AvailablePluginsResponse {
   total: number;
   version: string;
   mirror: string;
-  source: 'cache' | 'remote';
+  source: PluginListSource;
   cache_hit: boolean;
+  catalog_source_mirror?: string;
+  catalog_refreshed_at?: string;
 }
 
 /**
@@ -196,7 +238,6 @@ export interface PluginInstallStatus {
   error?: string;
 }
 
-
 // ==================== Plugin Download Types 插件下载类型 ====================
 
 /**
@@ -209,6 +250,8 @@ export interface PluginDownloadProgress {
   status: 'not_started' | 'downloading' | 'completed' | 'failed';
   progress: number;
   current_step?: string;
+  current_artifact?: string;
+  current_artifact_kind?: 'connector' | 'dependency' | string;
   downloaded_bytes?: number;
   total_bytes?: number;
   speed?: number;
@@ -216,6 +259,11 @@ export interface PluginDownloadProgress {
   error?: string;
   start_time?: string;
   end_time?: string;
+  connector_count?: number;
+  connector_completed?: number;
+  dependency_count?: number;
+  dependency_completed?: number;
+  selected_profile_keys?: string[];
 }
 
 /**
@@ -223,12 +271,12 @@ export interface PluginDownloadProgress {
  * 下载所有插件的进度
  */
 export interface DownloadAllPluginsProgress {
-  total: number;       // 总插件数 / Total plugins
-  downloaded: number;  // 已下载数 / Downloaded count
-  failed: number;      // 失败数 / Failed count
-  skipped: number;     // 跳过数（已存在）/ Skipped count
-  status: string;      // 状态 / Status
-  message: string;     // 消息 / Message
+  total: number; // 总插件数 / Total plugins
+  downloaded: number; // 已下载数 / Downloaded count
+  failed: number; // 失败数 / Failed count
+  skipped: number; // 跳过数（已存在）/ Skipped count
+  status: string; // 状态 / Status
+  message: string; // 消息 / Message
 }
 
 /**
@@ -237,11 +285,15 @@ export interface DownloadAllPluginsProgress {
  */
 export interface LocalPlugin {
   name: string;
+  artifact_id?: string;
   version: string;
   category: PluginCategory;
   connector_path: string;
   size: number;
   downloaded_at: string;
+  selected_profile_keys?: string[];
+  attached_connectors?: string[];
+  dependencies?: PluginDependency[];
 }
 
 /**
@@ -251,6 +303,7 @@ export interface LocalPlugin {
 export interface DownloadPluginRequest {
   version: string;
   mirror?: MirrorSource;
+  profile_keys?: string[];
 }
 
 /**
@@ -289,12 +342,105 @@ export interface GetInstallProgressResponse {
 export interface PluginDependencyConfig {
   id: number;
   plugin_name: string;
+  seatunnel_version: string;
+  group_id: string;
+  artifact_id: string;
+  version: string;
+  target_dir: string;
+  source_type: PluginDependencySource;
+  original_file_name?: string;
+  file_size?: number;
+  checksum?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PluginDependencyDisable {
+  id: number;
+  plugin_name: string;
+  seatunnel_version: string;
   group_id: string;
   artifact_id: string;
   version: string;
   target_dir: string;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Official dependency profile item
+ * 官方依赖画像条目
+ */
+export interface PluginDependencyProfileItem {
+  id: number;
+  profile_id: number;
+  group_id: string;
+  artifact_id: string;
+  version: string;
+  target_dir: string;
+  required: boolean;
+  source_url: string;
+  note: string;
+  disabled?: boolean;
+  disable_id?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Official dependency profile
+ * 官方依赖画像
+ */
+export interface PluginDependencyProfile {
+  id: number;
+  seatunnel_version: string;
+  plugin_name: string;
+  artifact_id: string;
+  profile_key: string;
+  profile_name: string;
+  engine_scope: string;
+  target_dir: string;
+  applies_to: string;
+  include_versions?: string;
+  excluded_versions?: string;
+  source_kind: string;
+  baseline_version_used?: string;
+  doc_slug: string;
+  doc_source_url: string;
+  confidence: string;
+  no_additional_dependencies: boolean;
+  is_default: boolean;
+  note: string;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+  items?: PluginDependencyProfileItem[];
+}
+
+/**
+ * Official dependency resolution response
+ * 官方依赖解析响应
+ */
+export interface OfficialDependenciesResponse {
+  plugin_name: string;
+  seatunnel_version: string;
+  dependency_status: PluginDependencyStatus;
+  dependency_count: number;
+  baseline_version_used?: string;
+  dependency_resolution_mode: DependencyResolutionMode;
+  profiles: PluginDependencyProfile[];
+  effective_dependencies: PluginDependency[];
+  disabled_dependencies?: PluginDependencyDisable[];
+}
+
+/**
+ * Analyze official dependencies request
+ * 在线分析官方依赖请求
+ */
+export interface AnalyzeOfficialDependenciesRequest {
+  version: string;
+  profile_key?: string;
+  force_refresh?: boolean;
 }
 
 /**
@@ -305,6 +451,25 @@ export interface AddDependencyRequest {
   group_id: string;
   artifact_id: string;
   version: string; // 必填 / Required
+  seatunnel_version?: string;
+  target_dir?: string;
+}
+
+export interface UploadDependencyRequest {
+  file: File;
+  seatunnel_version?: string;
+  group_id?: string;
+  artifact_id?: string;
+  version?: string;
+  target_dir?: string;
+}
+
+export interface DisableDependencyRequest {
+  seatunnel_version?: string;
+  group_id: string;
+  artifact_id: string;
+  version: string;
+  target_dir: string;
 }
 
 /**
@@ -323,4 +488,9 @@ export interface ListDependenciesResponse {
 export interface AddDependencyResponse {
   error_msg: string;
   data: PluginDependencyConfig | null;
+}
+
+export interface DisableDependencyResponse {
+  error_msg: string;
+  data: PluginDependencyDisable | null;
 }

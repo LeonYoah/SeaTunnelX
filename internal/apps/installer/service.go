@@ -91,7 +91,7 @@ type AgentManager interface {
 type PluginTransferer interface {
 	// TransferPluginToAgent transfers a plugin to an agent
 	// TransferPluginToAgent 将插件传输到 Agent
-	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error
+	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error
 
 	// GetPluginArtifactID returns the Maven artifact ID for a plugin name
 	// GetPluginArtifactID 返回插件名称对应的 Maven artifact ID
@@ -103,7 +103,7 @@ type PluginTransferer interface {
 
 	// DownloadPluginSync downloads a plugin synchronously (blocking)
 	// DownloadPluginSync 同步下载插件（阻塞）
-	DownloadPluginSync(ctx context.Context, pluginName, version string) error
+	DownloadPluginSync(ctx context.Context, pluginName, version, mirror string, profileKeys []string) error
 
 	// RecordInstalledPlugin records a plugin as installed for a cluster
 	// RecordInstalledPlugin 记录插件已安装到集群
@@ -253,7 +253,24 @@ type Service struct {
 	// chunkUploadMu protects chunk upload state files
 	// chunkUploadMu 保护分片上传状态文件
 	chunkUploadMu sync.Mutex
+
+	// preparedAssetMu protects prepared package/plugin caches for Agent reuse.
+	// preparedAssetMu 保护用于复用 Agent 已准备安装包/插件的缓存。
+	preparedAssetMu sync.Mutex
+	// preparedPackages stores remote package paths already transferred to an Agent.
+	// preparedPackages 保存已传输到 Agent 的安装包远程路径。
+	preparedPackages map[string]preparedPackageCacheEntry
+	// preparedPlugins stores plugin bundles already transferred and installed on an Agent.
+	// preparedPlugins 保存已传输并安装到 Agent 的插件包标记。
+	preparedPlugins map[string]time.Time
 }
+
+type preparedPackageCacheEntry struct {
+	RemotePath string
+	UpdatedAt  time.Time
+}
+
+const preparedAssetCacheTTL = 30 * time.Minute
 
 // PackageChunkUploadRequest is the request for uploading a package chunk.
 // PackageChunkUploadRequest 表示安装包分片上传请求。
@@ -313,6 +330,8 @@ func NewService(packageDir string, agentManager AgentManager) *Service {
 		downloads:        make(map[string]*DownloadTask),
 		agentManager:     agentManager,
 		heartbeatTimeout: 2 * time.Minute, // Default 2 minutes / 默认 2 分钟
+		preparedPackages: make(map[string]preparedPackageCacheEntry),
+		preparedPlugins:  make(map[string]time.Time),
 	}
 }
 
@@ -1782,34 +1801,49 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 	}
 
 	if localPackagePath != "" {
-		// Transfer package to Agent via gRPC
-		// 通过 gRPC 传输安装包到 Agent
-		s.installMu.Lock()
-		status.Message = "Transferring package to Agent... / 正在传输安装包到 Agent..."
-		s.installMu.Unlock()
-
-		remotePath, err := s.transferPackageFileToAgent(ctx, agentID, req.Version, localPackagePath, status)
-		if err != nil {
-			if req.InstallMode == InstallModeOnline {
-				// Transfer failed, fallback to mirror download
-				// 传输失败，回退到镜像源下载
-				logger.WarnF(ctx, "[Installer] 安装包传输失败，回退到镜像源下载 / Package transfer failed, fallback to mirror download: %v", err)
-				// Continue with mirror download mode
-				// 继续使用镜像源下载模式
-			} else {
-				s.installMu.Lock()
-				now := time.Now()
-				status.Status = StepStatusFailed
-				status.Error = fmt.Sprintf("Failed to transfer offline package: %v / 传输离线安装包失败: %v", err, err)
-				status.EndTime = &now
-				s.installMu.Unlock()
-				return
-			}
+		if cachedRemotePath, ok := s.getPreparedPackageRemotePath(agentID, req.Version, localPackagePath); ok {
+			logger.InfoF(
+				ctx,
+				"[Installer] 复用已传输安装包 / Reusing previously transferred package: agent=%s, version=%s, remote_path=%s",
+				agentID,
+				req.Version,
+				cachedRemotePath,
+			)
+			s.installMu.Lock()
+			status.Message = "Reusing package already transferred to Agent... / 复用已传输到 Agent 的安装包..."
+			s.installMu.Unlock()
+			req.PackagePath = cachedRemotePath
 		} else {
-			// Transfer succeeded, update params to use package on Agent
-			// 传输成功，更新参数使用 Agent 本地安装包
-			logger.InfoF(ctx, "[Installer] 安装包传输成功 / Package transfer succeeded: remote_path=%s", remotePath)
-			req.PackagePath = remotePath
+			// Transfer package to Agent via gRPC
+			// 通过 gRPC 传输安装包到 Agent
+			s.installMu.Lock()
+			status.Message = "Transferring package to Agent... / 正在传输安装包到 Agent..."
+			s.installMu.Unlock()
+
+			remotePath, err := s.transferPackageFileToAgent(ctx, agentID, req.Version, localPackagePath, status)
+			if err != nil {
+				if req.InstallMode == InstallModeOnline {
+					// Transfer failed, fallback to mirror download
+					// 传输失败，回退到镜像源下载
+					logger.WarnF(ctx, "[Installer] 安装包传输失败，回退到镜像源下载 / Package transfer failed, fallback to mirror download: %v", err)
+					// Continue with mirror download mode
+					// 继续使用镜像源下载模式
+				} else {
+					s.installMu.Lock()
+					now := time.Now()
+					status.Status = StepStatusFailed
+					status.Error = fmt.Sprintf("Failed to transfer offline package: %v / 传输离线安装包失败: %v", err, err)
+					status.EndTime = &now
+					s.installMu.Unlock()
+					return
+				}
+			} else {
+				// Transfer succeeded, update params to use package on Agent
+				// 传输成功，更新参数使用 Agent 本地安装包
+				logger.InfoF(ctx, "[Installer] 安装包传输成功 / Package transfer succeeded: remote_path=%s", remotePath)
+				req.PackagePath = remotePath
+				s.rememberPreparedPackage(agentID, req.Version, localPackagePath, remotePath)
+			}
 		}
 	}
 
@@ -1826,8 +1860,31 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 		if installDir == "" {
 			installDir = seatunnel.DefaultInstallDir(req.Version)
 		}
+		pluginMirror := string(req.Mirror)
+		if req.Connector.PluginRepo != "" {
+			pluginMirror = string(req.Connector.PluginRepo)
+		}
 		for i, pluginName := range req.Connector.SelectedPlugins {
+			selectedProfileKeys := normalizeProfileKeys(req.Connector.SelectedPluginProfiles[pluginName])
 			logger.InfoF(ctx, "[Installer] 传输插件 / Transferring plugin: %s (%d/%d)", pluginName, i+1, len(req.Connector.SelectedPlugins))
+
+			if s.hasPreparedPlugin(agentID, pluginName, req.Version, installDir, selectedProfileKeys) {
+				logger.InfoF(
+					ctx,
+					"[Installer] 复用已准备插件 / Reusing prepared plugin: %s, profiles=%v, agent=%s",
+					pluginName,
+					selectedProfileKeys,
+					agentID,
+				)
+				s.installMu.Lock()
+				status.Message = fmt.Sprintf(
+					"Reusing prepared plugin %s (%d/%d)... / 正在复用已准备插件 %s (%d/%d)...",
+					pluginName, i+1, len(req.Connector.SelectedPlugins),
+					pluginName, i+1, len(req.Connector.SelectedPlugins),
+				)
+				s.installMu.Unlock()
+				continue
+			}
 
 			s.installMu.Lock()
 			status.Message = fmt.Sprintf("Transferring plugin %s (%d/%d)... / 正在传输插件 %s (%d/%d)...",
@@ -1835,24 +1892,29 @@ func (s *Service) runInstallation(ctx context.Context, req *InstallationRequest,
 				pluginName, i+1, len(req.Connector.SelectedPlugins))
 			s.installMu.Unlock()
 
-			// Check if plugin is downloaded, if not download it first
-			// 检查插件是否已下载，如果没有则先下载
-			if !s.pluginTransferer.IsPluginDownloaded(pluginName, req.Version) {
-				logger.InfoF(ctx, "[Installer] 插件未下载，开始下载 / Plugin not downloaded, starting download: %s", pluginName)
-				if err := s.pluginTransferer.DownloadPluginSync(ctx, pluginName, req.Version); err != nil {
-					logger.WarnF(ctx, "[Installer] 下载插件失败，跳过 / Failed to download plugin, skipping: %s, error=%v", pluginName, err)
-					continue
-				}
+			// Always prepare the effective plugin package before transfer.
+			// 在传输前始终准备插件的生效安装包。
+			logger.InfoF(
+				ctx,
+				"[Installer] 准备插件包 / Preparing plugin package: %s, profiles=%v, mirror=%s",
+				pluginName,
+				selectedProfileKeys,
+				pluginMirror,
+			)
+			if err := s.pluginTransferer.DownloadPluginSync(ctx, pluginName, req.Version, pluginMirror, selectedProfileKeys); err != nil {
+				logger.WarnF(ctx, "[Installer] 准备插件失败，跳过 / Failed to prepare plugin, skipping: %s, error=%v", pluginName, err)
+				continue
 			}
 
 			// Transfer plugin to Agent
 			// 传输插件到 Agent
-			if err := s.pluginTransferer.TransferPluginToAgent(ctx, agentID, pluginName, req.Version, installDir); err != nil {
+			if err := s.pluginTransferer.TransferPluginToAgent(ctx, agentID, pluginName, req.Version, installDir, selectedProfileKeys); err != nil {
 				logger.WarnF(ctx, "[Installer] 传输插件失败，跳过 / Failed to transfer plugin, skipping: %s, error=%v", pluginName, err)
 				continue
 			}
 
 			logger.InfoF(ctx, "[Installer] 插件传输成功 / Plugin transferred successfully: %s", pluginName)
+			s.rememberPreparedPlugin(agentID, pluginName, req.Version, installDir, selectedProfileKeys)
 		}
 	}
 
@@ -2306,6 +2368,103 @@ func getDownloadURLs(version string) map[MirrorSource]string {
 
 func packageFileName(version string) string {
 	return fmt.Sprintf("apache-seatunnel-%s-bin.tar.gz", version)
+}
+
+func preparedPackageCacheKey(agentID, version, localPath string) string {
+	return fmt.Sprintf("%s|%s|%s", agentID, version, filepath.Base(localPath))
+}
+
+func preparedPluginCacheKey(agentID, pluginName, version, installDir string, profileKeys []string) string {
+	return fmt.Sprintf(
+		"%s|%s|%s|%s|%s",
+		agentID,
+		pluginName,
+		version,
+		filepath.Clean(installDir),
+		strings.Join(normalizeProfileKeys(profileKeys), ","),
+	)
+}
+
+func (s *Service) prunePreparedAssetCacheLocked(now time.Time) {
+	for key, entry := range s.preparedPackages {
+		if now.Sub(entry.UpdatedAt) > preparedAssetCacheTTL {
+			delete(s.preparedPackages, key)
+		}
+	}
+	for key, updatedAt := range s.preparedPlugins {
+		if now.Sub(updatedAt) > preparedAssetCacheTTL {
+			delete(s.preparedPlugins, key)
+		}
+	}
+}
+
+func (s *Service) getPreparedPackageRemotePath(agentID, version, localPath string) (string, bool) {
+	s.preparedAssetMu.Lock()
+	defer s.preparedAssetMu.Unlock()
+
+	now := time.Now()
+	s.prunePreparedAssetCacheLocked(now)
+
+	entry, ok := s.preparedPackages[preparedPackageCacheKey(agentID, version, localPath)]
+	if !ok {
+		return "", false
+	}
+	return entry.RemotePath, true
+}
+
+func (s *Service) rememberPreparedPackage(agentID, version, localPath, remotePath string) {
+	s.preparedAssetMu.Lock()
+	defer s.preparedAssetMu.Unlock()
+
+	now := time.Now()
+	s.prunePreparedAssetCacheLocked(now)
+	s.preparedPackages[preparedPackageCacheKey(agentID, version, localPath)] = preparedPackageCacheEntry{
+		RemotePath: remotePath,
+		UpdatedAt:  now,
+	}
+}
+
+func (s *Service) hasPreparedPlugin(agentID, pluginName, version, installDir string, profileKeys []string) bool {
+	s.preparedAssetMu.Lock()
+	defer s.preparedAssetMu.Unlock()
+
+	now := time.Now()
+	s.prunePreparedAssetCacheLocked(now)
+
+	_, ok := s.preparedPlugins[preparedPluginCacheKey(agentID, pluginName, version, installDir, profileKeys)]
+	return ok
+}
+
+func (s *Service) rememberPreparedPlugin(agentID, pluginName, version, installDir string, profileKeys []string) {
+	s.preparedAssetMu.Lock()
+	defer s.preparedAssetMu.Unlock()
+
+	now := time.Now()
+	s.prunePreparedAssetCacheLocked(now)
+	s.preparedPlugins[preparedPluginCacheKey(agentID, pluginName, version, installDir, profileKeys)] = now
+}
+
+func normalizeProfileKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		set[trimmed] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(set))
+	for key := range set {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func normalizePathInDir(baseDir, candidatePath string) (string, error) {

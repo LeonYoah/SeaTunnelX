@@ -88,7 +88,7 @@ func (s *stubPluginProvider) GetPluginArtifactID(pluginName string) string {
 	return "connector-" + pluginName
 }
 
-func (s *stubPluginProvider) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error {
+func (s *stubPluginProvider) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error {
 	return nil
 }
 

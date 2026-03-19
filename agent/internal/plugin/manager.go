@@ -83,6 +83,7 @@ type TransferState struct {
 	PluginName    string    // 插件名称 / Plugin name
 	Version       string    // 版本号 / Version
 	FileType      string    // 文件类型: connector, dependency / File type
+	TargetDir     string    // 目标目录（相对 SeaTunnel_HOME）/ Target dir
 	FileName      string    // 文件名 / File name
 	TempPath      string    // 临时文件路径 / Temp file path
 	ReceivedBytes int64     // 已接收字节 / Received bytes
@@ -145,13 +146,12 @@ func (m *Manager) GetLibDir() string {
 	return filepath.Join(m.seatunnelPath, "lib")
 }
 
-
 // ReceivePluginChunk receives a chunk of plugin file data.
 // ReceivePluginChunk 接收插件文件数据块。
 // This method is called multiple times to receive a complete file.
 // 此方法被多次调用以接收完整文件。
-func (m *Manager) ReceivePluginChunk(pluginName, version, fileType, fileName string, chunk []byte, offset, totalSize int64, isLast bool, checksum string) (int64, error) {
-	key := fmt.Sprintf("%s:%s:%s", pluginName, version, fileName)
+func (m *Manager) ReceivePluginChunk(pluginName, version, fileType, targetDir, fileName string, chunk []byte, offset, totalSize int64, isLast bool, checksum string) (int64, error) {
+	key := fmt.Sprintf("%s:%s:%s:%s", pluginName, version, targetDir, fileName)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -165,6 +165,7 @@ func (m *Manager) ReceivePluginChunk(pluginName, version, fileType, fileName str
 			PluginName:    pluginName,
 			Version:       version,
 			FileType:      fileType,
+			TargetDir:     targetDir,
 			FileName:      fileName,
 			TempPath:      tempPath,
 			ReceivedBytes: 0,
@@ -204,8 +205,8 @@ func (m *Manager) ReceivePluginChunk(pluginName, version, fileType, fileName str
 
 // FinalizeTransfer completes a file transfer and moves it to the target location.
 // FinalizeTransfer 完成文件传输并将其移动到目标位置。
-func (m *Manager) FinalizeTransfer(pluginName, version, fileName string) (string, error) {
-	key := fmt.Sprintf("%s:%s:%s", pluginName, version, fileName)
+func (m *Manager) FinalizeTransfer(pluginName, version, targetDir, fileName string) (string, error) {
+	key := fmt.Sprintf("%s:%s:%s:%s", pluginName, version, targetDir, fileName)
 
 	m.mu.Lock()
 	state, exists := m.transfers[key]
@@ -242,24 +243,27 @@ func (m *Manager) FinalizeTransfer(pluginName, version, fileName string) (string
 	}
 
 	// Determine target directory based on file type / 根据文件类型确定目标目录
-	var targetDir string
+	var targetRoot string
 	switch state.FileType {
 	case "connector":
-		targetDir = m.GetConnectorsDir()
-	case "dependency":
-		targetDir = m.GetLibDir()
+		targetRoot = m.GetConnectorsDir()
 	default:
-		targetDir = m.GetConnectorsDir()
+		resolved, err := m.resolveTargetDir(state.TargetDir)
+		if err != nil {
+			_ = os.Remove(state.TempPath)
+			return "", err
+		}
+		targetRoot = resolved
 	}
 
 	// Create target directory if not exists / 如果目标目录不存在则创建
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := os.MkdirAll(targetRoot, 0755); err != nil {
 		os.Remove(state.TempPath)
 		return "", fmt.Errorf("failed to create target directory: %w", err)
 	}
 
 	// Move file to target location / 将文件移动到目标位置
-	targetPath := filepath.Join(targetDir, state.FileName)
+	targetPath := filepath.Join(targetRoot, state.FileName)
 	if err := os.Rename(state.TempPath, targetPath); err != nil {
 		// If rename fails (cross-device), try copy / 如果重命名失败（跨设备），尝试复制
 		if err := copyFile(state.TempPath, targetPath); err != nil {
@@ -316,6 +320,18 @@ func (m *Manager) InstallPlugin(pluginName, version, installPath string, depende
 	}
 
 	return connectorPath, libPaths, nil
+}
+
+func (m *Manager) resolveTargetDir(targetDir string) (string, error) {
+	targetDir = strings.TrimSpace(targetDir)
+	if targetDir == "" {
+		targetDir = "lib"
+	}
+	cleaned := filepath.Clean(targetDir)
+	if cleaned == "." || cleaned == string(filepath.Separator) || strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid target_dir: %s", targetDir)
+	}
+	return filepath.Join(m.seatunnelPath, cleaned), nil
 }
 
 // UninstallPlugin removes a plugin from SeaTunnel directories.

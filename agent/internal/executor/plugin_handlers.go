@@ -44,8 +44,8 @@ type PluginResult struct {
 // PluginListResult represents the result of listing installed plugins.
 // PluginListResult 表示列出已安装插件的结果。
 type PluginListResult struct {
-	Success bool                        `json:"success"`
-	Message string                      `json:"message"`
+	Success bool                         `json:"success"`
+	Message string                       `json:"message"`
 	Plugins []plugin.InstalledPluginInfo `json:"plugins"`
 }
 
@@ -87,6 +87,7 @@ func HandleTransferPluginCommand(ctx context.Context, cmd *pb.CommandRequest, re
 	pluginName := cmd.Parameters["plugin_name"]
 	version := cmd.Parameters["version"]
 	fileType := cmd.Parameters["file_type"]
+	targetDir := cmd.Parameters["target_dir"]
 	fileName := cmd.Parameters["file_name"]
 	chunkData := cmd.Parameters["chunk"]
 	offsetStr := cmd.Parameters["offset"]
@@ -120,7 +121,7 @@ func HandleTransferPluginCommand(ctx context.Context, cmd *pb.CommandRequest, re
 	}
 
 	// Receive chunk using ReceivePluginChunk / 使用 ReceivePluginChunk 接收数据块
-	receivedBytes, err := pluginManager.ReceivePluginChunk(pluginName, version, fileType, fileName, chunk, offset, totalSize, isLast, checksum)
+	receivedBytes, err := pluginManager.ReceivePluginChunk(pluginName, version, fileType, targetDir, fileName, chunk, offset, totalSize, isLast, checksum)
 	if err != nil {
 		return CreateErrorResponse(cmd.CommandId, fmt.Sprintf("failed to receive chunk: %v", err)), nil
 	}
@@ -133,7 +134,7 @@ func HandleTransferPluginCommand(ctx context.Context, cmd *pb.CommandRequest, re
 
 	if isLast {
 		// Finalize transfer / 完成传输
-		targetPath, err := pluginManager.FinalizeTransfer(pluginName, version, fileName)
+		targetPath, err := pluginManager.FinalizeTransfer(pluginName, version, targetDir, fileName)
 		if err != nil {
 			return CreateErrorResponse(cmd.CommandId, fmt.Sprintf("failed to finalize transfer: %v", err)), nil
 		}
@@ -154,7 +155,6 @@ func HandleTransferPluginCommand(ctx context.Context, cmd *pb.CommandRequest, re
 
 	return CreateProgressResponse(cmd.CommandId, progress, fmt.Sprintf("Received %d/%d bytes", receivedBytes, totalSize)), nil
 }
-
 
 // HandleInstallPluginCommand handles the INSTALL_PLUGIN command type.
 // HandleInstallPluginCommand 处理 INSTALL_PLUGIN 命令类型。

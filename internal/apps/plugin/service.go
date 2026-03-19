@@ -48,12 +48,11 @@ var (
 // SeaTunnel Maven repository and documentation URLs
 // SeaTunnel Maven 仓库和文档 URL
 const (
-	// Maven repository URL for fetching connector list / Maven 仓库 URL，用于获取连接器列表
-	MavenRepoBaseURL = "https://repo.maven.apache.org/maven2/org/apache/seatunnel"
+	// ConnectorRepoGroupPath is the Maven group path used for SeaTunnel connectors.
+	// ConnectorRepoGroupPath 是 SeaTunnel 连接器所在的 Maven group 路径。
+	ConnectorRepoGroupPath = "org/apache/seatunnel"
 	// SeaTunnel documentation URL for connector docs / SeaTunnel 文档 URL，用于连接器文档
 	SeaTunnelDocsBaseURL = "https://seatunnel.apache.org/zh-CN/docs"
-	// Cache duration / 缓存时间
-	PluginCacheDuration = 24 * time.Hour
 	// HTTP request timeout for fetching plugin list / 获取插件列表的 HTTP 请求超时
 	PluginFetchTimeout = 60 * time.Second
 )
@@ -66,6 +65,14 @@ var skipModuleList = []string{
 	"connector-cdc",      // CDC parent module / CDC 父模块
 	"connector-file",     // File parent module / File 父模块
 	"connector-http",     // HTTP parent module / HTTP 父模块
+}
+
+func connectorRepoBaseURL(mirror MirrorSource) string {
+	baseURL := strings.TrimSuffix(MirrorURLs[mirror], "/")
+	if baseURL == "" {
+		baseURL = strings.TrimSuffix(MirrorURLs[MirrorSourceApache], "/")
+	}
+	return baseURL + "/" + ConnectorRepoGroupPath
 }
 
 // isSkippedModule checks if the artifact ID should be skipped.
@@ -108,10 +115,12 @@ type HostInfoGetter interface {
 // Service provides plugin management functionality.
 // Service 提供插件管理功能。
 type Service struct {
-	repo          *Repository
-	clusterGetter ClusterGetter
-	downloader    *Downloader
-	pluginFetcher func(ctx context.Context, version string) ([]Plugin, error)
+	repo               *Repository
+	clusterGetter      ClusterGetter
+	downloader         *Downloader
+	pluginFetcher      func(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error)
+	officialDocFetcher func(ctx context.Context, version, docSlug string) (string, error)
+	mavenVersionLookup func(ctx context.Context, groupID, artifactID string) (string, error)
 
 	// agentCommandSender is used to send commands to agents for plugin installation
 	// agentCommandSender 用于向 Agent 发送命令进行插件安装
@@ -133,19 +142,26 @@ type Service struct {
 	// Installation progress tracking / 安装进度跟踪
 	installProgress   map[string]*PluginInstallStatus // key: clusterID:pluginName
 	installProgressMu sync.RWMutex
+
+	// bundled seed load markers / 内置基线加载标记
+	seedLoadedVersions map[string]bool
+	seedLoadedMu       sync.RWMutex
 }
 
 // NewService creates a new Service instance.
 // NewService 创建一个新的 Service 实例。
 func NewService(repo *Repository) *Service {
 	service := &Service{
-		repo:             repo,
-		downloader:       NewDownloader("./lib/plugins"),
-		cachedPlugins:    make(map[string][]Plugin),
-		pluginsCacheTime: make(map[string]time.Time),
-		installProgress:  make(map[string]*PluginInstallStatus),
+		repo:               repo,
+		downloader:         NewDownloader("./lib/plugins"),
+		cachedPlugins:      make(map[string][]Plugin),
+		pluginsCacheTime:   make(map[string]time.Time),
+		installProgress:    make(map[string]*PluginInstallStatus),
+		seedLoadedVersions: make(map[string]bool),
 	}
 	service.pluginFetcher = service.fetchPluginsFromDocs
+	service.officialDocFetcher = service.fetchOfficialDocMarkdown
+	service.mavenVersionLookup = service.resolveLatestMavenVersion
 	return service
 }
 
@@ -153,13 +169,16 @@ func NewService(repo *Repository) *Service {
 // NewServiceWithDownloader 创建一个带有自定义下载器的新 Service 实例。
 func NewServiceWithDownloader(repo *Repository, pluginsDir string) *Service {
 	service := &Service{
-		repo:             repo,
-		downloader:       NewDownloader(pluginsDir),
-		cachedPlugins:    make(map[string][]Plugin),
-		pluginsCacheTime: make(map[string]time.Time),
-		installProgress:  make(map[string]*PluginInstallStatus),
+		repo:               repo,
+		downloader:         NewDownloader(pluginsDir),
+		cachedPlugins:      make(map[string][]Plugin),
+		pluginsCacheTime:   make(map[string]time.Time),
+		installProgress:    make(map[string]*PluginInstallStatus),
+		seedLoadedVersions: make(map[string]bool),
 	}
 	service.pluginFetcher = service.fetchPluginsFromDocs
+	service.officialDocFetcher = service.fetchOfficialDocMarkdown
+	service.mavenVersionLookup = service.resolveLatestMavenVersion
 	return service
 }
 
@@ -171,7 +190,7 @@ func (s *Service) SetClusterGetter(getter ClusterGetter) {
 
 // SetPluginFetcher sets the plugin list fetcher, mainly used in tests.
 // SetPluginFetcher 设置插件列表获取函数，主要用于测试。
-func (s *Service) SetPluginFetcher(fetcher func(ctx context.Context, version string) ([]Plugin, error)) {
+func (s *Service) SetPluginFetcher(fetcher func(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error)) {
 	if fetcher == nil {
 		s.pluginFetcher = s.fetchPluginsFromDocs
 		return
@@ -181,102 +200,100 @@ func (s *Service) SetPluginFetcher(fetcher func(ctx context.Context, version str
 
 // ==================== Available Plugins 可用插件 ====================
 
-// ListAvailablePlugins returns available plugins from Maven repository.
-// ListAvailablePlugins 从 Maven 仓库获取可用插件列表。
-// Supports multiple mirror sources (apache/aliyun/huaweicloud).
-// 支持多仓库源（apache/aliyun/huaweicloud）。
+// ListAvailablePlugins returns available plugins from DB snapshot or Maven repository.
+// ListAvailablePlugins 从数据库快照或 Maven 仓库获取可用插件列表。
 func (s *Service) ListAvailablePlugins(ctx context.Context, version string, mirror MirrorSource) (*AvailablePluginsResponse, error) {
 	if version == "" {
-		version = seatunnel.DefaultVersion() // Default version / 默认版本
+		version = seatunnel.DefaultVersion()
 	}
-
 	if mirror == "" {
-		mirror = MirrorSourceApache // Default mirror / 默认镜像源
+		mirror = MirrorSourceApache
 	}
-
-	// Validate mirror source / 验证镜像源
 	if _, ok := MirrorURLs[mirror]; !ok {
 		return nil, ErrInvalidMirror
 	}
 
-	// Get plugins (from cache, online, or fallback)
-	// 获取插件（从缓存、在线或备用列表）
-	plugins, source, cacheHit := s.getPlugins(ctx, version)
+	plugins, sourceMirror, refreshedAt, source, cacheHit := s.getPlugins(ctx, version, mirror)
+	s.ensureBundledSeedLoaded(ctx, version)
+	plugins = s.enrichPluginsWithDependencyState(ctx, version, plugins)
 
 	return &AvailablePluginsResponse{
-		Plugins:  plugins,
-		Total:    len(plugins),
-		Version:  version,
-		Mirror:   string(mirror),
-		Source:   source,
-		CacheHit: cacheHit,
+		Plugins:             plugins,
+		Total:               len(plugins),
+		Version:             version,
+		Mirror:              string(mirror),
+		Source:              source,
+		CacheHit:            cacheHit,
+		CatalogSourceMirror: string(sourceMirror),
+		CatalogRefreshedAt:  refreshedAt,
 	}, nil
 }
 
-// getPlugins returns the plugin list, using cache if valid, otherwise fetching from Maven.
-// getPlugins 返回插件列表，如果缓存有效则使用缓存，否则从 Maven 获取。
-func (s *Service) getPlugins(ctx context.Context, version string) ([]Plugin, PluginListSource, bool) {
-	s.pluginsMu.RLock()
-	// Check if cache is valid / 检查缓存是否有效
-	if plugins, ok := s.cachedPlugins[version]; ok {
-		if cacheTime, exists := s.pluginsCacheTime[version]; exists {
-			if time.Since(cacheTime) < PluginCacheDuration {
-				s.pluginsMu.RUnlock()
-				return plugins, PluginListSourceCache, true
-			}
-		}
+// getPlugins returns the plugin list, preferring persisted DB snapshots and falling back to Maven.
+// getPlugins 返回插件列表，优先使用数据库快照，不存在时回退到 Maven。
+func (s *Service) getPlugins(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, *time.Time, PluginListSource, bool) {
+	if persisted, sourceMirror, refreshedAt := s.loadPluginsFromCatalog(ctx, version); len(persisted) > 0 {
+		return persisted, sourceMirror, refreshedAt, PluginListSourceDatabase, false
 	}
-	s.pluginsMu.RUnlock()
 
-	// Fetch from Maven repository / 从 Maven 仓库获取
 	fetcher := s.pluginFetcher
 	if fetcher == nil {
 		fetcher = s.fetchPluginsFromDocs
 	}
-	plugins, err := fetcher(ctx, version)
+	plugins, usedMirror, err := fetcher(ctx, version, mirror)
 	if err != nil {
-		// Return empty list on error / 出错时返回空列表
 		fmt.Printf("[Plugin] Failed to fetch plugins from Maven: %v\n", err)
-		return []Plugin{}, PluginListSourceRemote, false
+		return []Plugin{}, mirror, nil, PluginListSourceRemote, false
 	}
-
-	// Update cache / 更新缓存
-	s.pluginsMu.Lock()
-	s.cachedPlugins[version] = plugins
-	s.pluginsCacheTime[version] = time.Now()
-	s.pluginsMu.Unlock()
-
-	return plugins, PluginListSourceRemote, false
+	plugins = s.filterHiddenPluginsForVersion(version, plugins)
+	refreshedAt := time.Now()
+	if err := s.persistPluginCatalog(ctx, version, plugins, PluginCatalogSourceRemote, usedMirror, refreshedAt); err != nil {
+		logger.WarnF(ctx, "[Plugin] 持久化插件目录失败: %v", err)
+	}
+	return plugins, usedMirror, &refreshedAt, PluginListSourceRemote, false
 }
 
 // fetchPluginsFromDocs fetches plugin list from Maven repository.
 // fetchPluginsFromDocs 从 Maven 仓库获取插件列表。
 // Strategy: Fetch connector list from Maven repo and filter by version
 // 策略：从 Maven 仓库获取连接器列表并按版本过滤
-func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string) ([]Plugin, error) {
+func (s *Service) fetchPluginsFromDocs(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error) {
 	// Fetch connectors from Maven repo / 从 Maven 仓库获取连接器
-	connectors, err := s.fetchConnectorsFromMaven(ctx, version)
+	connectors, usedMirror, err := s.fetchConnectorsFromMaven(ctx, version, mirror)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch connectors from Maven: %w / 从 Maven 获取连接器失败: %w", err, err)
+		return nil, mirror, fmt.Errorf("failed to fetch connectors from Maven: %w / 从 Maven 获取连接器失败: %w", err, err)
 	}
 
 	if len(connectors) == 0 {
-		return nil, fmt.Errorf("no connectors found for version %s / 未找到版本 %s 的连接器", version, version)
+		return nil, usedMirror, fmt.Errorf("no connectors found for version %s / 未找到版本 %s 的连接器", version, version)
 	}
 
-	return connectors, nil
+	return connectors, usedMirror, nil
 }
 
 // fetchConnectorsFromMaven fetches connector list from Maven repository.
 // fetchConnectorsFromMaven 从 Maven 仓库获取连接器列表。
 // Uses concurrent version checking for better performance.
 // 使用并发版本检查以提高性能。
-func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) ([]Plugin, error) {
-	logger.InfoF(ctx, "[Plugin] Fetching connectors from Maven for version %s", version)
+func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error) {
+	logger.InfoF(ctx, "[Plugin] Fetching connectors from Maven for version %s via mirror %s", version, mirror)
 
+	connectors, err := s.fetchConnectorsFromMirror(ctx, version, mirror)
+	if err == nil {
+		return connectors, mirror, nil
+	}
+	if mirror != MirrorSourceApache {
+		logger.WarnF(ctx, "[Plugin] Mirror %s connector discovery failed, fallback to apache: %v", mirror, err)
+		connectors, err = s.fetchConnectorsFromMirror(ctx, version, MirrorSourceApache)
+		return connectors, MirrorSourceApache, err
+	}
+	return nil, mirror, err
+}
+
+func (s *Service) fetchConnectorsFromMirror(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, error) {
 	// Fetch the main directory listing / 获取主目录列表
 	client := &http.Client{Timeout: PluginFetchTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, MavenRepoBaseURL+"/", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, connectorRepoBaseURL(mirror)+"/", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -334,7 +351,7 @@ func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) 
 			sem <- struct{}{}        // acquire
 			defer func() { <-sem }() // release
 
-			hasVersion, err := s.checkConnectorVersion(ctx, aid, version)
+			hasVersion, err := s.checkConnectorVersion(ctx, aid, version, mirror)
 			if err != nil || !hasVersion {
 				return
 			}
@@ -353,8 +370,8 @@ func (s *Service) fetchConnectorsFromMaven(ctx context.Context, version string) 
 
 // checkConnectorVersion checks if a connector has the specified version in Maven.
 // checkConnectorVersion 检查连接器在 Maven 中是否有指定版本。
-func (s *Service) checkConnectorVersion(ctx context.Context, artifactID, version string) (bool, error) {
-	url := fmt.Sprintf("%s/%s/", MavenRepoBaseURL, artifactID)
+func (s *Service) checkConnectorVersion(ctx context.Context, artifactID, version string, mirror MirrorSource) (bool, error) {
+	url := fmt.Sprintf("%s/%s/", connectorRepoBaseURL(mirror), artifactID)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -369,6 +386,9 @@ func (s *Service) checkConnectorVersion(ctx context.Context, artifactID, version
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if mirror != MirrorSourceApache {
+			return s.checkConnectorVersion(ctx, artifactID, version, MirrorSourceApache)
+		}
 		return false, nil
 	}
 
@@ -421,10 +441,15 @@ func getArtifactID(name string) string {
 
 // RefreshPlugins forces a refresh of the plugin list from Maven repository.
 // RefreshPlugins 强制从 Maven 仓库刷新插件列表。
-func (s *Service) RefreshPlugins(ctx context.Context, version string) ([]Plugin, error) {
-	plugins, err := s.fetchPluginsFromDocs(ctx, version)
+func (s *Service) RefreshPlugins(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, error) {
+	plugins, usedMirror, err := s.fetchPluginsFromDocs(ctx, version, mirror)
 	if err != nil {
 		return nil, err
+	}
+
+	refreshedAt := time.Now()
+	if err := s.persistPluginCatalog(ctx, version, plugins, PluginCatalogSourceRemote, usedMirror, refreshedAt); err != nil {
+		logger.WarnF(ctx, "[Plugin] 刷新插件目录后持久化失败: %v", err)
 	}
 
 	// Update cache / 更新缓存
@@ -439,6 +464,10 @@ func (s *Service) RefreshPlugins(ctx context.Context, version string) ([]Plugin,
 // GetPluginInfo returns detailed information about a specific plugin.
 // GetPluginInfo 返回特定插件的详细信息。
 func (s *Service) GetPluginInfo(ctx context.Context, name string, version string) (*Plugin, error) {
+	return s.getPluginInfoWithMirror(ctx, name, version, MirrorSourceApache)
+}
+
+func (s *Service) getPluginInfoWithMirror(ctx context.Context, name string, version string, mirror MirrorSource) (*Plugin, error) {
 	if version == "" {
 		version = seatunnel.DefaultVersion()
 	}
@@ -446,22 +475,14 @@ func (s *Service) GetPluginInfo(ctx context.Context, name string, version string
 	// Normalize name to lowercase for comparison / 将名称转换为小写进行比较
 	normalizedName := strings.ToLower(name)
 
-	// First, try to find in cached plugins / 首先尝试从缓存中查找
-	s.pluginsMu.RLock()
-	if cachedPlugins, ok := s.cachedPlugins[version]; ok {
-		for _, p := range cachedPlugins {
-			if strings.ToLower(p.Name) == normalizedName {
-				s.pluginsMu.RUnlock()
-				return &p, nil
-			}
-		}
-	}
-	s.pluginsMu.RUnlock()
-
-	// If not found in cache, try to fetch from Maven / 如果缓存中没有，尝试从 Maven 获取
-	fetchedPlugins, _, _ := s.getPlugins(ctx, version)
+	// Resolve from DB snapshot or remote fetch / 从数据库快照或远端抓取中解析
+	fetchedPlugins, _, _, _, _ := s.getPlugins(ctx, version, mirror)
 	for _, p := range fetchedPlugins {
 		if strings.ToLower(p.Name) == normalizedName {
+			enriched := s.enrichPluginsWithDependencyState(ctx, version, []Plugin{p})
+			if len(enriched) > 0 {
+				return &enriched[0], nil
+			}
 			return &p, nil
 		}
 	}
@@ -580,7 +601,7 @@ func (s *Service) DisablePlugin(ctx context.Context, clusterID uint, pluginName 
 
 // DownloadPlugin downloads a plugin to the Control Plane local storage.
 // DownloadPlugin 下载插件到 Control Plane 本地存储。
-func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirror MirrorSource) (*DownloadProgress, error) {
+func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirror MirrorSource, profileKeys []string) (*DownloadProgress, error) {
 	if version == "" {
 		version = seatunnel.DefaultVersion() // Default version / 默认版本
 	}
@@ -590,7 +611,7 @@ func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirr
 	}
 
 	// Get plugin info / 获取插件信息
-	plugin, err := s.GetPluginInfo(ctx, name, version)
+	plugin, err := s.getPluginInfoWithMirror(ctx, name, version, mirror)
 	if err != nil {
 		return nil, err
 	}
@@ -602,78 +623,143 @@ func (s *Service) DownloadPlugin(ctx context.Context, name, version string, mirr
 	}
 	fmt.Printf("[DownloadPlugin] Plugin: name=%s, artifactID=%s, version=%s\n", plugin.Name, plugin.ArtifactID, plugin.Version)
 
+	selectedProfiles := normalizeProfileKeys(profileKeys)
+
 	// Load configured dependencies from database / 从数据库加载配置的依赖
-	deps, err := s.GetPluginDependencies(ctx, name)
+	deps, err := s.GetPluginDependenciesForVersionAndProfiles(ctx, name, version, selectedProfiles)
 	if err == nil && len(deps) > 0 {
 		plugin.Dependencies = deps
 		fmt.Printf("[DownloadPlugin] Loaded %d dependencies for %s\n", len(deps), name)
 	}
 
+	connectorReady := s.downloader.IsConnectorDownloaded(name, version)
+	dependenciesReady := s.arePluginDependenciesDownloaded(plugin)
+
 	// Check if already downloaded / 检查是否已下载
-	if s.downloader.IsConnectorDownloaded(name, version) {
+	if connectorReady && dependenciesReady {
 		return &DownloadProgress{
-			PluginName:  name,
-			Version:     version,
-			Status:      "completed",
-			Progress:    100,
-			CurrentStep: "Already downloaded / 已下载",
+			PluginName:          name,
+			Version:             version,
+			Status:              "completed",
+			Progress:            100,
+			CurrentStep:         "Already downloaded / 已下载",
+			SelectedProfileKeys: selectedProfiles,
+			ConnectorCount:      1,
+			ConnectorCompleted:  1,
+			DependencyCount:     len(plugin.Dependencies),
+			DependencyCompleted: len(plugin.Dependencies),
 		}, nil
 	}
 
 	// Start download in background / 在后台开始下载
 	go func() {
 		downloadCtx := context.Background()
-		if err := s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, nil); err != nil {
-			// Log error for debugging / 记录错误用于调试
+		if err := s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, selectedProfiles, connectorReady, dependenciesReady, nil); err != nil {
 			fmt.Printf("[Plugin Download Error] plugin=%s, version=%s, error=%v\n", name, version, err)
+			return
 		}
 	}()
 
 	// Return initial progress / 返回初始进度
 	return &DownloadProgress{
-		PluginName:  name,
-		Version:     version,
-		Status:      "downloading",
-		Progress:    0,
-		CurrentStep: "Starting download / 开始下载",
-		StartTime:   time.Now(),
+		PluginName:          name,
+		Version:             version,
+		Status:              "downloading",
+		Progress:            0,
+		CurrentStep:         "Starting download / 开始下载",
+		StartTime:           time.Now(),
+		SelectedProfileKeys: selectedProfiles,
+		ConnectorCount:      1,
+		ConnectorCompleted:  0,
+		DependencyCount:     len(plugin.Dependencies),
+		DependencyCompleted: 0,
 	}, nil
 }
 
 // GetDownloadStatus returns the current download status for a plugin.
 // GetDownloadStatus 返回插件的当前下载状态。
-func (s *Service) GetDownloadStatus(name, version string) *DownloadProgress {
+func (s *Service) GetDownloadStatus(name, version string, profileKeys []string) *DownloadProgress {
 	// Check if download is in progress / 检查是否正在下载
 	progress := s.downloader.GetDownloadProgress(name, version)
 	if progress != nil {
 		return progress
 	}
 
+	selectedProfiles := normalizeProfileKeys(profileKeys)
+	plugin := &Plugin{Name: name, Version: version}
+	if info, err := s.GetPluginInfo(context.Background(), name, version); err == nil && info != nil {
+		plugin = info
+		if deps, depErr := s.GetPluginDependenciesForVersionAndProfiles(context.Background(), name, version, selectedProfiles); depErr == nil {
+			plugin.Dependencies = deps
+		}
+	}
+
 	// Check if already downloaded / 检查是否已下载
-	if s.downloader.IsConnectorDownloaded(name, version) {
+	if s.downloader.IsConnectorDownloaded(name, version) && s.arePluginDependenciesDownloaded(plugin) {
 		return &DownloadProgress{
-			PluginName:  name,
-			Version:     version,
-			Status:      "completed",
-			Progress:    100,
-			CurrentStep: "Downloaded / 已下载",
+			PluginName:          name,
+			Version:             version,
+			Status:              "completed",
+			Progress:            100,
+			CurrentStep:         "Downloaded / 已下载",
+			SelectedProfileKeys: selectedProfiles,
+			ConnectorCount:      1,
+			ConnectorCompleted:  1,
+			DependencyCount:     len(plugin.Dependencies),
+			DependencyCompleted: len(plugin.Dependencies),
 		}
 	}
 
 	// Not downloaded / 未下载
 	return &DownloadProgress{
-		PluginName:  name,
-		Version:     version,
-		Status:      "not_started",
-		Progress:    0,
-		CurrentStep: "Not downloaded / 未下载",
+		PluginName:          name,
+		Version:             version,
+		Status:              "not_started",
+		Progress:            0,
+		CurrentStep:         "Not downloaded / 未下载",
+		SelectedProfileKeys: selectedProfiles,
+		ConnectorCount:      1,
+		ConnectorCompleted:  0,
+		DependencyCount:     len(plugin.Dependencies),
+		DependencyCompleted: 0,
 	}
 }
 
 // ListLocalPlugins returns a list of locally downloaded plugins.
 // ListLocalPlugins 返回本地已下载的插件列表。
 func (s *Service) ListLocalPlugins() ([]LocalPlugin, error) {
-	return s.downloader.ListLocalPlugins()
+	plugins, err := s.downloader.ListLocalPlugins()
+	if err != nil {
+		return nil, err
+	}
+	for i := range plugins {
+		if len(plugins[i].Dependencies) > 0 {
+			continue
+		}
+		deps, depErr := s.GetPluginDependenciesForVersionAndProfiles(
+			context.Background(),
+			plugins[i].Name,
+			plugins[i].Version,
+			plugins[i].SelectedProfileKeys,
+		)
+		if depErr != nil || len(deps) == 0 {
+			continue
+		}
+		plugins[i].Dependencies = deps
+		attached := make([]string, 0)
+		seenAttached := make(map[string]struct{})
+		for _, dep := range deps {
+			if strings.TrimSpace(dep.TargetDir) == "connectors" {
+				if _, exists := seenAttached[dep.ArtifactID]; exists {
+					continue
+				}
+				seenAttached[dep.ArtifactID] = struct{}{}
+				attached = append(attached, dep.ArtifactID)
+			}
+		}
+		plugins[i].AttachedConnectors = attached
+	}
+	return plugins, nil
 }
 
 // DownloadAllPluginsProgress represents the progress of downloading all plugins.
@@ -698,7 +784,7 @@ func (s *Service) DownloadAllPlugins(ctx context.Context, version string, mirror
 	}
 
 	// Get all available plugins / 获取所有可用插件
-	plugins, _, _ := s.getPlugins(ctx, version)
+	plugins, _, _, _, _ := s.getPlugins(ctx, version, mirror)
 	if len(plugins) == 0 {
 		return nil, fmt.Errorf("no plugins found for version %s / 未找到版本 %s 的插件", version, version)
 	}
@@ -722,13 +808,13 @@ func (s *Service) DownloadAllPlugins(ctx context.Context, version string, mirror
 			}
 
 			// Load configured dependencies from database / 从数据库加载配置的依赖
-			deps, err := s.GetPluginDependencies(downloadCtx, plugin.Name)
+			deps, err := s.GetPluginDependenciesForVersion(downloadCtx, plugin.Name, version)
 			if err == nil && len(deps) > 0 {
 				plugin.Dependencies = deps
 			}
 
 			// Download plugin / 下载插件
-			err = s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, nil)
+			err = s.downloader.DownloadPlugin(downloadCtx, plugin, mirror, nil, false, false, nil)
 			if err != nil {
 				progress.Failed++
 				fmt.Printf("[DownloadAllPlugins] Failed to download %s: %v\n", plugin.Name, err)
@@ -877,7 +963,15 @@ func (s *Service) InstallPluginToCluster(ctx context.Context, clusterID uint, re
 	s.setInstallProgress(clusterID, req.PluginName, progress)
 
 	// Check if plugin is downloaded locally / 检查插件是否已在本地下载
-	if !s.downloader.IsConnectorDownloaded(req.PluginName, req.Version) {
+	effectiveDeps, err := s.GetPluginDependenciesForVersionAndProfiles(ctx, req.PluginName, req.Version, req.ProfileKeys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve plugin dependencies: %w", err)
+	}
+	pluginInfo.Dependencies = effectiveDeps
+
+	connectorReady := s.downloader.IsConnectorDownloaded(req.PluginName, req.Version)
+	dependenciesReady := s.arePluginDependenciesDownloaded(pluginInfo)
+	if !connectorReady || !dependenciesReady {
 		progress.Message = "Downloading plugin / 下载插件"
 		s.setInstallProgress(clusterID, req.PluginName, progress)
 
@@ -887,15 +981,26 @@ func (s *Service) InstallPluginToCluster(ctx context.Context, clusterID uint, re
 			mirror = MirrorSourceApache
 		}
 
-		if err := s.downloader.DownloadPlugin(ctx, pluginInfo, mirror, func(p *DownloadProgress) {
+		progressCallback := func(p *DownloadProgress) {
 			progress.Progress = p.Progress / 2 // First half is download / 前半部分是下载
 			progress.Message = p.CurrentStep
 			s.setInstallProgress(clusterID, req.PluginName, progress)
-		}); err != nil {
-			progress.Status = "failed"
-			progress.Error = err.Error()
-			s.setInstallProgress(clusterID, req.PluginName, progress)
-			return nil, fmt.Errorf("failed to download plugin: %w", err)
+		}
+		if !connectorReady {
+			if err := s.downloader.DownloadConnector(ctx, pluginInfo, mirror, progressCallback); err != nil {
+				progress.Status = "failed"
+				progress.Error = err.Error()
+				s.setInstallProgress(clusterID, req.PluginName, progress)
+				return nil, fmt.Errorf("failed to download plugin connector: %w", err)
+			}
+		}
+		if !dependenciesReady {
+			if err := s.downloader.DownloadDependencies(ctx, pluginInfo, mirror, progressCallback); err != nil {
+				progress.Status = "failed"
+				progress.Error = err.Error()
+				s.setInstallProgress(clusterID, req.PluginName, progress)
+				return nil, fmt.Errorf("failed to download plugin dependencies: %w", err)
+			}
 		}
 	}
 
@@ -966,7 +1071,7 @@ func (s *Service) InstallPluginToCluster(ctx context.Context, clusterID uint, re
 
 			// Transfer plugin file to agent using artifact ID / 使用 artifact ID 传输插件文件到 Agent
 			fmt.Printf("[Plugin Install] Transferring plugin %s (artifact: %s) to agent %s...\n", req.PluginName, artifactID, agentID)
-			if err := s.transferPluginToAgent(ctx, agentID, artifactID, req.PluginName, req.Version, node.InstallDir); err != nil {
+			if err := s.transferPluginToAgent(ctx, agentID, artifactID, req.PluginName, req.Version, node.InstallDir, effectiveDeps); err != nil {
 				progress.Status = "failed"
 				progress.Error = fmt.Sprintf("Failed to transfer plugin to node %d: %v / 传输插件到节点 %d 失败: %v", node.NodeID, err, node.NodeID, err)
 				s.setInstallProgress(clusterID, req.PluginName, progress)
@@ -1066,7 +1171,7 @@ func (s *Service) UninstallPluginFromCluster(ctx context.Context, clusterID uint
 // Parameters:
 // - artifactID: Maven artifact ID (e.g., connector-cdc-mysql, connector-file-cos)
 // - pluginName: Plugin display name (e.g., mysql-cdc, cosfile)
-func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID, pluginName, version, installDir string) error {
+func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID, pluginName, version, installDir string, deps []PluginDependency) error {
 	if s.agentCommandSender == nil {
 		return fmt.Errorf("agent command sender not configured / Agent 命令发送器未配置")
 	}
@@ -1082,28 +1187,23 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 	}
 
 	// Transfer connector file in chunks / 分块传输连接器文件
-	if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "connector", connectorFileName, fileData, installDir); err != nil {
+	if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "connector", "connectors", connectorFileName, fileData, installDir); err != nil {
 		return fmt.Errorf("failed to transfer connector: %w / 传输连接器失败: %w", err, err)
 	}
 
 	// 2. Transfer dependencies / 传输依赖
-	// Get plugin dependencies from database / 从数据库获取插件依赖
-	deps, err := s.GetPluginDependencies(ctx, pluginName)
-	if err != nil {
-		// Log warning but continue - dependencies are optional / 记录警告但继续 - 依赖是可选的
-		fmt.Printf("[Plugin Transfer] Warning: failed to get dependencies for %s: %v\n", pluginName, err)
-	} else if len(deps) > 0 {
+	if len(deps) > 0 {
 		fmt.Printf("[Plugin Transfer] Transferring %d dependencies for plugin %s\n", len(deps), pluginName)
 
 		for _, dep := range deps {
 			// Check if dependency is downloaded / 检查依赖是否已下载
-			if !s.downloader.IsDependencyDownloaded(dep.ArtifactID, dep.Version, version) {
+			if !s.downloader.IsDependencyDownloaded(dep.ArtifactID, dep.Version, version, dep.TargetDir) {
 				fmt.Printf("[Plugin Transfer] Warning: dependency %s-%s not downloaded, skipping\n", dep.ArtifactID, dep.Version)
 				continue
 			}
 
 			// Read dependency file / 读取依赖文件
-			depPath := s.downloader.GetLibPath(dep.ArtifactID, dep.Version, version)
+			depPath := s.downloader.GetDependencyPath(dep.ArtifactID, dep.Version, version, dep.TargetDir)
 			depData, err := s.readFile(depPath)
 			if err != nil {
 				fmt.Printf("[Plugin Transfer] Warning: failed to read dependency %s: %v, skipping\n", dep.ArtifactID, err)
@@ -1112,7 +1212,7 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 
 			// Transfer dependency file / 传输依赖文件
 			depFileName := fmt.Sprintf("%s-%s.jar", dep.ArtifactID, dep.Version)
-			if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "dependency", depFileName, depData, installDir); err != nil {
+			if err := s.transferFileToAgent(ctx, agentID, pluginName, version, "dependency", dep.TargetDir, depFileName, depData, installDir); err != nil {
 				fmt.Printf("[Plugin Transfer] Warning: failed to transfer dependency %s: %v, skipping\n", dep.ArtifactID, err)
 				continue
 			}
@@ -1144,7 +1244,7 @@ func (s *Service) transferPluginToAgent(ctx context.Context, agentID, artifactID
 
 // transferFileToAgent transfers a single file to an Agent in chunks.
 // transferFileToAgent 分块传输单个文件到 Agent。
-func (s *Service) transferFileToAgent(ctx context.Context, agentID, pluginName, version, fileType, fileName string, fileData []byte, installDir string) error {
+func (s *Service) transferFileToAgent(ctx context.Context, agentID, pluginName, version, fileType, targetDir, fileName string, fileData []byte, installDir string) error {
 	// Transfer file in chunks / 分块传输文件
 	// Chunk size: 1MB / 块大小: 1MB
 	const chunkSize = 1024 * 1024
@@ -1168,6 +1268,7 @@ func (s *Service) transferFileToAgent(ctx context.Context, agentID, pluginName, 
 			"plugin_name":  pluginName,
 			"version":      version,
 			"file_type":    fileType,
+			"target_dir":   targetDir,
 			"file_name":    fileName,
 			"chunk":        chunkBase64,
 			"offset":       fmt.Sprintf("%d", offset),
@@ -1190,6 +1291,18 @@ func (s *Service) transferFileToAgent(ctx context.Context, agentID, pluginName, 
 	return nil
 }
 
+func (s *Service) arePluginDependenciesDownloaded(plugin *Plugin) bool {
+	if plugin == nil {
+		return false
+	}
+	for _, dep := range plugin.Dependencies {
+		if !s.downloader.IsDependencyDownloaded(dep.ArtifactID, dep.Version, plugin.Version, dep.TargetDir) {
+			return false
+		}
+	}
+	return true
+}
+
 // readFile reads a file from the filesystem.
 // readFile 从文件系统读取文件。
 func (s *Service) readFile(path string) ([]byte, error) {
@@ -1202,57 +1315,25 @@ func encodeBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-// ==================== Plugin Dependency Config Methods 插件依赖配置方法 ====================
-
-// ListDependencies returns all configured dependencies for a plugin.
-// ListDependencies 返回插件的所有配置依赖。
-func (s *Service) ListDependencies(ctx context.Context, pluginName string) ([]PluginDependencyConfig, error) {
-	return s.repo.ListDependencies(ctx, pluginName)
-}
-
-// AddDependency adds a dependency configuration for a plugin.
-// AddDependency 为插件添加依赖配置。
-func (s *Service) AddDependency(ctx context.Context, req *AddDependencyRequest) (*PluginDependencyConfig, error) {
-	dep := &PluginDependencyConfig{
-		PluginName: req.PluginName,
-		GroupID:    req.GroupID,
-		ArtifactID: req.ArtifactID,
-		Version:    req.Version,
-		TargetDir:  "lib", // Dependencies go to lib directory / 依赖放到 lib 目录
-	}
-
-	if err := s.repo.CreateDependency(ctx, dep); err != nil {
-		return nil, err
-	}
-
-	return dep, nil
-}
-
-// DeleteDependency deletes a dependency configuration.
-// DeleteDependency 删除依赖配置。
-func (s *Service) DeleteDependency(ctx context.Context, depID uint) error {
-	return s.repo.DeleteDependency(ctx, depID)
-}
-
-// GetPluginDependencies returns the configured dependencies for a plugin.
-// GetPluginDependencies 返回插件的配置依赖（用于下载时）。
+// GetPluginDependencies returns effective dependencies for a plugin using the default SeaTunnel version.
+// GetPluginDependencies 返回插件的生效依赖（使用默认 SeaTunnel 版本）。
 func (s *Service) GetPluginDependencies(ctx context.Context, pluginName string) ([]PluginDependency, error) {
-	configs, err := s.repo.ListDependencies(ctx, pluginName)
-	if err != nil {
-		return nil, err
-	}
+	return s.GetPluginDependenciesForVersion(ctx, pluginName, seatunnel.DefaultVersion())
+}
 
-	deps := make([]PluginDependency, len(configs))
-	for i, cfg := range configs {
-		deps[i] = PluginDependency{
-			GroupID:    cfg.GroupID,
-			ArtifactID: cfg.ArtifactID,
-			Version:    cfg.Version,
-			TargetDir:  cfg.TargetDir,
-		}
-	}
+// GetPluginDependenciesForVersion returns effective dependencies for a plugin using the given version.
+// GetPluginDependenciesForVersion 返回指定版本下插件的生效依赖。
+func (s *Service) GetPluginDependenciesForVersion(ctx context.Context, pluginName, version string) ([]PluginDependency, error) {
+	return s.GetPluginDependenciesForVersionAndProfiles(ctx, pluginName, version, nil)
+}
 
-	return deps, nil
+// GetPluginDependenciesForVersionAndProfiles returns effective dependencies for a plugin using the given version and selected profiles.
+// GetPluginDependenciesForVersionAndProfiles 返回指定版本与画像下插件的生效依赖。
+func (s *Service) GetPluginDependenciesForVersionAndProfiles(ctx context.Context, pluginName, version string, profileKeys []string) ([]PluginDependency, error) {
+	if strings.TrimSpace(version) == "" {
+		version = seatunnel.DefaultVersion()
+	}
+	return s.GetEffectiveDependencies(ctx, pluginName, version, normalizeProfileKeys(profileKeys))
 }
 
 // ==================== PluginTransferer Interface Implementation 插件传输器接口实现 ====================
@@ -1261,12 +1342,16 @@ func (s *Service) GetPluginDependencies(ctx context.Context, pluginName string) 
 // TransferPluginToAgent 在 SeaTunnel 安装过程中将插件传输到 Agent。
 // This implements the installer.PluginTransferer interface.
 // 这实现了 installer.PluginTransferer 接口。
-func (s *Service) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string) error {
+func (s *Service) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error {
 	// Get artifact ID for the plugin / 获取插件的 artifact ID
 	artifactID := s.GetPluginArtifactID(pluginName)
+	deps, err := s.GetPluginDependenciesForVersionAndProfiles(ctx, pluginName, version, profileKeys)
+	if err != nil {
+		deps = nil
+	}
 
 	// Use the existing transferPluginToAgent method / 使用现有的 transferPluginToAgent 方法
-	return s.transferPluginToAgent(ctx, agentID, artifactID, pluginName, version, installDir)
+	return s.transferPluginToAgent(ctx, agentID, artifactID, pluginName, version, installDir, deps)
 }
 
 // GetPluginArtifactID returns the Maven artifact ID for a plugin name.
@@ -1281,7 +1366,7 @@ func (s *Service) GetPluginArtifactID(pluginName string) string {
 // DownloadPluginSync 同步下载插件（阻塞）。
 // This implements the installer.PluginTransferer interface.
 // 这实现了 installer.PluginTransferer 接口。
-func (s *Service) DownloadPluginSync(ctx context.Context, pluginName, version string) error {
+func (s *Service) DownloadPluginSync(ctx context.Context, pluginName, version, mirror string, profileKeys []string) error {
 	// Get plugin info / 获取插件信息
 	plugin, err := s.GetPluginInfo(ctx, pluginName, version)
 	if err != nil {
@@ -1294,16 +1379,30 @@ func (s *Service) DownloadPluginSync(ctx context.Context, pluginName, version st
 		}
 	}
 
-	// Load configured dependencies from database / 从数据库加载配置的依赖
-	deps, err := s.GetPluginDependencies(ctx, pluginName)
-	if err == nil && len(deps) > 0 {
+	selectedProfiles := normalizeProfileKeys(profileKeys)
+
+	// Load effective dependencies using selected profiles / 使用选中的画像加载生效依赖
+	deps, err := s.GetPluginDependenciesForVersionAndProfiles(ctx, pluginName, version, selectedProfiles)
+	if err == nil {
 		plugin.Dependencies = deps
-		fmt.Printf("[DownloadPluginSync] Loaded %d dependencies for %s\n", len(deps), pluginName)
+		fmt.Printf("[DownloadPluginSync] Loaded %d dependencies for %s (profiles=%v)\n", len(deps), pluginName, selectedProfiles)
 	}
 
-	// Use default mirror (Apache) / 使用默认镜像源（Apache）
+	downloadMirror := MirrorSourceApache
+	switch MirrorSource(strings.TrimSpace(mirror)) {
+	case MirrorSourceAliyun:
+		downloadMirror = MirrorSourceAliyun
+	case MirrorSourceHuaweiCloud:
+		downloadMirror = MirrorSourceHuaweiCloud
+	case MirrorSourceApache:
+		downloadMirror = MirrorSourceApache
+	}
+
+	connectorReady := s.downloader.IsConnectorDownloaded(pluginName, version)
+	dependenciesReady := s.arePluginDependenciesDownloaded(plugin)
+
 	// DownloadPlugin downloads both connector and dependencies / DownloadPlugin 同时下载连接器和依赖
-	return s.downloader.DownloadPlugin(ctx, plugin, MirrorSourceApache, nil)
+	return s.downloader.DownloadPlugin(ctx, plugin, downloadMirror, selectedProfiles, connectorReady, dependenciesReady, nil)
 }
 
 // RecordInstalledPlugin records a plugin as installed for a cluster.

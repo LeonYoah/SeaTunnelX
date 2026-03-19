@@ -665,6 +665,10 @@ func Serve() {
 				// GET /api/v1/plugins - List available plugins
 				pluginRouter.GET("", pluginHandler.ListAvailablePlugins)
 
+				// POST /api/v1/plugins/refresh - 刷新连接器目录
+				// POST /api/v1/plugins/refresh - Refresh connector catalog
+				pluginRouter.POST("/refresh", pluginHandler.RefreshAvailablePlugins)
+
 				// GET /api/v1/plugins/local - 获取已下载的本地插件列表
 				// GET /api/v1/plugins/local - List locally downloaded plugins
 				pluginRouter.GET("/local", pluginHandler.ListLocalPlugins)
@@ -696,6 +700,26 @@ func Serve() {
 				// GET /api/v1/plugins/:name/dependencies - 获取插件依赖配置
 				// GET /api/v1/plugins/:name/dependencies - Get plugin dependencies
 				pluginRouter.GET("/:name/dependencies", pluginHandler.ListDependencies)
+
+				// POST /api/v1/plugins/:name/dependencies/upload - 上传自定义依赖 Jar
+				// POST /api/v1/plugins/:name/dependencies/upload - Upload a custom dependency Jar
+				pluginRouter.POST("/:name/dependencies/upload", pluginHandler.UploadDependency)
+
+				// POST /api/v1/plugins/:name/dependencies/disables - 禁用官方依赖
+				// POST /api/v1/plugins/:name/dependencies/disables - Disable one official dependency
+				pluginRouter.POST("/:name/dependencies/disables", pluginHandler.DisableDependency)
+
+				// DELETE /api/v1/plugins/:name/dependencies/disables/:disableId - 重新启用官方依赖
+				// DELETE /api/v1/plugins/:name/dependencies/disables/:disableId - Enable one disabled official dependency
+				pluginRouter.DELETE("/:name/dependencies/disables/:disableId", pluginHandler.EnableDependency)
+
+				// GET /api/v1/plugins/:name/official-dependencies - 获取官方依赖基线
+				// GET /api/v1/plugins/:name/official-dependencies - Get official dependency profiles
+				pluginRouter.GET("/:name/official-dependencies", pluginHandler.GetOfficialDependencies)
+
+				// POST /api/v1/plugins/:name/official-dependencies/analyze - 在线分析官方依赖
+				// POST /api/v1/plugins/:name/official-dependencies/analyze - Analyze official dependency profiles
+				pluginRouter.POST("/:name/official-dependencies/analyze", pluginHandler.AnalyzeOfficialDependencies)
 
 				// POST /api/v1/plugins/:name/dependencies - 添加插件依赖
 				// POST /api/v1/plugins/:name/dependencies - Add plugin dependency

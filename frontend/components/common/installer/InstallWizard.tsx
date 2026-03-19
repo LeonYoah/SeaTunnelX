@@ -168,6 +168,14 @@ export function InstallWizard({
 
   // Check if can proceed to next step / 检查是否可以进入下一步
   const canProceed = useCallback(() => {
+    const hasProfileSelectionIssue =
+      (config.connector.selected_plugins || []).some(
+        (pluginName) =>
+          pluginName === 'jdbc' &&
+          (config.connector.selected_plugin_profiles?.[pluginName] || [])
+            .length === 0,
+      );
+
     switch (currentStep.id) {
       case 'precheck':
         // Can proceed if precheck passed or has only warnings / 如果预检查通过或只有警告则可以继续
@@ -184,8 +192,8 @@ export function InstallWizard({
         }
         return true;
       case 'plugins':
-        // Plugin selection is optional / 插件选择是可选的
-        return true;
+        // Plugin selection is optional, but selected JDBC profiles must be explicit / 插件选择可选，但已选择的 JDBC 必须显式选择场景
+        return !hasProfileSelectionIssue;
       case 'install':
         // Cannot proceed during installation / 安装过程中不能继续
         return installStatus?.status === 'success';
@@ -276,14 +284,36 @@ export function InstallWizard({
           <PluginSelectStep
             version={config.version}
             mirror={config.mirror}
+            onMirrorChange={(mirror) => updateConfig({ mirror })}
             selectedPlugins={config.connector.selected_plugins || []}
-            onPluginsChange={(plugins: string[]) => updateConfig({
-              connector: {
-                ...config.connector,
-                install_connectors: plugins.length > 0,
-                selected_plugins: plugins,
-              },
-            })}
+            selectedPluginProfiles={config.connector.selected_plugin_profiles || {}}
+            onPluginsChange={(plugins: string[]) => {
+              const selectedPluginSet = new Set(plugins);
+              const nextProfiles = Object.fromEntries(
+                Object.entries(config.connector.selected_plugin_profiles || {}).filter(
+                  ([pluginName]) => selectedPluginSet.has(pluginName),
+                ),
+              );
+              updateConfig({
+                connector: {
+                  ...config.connector,
+                  install_connectors: plugins.length > 0,
+                  selected_plugins: plugins,
+                  selected_plugin_profiles: nextProfiles,
+                },
+              });
+            }}
+            onPluginProfilesChange={(pluginName, profileKeys) =>
+              updateConfig({
+                connector: {
+                  ...config.connector,
+                  selected_plugin_profiles: {
+                    ...(config.connector.selected_plugin_profiles || {}),
+                    [pluginName]: profileKeys,
+                  },
+                },
+              })
+            }
           />
         );
       case 'install':

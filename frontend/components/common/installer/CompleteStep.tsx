@@ -99,7 +99,7 @@ export function CompleteStep({
     }
   };
 
-  // Navigate to connector marketplace / 导航到连接器市场
+  // Navigate to plugin marketplace / 导航到插件市场
   const handleGoToPlugins = () => {
     onClose();
     router.push('/plugins');
@@ -246,14 +246,14 @@ export function CompleteStep({
               </Button>
             )}
 
-            {/* Go to connectors / 进入连接器市场 */}
+            {/* Go to plugin marketplace / 进入插件市场 */}
             <Button
               variant="outline"
               className="h-auto py-4 flex flex-col items-center gap-2"
               onClick={handleGoToPlugins}
             >
               <Package className="h-6 w-6" />
-              <span>{t('installer.goToPlugins') || 'Connector Marketplace'}</span>
+              <span>{t('installer.goToPlugins') || 'Plugin Marketplace'}</span>
             </Button>
           </div>
         </CardContent>

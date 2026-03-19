@@ -170,6 +170,9 @@ type ConnectorConfig struct {
 	// SelectedPlugins is the list of plugin names to install during SeaTunnel setup
 	// SelectedPlugins 是 SeaTunnel 安装过程中要安装的插件名称列表
 	SelectedPlugins []string `json:"selected_plugins,omitempty"`
+	// SelectedPluginProfiles stores selected profile keys for profile-aware plugins
+	// SelectedPluginProfiles 保存带画像插件选择的画像键
+	SelectedPluginProfiles map[string][]string `json:"selected_plugin_profiles,omitempty"`
 }
 
 // PluginInstallInfo contains information about a plugin installation during SeaTunnel setup

@@ -71,6 +71,10 @@ func Migrate() {
 		&audit.AuditLog{},                       // 审计日志表 / Audit log table
 		&plugin.InstalledPlugin{},               // 已安装插件表 / Installed plugin table
 		&plugin.PluginDependencyConfig{},        // 插件依赖配置表 / Plugin dependency config table
+		&plugin.PluginDependencyDisable{},       // 插件官方依赖禁用表 / Plugin official dependency disable table
+		&plugin.PluginCatalogEntry{},            // 插件目录表 / Plugin catalog table
+		&plugin.PluginDependencyProfile{},       // 插件官方依赖画像表 / Plugin official dependency profile table
+		&plugin.PluginDependencyProfileItem{},   // 插件官方依赖画像子项表 / Plugin official dependency profile item table
 		&appconfig.Config{},                     // 配置文件表 / Config file table
 		&appconfig.ConfigVersion{},              // 配置版本表 / Config version table
 		&monitor.MonitorConfig{},                // 监控配置表 / Monitor config table (Requirements: 5.2)
@@ -111,6 +115,22 @@ func Migrate() {
 	}
 	if err := upgradeMigrator.CreateIndex(&stupgrade.UpgradeTaskStep{}, "idx_st_upgrade_task_step_code"); err != nil {
 		log.Printf("[Database] failed to create st upgrade task step index: %v\n", err)
+	}
+	if upgradeMigrator.HasIndex(&plugin.PluginDependencyConfig{}, "idx_plugin_dep") {
+		if err := upgradeMigrator.DropIndex(&plugin.PluginDependencyConfig{}, "idx_plugin_dep"); err != nil {
+			log.Printf("[Database] failed to recreate plugin dependency index: %v\n", err)
+		}
+	}
+	if err := upgradeMigrator.CreateIndex(&plugin.PluginDependencyConfig{}, "idx_plugin_dep"); err != nil {
+		log.Printf("[Database] failed to create plugin dependency index: %v\n", err)
+	}
+	if upgradeMigrator.HasIndex(&plugin.PluginDependencyDisable{}, "idx_plugin_dep_disable") {
+		if err := upgradeMigrator.DropIndex(&plugin.PluginDependencyDisable{}, "idx_plugin_dep_disable"); err != nil {
+			log.Printf("[Database] failed to recreate plugin dependency disable index: %v\n", err)
+		}
+	}
+	if err := upgradeMigrator.CreateIndex(&plugin.PluginDependencyDisable{}, "idx_plugin_dep_disable"); err != nil {
+		log.Printf("[Database] failed to create plugin dependency disable index: %v\n", err)
 	}
 
 	// 初始化默认管理员用户

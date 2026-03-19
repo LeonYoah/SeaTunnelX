@@ -491,7 +491,7 @@ func (s *Service) executeSyncConnectorsStep(ctx context.Context, task *UpgradeTa
 			if err := s.appendNodeLog(ctx, step, node, LogLevelInfo, LogEventTypeProgress, fmt.Sprintf("transferring connector %s / 正在传输 connector %s", connector.PluginName, connector.PluginName), transferSummary); err != nil {
 				return err
 			}
-			if err := s.pluginProvider.TransferPluginToAgent(ctx, agentID, connector.PluginName, connector.Version, target.TargetInstallDir); err != nil {
+			if err := s.pluginProvider.TransferPluginToAgent(ctx, agentID, connector.PluginName, connector.Version, target.TargetInstallDir, nil); err != nil {
 				_ = s.failNodeStep(ctx, step, node, ExecutionStatusFailed, err, transferSummary)
 				return err
 			}

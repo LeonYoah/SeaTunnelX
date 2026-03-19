@@ -26,8 +26,9 @@ import { useTranslations } from 'next-intl';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Database, ExternalLink, Download, CheckCircle, Settings } from 'lucide-react';
+import { Database, ExternalLink, Download, CheckCircle } from 'lucide-react';
 import type { Plugin, PluginCategory } from '@/lib/services/plugin';
+import { getPluginDependencyStatusMeta } from './dependency-status';
 
 interface PluginCardProps {
   plugin: Plugin;
@@ -39,7 +40,6 @@ interface PluginCardProps {
   downloadProgress?: number;
   onInstall?: () => void;
   onDownload?: () => void;
-  onConfigDependency?: () => void;
 }
 
 /**
@@ -81,10 +81,10 @@ export function PluginCard({
   isDownloading = false,
   downloadProgress = 0,
   onInstall,
-  onDownload,
-  onConfigDependency,
+  onDownload
 }: PluginCardProps) {
   const t = useTranslations();
+  const dependencyMeta = getPluginDependencyStatusMeta(plugin, t);
 
   /**
    * Handle install button click
@@ -104,14 +104,6 @@ export function PluginCard({
     onDownload?.();
   };
 
-  /**
-   * Handle dependency config button click
-   * 处理依赖配置按钮点击
-   */
-  const handleConfigDependencyClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onConfigDependency?.();
-  };
 
   return (
     <Card
@@ -160,26 +152,23 @@ export function PluginCard({
             v{plugin.version}
           </span>
         </div>
-        {plugin.dependencies && plugin.dependencies.length > 0 && (
-          <div className="mt-2 text-xs text-muted-foreground">
-            {t('plugin.dependencies')}: {plugin.dependencies.length}
+        <div className="mt-3 rounded-md border border-dashed px-3 py-2 min-h-[66px]">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              {t('plugin.officialDependencyStatus')}
+            </span>
+            <Badge variant="outline" className={dependencyMeta.className}>
+              {dependencyMeta.label}
+            </Badge>
           </div>
-        )}
+          <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+            {dependencyMeta.description}
+          </p>
+        </div>
         
         {/* Install/Download/Status button / 安装/下载/状态按钮 */}
         {showInstallButton && (
           <div className="mt-3 pt-3 border-t space-y-2">
-            {/* Dependency config button / 依赖配置按钮 */}
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-full text-muted-foreground hover:text-foreground"
-              onClick={handleConfigDependencyClick}
-            >
-              <Settings className="h-4 w-4 mr-2" />
-              {t('plugin.configDependency')}
-            </Button>
-            
             {isInstalled ? (
               <Button variant="outline" size="sm" className="w-full" disabled>
                 <CheckCircle className="h-4 w-4 mr-2 text-green-600" />

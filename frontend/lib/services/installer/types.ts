@@ -172,6 +172,8 @@ export interface ConnectorConfig {
   plugin_repo?: MirrorSource;
   /** Selected plugins for installation / 选择安装的插件列表 */
   selected_plugins?: string[];
+  /** Selected profile keys by plugin / 按插件记录选择的画像 */
+  selected_plugin_profiles?: Record<string, string[]>;
 }
 
 // ==================== Installation Types 安装类型 ====================

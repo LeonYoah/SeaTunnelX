@@ -67,20 +67,18 @@ import {
   AlertTriangle,
   Crown,
   Wrench,
-  Search,
   Download,
 } from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import {usePackages} from '@/hooks/use-installer';
+import {PluginSelectStep} from '@/components/common/installer/PluginSelectStep';
 import {
   buildSeatunnelInstallDir,
   resolveSeatunnelVersion,
 } from '@/lib/seatunnel-version';
-import {PluginService} from '@/lib/services/plugin';
 import {HostInfo, HostType, HostStatus} from '@/lib/services/host/types';
 import {DeploymentMode, NodeRole} from '@/lib/services/cluster/types';
-import type {LocalPlugin} from '@/lib/services/plugin/types';
 import type {
   MirrorSource,
   JVMConfig,
@@ -190,6 +188,7 @@ interface ClusterDeployConfig {
   checkpoint: CheckpointConfig;
   // Plugins / 插件
   selectedPlugins: string[];
+  selectedPluginProfiles: Record<string, string[]>;
 }
 
 const defaultConfig: ClusterDeployConfig = {
@@ -212,6 +211,7 @@ const defaultConfig: ClusterDeployConfig = {
     namespace: '/tmp/seatunnel/checkpoint/',
   },
   selectedPlugins: [],
+  selectedPluginProfiles: {},
 };
 
 interface ClusterDeployWizardProps {
@@ -254,37 +254,11 @@ export function ClusterDeployWizard({
   // Packages hook / 安装包 hook
   const {packages, loading: packagesLoading} = usePackages();
 
-  // Plugin filter state / 插件筛选状态
-  const [pluginSearch, setPluginSearch] = useState('');
-  const [localPlugins, setLocalPlugins] = useState<LocalPlugin[]>([]);
-  const [localPluginsLoading, setLocalPluginsLoading] = useState(false);
-
   // Precheck state / 预检查状态
   const [precheckResults, setPrecheckResults] = useState<HostPrecheckResult[]>(
     [],
   );
   const [precheckRunning, setPrecheckRunning] = useState(false);
-
-  // Load local plugins / 加载本地插件
-  const loadLocalPlugins = useCallback(async () => {
-    setLocalPluginsLoading(true);
-    try {
-      const data = await PluginService.listLocalPlugins();
-      setLocalPlugins(data || []);
-    } catch (err) {
-      console.error('Failed to load local plugins:', err);
-      setLocalPlugins([]);
-    } finally {
-      setLocalPluginsLoading(false);
-    }
-  }, []);
-
-  // Load local plugins when entering plugins step / 进入插件步骤时加载本地插件
-  useEffect(() => {
-    if (open && currentStepIndex === 4) {
-      loadLocalPlugins();
-    }
-  }, [open, currentStepIndex, loadLocalPlugins]);
 
   // Load available hosts / 加载可用主机
   const loadHosts = useCallback(async () => {
@@ -372,25 +346,6 @@ export function ClusterDeployWizard({
       installDir: buildSeatunnelInstallDir(resolvedRecommendedVersion),
     }));
   }, [open, resolvedRecommendedVersion, config.version]);
-
-  // Filter local plugins by version and search / 按版本和搜索过滤本地插件
-  const filteredLocalPlugins = useMemo(() => {
-    let result = localPlugins.filter((lp) => lp.version === config.version);
-
-    // Filter by search keyword / 按搜索关键词过滤
-    if (pluginSearch.trim()) {
-      const keyword = pluginSearch.toLowerCase();
-      result = result.filter((p) => p.name.toLowerCase().includes(keyword));
-    }
-
-    return result;
-  }, [localPlugins, config.version, pluginSearch]);
-
-  // Count local plugins for current version / 统计当前版本的本地插件数量
-  const localPluginsForVersion = useMemo(
-    () => localPlugins.filter((lp) => lp.version === config.version),
-    [localPlugins, config.version],
-  );
 
   // Run precheck when entering precheck step / 进入预检查步骤时运行预检查
   const runPrecheck = useCallback(async () => {
@@ -546,6 +501,12 @@ export function ClusterDeployWizard({
 
   // Check if can proceed to next step / 检查是否可以进入下一步
   const canProceed = useCallback(() => {
+    const hasPluginProfileSelectionIssue = config.selectedPlugins.some(
+      (pluginName) =>
+        pluginName === 'jdbc' &&
+        (config.selectedPluginProfiles[pluginName] || []).length === 0,
+    );
+
     switch (currentStep.id) {
       case 'basic':
         return config.name.trim().length > 0;
@@ -572,7 +533,7 @@ export function ClusterDeployWizard({
         // 如果本地没有安装包会自动下载
         return config.version.length > 0;
       case 'plugins':
-        return true; // Optional / 可选
+        return !hasPluginProfileSelectionIssue; // Optional, but selected JDBC profiles must be explicit / 可选，但已选择的 JDBC 必须显式选择场景
       case 'deploy':
         return deployStatus === 'success';
       case 'complete':
@@ -758,6 +719,7 @@ export function ClusterDeployWizard({
                     install_connectors: true,
                     connectors: [],
                     selected_plugins: config.selectedPlugins,
+                    selected_plugin_profiles: config.selectedPluginProfiles,
                   }
                 : undefined,
           },
@@ -1037,11 +999,11 @@ export function ClusterDeployWizard({
                   config.version || resolvedRecommendedVersion,
                 )}
               />
+              <p className='text-xs text-muted-foreground'>
+                {t('installer.installDirDesc')}
+              </p>
             </div>
           </div>
-          <p className='text-xs text-muted-foreground'>
-            {t('installer.installDirDesc')}
-          </p>
         </div>
       </ScrollArea>
     </div>
@@ -1798,209 +1760,53 @@ export function ClusterDeployWizard({
 
   // Render plugins step / 渲染插件步骤
   const renderPluginsStep = () => {
-    // Select all filtered plugins / 全选过滤后的插件
-    const handleSelectAll = () => {
-      const allNames = filteredLocalPlugins.map((p) => p.name);
-      const newSelected = [
-        ...new Set([...config.selectedPlugins, ...allNames]),
-      ];
-      updateConfig({selectedPlugins: newSelected});
-    };
-
-    // Deselect all filtered plugins / 取消全选过滤后的插件
-    const handleDeselectAll = () => {
-      const filteredNames = new Set(filteredLocalPlugins.map((p) => p.name));
-      const newSelected = config.selectedPlugins.filter(
-        (name) => !filteredNames.has(name),
-      );
-      updateConfig({selectedPlugins: newSelected});
-    };
-
     return (
       <div className='h-full flex flex-col overflow-hidden'>
-        {/* Header with count / 标题和计数 */}
-        <div className='flex items-center justify-between mb-4'>
+        <div className='mb-4 flex items-center justify-between gap-4'>
           <div>
             <p className='text-sm text-muted-foreground'>
-              {t('cluster.wizard.selectLocalPluginsDesc')}
+              {t('cluster.wizard.selectPluginsDesc')}
             </p>
-            <p className='text-xs text-muted-foreground mt-1'>
-              {t('cluster.wizard.localPluginsCount', {
-                count: localPluginsForVersion.length,
-                version: config.version,
-              })}
+            <p className='mt-1 text-xs text-muted-foreground'>
+              {t('cluster.wizard.pluginsPreparedAutomatically')}
             </p>
           </div>
           <Badge variant='outline'>
-            {config.selectedPlugins.length} {t('plugin.selectedCount')}
+            {config.selectedPlugins.length} {t('cluster.wizard.selectedPlugins')}
           </Badge>
         </div>
 
-        {/* No local plugins warning / 没有本地插件警告 */}
-        {localPluginsForVersion.length === 0 ? (
-          <div className='flex-1 flex items-center justify-center'>
-            <div className='text-center p-8 max-w-md'>
-              <Package className='h-16 w-16 mx-auto mb-4 text-muted-foreground/50' />
-              <h3 className='text-lg font-medium mb-2'>
-                {t('cluster.wizard.noLocalPluginsForVersion')}
-              </h3>
-              <p className='text-sm text-muted-foreground mb-4'>
-                {t('cluster.wizard.noLocalPluginsForVersionDesc', {
-                  version: config.version,
-                })}
-              </p>
-              <div className='flex flex-col gap-2'>
-                <Button
-                  variant='default'
-                  onClick={() => window.open('/plugins', '_blank')}
-                >
-                  <Download className='h-4 w-4 mr-2' />
-                  {t('cluster.wizard.goToPluginMarket')}
-                </Button>
-                <p className='text-xs text-muted-foreground'>
-                  {t('cluster.wizard.pluginsOptional')}
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Filters / 筛选器 */}
-            <div className='flex flex-wrap gap-3 items-center'>
-              {/* Search / 搜索 */}
-              <div className='relative flex-1 min-w-[200px]'>
-                <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-                <Input
-                  placeholder={t('plugin.searchPlaceholder')}
-                  value={pluginSearch}
-                  onChange={(e) => setPluginSearch(e.target.value)}
-                  className='pl-9'
-                />
-              </div>
+        <PluginSelectStep
+          version={config.version}
+          mirror={config.mirror}
+          onMirrorChange={(mirror) => updateConfig({mirror})}
+          selectedPlugins={config.selectedPlugins}
+          selectedPluginProfiles={config.selectedPluginProfiles}
+          onPluginsChange={(plugins) => {
+            const selectedPluginSet = new Set(plugins);
+            const nextProfiles = Object.fromEntries(
+              Object.entries(config.selectedPluginProfiles).filter(([pluginName]) =>
+                selectedPluginSet.has(pluginName),
+              ),
+            );
+            updateConfig({
+              selectedPlugins: plugins,
+              selectedPluginProfiles: nextProfiles,
+            });
+          }}
+          onPluginProfilesChange={(pluginName, profileKeys) =>
+            updateConfig({
+              selectedPluginProfiles: {
+                ...config.selectedPluginProfiles,
+                [pluginName]: profileKeys,
+              },
+            })
+          }
+        />
 
-              {/* Select all / Deselect all / 全选/取消全选 */}
-              <div className='flex gap-2'>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={handleSelectAll}
-                  disabled={filteredLocalPlugins.length === 0}
-                >
-                  {t('common.selectAll')}
-                </Button>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={handleDeselectAll}
-                  disabled={config.selectedPlugins.length === 0}
-                >
-                  {t('common.deselectAll')}
-                </Button>
-              </div>
-            </div>
-
-            {/* Plugin list / 插件列表 */}
-            <ScrollArea className='flex-1 min-h-0 pr-4 mt-4'>
-              {localPluginsLoading ? (
-                <div className='flex items-center justify-center py-12'>
-                  <Loader2 className='h-8 w-8 animate-spin text-muted-foreground' />
-                </div>
-              ) : filteredLocalPlugins.length === 0 ? (
-                <div className='text-center py-12 text-muted-foreground'>
-                  <Package className='h-12 w-12 mx-auto mb-4 opacity-50' />
-                  <p>{t('plugin.noPluginsFound')}</p>
-                </div>
-              ) : (
-                <div className='grid grid-cols-4 gap-2'>
-                  {filteredLocalPlugins.map((plugin) => {
-                    const isSelected = config.selectedPlugins.includes(
-                      plugin.name,
-                    );
-
-                    return (
-                      <Card
-                        key={plugin.name}
-                        className={cn(
-                          'cursor-pointer transition-colors hover:border-muted-foreground/50',
-                          isSelected && 'border-primary bg-primary/5',
-                        )}
-                        onClick={() => {
-                          if (isSelected) {
-                            updateConfig({
-                              selectedPlugins: config.selectedPlugins.filter(
-                                (p) => p !== plugin.name,
-                              ),
-                            });
-                          } else {
-                            updateConfig({
-                              selectedPlugins: [
-                                ...config.selectedPlugins,
-                                plugin.name,
-                              ],
-                            });
-                          }
-                        }}
-                      >
-                        <CardContent className='p-3'>
-                          <div className='flex items-start gap-2'>
-                            <Checkbox
-                              checked={isSelected}
-                              className='mt-0.5'
-                              onClick={(e) => e.stopPropagation()}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  updateConfig({
-                                    selectedPlugins: [
-                                      ...config.selectedPlugins,
-                                      plugin.name,
-                                    ],
-                                  });
-                                } else {
-                                  updateConfig({
-                                    selectedPlugins:
-                                      config.selectedPlugins.filter(
-                                        (p) => p !== plugin.name,
-                                      ),
-                                  });
-                                }
-                              }}
-                            />
-                            <div className='flex-1 min-w-0'>
-                              <span className='text-sm font-medium truncate block'>
-                                {plugin.name}
-                              </span>
-                              <div className='flex items-center gap-1 mt-1'>
-                                <Badge variant='outline' className='text-xs'>
-                                  {plugin.category}
-                                </Badge>
-                                <span className='text-xs text-muted-foreground'>
-                                  {(plugin.size / 1024 / 1024).toFixed(1)}MB
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-            </ScrollArea>
-
-            {/* Footer hint / 底部提示 */}
-            <div className='flex items-center justify-between text-xs text-muted-foreground pt-2 border-t'>
-              <p>{t('cluster.wizard.pluginsOptional')}</p>
-              <Button
-                variant='link'
-                size='sm'
-                className='h-auto p-0 text-xs'
-                onClick={() => window.open('/plugins', '_blank')}
-              >
-                {t('cluster.wizard.goToPluginMarket')}
-              </Button>
-            </div>
-          </>
-        )}
+        <div className='mt-4 border-t pt-3 text-xs text-muted-foreground'>
+          <p>{t('cluster.wizard.pluginsOptional')}</p>
+        </div>
       </div>
     );
   };

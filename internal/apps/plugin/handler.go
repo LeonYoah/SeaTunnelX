@@ -18,6 +18,8 @@
 package plugin
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -71,6 +73,47 @@ func (h *Handler) ListAvailablePlugins(c *gin.Context) {
 	c.JSON(http.StatusOK, ListPluginsResponse{Data: result})
 }
 
+// RefreshAvailablePluginsRequest represents the request for refreshing connector catalog.
+// RefreshAvailablePluginsRequest 表示刷新连接器目录的请求。
+type RefreshAvailablePluginsRequest struct {
+	Version string       `json:"version"`
+	Mirror  MirrorSource `json:"mirror"`
+}
+
+// RefreshAvailablePlugins handles POST /api/v1/plugins/refresh - refreshes connector catalog from Maven.
+// RefreshAvailablePlugins 处理 POST /api/v1/plugins/refresh - 从 Maven 刷新连接器目录。
+// @Tags plugins
+// @Accept json
+// @Produce json
+// @Param request body RefreshAvailablePluginsRequest false "刷新参数"
+// @Success 200 {object} ListPluginsResponse
+// @Router /api/v1/plugins/refresh [post]
+func (h *Handler) RefreshAvailablePlugins(c *gin.Context) {
+	var req RefreshAvailablePluginsRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, ListPluginsResponse{ErrorMsg: "无效的请求参数 / Invalid request payload"})
+		return
+	}
+
+	result, err := h.service.ListAvailablePlugins(c.Request.Context(), req.Version, req.Mirror)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ListPluginsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	if _, err := h.service.RefreshPlugins(c.Request.Context(), result.Version, req.Mirror); err != nil {
+		c.JSON(http.StatusInternalServerError, ListPluginsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	refreshed, err := h.service.ListAvailablePlugins(c.Request.Context(), result.Version, req.Mirror)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ListPluginsResponse{ErrorMsg: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, ListPluginsResponse{Data: refreshed})
+}
 
 // GetPluginInfoResponse represents the response for getting plugin info.
 // GetPluginInfoResponse 表示获取插件信息的响应。
@@ -301,8 +344,9 @@ func (h *Handler) DisablePlugin(c *gin.Context) {
 // DownloadPluginRequest represents a request to download a plugin.
 // DownloadPluginRequest 表示下载插件的请求。
 type DownloadPluginRequest struct {
-	Version string       `json:"version" binding:"required"` // 版本号 / Version
-	Mirror  MirrorSource `json:"mirror,omitempty"`           // 镜像源 / Mirror source
+	Version     string       `json:"version" binding:"required"` // 版本号 / Version
+	Mirror      MirrorSource `json:"mirror,omitempty"`           // 镜像源 / Mirror source
+	ProfileKeys []string     `json:"profile_keys,omitempty"`     // 选中的依赖画像 / Selected dependency profiles
 }
 
 // DownloadPluginResponse represents the response for downloading a plugin.
@@ -334,7 +378,7 @@ func (h *Handler) DownloadPlugin(c *gin.Context) {
 		return
 	}
 
-	progress, err := h.service.DownloadPlugin(c.Request.Context(), name, req.Version, req.Mirror)
+	progress, err := h.service.DownloadPlugin(c.Request.Context(), name, req.Version, req.Mirror, req.ProfileKeys)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, DownloadPluginResponse{ErrorMsg: err.Error()})
 		return
@@ -415,7 +459,8 @@ func (h *Handler) GetDownloadStatus(c *gin.Context) {
 		return
 	}
 
-	progress := h.service.GetDownloadStatus(name, version)
+	profileKeys := c.QueryArray("profile_keys")
+	progress := h.service.GetDownloadStatus(name, version, profileKeys)
 	c.JSON(http.StatusOK, GetDownloadStatusResponse{Data: progress})
 }
 
@@ -556,7 +601,8 @@ func (h *Handler) ListDependencies(c *gin.Context) {
 		return
 	}
 
-	deps, err := h.service.ListDependencies(c.Request.Context(), name)
+	version := c.Query("version")
+	deps, err := h.service.ListDependencies(c.Request.Context(), name, version)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ListDependenciesResponse{ErrorMsg: err.Error()})
 		return
@@ -607,6 +653,38 @@ func (h *Handler) AddDependency(c *gin.Context) {
 	c.JSON(http.StatusOK, AddDependencyResponse{Data: dep})
 }
 
+// UploadDependency handles POST /api/v1/plugins/:name/dependencies/upload - uploads a custom jar dependency.
+// UploadDependency 处理 POST /api/v1/plugins/:name/dependencies/upload - 上传自定义 Jar 依赖。
+func (h *Handler) UploadDependency(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, AddDependencyResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, AddDependencyResponse{ErrorMsg: "必须上传 jar 文件 / jar file is required"})
+		return
+	}
+	req := &UploadDependencyRequest{
+		PluginName:       name,
+		SeatunnelVersion: c.PostForm("seatunnel_version"),
+		GroupID:          c.PostForm("group_id"),
+		ArtifactID:       c.PostForm("artifact_id"),
+		Version:          c.PostForm("version"),
+		TargetDir:        c.PostForm("target_dir"),
+	}
+	dep, err := h.service.UploadDependency(c.Request.Context(), req, file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, AddDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"upload_dependency", "plugin", name, name, audit.AuditDetails{"trigger": "manual", "artifact_id": dep.ArtifactID})
+	logger.InfoF(c.Request.Context(), "[Plugin] 上传自定义依赖成功: plugin=%s, dep=%s", name, dep.ArtifactID)
+	c.JSON(http.StatusOK, AddDependencyResponse{Data: dep})
+}
+
 // DeleteDependencyResponse represents the response for deleting a dependency.
 // DeleteDependencyResponse 表示删除依赖的响应。
 type DeleteDependencyResponse struct {
@@ -639,4 +717,112 @@ func (h *Handler) DeleteDependency(c *gin.Context) {
 		"delete_dependency", "plugin", name+"/"+strconv.FormatUint(depID, 10), name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Plugin] 删除依赖成功: depId=%d", depID)
 	c.JSON(http.StatusOK, DeleteDependencyResponse{})
+}
+
+// DisableDependencyResponse represents the response for disabling one official dependency item.
+// DisableDependencyResponse 表示禁用官方依赖的响应。
+type DisableDependencyResponse struct {
+	ErrorMsg string                   `json:"error_msg"`
+	Data     *PluginDependencyDisable `json:"data"`
+}
+
+// DisableDependency handles POST /api/v1/plugins/:name/dependencies/disables.
+// DisableDependency 处理 POST /api/v1/plugins/:name/dependencies/disables。
+func (h *Handler) DisableDependency(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, DisableDependencyResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+	var req DisableDependencyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, DisableDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	req.PluginName = name
+	item, err := h.service.DisableDependency(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, DisableDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"disable_official_dependency", "plugin", name, name, audit.AuditDetails{"artifact_id": req.ArtifactID, "version": req.Version})
+	logger.InfoF(c.Request.Context(), "[Plugin] 禁用官方依赖成功: plugin=%s, dep=%s:%s", name, req.GroupID, req.ArtifactID)
+	c.JSON(http.StatusOK, DisableDependencyResponse{Data: item})
+}
+
+// EnableDependency handles DELETE /api/v1/plugins/:name/dependencies/disables/:disableId.
+// EnableDependency 处理 DELETE /api/v1/plugins/:name/dependencies/disables/:disableId。
+func (h *Handler) EnableDependency(c *gin.Context) {
+	name := c.Param("name")
+	disableID, err := strconv.ParseUint(c.Param("disableId"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, DeleteDependencyResponse{ErrorMsg: "无效的禁用依赖 ID / Invalid disable ID"})
+		return
+	}
+	if err := h.service.EnableDependency(c.Request.Context(), uint(disableID)); err != nil {
+		c.JSON(http.StatusInternalServerError, DeleteDependencyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"enable_official_dependency", "plugin", name+"/"+strconv.FormatUint(disableID, 10), name, audit.AuditDetails{"trigger": "manual"})
+	logger.InfoF(c.Request.Context(), "[Plugin] 恢复官方依赖成功: disableId=%d", disableID)
+	c.JSON(http.StatusOK, DeleteDependencyResponse{})
+}
+
+// GetOfficialDependenciesResponse represents the response for official dependency lookup.
+// GetOfficialDependenciesResponse 表示获取官方依赖的响应。
+type GetOfficialDependenciesResponse struct {
+	ErrorMsg string                        `json:"error_msg"`
+	Data     *OfficialDependenciesResponse `json:"data"`
+}
+
+// AnalyzeOfficialDependenciesRequest represents analyze request payload.
+// AnalyzeOfficialDependenciesRequest 表示在线分析请求。
+type AnalyzeOfficialDependenciesRequest struct {
+	Version      string `json:"version"`
+	ProfileKey   string `json:"profile_key"`
+	ForceRefresh bool   `json:"force_refresh"`
+}
+
+// GetOfficialDependencies handles GET /api/v1/plugins/:name/official-dependencies.
+// GetOfficialDependencies 处理 GET /api/v1/plugins/:name/official-dependencies。
+func (h *Handler) GetOfficialDependencies(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, GetOfficialDependenciesResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+	version := c.Query("version")
+	profileKey := c.Query("profile_key")
+	data, err := h.service.GetOfficialDependencies(c.Request.Context(), name, version, profileKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, GetOfficialDependenciesResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GetOfficialDependenciesResponse{Data: data})
+}
+
+// AnalyzeOfficialDependencies handles POST /api/v1/plugins/:name/official-dependencies/analyze.
+// AnalyzeOfficialDependencies 处理 POST /api/v1/plugins/:name/official-dependencies/analyze。
+func (h *Handler) AnalyzeOfficialDependencies(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, GetOfficialDependenciesResponse{ErrorMsg: "插件名称不能为空 / Plugin name is required"})
+		return
+	}
+	var req AnalyzeOfficialDependenciesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, GetOfficialDependenciesResponse{ErrorMsg: err.Error()})
+		return
+	}
+	data, err := h.service.AnalyzeOfficialDependencies(c.Request.Context(), name, req.Version, req.ProfileKey, req.ForceRefresh)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, GetOfficialDependenciesResponse{ErrorMsg: err.Error()})
+		return
+	}
+	_ = audit.RecordFromGin(c, h.auditRepo, auth.GetUserIDFromContext(c), auth.GetUsernameFromContext(c),
+		"analyze_official_dependency", "plugin", name, name, audit.AuditDetails{"trigger": "manual", "profile_key": req.ProfileKey, "version": req.Version})
+	logger.InfoF(c.Request.Context(), "[Plugin] 官方依赖分析完成: plugin=%s, profile=%s, version=%s", name, req.ProfileKey, req.Version)
+	c.JSON(http.StatusOK, GetOfficialDependenciesResponse{Data: data})
 }
