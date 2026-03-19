@@ -17,7 +17,7 @@
 
 'use client';
 
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useTranslations} from 'next-intl';
 import {RefreshCw, Search} from 'lucide-react';
 import {toast} from 'sonner';
@@ -118,8 +118,20 @@ export function DiagnosticsErrorCenter({
   );
   const [groupEvents, setGroupEvents] = useState<DiagnosticsErrorEvent[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const groupsRequestIdRef = useRef(0);
+  const detailRequestIdRef = useRef(0);
+
+  const clearSelectedGroupDetail = useCallback(() => {
+    detailRequestIdRef.current += 1;
+    setLoadingDetail(false);
+    setSelectedGroup(null);
+    setGroupEvents([]);
+    setSelectedEventId(null);
+  }, []);
 
   const loadGroups = useCallback(async () => {
+    const requestId = groupsRequestIdRef.current + 1;
+    groupsRequestIdRef.current = requestId;
     setLoadingGroups(true);
     try {
       const result = await services.diagnostics.getErrorGroupsSafe({
@@ -128,6 +140,9 @@ export function DiagnosticsErrorCenter({
         page,
         page_size: 20,
       });
+      if (groupsRequestIdRef.current !== requestId) {
+        return;
+      }
       if (!result.success || !result.data) {
         toast.error(result.error || t('errors.loadGroupsError'));
         setGroups([]);
@@ -137,11 +152,15 @@ export function DiagnosticsErrorCenter({
       setGroups(result.data.items || []);
       setGroupTotal(result.data.total || 0);
     } finally {
-      setLoadingGroups(false);
+      if (groupsRequestIdRef.current === requestId) {
+        setLoadingGroups(false);
+      }
     }
   }, [clusterId, keyword, page, t]);
 
   const loadGroupDetail = useCallback(async (groupId: number) => {
+    const requestId = detailRequestIdRef.current + 1;
+    detailRequestIdRef.current = requestId;
     setLoadingDetail(true);
     try {
       const result = await services.diagnostics.getErrorGroupDetailSafe(
@@ -151,6 +170,9 @@ export function DiagnosticsErrorCenter({
           cluster_id: clusterId,
         },
       );
+      if (detailRequestIdRef.current !== requestId) {
+        return;
+      }
       if (!result.success || !result.data) {
         toast.error(result.error || t('errors.loadDetailError'));
         setSelectedGroup(null);
@@ -162,7 +184,9 @@ export function DiagnosticsErrorCenter({
       setGroupEvents(result.data.events || []);
       setSelectedEventId(result.data.events?.[0]?.id ?? null);
     } finally {
-      setLoadingDetail(false);
+      if (detailRequestIdRef.current === requestId) {
+        setLoadingDetail(false);
+      }
     }
   }, [clusterId, t]);
 
@@ -173,16 +197,15 @@ export function DiagnosticsErrorCenter({
   useEffect(() => {
     if (groups.length === 0) {
       setSelectedGroupId(null);
-      setSelectedGroup(null);
-      setGroupEvents([]);
-      setSelectedEventId(null);
+      clearSelectedGroupDetail();
       return;
     }
     if (!selectedGroupId || !groups.some((item) => item.id === selectedGroupId)) {
+      clearSelectedGroupDetail();
       setSelectedGroupId(groups[0].id);
       onSelectGroup?.(groups[0].id);
     }
-  }, [groups, onSelectGroup, selectedGroupId]);
+  }, [clearSelectedGroupDetail, groups, onSelectGroup, selectedGroupId]);
 
   useEffect(() => {
     if (!selectedGroupId || !groups.some((item) => item.id === selectedGroupId)) {
@@ -192,8 +215,15 @@ export function DiagnosticsErrorCenter({
   }, [groups, loadGroupDetail, selectedGroupId]);
 
   useEffect(() => {
+    clearSelectedGroupDetail();
+  }, [clearSelectedGroupDetail, clusterId]);
+
+  useEffect(() => {
     setSelectedGroupId(groupId ?? null);
-  }, [groupId]);
+    if (!groupId) {
+      clearSelectedGroupDetail();
+    }
+  }, [clearSelectedGroupDetail, groupId]);
 
   const selectedEvent = useMemo(
     () => groupEvents.find((item) => item.id === selectedEventId) ?? groupEvents[0],
@@ -297,6 +327,9 @@ export function DiagnosticsErrorCenter({
                             : 'cursor-pointer'
                         }
                         onClick={() => {
+                          if (selectedGroupId !== group.id) {
+                            clearSelectedGroupDetail();
+                          }
                           setSelectedGroupId(group.id);
                           onSelectGroup?.(group.id);
                         }}
