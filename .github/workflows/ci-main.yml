@@ -313,3 +313,33 @@ jobs:
             frontend/playwright-report
             frontend/test-results
           if-no-files-found: ignore
+
+  frontend-e2e-gate:
+    name: Frontend E2E Gate
+    runs-on: ubuntu-latest
+    needs: [changes, frontend-e2e-select, frontend-e2e-smoke]
+    if: ${{ always() }}
+
+    steps:
+      - name: Evaluate E2E gate
+        run: |
+          echo "frontend=${{ needs.changes.outputs.frontend }}"
+          echo "has_specs=${{ needs.frontend-e2e-select.outputs.has_specs }}"
+          echo "smoke_result=${{ needs.frontend-e2e-smoke.result }}"
+
+          if [ "${{ needs.changes.outputs.frontend }}" != "true" ]; then
+            echo "No frontend changes detected; passing E2E gate."
+            exit 0
+          fi
+
+          if [ "${{ needs.frontend-e2e-select.outputs.has_specs }}" != "true" ]; then
+            echo "No frontend E2E specs selected; passing E2E gate."
+            exit 0
+          fi
+
+          if [ "${{ needs.frontend-e2e-smoke.result }}" != "success" ]; then
+            echo "::error::Frontend E2E smoke matrix did not succeed."
+            exit 1
+          fi
+
+          echo "Frontend E2E smoke matrix succeeded."
