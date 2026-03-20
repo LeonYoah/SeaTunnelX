@@ -305,7 +305,7 @@ jobs:
           pnpm exec playwright test ${{ needs.frontend-e2e-select.outputs.spec_args }}
 
       - name: Upload Playwright report
-        if: !cancelled()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.arch }}
