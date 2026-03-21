@@ -15,9 +15,27 @@
  * limitations under the License.
  */
 
-import {expect, type Page} from '@playwright/test';
+import {expect, type APIRequestContext, type Page} from '@playwright/test';
 import {chooseSelectOption} from './install-wizard-real';
 import fs from 'node:fs/promises';
+import {ConfigType} from '@/lib/services/config';
+
+const backendBaseURL =
+  process.env.E2E_BACKEND_BASE_URL ?? 'http://127.0.0.1:18000';
+
+export interface RealConfigInfo {
+  id: number;
+  config_type: ConfigType | string;
+  is_template: boolean;
+  match_template: boolean;
+  version: number;
+  content: string;
+}
+
+interface ClusterConfigsResponse {
+  error_msg?: string;
+  data?: RealConfigInfo[];
+}
 
 export async function openClusterConfigsTab(
   page: Page,
@@ -43,9 +61,6 @@ export async function initClusterConfigsFromNode(page: Page): Promise<void> {
   await expect(nodeChoices.first()).toBeVisible({timeout: 30000});
   await nodeChoices.first().click();
   await page.getByTestId('cluster-configs-init-confirm').click();
-  await expect(page.getByTestId('cluster-configs-template-edit')).toBeVisible({
-    timeout: 120000,
-  });
 }
 
 export async function openTemplateConfigEditor(page: Page): Promise<void> {
@@ -84,4 +99,74 @@ export async function waitForFileToContain(
       )
       .toContain(snippet);
   }
+}
+
+export async function listClusterConfigs(
+  request: APIRequestContext,
+  clusterId: number,
+): Promise<RealConfigInfo[]> {
+  const response = await request.get(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/configs`,
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ClusterConfigsResponse;
+  return payload.data ?? [];
+}
+
+export async function waitForTemplateConfig(
+  request: APIRequestContext,
+  clusterId: number,
+  configType: ConfigType,
+  predicate: (config: RealConfigInfo) => boolean,
+  timeoutMs: number = 60000,
+): Promise<RealConfigInfo> {
+  await expect
+    .poll(
+      async () => {
+        const configs = await listClusterConfigs(request, clusterId);
+        const matched = configs.find(
+          (config) =>
+            config.is_template &&
+            config.config_type === configType &&
+            predicate(config),
+        );
+        return matched ?? null;
+      },
+      {timeout: timeoutMs},
+    )
+    .not.toBeNull();
+
+  const configs = await listClusterConfigs(request, clusterId);
+  return configs.find(
+    (config) =>
+      config.is_template &&
+      config.config_type === configType &&
+      predicate(config),
+  ) as RealConfigInfo;
+}
+
+export async function waitForAllNodeConfigsMatchingTemplate(
+  request: APIRequestContext,
+  clusterId: number,
+  configType: ConfigType,
+  timeoutMs: number = 60000,
+): Promise<RealConfigInfo[]> {
+  await expect
+    .poll(
+      async () => {
+        const configs = await listClusterConfigs(request, clusterId);
+        const nodes = configs.filter(
+          (config) =>
+            !config.is_template && config.config_type === configType,
+        );
+        return nodes.length > 0 && nodes.every((config) => config.match_template);
+      },
+      {timeout: timeoutMs},
+    )
+    .toBeTruthy();
+
+  const configs = await listClusterConfigs(request, clusterId);
+  return configs.filter(
+    (config) => !config.is_template && config.config_type === configType,
+  );
 }
