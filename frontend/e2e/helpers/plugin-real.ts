@@ -98,10 +98,27 @@ export async function waitForLocalPlugin(
   ) as LocalPlugin;
 }
 
+async function waitForFile(pathname: string, timeoutMs: number = 30000): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        try {
+          await fs.access(pathname);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      {timeout: timeoutMs},
+    )
+    .toBeTruthy();
+}
+
 export async function assertLocalPluginAssets(plugin: LocalPlugin): Promise<void> {
-  await fs.access(plugin.connector_path);
+  await waitForFile(plugin.connector_path);
   for (const dependency of plugin.dependencies || []) {
-    await fs.access(resolveLocalPluginDependencyPath(plugin.version, dependency));
+    const dependencyPath = resolveLocalPluginDependencyPath(plugin.version, dependency);
+    await waitForFile(dependencyPath);
   }
 }
 
