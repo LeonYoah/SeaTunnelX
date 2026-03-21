@@ -96,3 +96,30 @@ func TestBuildErrorFingerprintReturnsEmptyForNoiseOnlyEvidenceWithSeatunnelLogHe
 		t.Fatalf("expected noise-only evidence with log header to be ignored, got fp=%q normalized=%q exception=%q title=%q", fp, normalized, exceptionClass, title)
 	}
 }
+
+func TestBuildErrorFingerprintUsesRootCauseFromMergedSeatunnelFatalBlock(t *testing.T) {
+	message := "Fatal Error,"
+	evidence := "" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - \n" +
+		"===============================================================================\n" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Fatal Error,\n" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Please submit bug report in https://github.com/apache/seatunnel/issues\n" +
+		"[] 2026-03-21 13:21:35,466 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Reason:Invalid YAML configuration\n" +
+		"[] 2026-03-21 13:21:35,471 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Exception StackTrace:com.hazelcast.config.InvalidConfigurationException: Invalid YAML configuration\n" +
+		"\tat com.hazelcast.config.YamlConfigBuilder.parseAndBuildConfig(YamlConfigBuilder.java:151)\n" +
+		"Caused by: com.hazelcast.internal.yaml.YamlException: An error occurred while loading and parsing the YAML stream\n"
+
+	fp, normalized, exceptionClass, title := BuildErrorFingerprint(message, evidence)
+	if fp == "" {
+		t.Fatal("expected fingerprint for merged Seatunnel fatal block")
+	}
+	if exceptionClass != "com.hazelcast.internal.yaml.YamlException" {
+		t.Fatalf("expected merged fatal block root cause class, got %q", exceptionClass)
+	}
+	if title != "com.hazelcast.internal.yaml.YamlException: An error occurred while loading and parsing the YAML stream" {
+		t.Fatalf("unexpected merged fatal block title %q", title)
+	}
+	if normalized == "" {
+		t.Fatal("expected normalized text for merged fatal block")
+	}
+}
