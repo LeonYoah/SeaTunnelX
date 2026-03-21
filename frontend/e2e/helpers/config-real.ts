@@ -37,6 +37,33 @@ interface ClusterConfigsResponse {
   data?: RealConfigInfo[];
 }
 
+interface ClusterConfigResponse {
+  error_msg?: string;
+  data?: RealConfigInfo;
+}
+
+interface ClusterConfigVersionsResponse {
+  error_msg?: string;
+  data?: Array<{
+    id: number;
+    config_id: number;
+    version: number;
+    content: string;
+    comment: string;
+    created_by: number;
+    created_at: string;
+  }>;
+}
+
+interface ClusterConfigSyncAllResponse {
+  error_msg?: string;
+  data?: {
+    message: string;
+    synced_count: number;
+    push_errors: Array<{host_id: number; host_ip?: string; message: string}>;
+  };
+}
+
 export async function openClusterConfigsTab(
   page: Page,
   clusterId: number,
@@ -61,6 +88,23 @@ export async function initClusterConfigsFromNode(page: Page): Promise<void> {
   await expect(nodeChoices.first()).toBeVisible({timeout: 30000});
   await nodeChoices.first().click();
   await page.getByTestId('cluster-configs-init-confirm').click();
+}
+
+export async function initClusterConfigsFromNodeApi(
+  request: APIRequestContext,
+  clusterId: number,
+  hostId: number,
+  installDir: string,
+): Promise<void> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/configs/init`,
+    {
+      data: {host_id: hostId, install_dir: installDir},
+    },
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as {error_msg?: string};
+  expect(payload.error_msg ?? '').toBe('');
 }
 
 export async function openTemplateConfigEditor(page: Page): Promise<void> {
@@ -111,6 +155,75 @@ export async function listClusterConfigs(
   expect(response.ok()).toBeTruthy();
   const payload = (await response.json()) as ClusterConfigsResponse;
   return payload.data ?? [];
+}
+
+export async function updateClusterConfig(
+  request: APIRequestContext,
+  configId: number,
+  content: string,
+  comment?: string,
+): Promise<RealConfigInfo> {
+  const response = await request.put(
+    `${backendBaseURL}/api/v1/configs/${configId}`,
+    {
+      data: {content, comment},
+    },
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ClusterConfigResponse;
+  expect(payload.error_msg ?? '').toBe('');
+  expect(payload.data).toBeTruthy();
+  return payload.data as RealConfigInfo;
+}
+
+export async function listClusterConfigVersions(
+  request: APIRequestContext,
+  configId: number,
+): Promise<NonNullable<ClusterConfigVersionsResponse['data']>> {
+  const response = await request.get(
+    `${backendBaseURL}/api/v1/configs/${configId}/versions`,
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ClusterConfigVersionsResponse;
+  expect(payload.error_msg ?? '').toBe('');
+  return (payload.data ?? []) as NonNullable<ClusterConfigVersionsResponse['data']>;
+}
+
+export async function rollbackClusterConfig(
+  request: APIRequestContext,
+  configId: number,
+  version: number,
+  comment?: string,
+): Promise<RealConfigInfo> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/configs/${configId}/rollback`,
+    {
+      data: {version, comment},
+    },
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ClusterConfigResponse;
+  expect(payload.error_msg ?? '').toBe('');
+  expect(payload.data).toBeTruthy();
+  return payload.data as RealConfigInfo;
+}
+
+export async function syncClusterTemplateToAllNodesApi(
+  request: APIRequestContext,
+  clusterId: number,
+  configType: ConfigType,
+): Promise<NonNullable<ClusterConfigSyncAllResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/configs/sync-all`,
+    {
+      data: {config_type: configType},
+    },
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as ClusterConfigSyncAllResponse;
+  expect(payload.error_msg ?? '').toBe('');
+  expect(payload.data).toBeTruthy();
+  return payload.data as NonNullable<ClusterConfigSyncAllResponse['data']>;
 }
 
 export async function waitForTemplateConfig(

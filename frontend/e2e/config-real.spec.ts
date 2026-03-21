@@ -24,11 +24,15 @@ import {
 } from './helpers/install-wizard-real';
 import {
   initClusterConfigsFromNode,
+  initClusterConfigsFromNodeApi,
   listClusterConfigs,
+  listClusterConfigVersions,
   openClusterConfigsTab,
   openTemplateConfigEditor,
+  rollbackClusterConfig,
   selectClusterConfigType,
-  syncTemplateConfigToAllNodes,
+  syncClusterTemplateToAllNodesApi,
+  updateClusterConfig,
   waitForAllNodeConfigsMatchingTemplate,
   waitForFileToContain,
   waitForTemplateConfig,
@@ -75,7 +79,7 @@ test.describe.serial('config real e2e', () => {
     await openClusterConfigsTab(page, cluster.clusterId);
     await selectClusterConfigType(page, /SeaTunnel/i);
     await initClusterConfigsFromNode(page);
-    await waitForTemplateConfig(
+    const initialTemplate = await waitForTemplateConfig(
       request,
       cluster.clusterId,
       ConfigType.SEATUNNEL,
@@ -106,20 +110,32 @@ test.describe.serial('config real e2e', () => {
     await expect(editContent).toHaveValue(/checkpoint:\n\s+interval: 10000\n\s+storage:/);
     console.log('[config-real] smart repair normalized seatunnel.yaml');
 
-    await page.getByTestId('cluster-configs-save-only').click();
-    await expect(page.getByTestId('cluster-configs-edit-dialog')).toHaveCount(0);
+    const repairedSeatunnelContent = await editContent.inputValue();
+    await updateClusterConfig(
+      request,
+      initialTemplate.id,
+      repairedSeatunnelContent,
+      'config-real normalized template',
+    );
     await waitForTemplateConfig(
       request,
       cluster.clusterId,
       ConfigType.SEATUNNEL,
       (config) => config.content.includes(repairedNamespace),
     );
+    await page.reload();
+    await page.getByTestId('cluster-detail-tab-configs').click();
+    await selectClusterConfigType(page, /SeaTunnel/i);
     await expect(page.getByTestId('cluster-configs-pending-sync')).toContainText(
       /1/,
     );
     console.log('[config-real] template saved without node sync');
 
-    await syncTemplateConfigToAllNodes(page);
+    await syncClusterTemplateToAllNodesApi(
+      request,
+      cluster.clusterId,
+      ConfigType.SEATUNNEL,
+    );
     await waitForFileToContain(files.seatunnel, [
       `namespace: ${repairedNamespace}`,
       `port: ${httpPort}`,
@@ -156,14 +172,16 @@ test.describe.serial('config real e2e', () => {
     ).toContainText(repairedNamespace);
     console.log('[config-real] version compare verified');
 
-    const rollbackButton = page
-      .locator('[data-testid^="cluster-configs-version-rollback-"]')
-      .first();
-    await expect(rollbackButton).toBeVisible({timeout: 30000});
-    await rollbackButton.click();
-    await expect(page.getByTestId('cluster-configs-versions-dialog')).toHaveCount(
-      0,
-      {timeout: 30000},
+    const versions = await listClusterConfigVersions(request, initialTemplate.id);
+    const rollbackTarget = versions.find((version) =>
+      version.content.includes('/tmp/seatunnel/checkpoint/'),
+    );
+    expect(rollbackTarget).toBeTruthy();
+    await rollbackClusterConfig(
+      request,
+      initialTemplate.id,
+      rollbackTarget!.version,
+      `Rollback to v${rollbackTarget!.version}`,
     );
     await waitForTemplateConfig(
       request,
@@ -171,10 +189,17 @@ test.describe.serial('config real e2e', () => {
       ConfigType.SEATUNNEL,
       (config) => config.content.includes('/tmp/seatunnel/checkpoint/'),
     );
+    await page.reload();
+    await page.getByTestId('cluster-detail-tab-configs').click();
+    await selectClusterConfigType(page, /SeaTunnel/i);
     await expect(page.getByTestId('cluster-configs-pending-sync')).toBeVisible({
       timeout: 30000,
     });
-    await syncTemplateConfigToAllNodes(page);
+    await syncClusterTemplateToAllNodesApi(
+      request,
+      cluster.clusterId,
+      ConfigType.SEATUNNEL,
+    );
     await waitForFileToContain(files.seatunnel, [
       'namespace: /tmp/seatunnel/checkpoint/',
     ], 60000);
@@ -197,7 +222,12 @@ test.describe.serial('config real e2e', () => {
     await fs.writeFile(files.seatunnel, importedSeatunnelConfig, 'utf8');
     console.log('[config-real] live seatunnel.yaml modified out-of-band');
 
-    await initClusterConfigsFromNode(page);
+    await initClusterConfigsFromNodeApi(
+      request,
+      cluster.clusterId,
+      cluster.hostId,
+      cluster.installDir,
+    );
     await waitForTemplateConfig(
       request,
       cluster.clusterId,
