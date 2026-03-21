@@ -17,6 +17,7 @@
 
 import {expect, type Page} from '@playwright/test';
 import {chooseSelectOption} from './install-wizard-real';
+import fs from 'node:fs/promises';
 
 export async function openClusterConfigsTab(
   page: Page,
@@ -62,4 +63,25 @@ export async function syncTemplateConfigToAllNodes(page: Page): Promise<void> {
   }
 
   await page.getByTestId('cluster-configs-template-sync-all').click();
+}
+
+export async function waitForFileToContain(
+  filePath: string,
+  snippets: string[],
+  timeoutMs: number = 120000,
+): Promise<void> {
+  for (const snippet of snippets) {
+    await expect
+      .poll(
+        async () => {
+          try {
+            return await fs.readFile(filePath, 'utf8');
+          } catch {
+            return '';
+          }
+        },
+        {timeout: timeoutMs},
+      )
+      .toContain(snippet);
+  }
 }

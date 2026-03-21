@@ -136,24 +136,6 @@ export async function assertFileContains(
   }
 }
 
-export async function waitForFileToContain(
-  filePath: string,
-  snippets: string[],
-  timeoutMs: number = 120000,
-): Promise<void> {
-  for (const snippet of snippets) {
-    await expect
-      .poll(async () => {
-        try {
-          return await fs.readFile(filePath, 'utf8');
-        } catch {
-          return '';
-        }
-      }, {timeout: timeoutMs})
-      .toContain(snippet);
-  }
-}
-
 export function resolveInstalledConfigPaths(installDir: string) {
   const configDir = path.join(installDir, 'config');
   return {

@@ -21,7 +21,6 @@ import {expect, test} from '@playwright/test';
 import {
   resolveInstalledConfigPaths,
   waitForFileContent,
-  waitForFileToContain,
 } from './helpers/install-wizard-real';
 import {
   initClusterConfigsFromNode,
@@ -29,6 +28,7 @@ import {
   openTemplateConfigEditor,
   selectClusterConfigType,
   syncTemplateConfigToAllNodes,
+  waitForFileToContain,
 } from './helpers/config-real';
 import {installSourceCluster} from './helpers/upgrade-real';
 
@@ -103,13 +103,15 @@ test.describe.serial('config real e2e', () => {
     console.log('[config-real] template saved without node sync');
 
     await syncTemplateConfigToAllNodes(page);
-    await expect(page.getByTestId('cluster-configs-pending-sync')).toHaveCount(0, {
-      timeout: 120000,
-    });
     await waitForFileToContain(files.seatunnel, [
       `namespace: ${repairedNamespace}`,
       `port: ${httpPort}`,
-    ]);
+    ], 60000);
+    await openClusterConfigsTab(page, cluster.clusterId);
+    await selectClusterConfigType(page, /SeaTunnel/i);
+    await expect(page.getByTestId('cluster-configs-pending-sync')).toHaveCount(0, {
+      timeout: 30000,
+    });
     console.log('[config-real] template synced to node and file updated');
 
     await page.getByTestId('cluster-configs-template-versions').click();
@@ -147,12 +149,14 @@ test.describe.serial('config real e2e', () => {
       timeout: 30000,
     });
     await syncTemplateConfigToAllNodes(page);
-    await expect(page.getByTestId('cluster-configs-pending-sync')).toHaveCount(0, {
-      timeout: 120000,
-    });
     await waitForFileToContain(files.seatunnel, [
       'namespace: /tmp/seatunnel/checkpoint/',
-    ]);
+    ], 60000);
+    await openClusterConfigsTab(page, cluster.clusterId);
+    await selectClusterConfigType(page, /SeaTunnel/i);
+    await expect(page.getByTestId('cluster-configs-pending-sync')).toHaveCount(0, {
+      timeout: 30000,
+    });
     console.log('[config-real] rollback synced back to node');
 
     const liveSeatunnelConfig = await waitForFileContent(files.seatunnel);
@@ -167,7 +171,7 @@ test.describe.serial('config real e2e', () => {
     await initClusterConfigsFromNode(page);
     await expect(page.getByTestId('cluster-configs-template-content')).toContainText(
       importedNamespace,
-      {timeout: 120000},
+      {timeout: 60000},
     );
     console.log('[config-real] init from node refreshed template from live file');
   });
