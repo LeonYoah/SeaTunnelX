@@ -26,7 +26,9 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -161,6 +163,7 @@ type ConfigInitializer interface {
 // HostInfo 包含预检查所需的主机信息
 type HostInfo struct {
 	ID          uint       `json:"id"`
+	Name        string     `json:"name,omitempty"`
 	AgentID     string     `json:"agent_id"`
 	AgentStatus string     `json:"agent_status"`
 	LastSeen    *time.Time `json:"last_seen"`
@@ -492,64 +495,7 @@ func (s *Service) RefreshVersions(ctx context.Context) ([]string, error) {
 // Returns: >0 if v1 > v2, <0 if v1 < v2, 0 if equal
 // 返回: >0 如果 v1 > v2, <0 如果 v1 < v2, 0 如果相等
 func compareVersions(v1, v2 string) int {
-	// Split by dots and compare each part / 按点分割并比较每个部分
-	parts1 := strings.Split(v1, ".")
-	parts2 := strings.Split(v2, ".")
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var p1, p2 string
-		if i < len(parts1) {
-			p1 = parts1[i]
-		}
-		if i < len(parts2) {
-			p2 = parts2[i]
-		}
-
-		// Handle suffix like "-beta" / 处理后缀如 "-beta"
-		n1, s1 := parseVersionPart(p1)
-		n2, s2 := parseVersionPart(p2)
-
-		if n1 != n2 {
-			return n1 - n2
-		}
-		// If numbers are equal, compare suffixes (no suffix > with suffix)
-		// 如果数字相等，比较后缀（无后缀 > 有后缀）
-		if s1 != s2 {
-			if s1 == "" {
-				return 1
-			}
-			if s2 == "" {
-				return -1
-			}
-			return strings.Compare(s1, s2)
-		}
-	}
-	return 0
-}
-
-// parseVersionPart parses a version part like "12" or "0-beta".
-// parseVersionPart 解析版本部分如 "12" 或 "0-beta"。
-func parseVersionPart(part string) (int, string) {
-	if part == "" {
-		return 0, ""
-	}
-
-	// Split by hyphen for suffix / 按连字符分割后缀
-	idx := strings.Index(part, "-")
-	if idx == -1 {
-		var num int
-		fmt.Sscanf(part, "%d", &num)
-		return num, ""
-	}
-
-	var num int
-	fmt.Sscanf(part[:idx], "%d", &num)
-	return num, part[idx:]
+	return seatunnel.CompareVersions(v1, v2)
 }
 
 // ==================== Package Management 安装包管理 ====================
@@ -569,9 +515,20 @@ func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions
 	}
 
 	result := &AvailableVersions{
-		Versions:           versions,
-		RecommendedVersion: recommended,
-		LocalPackages:      make([]PackageInfo, 0),
+		Versions:            versions,
+		RecommendedVersion:  recommended,
+		LocalPackages:       make([]PackageInfo, 0),
+		VersionCapabilities: make(map[string]seatunnel.VersionCapabilities),
+	}
+
+	if recommended != "" {
+		result.VersionCapabilities[recommended] = seatunnel.CapabilitiesForVersion(recommended)
+	}
+	for _, version := range versions {
+		if version == "" {
+			continue
+		}
+		result.VersionCapabilities[version] = seatunnel.CapabilitiesForVersion(version)
 	}
 
 	// Scan local packages / 扫描本地安装包
@@ -609,6 +566,9 @@ func (s *Service) ListAvailableVersions(ctx context.Context) (*AvailableVersions
 			UploadedAt:   &uploadedAt,
 			DownloadURLs: getDownloadURLs(version),
 		})
+		if version != "" {
+			result.VersionCapabilities[version] = seatunnel.CapabilitiesForVersion(version)
+		}
 	}
 
 	return result, nil
@@ -1466,6 +1426,250 @@ func (s *Service) RunPrecheck(ctx context.Context, hostID uint, req *PrecheckReq
 	return result, nil
 }
 
+// ValidateRuntimeStorage validates checkpoint or IMAP storage reachability from selected hosts.
+// ValidateRuntimeStorage 校验所选主机到 checkpoint 或 IMAP 存储的可达性。
+func (s *Service) ValidateRuntimeStorage(ctx context.Context, req *RuntimeStorageValidationRequest) (*RuntimeStorageValidationResult, error) {
+	if req == nil || len(req.HostIDs) == 0 {
+		return nil, fmt.Errorf("host_ids is required / 必须提供 host_ids")
+	}
+	if s.hostProvider == nil || s.agentManager == nil {
+		return nil, fmt.Errorf("runtime storage validation is not configured / 运行时存储校验服务未配置")
+	}
+
+	result := &RuntimeStorageValidationResult{
+		Success: true,
+		Kind:    req.Kind,
+		Warning: "Validation checks local path readiness or remote endpoint reachability only. Credentials and write permissions still need runtime verification. / 当前校验仅检查本地路径可用性或远程端点可达性，凭证与写入权限仍需运行时验证。",
+		Hosts:   make([]*RuntimeStorageValidationHostResult, 0, len(req.HostIDs)),
+	}
+
+	for _, hostID := range req.HostIDs {
+		hostInfo, err := s.hostProvider.GetHostByID(ctx, hostID)
+		hostName := fmt.Sprintf("host-%d", hostID)
+		if hostInfo != nil && strings.TrimSpace(hostInfo.Name) != "" {
+			hostName = strings.TrimSpace(hostInfo.Name)
+		}
+		if err != nil {
+			result.Success = false
+			result.Hosts = append(result.Hosts, &RuntimeStorageValidationHostResult{
+				HostID:   hostID,
+				HostName: hostName,
+				Success:  false,
+				Message:  fmt.Sprintf("failed to load host info: %v", err),
+			})
+			continue
+		}
+		if !hostInfo.IsOnline(2*time.Minute) || strings.TrimSpace(hostInfo.AgentID) == "" {
+			result.Success = false
+			result.Hosts = append(result.Hosts, &RuntimeStorageValidationHostResult{
+				HostID:   hostID,
+				HostName: hostName,
+				Success:  false,
+				Message:  "host agent is offline",
+			})
+			continue
+		}
+
+		var hostResult *RuntimeStorageValidationHostResult
+		switch req.Kind {
+		case RuntimeStorageValidationCheckpoint:
+			hostResult = s.validateCheckpointStorageOnHost(ctx, hostInfo, req.Checkpoint)
+		case RuntimeStorageValidationIMAP:
+			hostResult = s.validateIMAPStorageOnHost(ctx, hostInfo, req.IMAP)
+		default:
+			return nil, fmt.Errorf("unsupported runtime storage validation kind: %s", req.Kind)
+		}
+		hostResult.HostID = hostID
+		hostResult.HostName = hostName
+		if !hostResult.Success {
+			result.Success = false
+		}
+		result.Hosts = append(result.Hosts, hostResult)
+	}
+
+	return result, nil
+}
+
+func (s *Service) validateCheckpointStorageOnHost(ctx context.Context, host *HostInfo, cfg *CheckpointConfig) *RuntimeStorageValidationHostResult {
+	if cfg == nil {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: "checkpoint config is required"}
+	}
+	switch cfg.StorageType {
+	case CheckpointStorageLocalFile:
+		return s.runPathReadyCheck(ctx, host.AgentID, strings.TrimSpace(cfg.Namespace))
+	case CheckpointStorageHDFS:
+		if cfg.HDFSHAEnabled {
+			return s.validateHDFSHAOnHost(ctx, host.AgentID, cfg.HDFSNamenodeRPCAddress1, cfg.HDFSNamenodeRPCAddress2)
+		}
+		return s.runTCPCheck(ctx, host.AgentID, strings.TrimSpace(cfg.HDFSNameNodeHost), cfg.HDFSNameNodePort)
+	case CheckpointStorageOSS, CheckpointStorageS3:
+		return s.validateObjectStoreEndpoint(ctx, host.AgentID, cfg.StorageEndpoint, cfg.StorageBucket)
+	default:
+		return &RuntimeStorageValidationHostResult{Success: false, Message: fmt.Sprintf("unsupported checkpoint storage type: %s", cfg.StorageType)}
+	}
+}
+
+func (s *Service) validateIMAPStorageOnHost(ctx context.Context, host *HostInfo, cfg *IMAPConfig) *RuntimeStorageValidationHostResult {
+	if cfg == nil {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: "imap config is required"}
+	}
+	switch cfg.StorageType {
+	case IMAPStorageDisabled:
+		return &RuntimeStorageValidationHostResult{
+			Success: true,
+			Message: "IMAP uses in-memory mode; no external storage validation required",
+			Details: map[string]string{"mode": "disabled"},
+		}
+	case IMAPStorageLocalFile:
+		return s.runPathReadyCheck(ctx, host.AgentID, strings.TrimSpace(cfg.Namespace))
+	case IMAPStorageHDFS:
+		if cfg.HDFSHAEnabled {
+			return s.validateHDFSHAOnHost(ctx, host.AgentID, cfg.HDFSNamenodeRPCAddress1, cfg.HDFSNamenodeRPCAddress2)
+		}
+		return s.runTCPCheck(ctx, host.AgentID, strings.TrimSpace(cfg.HDFSNameNodeHost), cfg.HDFSNameNodePort)
+	case IMAPStorageOSS, IMAPStorageS3:
+		return s.validateObjectStoreEndpoint(ctx, host.AgentID, cfg.StorageEndpoint, cfg.StorageBucket)
+	default:
+		return &RuntimeStorageValidationHostResult{Success: false, Message: fmt.Sprintf("unsupported imap storage type: %s", cfg.StorageType)}
+	}
+}
+
+func (s *Service) validateHDFSHAOnHost(ctx context.Context, agentID string, addr1, addr2 string) *RuntimeStorageValidationHostResult {
+	endpoints := []string{strings.TrimSpace(addr1), strings.TrimSpace(addr2)}
+	details := map[string]string{}
+	allSuccess := true
+	messages := make([]string, 0, len(endpoints))
+	for idx, endpoint := range endpoints {
+		if endpoint == "" {
+			continue
+		}
+		host, port := splitHostPortWithDefault(endpoint, 8020)
+		result := s.runTCPCheck(ctx, agentID, host, port)
+		key := fmt.Sprintf("namenode_%d", idx+1)
+		details[key] = endpoint
+		if !result.Success {
+			allSuccess = false
+		}
+		messages = append(messages, result.Message)
+		for k, v := range result.Details {
+			details[fmt.Sprintf("%s_%s", key, k)] = v
+		}
+	}
+	if len(messages) == 0 {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: "at least one HDFS HA RPC address is required"}
+	}
+	return &RuntimeStorageValidationHostResult{
+		Success: allSuccess,
+		Message: strings.Join(messages, "; "),
+		Details: details,
+	}
+}
+
+func (s *Service) validateObjectStoreEndpoint(ctx context.Context, agentID, endpoint, bucket string) *RuntimeStorageValidationHostResult {
+	host, port := parseEndpointHostPort(endpoint, 443)
+	result := s.runTCPCheck(ctx, agentID, host, port)
+	if result.Details == nil {
+		result.Details = map[string]string{}
+	}
+	if strings.TrimSpace(bucket) != "" {
+		result.Details["bucket"] = strings.TrimSpace(bucket)
+	}
+	return result
+}
+
+func (s *Service) runPathReadyCheck(ctx context.Context, agentID, path string) *RuntimeStorageValidationHostResult {
+	if strings.TrimSpace(path) == "" {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: "path is required"}
+	}
+	success, output, err := s.agentManager.SendCommand(ctx, agentID, "check_path_ready", map[string]string{"path": path})
+	if err != nil {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: err.Error()}
+	}
+	return runtimeStorageHostResultFromCommandOutput(success, output)
+}
+
+func (s *Service) runTCPCheck(ctx context.Context, agentID, host string, port int) *RuntimeStorageValidationHostResult {
+	if strings.TrimSpace(host) == "" || port <= 0 {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: "host and port are required"}
+	}
+	success, output, err := s.agentManager.SendCommand(ctx, agentID, "check_tcp", map[string]string{
+		"host": host,
+		"port": strconv.Itoa(port),
+	})
+	if err != nil {
+		return &RuntimeStorageValidationHostResult{Success: false, Message: err.Error()}
+	}
+	return runtimeStorageHostResultFromCommandOutput(success, output)
+}
+
+func runtimeStorageHostResultFromCommandOutput(success bool, output string) *RuntimeStorageValidationHostResult {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return &RuntimeStorageValidationHostResult{Success: success, Message: ""}
+	}
+	var parsed struct {
+		Success bool              `json:"success"`
+		Message string            `json:"message"`
+		Details map[string]string `json:"details"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil && parsed.Message != "" {
+		return &RuntimeStorageValidationHostResult{
+			Success: parsed.Success,
+			Message: parsed.Message,
+			Details: parsed.Details,
+		}
+	}
+	return &RuntimeStorageValidationHostResult{
+		Success: success,
+		Message: trimmed,
+	}
+}
+
+func parseEndpointHostPort(raw string, defaultPort int) (string, int) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", 0
+	}
+	if strings.Contains(trimmed, "://") {
+		if u, err := url.Parse(trimmed); err == nil {
+			host := u.Hostname()
+			port := defaultPort
+			if parsed := u.Port(); parsed != "" {
+				if p, convErr := strconv.Atoi(parsed); convErr == nil {
+					port = p
+				}
+			} else if strings.EqualFold(u.Scheme, "http") {
+				port = 80
+			}
+			return host, port
+		}
+	}
+	return splitHostPortWithDefault(trimmed, defaultPort)
+}
+
+func splitHostPortWithDefault(raw string, defaultPort int) (string, int) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", 0
+	}
+	if strings.Count(trimmed, ":") == 1 && !strings.Contains(trimmed, "]") {
+		host, portStr, err := net.SplitHostPort(trimmed)
+		if err == nil {
+			if port, convErr := strconv.Atoi(portStr); convErr == nil {
+				return host, port
+			}
+		}
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		if host, portStr, err := net.SplitHostPort(trimmed); err == nil {
+			if port, convErr := strconv.Atoi(portStr); convErr == nil {
+				return strings.Trim(host, "[]"), port
+			}
+		}
+	}
+	return trimmed, defaultPort
+}
+
 // javaCheckResponse represents the JSON response from Agent's check_java command
 // javaCheckResponse 表示 Agent check_java 命令的 JSON 响应
 type javaCheckResponse struct {
@@ -2304,6 +2508,30 @@ func buildInstallParams(req *InstallationRequest) map[string]string {
 	if req.HTTPPort > 0 {
 		params["http_port"] = fmt.Sprintf("%d", req.HTTPPort)
 	}
+	if req.EnableHTTP != nil {
+		params["enable_http"] = strconv.FormatBool(*req.EnableHTTP)
+	}
+	if req.DynamicSlot != nil {
+		params["dynamic_slot"] = strconv.FormatBool(*req.DynamicSlot)
+	}
+	if req.SlotNum != nil && *req.SlotNum > 0 {
+		params["slot_num"] = fmt.Sprintf("%d", *req.SlotNum)
+	}
+	if req.SlotAllocationStrategy != "" {
+		params["slot_allocation_strategy"] = string(req.SlotAllocationStrategy)
+	}
+	if req.JobScheduleStrategy != "" {
+		params["job_schedule_strategy"] = string(req.JobScheduleStrategy)
+	}
+	if req.HistoryJobExpireMinutes != nil && *req.HistoryJobExpireMinutes > 0 {
+		params["history_job_expire_minutes"] = fmt.Sprintf("%d", *req.HistoryJobExpireMinutes)
+	}
+	if req.ScheduledDeletionEnable != nil {
+		params["scheduled_deletion_enable"] = strconv.FormatBool(*req.ScheduledDeletionEnable)
+	}
+	if req.JobLogMode != "" {
+		params["job_log_mode"] = string(req.JobLogMode)
+	}
 
 	// Add JVM config / 添加 JVM 配置
 	if req.JVM != nil {
@@ -2358,6 +2586,46 @@ func buildInstallParams(req *InstallationRequest) map[string]string {
 		}
 	}
 
+	// Add IMAP config / 添加 IMAP 配置
+	if req.IMAP != nil {
+		params["imap_storage_type"] = string(req.IMAP.StorageType)
+		params["imap_namespace"] = req.IMAP.Namespace
+		if req.IMAP.HDFSNameNodeHost != "" {
+			params["imap_hdfs_host"] = req.IMAP.HDFSNameNodeHost
+			params["imap_hdfs_port"] = fmt.Sprintf("%d", req.IMAP.HDFSNameNodePort)
+		}
+		if req.IMAP.StorageEndpoint != "" {
+			params["imap_storage_endpoint"] = req.IMAP.StorageEndpoint
+			params["imap_storage_bucket"] = req.IMAP.StorageBucket
+			params["imap_storage_access_key"] = req.IMAP.StorageAccessKey
+			params["imap_storage_secret_key"] = req.IMAP.StorageSecretKey
+		}
+		if req.IMAP.KerberosPrincipal != "" {
+			params["imap_kerberos_principal"] = req.IMAP.KerberosPrincipal
+		}
+		if req.IMAP.KerberosKeytabFilePath != "" {
+			params["imap_kerberos_keytab_path"] = req.IMAP.KerberosKeytabFilePath
+		}
+		if req.IMAP.HDFSHAEnabled {
+			params["imap_hdfs_ha_enabled"] = "true"
+			if req.IMAP.HDFSNameServices != "" {
+				params["imap_hdfs_name_services"] = req.IMAP.HDFSNameServices
+			}
+			if req.IMAP.HDFSHANamenodes != "" {
+				params["imap_hdfs_ha_namenodes"] = req.IMAP.HDFSHANamenodes
+			}
+			if req.IMAP.HDFSNamenodeRPCAddress1 != "" {
+				params["imap_hdfs_namenode_rpc_address_1"] = req.IMAP.HDFSNamenodeRPCAddress1
+			}
+			if req.IMAP.HDFSNamenodeRPCAddress2 != "" {
+				params["imap_hdfs_namenode_rpc_address_2"] = req.IMAP.HDFSNamenodeRPCAddress2
+			}
+			if req.IMAP.HDFSFailoverProxyProvider != "" {
+				params["imap_hdfs_failover_proxy_provider"] = req.IMAP.HDFSFailoverProxyProvider
+			}
+		}
+	}
+
 	// Add connector config / 添加连接器配置
 	if req.Connector != nil && req.Connector.InstallConnectors {
 		params["install_connectors"] = "true"
@@ -2408,6 +2676,7 @@ func createInitialSteps() []StepInfo {
 		{Step: InstallStepExtract, Name: "extract", Description: "Extract package / 解压安装包", Status: StepStatusPending, Retryable: true},
 		{Step: InstallStepConfigureCluster, Name: "configure_cluster", Description: "Configure cluster / 配置集群", Status: StepStatusPending, Retryable: true},
 		{Step: InstallStepConfigureCheckpoint, Name: "configure_checkpoint", Description: "Configure checkpoint / 配置检查点", Status: StepStatusPending, Retryable: true},
+		{Step: InstallStepConfigureIMAP, Name: "configure_imap", Description: "Configure IMAP / 配置 IMAP", Status: StepStatusPending, Retryable: true},
 		{Step: InstallStepConfigureJVM, Name: "configure_jvm", Description: "Configure JVM / 配置 JVM", Status: StepStatusPending, Retryable: true},
 		{Step: InstallStepInstallPlugins, Name: "install_plugins", Description: "Install plugins / 安装插件", Status: StepStatusPending, Retryable: true},
 		{Step: InstallStepRegisterCluster, Name: "register_cluster", Description: "Register to cluster / 注册到集群", Status: StepStatusPending, Retryable: true},

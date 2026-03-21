@@ -24,7 +24,7 @@ import (
 )
 
 var (
-	ErrTemplateNotFound      = errors.New("cluster template config not found")
+	ErrTemplateNotFound      = errors.New("configuration template not found")
 	ErrCannotPromoteTemplate = errors.New("cannot promote template config")
 	ErrCannotSyncTemplate    = errors.New("cannot sync template config from itself")
 )
@@ -77,6 +77,12 @@ func (s *Service) Get(ctx context.Context, id uint) (*ConfigInfo, error) {
 		return nil, err
 	}
 	return s.toConfigInfo(ctx, config)
+}
+
+// NormalizeContent normalizes one config content when it is parseable and valid.
+// NormalizeContent 对可解析且合法的配置内容做规范化处理。
+func (s *Service) NormalizeContent(_ context.Context, req *NormalizeConfigRequest) (string, error) {
+	return normalizeConfigContent(req.ConfigType, req.Content)
 }
 
 // GetByCluster 获取集群所有配置
@@ -148,6 +154,10 @@ func (s *Service) Create(ctx context.Context, req *CreateConfigRequest, userID u
 func (s *Service) Update(ctx context.Context, id uint, req *UpdateConfigRequest, userID uint) (*ConfigInfo, error) {
 	config, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := validateConfigContent(config.ConfigType, req.Content); err != nil {
 		return nil, err
 	}
 
@@ -236,6 +246,10 @@ func (s *Service) Rollback(ctx context.Context, id uint, req *RollbackConfigRequ
 		return nil, err
 	}
 
+	if err := validateConfigContent(config.ConfigType, targetVersion.Content); err != nil {
+		return nil, err
+	}
+
 	// 更新配置
 	config.Content = targetVersion.Content
 	config.Version = config.Version + 1
@@ -295,6 +309,10 @@ func (s *Service) Promote(ctx context.Context, id uint, req *PromoteConfigReques
 	// 不能推广模板配置
 	if config.IsTemplate() {
 		return ErrCannotPromoteTemplate
+	}
+
+	if err := validateConfigContent(config.ConfigType, config.Content); err != nil {
+		return err
 	}
 
 	return s.repo.Transaction(ctx, func(tx *Repository) error {
@@ -391,6 +409,10 @@ func (s *Service) SyncFromTemplate(ctx context.Context, id uint, req *SyncConfig
 		return nil, ErrTemplateNotFound
 	}
 
+	if err := validateConfigContent(config.ConfigType, template.Content); err != nil {
+		return nil, err
+	}
+
 	// 内容相同则不更新
 	if config.Content == template.Content {
 		return s.toConfigInfo(ctx, config)
@@ -455,6 +477,10 @@ func (s *Service) InitClusterConfigs(ctx context.Context, clusterID uint, hostID
 
 		if content == "" {
 			continue // 空内容跳过
+		}
+
+		if err := validateConfigContent(configType, content); err != nil {
+			return err
 		}
 
 		// 检查模板是否已存在
@@ -572,6 +598,10 @@ func (s *Service) SyncTemplateToAllNodes(ctx context.Context, clusterID uint, co
 		return nil, ErrTemplateNotFound
 	}
 
+	if err := validateConfigContent(configType, template.Content); err != nil {
+		return nil, err
+	}
+
 	// 获取所有节点配置
 	nodeConfigs, err := s.repo.ListNodeConfigs(ctx, clusterID, configType)
 	if err != nil {
@@ -662,6 +692,10 @@ func (s *Service) PushConfigToNode(ctx context.Context, id uint, installDir stri
 
 	if config.HostID == nil {
 		return errors.New("cannot push template config directly")
+	}
+
+	if err := validateConfigContent(config.ConfigType, config.Content); err != nil {
+		return err
 	}
 
 	return s.agentClient.PushConfig(ctx, *config.HostID, installDir, config.ConfigType, config.Content)

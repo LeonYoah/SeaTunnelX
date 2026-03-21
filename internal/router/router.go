@@ -244,6 +244,10 @@ func Serve() {
 				clusterRouter.POST("/:id/stop", clusterHandler.StopCluster)
 				clusterRouter.POST("/:id/restart", clusterHandler.RestartCluster)
 				clusterRouter.GET("/:id/status", clusterHandler.GetClusterStatus)
+				clusterRouter.GET("/:id/runtime-storage", clusterHandler.GetRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/imap/cleanup", clusterHandler.CleanupIMAPStorage)
+				clusterRouter.Any("/:id/webui", clusterHandler.ProxyWebUI)
+				clusterRouter.Any("/:id/webui/*proxyPath", clusterHandler.ProxyWebUI)
 			}
 
 			// Monitor 监控配置管理
@@ -826,6 +830,7 @@ func Serve() {
 			// POST /api/v1/hosts/:id/precheck - 运行预检查
 			// POST /api/v1/hosts/:id/precheck - Run precheck
 			hostRouter.POST("/:id/precheck", installerHandler.RunPrecheck)
+			apiV1Router.POST("/installer/runtime-storage/validate", auth.LoginRequired(), installerHandler.ValidateRuntimeStorage)
 
 			// POST /api/v1/hosts/:id/install - 开始安装
 			// POST /api/v1/hosts/:id/install - Start installation
@@ -1070,7 +1075,7 @@ func (a *agentCommandSenderAdapter) SendCommand(ctx context.Context, agentID str
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL
@@ -1221,6 +1226,7 @@ func (a *hostProviderAdapter) GetHostByID(ctx context.Context, hostID uint) (*in
 
 	return &installer.HostInfo{
 		ID:          h.ID,
+		Name:        h.Name,
 		AgentID:     h.AgentID,
 		AgentStatus: string(h.AgentStatus),
 		LastSeen:    h.LastHeartbeat,
@@ -1314,7 +1320,7 @@ func (a *installerAgentManagerAdapter) SendCommand(ctx context.Context, agentID 
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *installerAgentManagerAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL

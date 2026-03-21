@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	pb "github.com/seatunnel/seatunnelX/agent"
 	"github.com/seatunnel/seatunnelX/agent/internal/installer"
@@ -51,6 +52,22 @@ const (
 	// PrecheckSubCommandCheckJava checks if Java is installed and its version
 	// PrecheckSubCommandCheckJava 检查 Java 是否已安装及其版本
 	PrecheckSubCommandCheckJava PrecheckSubCommand = "check_java"
+
+	// PrecheckSubCommandCheckTCP checks whether a remote TCP endpoint is reachable.
+	// PrecheckSubCommandCheckTCP 检查远程 TCP 端点是否可达。
+	PrecheckSubCommandCheckTCP PrecheckSubCommand = "check_tcp"
+
+	// PrecheckSubCommandCheckPathReady checks whether a local path exists or can be created.
+	// PrecheckSubCommandCheckPathReady 检查本地路径是否已存在或可创建。
+	PrecheckSubCommandCheckPathReady PrecheckSubCommand = "check_path_ready"
+
+	// PrecheckSubCommandStatPath inspects local path size and existence.
+	// PrecheckSubCommandStatPath 检查本地路径是否存在及其大小。
+	PrecheckSubCommandStatPath PrecheckSubCommand = "stat_path"
+
+	// PrecheckSubCommandCleanupPath clears the contents under a local path.
+	// PrecheckSubCommandCleanupPath 清理本地路径下的内容。
+	PrecheckSubCommandCleanupPath PrecheckSubCommand = "cleanup_path"
 
 	// PrecheckSubCommandFull runs all precheck items
 	// PrecheckSubCommandFull 运行所有预检查项
@@ -93,6 +110,14 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 		result, err = handleCheckProcess(ctx, cmd.Parameters)
 	case PrecheckSubCommandCheckJava:
 		result, err = handleCheckJava(ctx, cmd.Parameters)
+	case PrecheckSubCommandCheckTCP:
+		result, err = handleCheckTCP(ctx, cmd.Parameters)
+	case PrecheckSubCommandCheckPathReady:
+		result, err = handleCheckPathReady(ctx, cmd.Parameters)
+	case PrecheckSubCommandStatPath:
+		result, err = handleStatPath(ctx, cmd.Parameters)
+	case PrecheckSubCommandCleanupPath:
+		result, err = handleCleanupPath(ctx, cmd.Parameters)
 	case PrecheckSubCommandFull:
 		result, err = handleFullPrecheck(ctx, cmd.Parameters, reporter)
 	default:
@@ -233,6 +258,90 @@ func handleCheckJava(ctx context.Context, params map[string]string) (*PrecheckRe
 		Success: item.Status == installer.CheckStatusPassed || item.Status == installer.CheckStatusWarning,
 		Message: item.Message,
 		Details: details,
+	}, nil
+}
+
+// handleCheckTCP handles the check_tcp sub-command.
+// handleCheckTCP 处理 check_tcp 子命令。
+func handleCheckTCP(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	host := params["host"]
+	portStr := params["port"]
+	if host == "" || portStr == "" {
+		return &PrecheckResult{
+			Success: false,
+			Message: "host and port parameters are required",
+		}, nil
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return &PrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("invalid port number: %s", portStr),
+		}, nil
+	}
+	timeout := 5 * time.Second
+	if timeoutStr := params["timeout_seconds"]; timeoutStr != "" {
+		if sec, convErr := strconv.Atoi(timeoutStr); convErr == nil && sec > 0 {
+			timeout = time.Duration(sec) * time.Second
+		}
+	}
+	checkResult := installer.CheckTCPConnection(host, port, timeout)
+	return &PrecheckResult{
+		Success: checkResult.Success,
+		Message: checkResult.Message,
+		Details: checkResult.Details,
+	}, nil
+}
+
+// handleCheckPathReady handles the check_path_ready sub-command.
+// handleCheckPathReady 处理 check_path_ready 子命令。
+func handleCheckPathReady(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	path := params["path"]
+	checkResult := installer.CheckPathReady(path)
+	return &PrecheckResult{
+		Success: checkResult.Success,
+		Message: checkResult.Message,
+		Details: checkResult.Details,
+	}, nil
+}
+
+// handleStatPath handles the stat_path sub-command.
+// handleStatPath 处理 stat_path 子命令。
+func handleStatPath(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	path := params["path"]
+	statResult, err := installer.StatPath(path)
+	if err != nil {
+		return &PrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("failed to stat path %s: %v", path, err),
+		}, nil
+	}
+	details := map[string]string{
+		"path":       statResult.Path,
+		"exists":     strconv.FormatBool(statResult.Exists),
+		"is_dir":     strconv.FormatBool(statResult.IsDir),
+		"size_bytes": strconv.FormatInt(statResult.SizeBytes, 10),
+	}
+	message := fmt.Sprintf("Path %s does not exist", statResult.Path)
+	if statResult.Exists {
+		message = fmt.Sprintf("Path %s exists", statResult.Path)
+	}
+	return &PrecheckResult{
+		Success: true,
+		Message: message,
+		Details: details,
+	}, nil
+}
+
+// handleCleanupPath handles the cleanup_path sub-command.
+// handleCleanupPath 处理 cleanup_path 子命令。
+func handleCleanupPath(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	path := params["path"]
+	checkResult := installer.CleanupDirectoryContents(path)
+	return &PrecheckResult{
+		Success: checkResult.Success,
+		Message: checkResult.Message,
+		Details: checkResult.Details,
 	}, nil
 }
 

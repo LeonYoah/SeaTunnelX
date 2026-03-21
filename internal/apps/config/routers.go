@@ -34,6 +34,7 @@ func RegisterRoutes(router *gin.RouterGroup, handler *Handler) {
 	// 配置操作路由
 	configs := router.Group("/configs")
 	{
+		configs.POST("/normalize", handler.NormalizeConfig)
 		configs.GET("/:id", handler.GetConfig)
 		configs.PUT("/:id", handler.UpdateConfig)
 		configs.GET("/:id/versions", handler.GetConfigVersions)

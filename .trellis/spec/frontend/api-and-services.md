@@ -38,6 +38,7 @@ export interface ApiError {
   - 方法对应后端接口（如 `list(params)`、`getById(id)`、`create(body)`）。
   - 返回类型为 `data` 的类型（如 `ClusterInfo`、`PaginatedResponse<ClusterInfo>`）；不向调用方暴露原始 `ApiResponse`。
   - 登录页这类**能力开关由后端决定**的界面，不要硬编码展示第三方登录入口。应先调用服务（如 `auth.getEnabledOAuthProviders()` → `GET /api/v1/oauth/providers`），再按返回结果渲染 GitHub / Google 按钮。
+  - 安装向导 / 创建集群这类**版本敏感配置**，不要在前端硬编码版本比较逻辑来猜哪些字段可用。应优先消费后端返回的能力矩阵（如 `installer.listPackages()` 返回的 `version_capabilities`），再决定是否展示 `history_job_expire_minutes`、`scheduled_deletion_enable`、`job_schedule_strategy` 等高级配置。
   - 若后端来自 Go / GORM 等实现，**不要假定数组字段一定是 `[]`**；对于会被 UI 直接 `.map()` / `.filter()` 的字段，优先在 service 或 session 恢复边界统一做 normalize，把 `null` 兜底成 `[]`。
   - 若接口返回**后端本地化文案**（如 diagnostics 摘要、诊断报告、SSE 事件、模板说明），service 应显式附带当前语言参数 `lang`，避免后端回落到默认语言或双语拼接结果。
 - **使用**：组件或 hooks 从 `lib/services/<domain>` 导入 service，调用静态方法；错误用 try/catch 捕获，消息在 UI 中展示（toast 或行内错误状态）。

@@ -26,6 +26,7 @@ import (
 
 	clusterapp "github.com/seatunnel/seatunnelX/internal/apps/cluster"
 	installerapp "github.com/seatunnel/seatunnelX/internal/apps/installer"
+	pluginapp "github.com/seatunnel/seatunnelX/internal/apps/plugin"
 )
 
 type stubClusterOperator struct {
@@ -171,6 +172,19 @@ func TestService_ExecutePlan_success(t *testing.T) {
 	clusterOperator := &stubClusterOperator{}
 	agentSender := &stubAgentCommandSender{agents: map[uint]string{101: "agent-node-a"}}
 	service := newExecutionService(t, repo, clusterOperator, agentSender)
+	pluginProvider := &stubPluginProvider{
+		installed: []pluginapp.InstalledPlugin{{
+			ClusterID:  1,
+			PluginName: "jdbc",
+			Version:    "2.3.11",
+		}},
+		local: []pluginapp.LocalPlugin{{
+			Name:       "jdbc",
+			ArtifactID: "connector-jdbc",
+			Version:    "2.3.12",
+		}},
+	}
+	service.SetPluginProvider(pluginProvider)
 
 	planID := mustCreateReadyPlan(t, service)
 	task, err := service.ExecutePlan(context.Background(), planID, 7)
@@ -204,6 +218,9 @@ func TestService_ExecutePlan_success(t *testing.T) {
 	}
 	if len(clusterOperator.clusterVersions) == 0 || clusterOperator.clusterVersions[len(clusterOperator.clusterVersions)-1] != "2.3.12" {
 		t.Fatalf("expected cluster version updated to 2.3.12, got %+v", clusterOperator.clusterVersions)
+	}
+	if pluginProvider.recorded["jdbc"] != "2.3.12" {
+		t.Fatalf("expected installed plugin version reconciled to 2.3.12, got %+v", pluginProvider.recorded)
 	}
 	if got := lastString(clusterOperator.nodeInstallDirs[11]); got != "/opt/seatunnel-2.3.12" {
 		t.Fatalf("expected node install dir switched to target version, got %q", got)

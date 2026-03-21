@@ -30,7 +30,6 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {OverviewService, OverviewData} from '@/lib/services/dashboard';
-import {MonitoringOverview} from '@/components/common/monitoring';
 import {Button} from '@/components/ui/button';
 import Link from 'next/link';
 
@@ -155,14 +154,6 @@ export default function DashboardPage() {
           </motion.div>
         ))}
       </div>
-
-      <motion.div
-        initial={{opacity: 0, y: 20}}
-        animate={{opacity: 1, y: 0}}
-        transition={{delay: 0.35, duration: 0.5}}
-      >
-        <MonitoringOverview compact />
-      </motion.div>
     </div>
   );
 }

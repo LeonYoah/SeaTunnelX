@@ -141,35 +141,6 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
-// TestParseVersionPart tests version part parsing
-// TestParseVersionPart 测试版本部分解析
-func TestParseVersionPart(t *testing.T) {
-	tests := []struct {
-		name           string
-		part           string
-		expectedNum    int
-		expectedSuffix string
-	}{
-		{"simple number", "12", 12, ""},
-		{"zero", "0", 0, ""},
-		{"with beta suffix", "0-beta", 0, "-beta"},
-		{"with alpha suffix", "1-alpha", 1, "-alpha"},
-		{"empty string", "", 0, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			num, suffix := parseVersionPart(tt.part)
-			if num != tt.expectedNum {
-				t.Errorf("parseVersionPart(%s) num = %d, expected %d", tt.part, num, tt.expectedNum)
-			}
-			if suffix != tt.expectedSuffix {
-				t.Errorf("parseVersionPart(%s) suffix = %s, expected %s", tt.part, suffix, tt.expectedSuffix)
-			}
-		})
-	}
-}
-
 // TestVersionCache tests version caching behavior
 // TestVersionCache 测试版本缓存行为
 func TestVersionCache(t *testing.T) {
@@ -189,6 +160,45 @@ func TestVersionCache(t *testing.T) {
 	}
 	if versions[0] != "2.3.12" {
 		t.Errorf("Expected first version to be 2.3.12, got %s", versions[0])
+	}
+}
+
+func TestBuildInstallParamsIncludesRuntimeConfig(t *testing.T) {
+	dynamicSlot := false
+	slotNum := 6
+	historyJobExpireMinutes := 2880
+	scheduledDeletionEnable := false
+
+	params := buildInstallParams(&InstallationRequest{
+		Version:                 "2.3.9",
+		InstallMode:             InstallModeOnline,
+		DeploymentMode:          DeploymentModeSeparated,
+		NodeRole:                NodeRoleWorker,
+		DynamicSlot:             &dynamicSlot,
+		SlotNum:                 &slotNum,
+		SlotAllocationStrategy:  SlotAllocationStrategySystemLoad,
+		JobScheduleStrategy:     JobScheduleStrategyWait,
+		HistoryJobExpireMinutes: &historyJobExpireMinutes,
+		ScheduledDeletionEnable: &scheduledDeletionEnable,
+	})
+
+	if params["dynamic_slot"] != "false" {
+		t.Fatalf("expected dynamic_slot=false, got %q", params["dynamic_slot"])
+	}
+	if params["slot_num"] != "6" {
+		t.Fatalf("expected slot_num=6, got %q", params["slot_num"])
+	}
+	if params["slot_allocation_strategy"] != "SYSTEM_LOAD" {
+		t.Fatalf("expected slot_allocation_strategy=SYSTEM_LOAD, got %q", params["slot_allocation_strategy"])
+	}
+	if params["job_schedule_strategy"] != "WAIT" {
+		t.Fatalf("expected job_schedule_strategy=WAIT, got %q", params["job_schedule_strategy"])
+	}
+	if params["history_job_expire_minutes"] != "2880" {
+		t.Fatalf("expected history_job_expire_minutes=2880, got %q", params["history_job_expire_minutes"])
+	}
+	if params["scheduled_deletion_enable"] != "false" {
+		t.Fatalf("expected scheduled_deletion_enable=false, got %q", params["scheduled_deletion_enable"])
 	}
 }
 

@@ -600,8 +600,28 @@ func (s *Service) executeSwitchVersionStep(ctx context.Context, task *UpgradeTas
 	if len(plan.NodeTargets) > 0 {
 		clusterInstallDir = plan.NodeTargets[0].TargetInstallDir
 	}
-	_, err := s.clusterOperator.Update(ctx, task.ClusterID, &clusterapp.UpdateClusterRequest{Version: &plan.TargetVersion, InstallDir: &clusterInstallDir})
-	return err
+	if _, err := s.clusterOperator.Update(ctx, task.ClusterID, &clusterapp.UpdateClusterRequest{Version: &plan.TargetVersion, InstallDir: &clusterInstallDir}); err != nil {
+		return err
+	}
+
+	if s.pluginProvider == nil {
+		return nil
+	}
+
+	installedPlugins, err := s.pluginProvider.ListInstalledPlugins(ctx, task.ClusterID)
+	if err != nil {
+		return err
+	}
+	for _, plugin := range installedPlugins {
+		if strings.TrimSpace(plugin.PluginName) == "" {
+			continue
+		}
+		if err := s.pluginProvider.RecordInstalledPlugin(ctx, task.ClusterID, plugin.PluginName, plan.TargetVersion); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) executeHealthCheckStep(ctx context.Context, task *UpgradeTask, step *UpgradeTaskStep, nodeTargets []NodeTarget, nodesByKey map[string]*UpgradeNodeExecution) error {

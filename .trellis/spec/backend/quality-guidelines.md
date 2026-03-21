@@ -52,6 +52,7 @@
 - **语言切换由前端驱动。** 语言偏好来源于个人中心 / 用户资料，前端在请求 diagnostics 等需要本地化输出的接口时负责透传 `lang`，后端负责按该语言返回结果。
 - **内部标识与用户文案分离。** 状态码、step code、template code 等内部字段保持稳定常量；展示名称、说明、推荐动作等用户文案再做本地化转换。
 - **“支持中英文”不等于“同屏双语拼接”。** 例如 diagnostics / 巡检中心 / 诊断报告这类模块，要求是支持 `zh` / `en` 自由切换，并按当前语言返回单语言结果；不要回退到 `中文 / English` 并排或斜杠拼接输出。
+- **版本敏感安装配置由后端统一裁决。** 对一键安装 / 创建集群这类会下发 `seatunnel.yaml` / `hazelcast*.yaml` 的流程，Control Plane 应返回显式 capability（如 `version_capabilities`），Agent 在最终写配置时也必须二次 gate，避免把旧版本不支持的 key（如 `history-job-expire-minutes`、`scheduled-deletion-enable`、`job-schedule-strategy`）误写进去。
 
 ### 部署会话 Cookie 约定
 

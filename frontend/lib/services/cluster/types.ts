@@ -277,6 +277,52 @@ export interface ClusterStatusInfo {
   nodes: NodeStatusInfo[];
 }
 
+export interface RuntimeStorageNodeStat {
+  node_id: number;
+  host_id: number;
+  host_name: string;
+  path?: string;
+  exists: boolean;
+  size_bytes: number;
+  message?: string;
+}
+
+export interface RuntimeStorageSpec {
+  kind: string;
+  enabled: boolean;
+  storage_type: string;
+  namespace?: string;
+  endpoint?: string;
+  bucket?: string;
+  external: boolean;
+  size_available: boolean;
+  total_size_bytes: number;
+  cleanup_supported: boolean;
+  warning?: string;
+  nodes?: RuntimeStorageNodeStat[];
+}
+
+export interface RuntimeStorageDetails {
+  cluster_id: number;
+  config_source?: string;
+  checkpoint?: RuntimeStorageSpec;
+  imap?: RuntimeStorageSpec;
+}
+
+export interface RuntimeStorageCleanupNodeResult {
+  host_id: number;
+  host_name: string;
+  success: boolean;
+  message: string;
+}
+
+export interface RuntimeStorageCleanupResult {
+  cluster_id: number;
+  success: boolean;
+  message: string;
+  nodes?: RuntimeStorageCleanupNodeResult[];
+}
+
 /**
  * Node operation result
  * 节点操作结果
@@ -688,6 +734,12 @@ export type ClusterOperationResponse = BackendResponse<OperationResult>;
 
 /** Get cluster status response type / 获取集群状态响应类型 */
 export type GetClusterStatusResponse = BackendResponse<ClusterStatusInfo>;
+
+/** Runtime storage details response type / 运行时存储详情响应类型 */
+export type GetRuntimeStorageResponse = BackendResponse<RuntimeStorageDetails>;
+
+/** Runtime storage cleanup response type / 运行时存储清理响应类型 */
+export type CleanupRuntimeStorageResponse = BackendResponse<RuntimeStorageCleanupResult>;
 
 /**
  * Request to precheck a node before adding

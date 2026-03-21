@@ -21,6 +21,7 @@
  */
 
 import apiClient from '../core/api-client';
+import {localizeBackendText} from '@/lib/i18n/localize-text';
 import type {
   AvailableVersions,
   PackageInfo,
@@ -39,6 +40,9 @@ import type {
   DownloadResponse,
   DownloadListResponse,
   MirrorSource,
+  RuntimeStorageValidationRequest,
+  RuntimeStorageValidationResponse,
+  RuntimeStorageValidationResult,
 } from './types';
 
 const API_PREFIX = '';
@@ -179,6 +183,33 @@ export async function runPrecheck(
     throw new Error(response.data.error_msg);
   }
   return response.data.data!;
+}
+
+/**
+ * Validate runtime storage connectivity for checkpoint or IMAP.
+ * 校验 checkpoint 或 IMAP 的运行时存储连通性。
+ */
+export async function validateRuntimeStorage(
+  request: RuntimeStorageValidationRequest,
+): Promise<RuntimeStorageValidationResult> {
+  const response = await apiClient.post<RuntimeStorageValidationResponse>(
+    `${API_PREFIX}/installer/runtime-storage/validate`,
+    request,
+  );
+  if (response.data.error_msg) {
+    throw new Error(localizeBackendText(response.data.error_msg));
+  }
+  const result = response.data.data!;
+  return {
+    ...result,
+    warning: localizeBackendText(result.warning),
+    hosts: Array.isArray(result.hosts)
+      ? result.hosts.map((host) => ({
+          ...host,
+          message: localizeBackendText(host.message),
+        }))
+      : [],
+  };
 }
 
 // ==================== Installation 安装 ====================
@@ -348,6 +379,7 @@ export const installerService = {
   refreshVersions,
   // Precheck / 预检查
   runPrecheck,
+  validateRuntimeStorage,
   // Installation / 安装
   startInstallation,
   getInstallationStatus,

@@ -463,6 +463,13 @@ type PrecheckResponse struct {
 	Data     *PrecheckResult `json:"data"`
 }
 
+// RuntimeStorageValidationResponse represents runtime storage validation response.
+// RuntimeStorageValidationResponse 表示运行时存储校验响应。
+type RuntimeStorageValidationResponse struct {
+	ErrorMsg string                        `json:"error_msg"`
+	Data     *RuntimeStorageValidationResult `json:"data"`
+}
+
 // RunPrecheck handles POST /api/v1/hosts/:id/precheck - runs precheck on a host.
 // RunPrecheck 处理 POST /api/v1/hosts/:id/precheck - 在主机上运行预检查。
 // @Tags installation
@@ -492,6 +499,22 @@ func (h *Handler) RunPrecheck(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, PrecheckResponse{Data: result})
+}
+
+// ValidateRuntimeStorage handles POST /api/v1/installer/runtime-storage/validate.
+// ValidateRuntimeStorage 处理 POST /api/v1/installer/runtime-storage/validate。
+func (h *Handler) ValidateRuntimeStorage(c *gin.Context) {
+	var req RuntimeStorageValidationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, RuntimeStorageValidationResponse{ErrorMsg: err.Error()})
+		return
+	}
+	result, err := h.service.ValidateRuntimeStorage(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, RuntimeStorageValidationResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, RuntimeStorageValidationResponse{Data: result})
 }
 
 // ==================== Installation APIs 安装 API ====================

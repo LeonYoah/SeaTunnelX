@@ -190,6 +190,17 @@ export interface SyncConfigRequest {
 }
 
 /**
+ * Request to normalize config content
+ * 配置内容规范化请求
+ */
+export interface NormalizeConfigRequest {
+  /** Config type / 配置类型 */
+  config_type: ConfigType;
+  /** Config content / 配置内容 */
+  content: string;
+}
+
+/**
  * Backend response structure
  * 后端响应结构
  */
@@ -230,6 +241,11 @@ export type PromoteConfigResponse = ApiResponse<{ message: string }>;
 
 /** Sync config response type / 同步配置响应类型 */
 export type SyncConfigResponse = ApiResponse<ConfigInfo>;
+
+/** Normalize config response type / 规范化配置响应类型 */
+export type NormalizeConfigResponse = ApiResponse<{
+  content: string;
+}>;
 
 
 /**

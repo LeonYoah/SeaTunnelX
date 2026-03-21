@@ -30,107 +30,13 @@ import type {
   UpgradeNodeExecution,
 } from './types';
 import {getCurrentLocale, type Locale} from '@/lib/i18n/config';
-
-const HAS_CHINESE_PATTERN = /[\u4e00-\u9fff]/;
-const HAS_LATIN_PATTERN = /[A-Za-z]/;
-const LOCALIZED_SEPARATOR = ' / ';
-
-function countPatternMatches(value: string, pattern: RegExp): number {
-  return value.match(pattern)?.length || 0;
-}
-
-function splitLocalizedPair(
-  value: string,
-): {zh: string; en: string} | null {
-  let bestCandidate:
-    | {
-        zh: string;
-        en: string;
-        score: number;
-      }
-    | null = null;
-
-  let startIndex = 0;
-  while (startIndex < value.length) {
-    const separatorIndex = value.indexOf(LOCALIZED_SEPARATOR, startIndex);
-    if (separatorIndex < 0) {
-      break;
-    }
-
-    const left = value.slice(0, separatorIndex).trim();
-    const right = value
-      .slice(separatorIndex + LOCALIZED_SEPARATOR.length)
-      .trim();
-    startIndex = separatorIndex + LOCALIZED_SEPARATOR.length;
-
-    if (!left || !right) {
-      continue;
-    }
-
-    const candidates = [
-      {zh: left, en: right},
-      {zh: right, en: left},
-    ];
-
-    for (const candidate of candidates) {
-      const zhChineseCount = countPatternMatches(
-        candidate.zh,
-        /[\u4e00-\u9fff]/g,
-      );
-      const zhLatinCount = countPatternMatches(candidate.zh, /[A-Za-z]/g);
-      const enChineseCount = countPatternMatches(
-        candidate.en,
-        /[\u4e00-\u9fff]/g,
-      );
-      const enLatinCount = countPatternMatches(candidate.en, /[A-Za-z]/g);
-
-      if (zhChineseCount === 0 || enLatinCount === 0) {
-        continue;
-      }
-
-      const score =
-        zhChineseCount * 2 -
-        zhLatinCount +
-        enLatinCount * 2 -
-        enChineseCount;
-
-      if (!bestCandidate || score > bestCandidate.score) {
-        bestCandidate = {...candidate, score};
-      }
-    }
-  }
-
-  if (!bestCandidate || bestCandidate.score <= 0) {
-    return null;
-  }
-
-  return {
-    zh: bestCandidate.zh,
-    en: bestCandidate.en,
-  };
-}
+import {localizeBackendText} from '@/lib/i18n/localize-text';
 
 export function localizeUpgradeText(
   value?: string | null,
   locale: Locale = getCurrentLocale(),
 ): string {
-  const text = value?.trim() || '';
-  if (!text) {
-    return '';
-  }
-
-  const localizedPair = splitLocalizedPair(text);
-  if (localizedPair) {
-    return locale === 'en' ? localizedPair.en : localizedPair.zh;
-  }
-
-  if (locale === 'zh' && HAS_CHINESE_PATTERN.test(text)) {
-    return text;
-  }
-  if (locale === 'en' && HAS_LATIN_PATTERN.test(text)) {
-    return text;
-  }
-  return text;
+  return localizeBackendText(value, locale);
 }
 
 function sanitizeConfigMergeFile(file: ConfigMergeFile): ConfigMergeFile {

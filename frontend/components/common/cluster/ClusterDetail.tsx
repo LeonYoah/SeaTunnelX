@@ -57,6 +57,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {toast} from 'sonner';
 import {
   ArrowLeft,
@@ -70,8 +71,11 @@ import {
   Server,
   Activity,
   Bug,
+  AlertTriangle,
   Loader2,
   FileText,
+  ExternalLink,
+  MonitorSmartphone,
 } from 'lucide-react';
 import {Checkbox} from '@/components/ui/checkbox';
 import {motion} from 'motion/react';
@@ -83,9 +87,12 @@ import {
   NodeInfo,
   NodeStatus,
   HealthStatus,
+  RuntimeStorageDetails,
+  RuntimeStorageSpec,
 } from '@/lib/services/cluster/types';
 import type {UpgradeTaskSummary} from '@/lib/services/st-upgrade';
 import type {DiagnosticsErrorGroup} from '@/lib/services/diagnostics';
+import type {ClusterMonitoringOverviewData} from '@/lib/services/monitoring';
 import {
   getExecutionStatusLabel,
   getStatusBadgeVariant as getUpgradeStatusBadgeVariant,
@@ -97,10 +104,22 @@ import {ClusterPlugins} from './ClusterPlugins';
 import {ClusterConfigs} from './ClusterConfigs';
 import {MonitorConfigPanel} from './MonitorConfigPanel';
 import {ProcessEventList} from './ProcessEventList';
+import {isSeatunnelVersionAtLeast} from '@/lib/seatunnel-version';
 
 interface ClusterDetailProps {
   clusterId: number;
 }
+
+type ClusterDetailTab =
+  | 'nodes'
+  | 'overview'
+  | 'storage'
+  | 'monitoring'
+  | 'webui'
+  | 'plugins'
+  | 'configs'
+  | 'diagnostics'
+  | 'upgrades';
 
 /**
  * Get status badge variant
@@ -168,6 +187,71 @@ function getRoleTranslationKey(role: string): string {
   return 'undefined';
 }
 
+function formatBytes(bytes?: number): string {
+  if (bytes === undefined || bytes === null || Number.isNaN(bytes)) {
+    return '-';
+  }
+  if (bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+interface ClusterRuntimeConfigView {
+  enableHTTP?: boolean;
+  jobLogMode?: string;
+}
+
+function extractClusterRuntimeConfig(config?: ClusterInfo['config'] | null): ClusterRuntimeConfigView {
+  if (!config || typeof config !== 'object') {
+    return {};
+  }
+  const runtime =
+    'runtime' in config && config.runtime && typeof config.runtime === 'object'
+      ? (config.runtime as Record<string, unknown>)
+      : null;
+  if (!runtime) {
+    return {};
+  }
+  return {
+    enableHTTP:
+      typeof runtime.enable_http === 'boolean' ? runtime.enable_http : undefined,
+    jobLogMode:
+      typeof runtime.job_log_mode === 'string' ? runtime.job_log_mode : undefined,
+  };
+}
+
+function pickWebUINode(
+  nodes: NodeInfo[],
+  clusterVersion?: string,
+  enableHTTP?: boolean,
+): NodeInfo | null {
+  if (!isSeatunnelVersionAtLeast(clusterVersion || '', '2.3.9')) {
+    return null;
+  }
+  if (enableHTTP === false) {
+    return null;
+  }
+
+  const candidates = nodes.filter(
+    (node) =>
+      node.api_port > 0 &&
+      (node.role === 'master' || node.role === 'master/worker'),
+  );
+  return (
+    candidates.find((node) => node.is_online !== false) ||
+    candidates[0] ||
+    null
+  );
+}
+
 /**
  * Cluster Detail Component
  * 集群详情组件
@@ -190,6 +274,11 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [diagnosticsGroups, setDiagnosticsGroups] = useState<DiagnosticsErrorGroup[]>([]);
   const [diagnosticsGroupTotal, setDiagnosticsGroupTotal] = useState(0);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [monitoringOverview, setMonitoringOverview] = useState<ClusterMonitoringOverviewData | null>(null);
+  const [runtimeStorage, setRuntimeStorage] = useState<RuntimeStorageDetails | null>(null);
+  const [runtimeStorageLoading, setRuntimeStorageLoading] = useState(false);
+  const [imapCleanupOpen, setImapCleanupOpen] = useState(false);
+  const [imapCleanupRunning, setImapCleanupRunning] = useState(false);
   const [inspectionStarting, setInspectionStarting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isOperating, setIsOperating] = useState(false);
@@ -202,6 +291,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
   const [nodeToRemove, setNodeToRemove] = useState<NodeInfo | null>(null);
+  const [activeTab, setActiveTab] = useState<ClusterDetailTab>('nodes');
 
   // Node selection state / 节点选择状态
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(
@@ -282,6 +372,29 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     }
   }, [clusterId]);
 
+  const loadMonitoringOverview = useCallback(async () => {
+    const result = await services.monitoring.getClusterOverviewSafe(clusterId);
+    if (!result.success || !result.data) {
+      setMonitoringOverview(null);
+      return;
+    }
+    setMonitoringOverview(result.data);
+  }, [clusterId]);
+
+  const loadRuntimeStorage = useCallback(async () => {
+    setRuntimeStorageLoading(true);
+    try {
+      const result = await services.cluster.getRuntimeStorageSafe(clusterId);
+      if (!result.success || !result.data) {
+        setRuntimeStorage(null);
+        return;
+      }
+      setRuntimeStorage(result.data);
+    } finally {
+      setRuntimeStorageLoading(false);
+    }
+  }, [clusterId]);
+
   const handleStartInspection = useCallback(async () => {
     setInspectionStarting(true);
     try {
@@ -339,11 +452,20 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   useEffect(() => {
     void loadClusterData();
     void loadDiagnosticsSummary();
-  }, [loadClusterData, loadDiagnosticsSummary]);
+    void loadMonitoringOverview();
+    void loadRuntimeStorage();
+  }, [loadClusterData, loadDiagnosticsSummary, loadMonitoringOverview, loadRuntimeStorage]);
 
   useEffect(() => {
     void loadUpgradeTasks(upgradeTasksPage, upgradeTasksPageSize);
   }, [loadUpgradeTasks, upgradeTasksPage, upgradeTasksPageSize]);
+
+  useEffect(() => {
+    if (activeTab !== 'storage') {
+      return;
+    }
+    void loadRuntimeStorage();
+  }, [activeTab, loadRuntimeStorage]);
 
   const openUpgradeTaskDetail = useCallback(
     (task: UpgradeTaskSummary) => {
@@ -357,14 +479,38 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const handleRefresh = useCallback(() => {
     void loadClusterData();
     void loadDiagnosticsSummary();
+    void loadMonitoringOverview();
+    void loadRuntimeStorage();
     void loadUpgradeTasks(upgradeTasksPage, upgradeTasksPageSize);
   }, [
     loadClusterData,
     loadDiagnosticsSummary,
+    loadMonitoringOverview,
+    loadRuntimeStorage,
     loadUpgradeTasks,
     upgradeTasksPage,
     upgradeTasksPageSize,
   ]);
+
+  const handleCleanupIMAP = useCallback(async () => {
+    setImapCleanupRunning(true);
+    try {
+      const result = await services.cluster.cleanupIMAPStorageSafe(clusterId);
+      if (!result.success || !result.data) {
+        toast.error(result.error || t('cluster.runtimeStorage.cleanupFailed'));
+        return;
+      }
+      toast.success(
+        result.data.success
+          ? t('cluster.runtimeStorage.cleanupSuccess')
+          : t('cluster.runtimeStorage.cleanupWarning'),
+      );
+      void loadRuntimeStorage();
+    } finally {
+      setImapCleanupRunning(false);
+      setImapCleanupOpen(false);
+    }
+  }, [clusterId, loadRuntimeStorage, t]);
 
   /**
    * Handle delete cluster
@@ -755,6 +901,11 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const canDelete =
     cluster.status !== ClusterStatus.RUNNING &&
     cluster.status !== ClusterStatus.DEPLOYING;
+  const runtimeConfig = extractClusterRuntimeConfig(cluster.config);
+  const webUINode = pickWebUINode(nodes, cluster.version, runtimeConfig.enableHTTP);
+  const webUIProxyURL = webUINode
+    ? `/api/v1/clusters/${clusterId}/webui/`
+    : '';
   const upgradeTaskTotalPages = Math.max(
     1,
     Math.ceil(upgradeTasksTotal / upgradeTasksPageSize),
@@ -771,6 +922,97 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const itemVariants = {
     hidden: {opacity: 0, y: 20},
     visible: {opacity: 1, y: 0, transition: {duration: 0.6}},
+  };
+
+  const renderRuntimeStorageSpec = (spec: RuntimeStorageSpec | undefined, label: string) => {
+    if (!spec) {
+      return (
+        <div className='rounded-lg border border-dashed p-4 text-sm text-muted-foreground'>
+          {t('cluster.runtimeStorage.unavailable')}
+        </div>
+      );
+    }
+    return (
+      <Card>
+        <CardHeader className='pb-3'>
+          <CardTitle className='text-base'>{label}</CardTitle>
+          <CardDescription>
+            {spec.enabled
+              ? t('cluster.runtimeStorage.mode', {type: spec.storage_type || '-'})
+              : t('cluster.runtimeStorage.disabled')}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-3 text-sm'>
+          <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.path')}</div>
+              <div className='font-medium break-all'>{spec.namespace || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.endpoint')}</div>
+              <div className='font-medium break-all'>{spec.endpoint || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.bucket')}</div>
+              <div className='font-medium break-all'>{spec.bucket || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
+              <div className='font-medium'>
+                {spec.size_available
+                  ? formatBytes(spec.total_size_bytes)
+                  : t('cluster.runtimeStorage.remoteSizeUnavailable')}
+              </div>
+            </div>
+          </div>
+          {spec.warning && (
+            <div className='rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100'>
+              {spec.warning}
+            </div>
+          )}
+          {spec.nodes && spec.nodes.length > 0 && (
+            <div className='space-y-2'>
+              {spec.nodes.map((node) => (
+                <div
+                  key={`${spec.kind}-${node.host_id}-${node.node_id}`}
+                  className='flex items-center justify-between rounded-md border px-3 py-2'
+                >
+                  <div className='min-w-0'>
+                    <div className='font-medium'>{node.host_name}</div>
+                    <div className='text-xs text-muted-foreground break-all'>
+                      {node.path || '-'}
+                    </div>
+                  </div>
+                  <div className='text-right'>
+                    <div className='font-medium'>{formatBytes(node.size_bytes)}</div>
+                    <div className='text-xs text-muted-foreground'>
+                      {node.message || (node.exists ? t('cluster.runtimeStorage.pathExists') : t('cluster.runtimeStorage.pathMissing'))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {spec.kind === 'imap' && spec.cleanup_supported && (
+            <div className='flex justify-end'>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => setImapCleanupOpen(true)}
+                disabled={imapCleanupRunning}
+              >
+                {imapCleanupRunning ? (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                ) : (
+                  <Trash2 className='mr-2 h-4 w-4' />
+                )}
+                {t('cluster.runtimeStorage.cleanupImap')}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
   };
 
   return (
@@ -845,6 +1087,39 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       </motion.div>
 
       <Separator />
+
+      {monitoringOverview &&
+        monitoringOverview.stats.active_alerts_1h > 0 && (
+          <motion.div variants={itemVariants}>
+            <Card className='border-destructive/40 bg-destructive/5'>
+              <CardContent className='flex flex-col gap-4 py-4 md:flex-row md:items-center md:justify-between'>
+                <div className='space-y-1'>
+                  <div className='flex items-center gap-2 text-sm font-medium text-destructive'>
+                    <AlertTriangle className='h-4 w-4' />
+                    {t('cluster.activeAlertsBanner.title', {
+                      count: monitoringOverview.stats.active_alerts_1h,
+                    })}
+                  </div>
+                  <p className='text-sm text-muted-foreground'>
+                    {t('cluster.activeAlertsBanner.description', {
+                      restartFailed:
+                        monitoringOverview.stats.restart_failed_events_24h,
+                    })}
+                  </p>
+                </div>
+                <Button
+                  variant='outline'
+                  onClick={() =>
+                    router.push(`/monitoring?tab=alerts&cluster_id=${clusterId}`)
+                  }
+                >
+                  <AlertTriangle className='mr-2 h-4 w-4' />
+                  {t('cluster.activeAlertsBanner.action')}
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
       {/* Cluster Info Cards / 集群信息卡片 */}
       <motion.div
@@ -921,485 +1196,662 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       </motion.div>
 
       <motion.div variants={itemVariants}>
-        <Card>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2'>
-              <Activity className='h-5 w-5' />
-              {t('stUpgrade.upgradeRecordsTitle')}
-            </CardTitle>
-            <CardDescription>
-              {t('stUpgrade.upgradeRecordsDescription')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            {upgradeTasksLoading ? (
-              <div className='flex items-center justify-center py-10 text-muted-foreground'>
-                <Loader2 className='h-5 w-5 animate-spin' />
-              </div>
-            ) : upgradeTasks.length === 0 ? (
-              <div className='rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground'>
-                {t('stUpgrade.noUpgradeRecords')}
-              </div>
-            ) : (
-              <>
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as ClusterDetailTab)}
+          className='space-y-4'
+        >
+          <TabsList className='h-auto w-full flex-wrap justify-start gap-1 rounded-xl p-1'>
+            <TabsTrigger value='nodes' className='flex-none px-3'>
+              {t('cluster.detailTabs.nodes')}
+            </TabsTrigger>
+            <TabsTrigger value='storage' className='flex-none px-3'>
+              {t('cluster.detailTabs.storage')}
+            </TabsTrigger>
+            <TabsTrigger value='monitoring' className='flex-none px-3'>
+              {t('cluster.detailTabs.monitoring')}
+            </TabsTrigger>
+            {webUINode && (
+              <TabsTrigger value='webui' className='flex-none px-3'>
+                {t('cluster.detailTabs.webui')}
+              </TabsTrigger>
+            )}
+            <TabsTrigger value='overview' className='flex-none px-3'>
+              {t('cluster.detailTabs.overview')}
+            </TabsTrigger>
+            <TabsTrigger value='plugins' className='flex-none px-3'>
+              {t('cluster.detailTabs.plugins')}
+            </TabsTrigger>
+            <TabsTrigger value='configs' className='flex-none px-3'>
+              {t('cluster.detailTabs.configs')}
+            </TabsTrigger>
+            <TabsTrigger value='diagnostics' className='flex-none px-3'>
+              {t('cluster.detailTabs.diagnostics')}
+            </TabsTrigger>
+            <TabsTrigger value='upgrades' className='flex-none px-3'>
+              {t('cluster.detailTabs.upgrades')}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value='overview' className='space-y-6'>
+            {/* Cluster Info / 集群信息 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('cluster.clusterInfo')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.installDir')}
+                    </span>
+                    <p className='font-medium break-all'>{cluster.install_dir || '-'}</p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.version')}
+                    </span>
+                    <p className='font-medium'>{cluster.version || '-'}</p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.hazelcastPort')}
+                    </span>
+                    <p className='font-medium'>
+                      {nodes.find((node) => node.hazelcast_port > 0)?.hazelcast_port || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.httpPort')}
+                    </span>
+                    <p className='font-medium'>
+                      {runtimeConfig.enableHTTP === false
+                        ? t('cluster.httpDisabled')
+                        : webUINode?.api_port || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.logOutputMode')}
+                    </span>
+                    <p className='font-medium'>
+                      {runtimeConfig.jobLogMode === 'per_job'
+                        ? t('cluster.logOutputModePerJob')
+                        : t('cluster.logOutputModeMixed')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.webUiStatus')}
+                    </span>
+                    <p className='font-medium'>
+                      {webUINode
+                        ? t('common.enabled')
+                        : isSeatunnelVersionAtLeast(cluster.version, '2.3.9')
+                          ? t('cluster.httpDisabled')
+                          : t('cluster.versionUnsupported')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.createdAt')}
+                    </span>
+                    <p className='font-medium'>
+                      {new Date(cluster.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <span className='text-sm text-muted-foreground'>
+                      {t('cluster.updatedAt')}
+                    </span>
+                    <p className='font-medium'>
+                      {new Date(cluster.updated_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {webUINode && (
+            <TabsContent value='webui' className='space-y-6'>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0'>
+                  <div>
+                    <CardTitle className='flex items-center gap-2'>
+                      <MonitorSmartphone className='h-5 w-5' />
+                      {t('cluster.webUiTitle')}
+                    </CardTitle>
+                    <CardDescription>
+                      {t('cluster.webUiDescription', {
+                        host: webUINode.host_ip || webUINode.host_name || '-',
+                        port: webUINode.api_port,
+                      })}
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant='outline'
+                    onClick={() => window.open(webUIProxyURL, '_blank', 'noopener,noreferrer')}
+                  >
+                    <ExternalLink className='mr-2 h-4 w-4' />
+                    {t('cluster.openWebUiInNewWindow')}
+                  </Button>
+                </CardHeader>
+                <CardContent className='space-y-4'>
+                  <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
+                    {t('cluster.webUiHint')}
+                  </div>
+                  <div className='overflow-hidden rounded-xl border bg-background'>
+                    <iframe
+                      key={webUIProxyURL}
+                      title='SeaTunnel Web UI'
+                      src={webUIProxyURL}
+                      className='h-[900px] w-full border-0'
+                      sandbox='allow-scripts allow-same-origin allow-forms allow-popups allow-downloads'
+                      referrerPolicy='strict-origin-when-cross-origin'
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
+          <TabsContent value='storage' className='space-y-6'>
+            {/* Runtime Storage / 运行时存储 */}
+            <Card>
+              <CardHeader className='flex flex-row items-center justify-between space-y-0'>
+                <div>
+                  <CardTitle>{t('cluster.runtimeStorage.title')}</CardTitle>
+                  <CardDescription>
+                    {t('cluster.runtimeStorage.description')}
+                  </CardDescription>
+                </div>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() => void loadRuntimeStorage()}
+                  disabled={runtimeStorageLoading}
+                >
+                  {runtimeStorageLoading ? (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  ) : (
+                    <RefreshCw className='mr-2 h-4 w-4' />
+                  )}
+                  {t('common.refresh')}
+                </Button>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                {runtimeStorageLoading && !runtimeStorage ? (
+                  <div className='flex items-center justify-center py-8'>
+                    <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+                  </div>
+                ) : (
+                  <>
+                    <div className='text-xs text-muted-foreground'>
+                      {t('cluster.runtimeStorage.configSource', {
+                        source: runtimeStorage?.config_source || '-',
+                      })}
+                    </div>
+                    <div className='grid gap-4 xl:grid-cols-2'>
+                      {renderRuntimeStorageSpec(
+                        runtimeStorage?.checkpoint,
+                        t('installer.checkpointConfig'),
+                      )}
+                      {renderRuntimeStorageSpec(
+                        runtimeStorage?.imap,
+                        t('installer.runtimeStorage.imapTitle'),
+                      )}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value='monitoring' className='space-y-6'>
+            {/* Monitor Config / 监控配置 */}
+            <MonitorConfigPanel clusterId={clusterId} clusterName={cluster.name} />
+          </TabsContent>
+
+          <TabsContent value='nodes' className='space-y-6'>
+            {/* Cluster Actions / 集群操作 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className='flex items-center gap-2'>
+                  <Activity className='h-5 w-5' />
+                  {t('cluster.operations')}
+                  {selectedNodeIds.size > 0 && (
+                    <Badge variant='secondary' className='ml-2'>
+                      {t('cluster.selectedNodes', {count: selectedNodeIds.size})}
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='outline'
+                    onClick={() => setConfirmBatchOp('start')}
+                    disabled={selectedNodeIds.size === 0 || isOperating}
+                  >
+                    {isOperating ? (
+                      <Loader2 className='h-4 w-4 mr-2 animate-spin' />
+                    ) : (
+                      <Play className='h-4 w-4 mr-2' />
+                    )}
+                    {t('cluster.start')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    onClick={() => setConfirmBatchOp('stop')}
+                    disabled={selectedNodeIds.size === 0 || isOperating}
+                  >
+                    {isOperating ? (
+                      <Loader2 className='h-4 w-4 mr-2 animate-spin' />
+                    ) : (
+                      <Square className='h-4 w-4 mr-2' />
+                    )}
+                    {t('cluster.stop')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    onClick={() => setConfirmBatchOp('restart')}
+                    disabled={selectedNodeIds.size === 0 || isOperating}
+                  >
+                    {isOperating ? (
+                      <Loader2 className='h-4 w-4 mr-2 animate-spin' />
+                    ) : (
+                      <RotateCcw className='h-4 w-4 mr-2' />
+                    )}
+                    {t('cluster.restart')}
+                  </Button>
+                </div>
+                {selectedNodeIds.size === 0 && (
+                  <p className='text-sm text-muted-foreground mt-2'>
+                    {t('cluster.selectNodesToOperate')}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Nodes Table / 节点表格 */}
+            <Card>
+              <CardHeader className='flex flex-row items-center justify-between'>
+                <CardTitle className='flex items-center gap-2'>
+                  <Server className='h-5 w-5' />
+                  {t('cluster.nodeList')}
+                </CardTitle>
+                <Button onClick={() => setIsAddNodeDialogOpen(true)}>
+                  <Plus className='h-4 w-4 mr-2' />
+                  {t('cluster.addNode')}
+                </Button>
+              </CardHeader>
+              <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>{t('stUpgrade.sourceVersion')}</TableHead>
-                      <TableHead>{t('stUpgrade.targetVersion')}</TableHead>
-                      <TableHead>{t('stUpgrade.taskStatus')}</TableHead>
-                      <TableHead>{t('stUpgrade.rollbackStatus')}</TableHead>
-                      <TableHead>{t('stUpgrade.currentStep')}</TableHead>
-                      <TableHead>{t('stUpgrade.createdAt')}</TableHead>
-                      <TableHead className='text-right'>
-                        {t('common.actions')}
+                      <TableHead className='w-12'>
+                        <Checkbox
+                          checked={
+                            nodes.length > 0 &&
+                            selectedNodeIds.size === nodes.length
+                          }
+                          onCheckedChange={toggleAllNodes}
+                        />
                       </TableHead>
+                      <TableHead>ID</TableHead>
+                      <TableHead>{t('cluster.hostName')}</TableHead>
+                      <TableHead>{t('cluster.hostIP')}</TableHead>
+                      <TableHead>{t('cluster.nodeRole')}</TableHead>
+                      <TableHead>{t('cluster.installDir')}</TableHead>
+                      <TableHead>{t('cluster.nodeStatus')}</TableHead>
+                      <TableHead>{t('cluster.processPID')}</TableHead>
+                      <TableHead>{t('cluster.actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {upgradeTasks.map((upgradeTask) => (
-                      <TableRow
-                        key={upgradeTask.id}
-                        className='cursor-pointer'
-                        onClick={() => openUpgradeTaskDetail(upgradeTask)}
-                      >
-                        <TableCell className='font-mono text-xs'>
-                          #{upgradeTask.id}
-                        </TableCell>
-                        <TableCell>
-                          {upgradeTask.source_version || '-'}
-                        </TableCell>
-                        <TableCell>
-                          {upgradeTask.target_version || '-'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={getUpgradeStatusBadgeVariant(
-                              upgradeTask.status,
-                            )}
-                          >
-                            {getExecutionStatusLabel(upgradeTask.status)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={getUpgradeStatusBadgeVariant(
-                              upgradeTask.rollback_status,
-                            )}
-                          >
-                            {getExecutionStatusLabel(
-                              upgradeTask.rollback_status,
-                            )}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className='font-mono text-xs'>
-                          {upgradeTask.current_step || '-'}
-                        </TableCell>
-                        <TableCell className='text-muted-foreground'>
-                          {new Date(upgradeTask.created_at).toLocaleString()}
-                        </TableCell>
-                        <TableCell className='text-right'>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openUpgradeTaskDetail(upgradeTask);
-                            }}
-                          >
-                            {t('stUpgrade.viewUpgradeDetail')}
-                          </Button>
+                    {nodes.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={9}
+                          className='text-center py-8 text-muted-foreground'
+                        >
+                          {t('cluster.noNodes')}
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      nodes.map((node) => (
+                        <TableRow key={node.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedNodeIds.has(node.id)}
+                              onCheckedChange={() => toggleNodeSelection(node.id)}
+                            />
+                          </TableCell>
+                          <TableCell>{node.id}</TableCell>
+                          <TableCell>{node.host_name || '-'}</TableCell>
+                          <TableCell>{node.host_ip || '-'}</TableCell>
+                          <TableCell>
+                            <Badge variant='outline'>
+                              {t(
+                                `cluster.roles.${getRoleTranslationKey(node.role)}`,
+                              )}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className='font-mono text-sm'>
+                            {node.install_dir || '-'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadgeVariant(node.status)}>
+                              {t(`cluster.nodeStatuses.${node.status}`)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{node.process_pid || '-'}</TableCell>
+                          <TableCell>
+                            <div className='flex items-center gap-1'>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() =>
+                                  setConfirmNodeOp({op: 'start', node})
+                                }
+                                disabled={
+                                  nodeOperating === node.id ||
+                                  node.status === NodeStatus.RUNNING ||
+                                  node.status === NodeStatus.OFFLINE
+                                }
+                                title={t('cluster.start')}
+                              >
+                                {nodeOperating === node.id ? (
+                                  <Loader2 className='h-4 w-4 animate-spin' />
+                                ) : (
+                                  <Play className='h-4 w-4 text-green-600' />
+                                )}
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() => setConfirmNodeOp({op: 'stop', node})}
+                                disabled={
+                                  nodeOperating === node.id ||
+                                  node.status !== NodeStatus.RUNNING
+                                }
+                                title={t('cluster.stop')}
+                              >
+                                <Square className='h-4 w-4 text-orange-600' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() =>
+                                  setConfirmNodeOp({op: 'restart', node})
+                                }
+                                disabled={
+                                  nodeOperating === node.id ||
+                                  node.status !== NodeStatus.RUNNING
+                                }
+                                title={t('cluster.restart')}
+                              >
+                                <RotateCcw className='h-4 w-4 text-blue-600' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() => handleViewLogs(node)}
+                                title={t('cluster.viewLogs')}
+                              >
+                                <FileText className='h-4 w-4' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() => openEditNodeDialog(node)}
+                                title={t('cluster.editNode')}
+                              >
+                                <Pencil className='h-4 w-4' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                onClick={() => setNodeToRemove(node)}
+                                title={t('cluster.removeNode')}
+                              >
+                                <Trash2 className='h-4 w-4 text-destructive' />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+              </CardContent>
+            </Card>
 
-                <Pagination
-                  currentPage={upgradeTasksPage}
-                  totalPages={upgradeTaskTotalPages}
-                  pageSize={upgradeTasksPageSize}
-                  totalItems={upgradeTasksTotal}
-                  onPageChange={setUpgradeTasksPage}
-                  showPageSizeSelector={false}
-                  showTotalItems={true}
-                />
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
+            {/* Process Events / 进程事件 */}
+            <ProcessEventList clusterId={clusterId} />
+          </TabsContent>
 
-      {/* Cluster Actions / 集群操作 */}
-      <motion.div variants={itemVariants}>
-        <Card>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2'>
-              <Activity className='h-5 w-5' />
-              {t('cluster.operations')}
-              {selectedNodeIds.size > 0 && (
-                <Badge variant='secondary' className='ml-2'>
-                  {t('cluster.selectedNodes', {count: selectedNodeIds.size})}
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className='flex gap-2'>
-              <Button
-                variant='outline'
-                onClick={() => setConfirmBatchOp('start')}
-                disabled={selectedNodeIds.size === 0 || isOperating}
-              >
-                {isOperating ? (
-                  <Loader2 className='h-4 w-4 mr-2 animate-spin' />
-                ) : (
-                  <Play className='h-4 w-4 mr-2' />
-                )}
-                {t('cluster.start')}
-              </Button>
-              <Button
-                variant='outline'
-                onClick={() => setConfirmBatchOp('stop')}
-                disabled={selectedNodeIds.size === 0 || isOperating}
-              >
-                {isOperating ? (
-                  <Loader2 className='h-4 w-4 mr-2 animate-spin' />
-                ) : (
-                  <Square className='h-4 w-4 mr-2' />
-                )}
-                {t('cluster.stop')}
-              </Button>
-              <Button
-                variant='outline'
-                onClick={() => setConfirmBatchOp('restart')}
-                disabled={selectedNodeIds.size === 0 || isOperating}
-              >
-                {isOperating ? (
-                  <Loader2 className='h-4 w-4 mr-2 animate-spin' />
-                ) : (
-                  <RotateCcw className='h-4 w-4 mr-2' />
-                )}
-                {t('cluster.restart')}
-              </Button>
-            </div>
-            {selectedNodeIds.size === 0 && (
-              <p className='text-sm text-muted-foreground mt-2'>
-                {t('cluster.selectNodesToOperate')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
+          <TabsContent value='plugins' className='space-y-4'>
+            {/* Installed Plugins / 已安装插件 */}
+            <ClusterPlugins clusterId={clusterId} />
+          </TabsContent>
 
-      {/* Nodes Table / 节点表格 */}
-      <motion.div variants={itemVariants}>
-        <Card>
-          <CardHeader className='flex flex-row items-center justify-between'>
-            <CardTitle className='flex items-center gap-2'>
-              <Server className='h-5 w-5' />
-              {t('cluster.nodeList')}
-            </CardTitle>
-            <Button onClick={() => setIsAddNodeDialogOpen(true)}>
-              <Plus className='h-4 w-4 mr-2' />
-              {t('cluster.addNode')}
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className='w-12'>
-                    <Checkbox
-                      checked={
-                        nodes.length > 0 &&
-                        selectedNodeIds.size === nodes.length
-                      }
-                      onCheckedChange={toggleAllNodes}
-                    />
-                  </TableHead>
-                  <TableHead>ID</TableHead>
-                  <TableHead>{t('cluster.hostName')}</TableHead>
-                  <TableHead>{t('cluster.hostIP')}</TableHead>
-                  <TableHead>{t('cluster.nodeRole')}</TableHead>
-                  <TableHead>{t('cluster.installDir')}</TableHead>
-                  <TableHead>{t('cluster.nodeStatus')}</TableHead>
-                  <TableHead>{t('cluster.processPID')}</TableHead>
-                  <TableHead>{t('cluster.actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {nodes.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={9}
-                      className='text-center py-8 text-muted-foreground'
-                    >
-                      {t('cluster.noNodes')}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  nodes.map((node) => (
-                    <TableRow key={node.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedNodeIds.has(node.id)}
-                          onCheckedChange={() => toggleNodeSelection(node.id)}
-                        />
-                      </TableCell>
-                      <TableCell>{node.id}</TableCell>
-                      <TableCell>{node.host_name || '-'}</TableCell>
-                      <TableCell>{node.host_ip || '-'}</TableCell>
-                      <TableCell>
-                        <Badge variant='outline'>
-                          {t(
-                            `cluster.roles.${getRoleTranslationKey(node.role)}`,
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className='font-mono text-sm'>
-                        {node.install_dir || '-'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusBadgeVariant(node.status)}>
-                          {t(`cluster.nodeStatuses.${node.status}`)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{node.process_pid || '-'}</TableCell>
-                      <TableCell>
-                        <div className='flex items-center gap-1'>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() =>
-                              setConfirmNodeOp({op: 'start', node})
-                            }
-                            disabled={
-                              nodeOperating === node.id ||
-                              node.status === NodeStatus.RUNNING ||
-                              node.status === NodeStatus.OFFLINE
-                            }
-                            title={t('cluster.start')}
-                          >
-                            {nodeOperating === node.id ? (
-                              <Loader2 className='h-4 w-4 animate-spin' />
-                            ) : (
-                              <Play className='h-4 w-4 text-green-600' />
-                            )}
-                          </Button>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() => setConfirmNodeOp({op: 'stop', node})}
-                            disabled={
-                              nodeOperating === node.id ||
-                              node.status !== NodeStatus.RUNNING
-                            }
-                            title={t('cluster.stop')}
-                          >
-                            <Square className='h-4 w-4 text-orange-600' />
-                          </Button>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() =>
-                              setConfirmNodeOp({op: 'restart', node})
-                            }
-                            disabled={
-                              nodeOperating === node.id ||
-                              node.status !== NodeStatus.RUNNING
-                            }
-                            title={t('cluster.restart')}
-                          >
-                            <RotateCcw className='h-4 w-4 text-blue-600' />
-                          </Button>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() => handleViewLogs(node)}
-                            title={t('cluster.viewLogs')}
-                          >
-                            <FileText className='h-4 w-4' />
-                          </Button>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() => openEditNodeDialog(node)}
-                            title={t('cluster.editNode')}
-                          >
-                            <Pencil className='h-4 w-4' />
-                          </Button>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            onClick={() => setNodeToRemove(node)}
-                            title={t('cluster.removeNode')}
-                          >
-                            <Trash2 className='h-4 w-4 text-destructive' />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </motion.div>
+          <TabsContent value='configs' className='space-y-4'>
+            {/* Cluster Configs / 集群配置 */}
+            <ClusterConfigs
+              clusterId={clusterId}
+              deploymentMode={cluster.deployment_mode}
+            />
+          </TabsContent>
 
-      {/* Installed Plugins / 已安装插件 */}
-      <motion.div variants={itemVariants}>
-        <ClusterPlugins clusterId={clusterId} />
-      </motion.div>
-
-      {/* Cluster Configs / 集群配置 */}
-      <motion.div variants={itemVariants}>
-        <ClusterConfigs
-          clusterId={clusterId}
-          deploymentMode={cluster.deployment_mode}
-        />
-      </motion.div>
-
-      {/* Monitor Config / 监控配置 */}
-      <motion.div variants={itemVariants}>
-        <MonitorConfigPanel clusterId={clusterId} clusterName={cluster.name} />
-      </motion.div>
-
-      {/* Diagnostics Summary / 诊断摘要 */}
-      <motion.div variants={itemVariants}>
-        <Card>
-          <CardHeader className='flex flex-row items-center justify-between space-y-0'>
-            <div>
-              <CardTitle>{t('diagnosticsCenter.errors.title')}</CardTitle>
-              <CardDescription>
-                {t('diagnosticsCenter.errors.clusterScopedHint', {name: cluster.name})}
-              </CardDescription>
-            </div>
-            <div className='flex flex-wrap items-center gap-2'>
-              <Button
-                onClick={() => void handleStartInspection()}
-                disabled={inspectionStarting}
-              >
-                {inspectionStarting ? (
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                ) : (
-                  <Activity className='mr-2 h-4 w-4' />
-                )}
-                {t('diagnosticsCenter.inspections.startInspection')}
-              </Button>
-              <Button
-                variant='outline'
-                onClick={() =>
-                  router.push(
-                    `/diagnostics?tab=errors&cluster_id=${clusterId}&source=cluster-detail-summary`,
-                  )
-                }
-              >
-                <Bug className='h-4 w-4 mr-2' />
-                {t('cluster.openDiagnostics')}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <Badge variant='outline'>
-                {t('diagnosticsCenter.errors.matchedGroups', {
-                  count: diagnosticsGroupTotal,
-                })}
-              </Badge>
-            </div>
-            {diagnosticsLoading ? (
-              <div className='space-y-2'>
-                <div className='h-10 rounded-md bg-muted/60' />
-                <div className='h-10 rounded-md bg-muted/60' />
-                <div className='h-10 rounded-md bg-muted/60' />
-              </div>
-            ) : diagnosticsGroups.length === 0 ? (
-              <div className='rounded-lg border border-dashed p-4 text-sm text-muted-foreground'>
-                {t('diagnosticsCenter.errors.empty')}
-              </div>
-            ) : (
-              <div className='space-y-3'>
-                {diagnosticsGroups.map((group) => (
-                  <button
-                    key={group.id}
-                    type='button'
-                    className='flex w-full items-start justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted/30'
+          <TabsContent value='diagnostics' className='space-y-6'>
+            {/* Diagnostics Summary / 诊断摘要 */}
+            <Card>
+              <CardHeader className='flex flex-row items-center justify-between space-y-0'>
+                <div>
+                  <CardTitle>{t('diagnosticsCenter.errors.title')}</CardTitle>
+                  <CardDescription>
+                    {t('diagnosticsCenter.errors.clusterScopedHint', {name: cluster.name})}
+                  </CardDescription>
+                </div>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Button
+                    onClick={() => void handleStartInspection()}
+                    disabled={inspectionStarting}
+                  >
+                    {inspectionStarting ? (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    ) : (
+                      <Activity className='mr-2 h-4 w-4' />
+                    )}
+                    {t('diagnosticsCenter.inspections.startInspection')}
+                  </Button>
+                  <Button
+                    variant='outline'
                     onClick={() =>
                       router.push(
-                        `/diagnostics?tab=errors&cluster_id=${clusterId}&group_id=${group.id}&source=cluster-detail-summary`,
+                        `/diagnostics?tab=errors&cluster_id=${clusterId}&source=cluster-detail-summary`,
                       )
                     }
                   >
-                    <div className='min-w-0 space-y-1'>
-                      <div className='truncate font-medium'>
-                        {group.title || group.sample_message || group.fingerprint}
-                      </div>
-                      <div className='truncate text-sm text-muted-foreground'>
-                        {group.exception_class || group.sample_message || '-'}
-                      </div>
-                    </div>
-                    <div className='ml-4 flex shrink-0 items-center gap-2'>
-                      <Badge
-                        variant={
-                          group.occurrence_count >= 10
-                            ? 'destructive'
-                            : group.occurrence_count >= 3
-                              ? 'secondary'
-                              : 'outline'
+                    <Bug className='h-4 w-4 mr-2' />
+                    {t('cluster.openDiagnostics')}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Badge variant='outline'>
+                    {t('diagnosticsCenter.errors.matchedGroups', {
+                      count: diagnosticsGroupTotal,
+                    })}
+                  </Badge>
+                </div>
+                {diagnosticsLoading ? (
+                  <div className='space-y-2'>
+                    <div className='h-10 rounded-md bg-muted/60' />
+                    <div className='h-10 rounded-md bg-muted/60' />
+                    <div className='h-10 rounded-md bg-muted/60' />
+                  </div>
+                ) : diagnosticsGroups.length === 0 ? (
+                  <div className='rounded-lg border border-dashed p-4 text-sm text-muted-foreground'>
+                    {t('diagnosticsCenter.errors.empty')}
+                  </div>
+                ) : (
+                  <div className='space-y-3'>
+                    {diagnosticsGroups.map((group) => (
+                      <button
+                        key={group.id}
+                        type='button'
+                        className='flex w-full items-start justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted/30'
+                        onClick={() =>
+                          router.push(
+                            `/diagnostics?tab=errors&cluster_id=${clusterId}&group_id=${group.id}&source=cluster-detail-summary`,
+                          )
                         }
                       >
-                        {group.occurrence_count}
-                      </Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
+                        <div className='min-w-0 space-y-1'>
+                          <div className='truncate font-medium'>
+                            {group.title || group.sample_message || group.fingerprint}
+                          </div>
+                          <div className='truncate text-sm text-muted-foreground'>
+                            {group.exception_class || group.sample_message || '-'}
+                          </div>
+                        </div>
+                        <div className='ml-4 flex shrink-0 items-center gap-2'>
+                          <Badge
+                            variant={
+                              group.occurrence_count >= 10
+                                ? 'destructive'
+                                : group.occurrence_count >= 3
+                                  ? 'secondary'
+                                  : 'outline'
+                            }
+                          >
+                            {group.occurrence_count}
+                          </Badge>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-      {/* Process Events / 进程事件 */}
-      <motion.div variants={itemVariants}>
-        <ProcessEventList clusterId={clusterId} />
-      </motion.div>
+          <TabsContent value='upgrades' className='space-y-6'>
+            <Card>
+              <CardHeader>
+                <CardTitle className='flex items-center gap-2'>
+                  <Activity className='h-5 w-5' />
+                  {t('stUpgrade.upgradeRecordsTitle')}
+                </CardTitle>
+                <CardDescription>
+                  {t('stUpgrade.upgradeRecordsDescription')}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                {upgradeTasksLoading ? (
+                  <div className='flex items-center justify-center py-10 text-muted-foreground'>
+                    <Loader2 className='h-5 w-5 animate-spin' />
+                  </div>
+                ) : upgradeTasks.length === 0 ? (
+                  <div className='rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground'>
+                    {t('stUpgrade.noUpgradeRecords')}
+                  </div>
+                ) : (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>ID</TableHead>
+                          <TableHead>{t('stUpgrade.sourceVersion')}</TableHead>
+                          <TableHead>{t('stUpgrade.targetVersion')}</TableHead>
+                          <TableHead>{t('stUpgrade.taskStatus')}</TableHead>
+                          <TableHead>{t('stUpgrade.rollbackStatus')}</TableHead>
+                          <TableHead>{t('stUpgrade.currentStep')}</TableHead>
+                          <TableHead>{t('stUpgrade.createdAt')}</TableHead>
+                          <TableHead className='text-right'>
+                            {t('common.actions')}
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {upgradeTasks.map((upgradeTask) => (
+                          <TableRow
+                            key={upgradeTask.id}
+                            className='cursor-pointer'
+                            onClick={() => openUpgradeTaskDetail(upgradeTask)}
+                          >
+                            <TableCell className='font-mono text-xs'>
+                              #{upgradeTask.id}
+                            </TableCell>
+                            <TableCell>
+                              {upgradeTask.source_version || '-'}
+                            </TableCell>
+                            <TableCell>
+                              {upgradeTask.target_version || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={getUpgradeStatusBadgeVariant(
+                                  upgradeTask.status,
+                                )}
+                              >
+                                {getExecutionStatusLabel(upgradeTask.status)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={getUpgradeStatusBadgeVariant(
+                                  upgradeTask.rollback_status,
+                                )}
+                              >
+                                {getExecutionStatusLabel(
+                                  upgradeTask.rollback_status,
+                                )}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className='font-mono text-xs'>
+                              {upgradeTask.current_step || '-'}
+                            </TableCell>
+                            <TableCell className='text-muted-foreground'>
+                              {new Date(upgradeTask.created_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell className='text-right'>
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openUpgradeTaskDetail(upgradeTask);
+                                }}
+                              >
+                                {t('stUpgrade.viewUpgradeDetail')}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
 
-      {/* Cluster Info / 集群信息 */}
-      <motion.div variants={itemVariants}>
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('cluster.clusterInfo')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className='grid grid-cols-3 gap-4'>
-              <div>
-                <span className='text-sm text-muted-foreground'>
-                  {t('cluster.version')}
-                </span>
-                <p className='font-medium'>{cluster.version || '-'}</p>
-              </div>
-              <div>
-                <span className='text-sm text-muted-foreground'>
-                  {t('cluster.createdAt')}
-                </span>
-                <p className='font-medium'>
-                  {new Date(cluster.created_at).toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <span className='text-sm text-muted-foreground'>
-                  {t('cluster.updatedAt')}
-                </span>
-                <p className='font-medium'>
-                  {new Date(cluster.updated_at).toLocaleString()}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+                    <Pagination
+                      currentPage={upgradeTasksPage}
+                      totalPages={upgradeTaskTotalPages}
+                      pageSize={upgradeTasksPageSize}
+                      totalItems={upgradeTasksTotal}
+                      onPageChange={setUpgradeTasksPage}
+                      showPageSizeSelector={false}
+                      showTotalItems={true}
+                    />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </motion.div>
 
       {/* Edit Cluster Dialog / 编辑集群对话框 */}
@@ -1597,6 +2049,26 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               {confirmNodeOp?.op === 'start' && t('cluster.start')}
               {confirmNodeOp?.op === 'stop' && t('cluster.stop')}
               {confirmNodeOp?.op === 'restart' && t('cluster.restart')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={imapCleanupOpen} onOpenChange={setImapCleanupOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cluster.runtimeStorage.cleanupConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('cluster.runtimeStorage.cleanupConfirmDesc')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleCleanupIMAP()}>
+              {imapCleanupRunning && (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              )}
+              {t('cluster.runtimeStorage.cleanupImap')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

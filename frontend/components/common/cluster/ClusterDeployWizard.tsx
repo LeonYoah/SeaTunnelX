@@ -68,14 +68,18 @@ import {
   Crown,
   Wrench,
   Download,
+  Database,
+  Info,
 } from 'lucide-react';
 import {toast} from 'sonner';
 import services from '@/lib/services';
 import {usePackages} from '@/hooks/use-installer';
 import {PluginSelectStep} from '@/components/common/installer/PluginSelectStep';
+import {RuntimeAdvancedConfigCard} from '@/components/common/installer/RuntimeAdvancedConfigCard';
 import {
   buildSeatunnelInstallDir,
   resolveSeatunnelVersion,
+  resolveSeatunnelVersionCapabilities,
 } from '@/lib/seatunnel-version';
 import {HostInfo, HostType, HostStatus} from '@/lib/services/host/types';
 import {DeploymentMode, NodeRole} from '@/lib/services/cluster/types';
@@ -83,9 +87,14 @@ import type {
   MirrorSource,
   JVMConfig,
   CheckpointConfig,
+  IMAPConfig,
+  RuntimeEngineConfig,
   CheckpointStorageType,
+  IMAPStorageType,
   PrecheckResult,
   CheckStatus,
+  RuntimeStorageValidationKind,
+  RuntimeStorageValidationResult,
 } from '@/lib/services/installer/types';
 
 // Wizard step types / 向导步骤类型
@@ -184,8 +193,10 @@ interface ClusterDeployConfig {
   clusterPort: number; // Hazelcast cluster port (default 5801) / Hazelcast 集群端口（默认 5801）
   httpPort: number; // HTTP API port (default 8080) / HTTP API 端口（默认 8080）
   workerPort: number; // Worker port for separated mode (default 5802) / 分离模式 Worker 端口（默认 5802）
+  runtime: RuntimeEngineConfig;
   jvm: JVMConfig;
   checkpoint: CheckpointConfig;
+  imap: IMAPConfig;
   // Plugins / 插件
   selectedPlugins: string[];
   selectedPluginProfiles: Record<string, string[]>;
@@ -201,6 +212,16 @@ const defaultConfig: ClusterDeployConfig = {
   clusterPort: 5801, // Default Hazelcast cluster port / 默认 Hazelcast 集群端口
   httpPort: 8080, // Default HTTP API port / 默认 HTTP API 端口
   workerPort: 5802, // Default worker port for separated mode / 分离模式默认 Worker 端口
+  runtime: {
+    dynamic_slot: true,
+    slot_num: 2,
+    slot_allocation_strategy: 'RANDOM',
+    job_schedule_strategy: 'REJECT',
+    history_job_expire_minutes: 1440,
+    scheduled_deletion_enable: true,
+    enable_http: true,
+    job_log_mode: 'mixed',
+  },
   jvm: {
     hybrid_heap_size: 2, // GB
     master_heap_size: 2, // GB
@@ -209,6 +230,10 @@ const defaultConfig: ClusterDeployConfig = {
   checkpoint: {
     storage_type: 'LOCAL_FILE',
     namespace: '/tmp/seatunnel/checkpoint/',
+  },
+  imap: {
+    storage_type: 'DISABLED',
+    namespace: '/tmp/seatunnel/imap/',
   },
   selectedPlugins: [],
   selectedPluginProfiles: {},
@@ -259,6 +284,13 @@ export function ClusterDeployWizard({
     [],
   );
   const [precheckRunning, setPrecheckRunning] = useState(false);
+  const [storageValidation, setStorageValidation] = useState<
+    Partial<
+      Record<RuntimeStorageValidationKind, RuntimeStorageValidationResult>
+    >
+  >({});
+  const [validatingKind, setValidatingKind] =
+    useState<RuntimeStorageValidationKind | null>(null);
 
   // Load available hosts / 加载可用主机
   const loadHosts = useCallback(async () => {
@@ -323,6 +355,10 @@ export function ClusterDeployWizard({
       (h.roles as NodeRole[]).map((role) => ({host: h.host, role})),
     );
   }, [config.deploymentMode, selectedHosts]);
+  const selectedHostIds = useMemo(
+    () => selectedHosts.map((item) => item.host.id),
+    [selectedHosts],
+  );
 
   // Local packages for offline mode / 离线模式的本地安装包
   const localPackages = useMemo(
@@ -334,6 +370,11 @@ export function ClusterDeployWizard({
     () => resolveSeatunnelVersion(packages),
     [packages],
   );
+  const versionCapabilities = useMemo(
+    () => resolveSeatunnelVersionCapabilities(packages, config.version),
+    [packages, config.version],
+  );
+  const httpServiceSupported = Boolean(versionCapabilities?.supports_http_service);
 
   useEffect(() => {
     if (!open || !resolvedRecommendedVersion || config.version) {
@@ -346,6 +387,24 @@ export function ClusterDeployWizard({
       installDir: buildSeatunnelInstallDir(resolvedRecommendedVersion),
     }));
   }, [open, resolvedRecommendedVersion, config.version]);
+
+  useEffect(() => {
+    if (!versionCapabilities) {
+      return;
+    }
+    setConfig((prev) => ({
+      ...prev,
+      runtime: {
+        ...prev.runtime,
+        enable_http: versionCapabilities.supports_http_service
+          ? prev.runtime.enable_http
+          : false,
+        job_log_mode: versionCapabilities.supports_job_log_mode
+          ? prev.runtime.job_log_mode || versionCapabilities.default_job_log_mode
+          : 'mixed',
+      },
+    }));
+  }, [versionCapabilities]);
 
   // Run precheck when entering precheck step / 进入预检查步骤时运行预检查
   const runPrecheck = useCallback(async () => {
@@ -369,8 +428,15 @@ export function ClusterDeployWizard({
     // 根据部署模式构建预检查的端口列表
     const portsToCheck =
       config.deploymentMode === DeploymentMode.SEPARATED
-        ? [config.clusterPort, config.workerPort, config.httpPort]
-        : [config.clusterPort, config.httpPort];
+        ? [
+            config.clusterPort,
+            config.workerPort,
+            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+          ]
+        : [
+            config.clusterPort,
+            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+          ];
 
     // Run precheck for each host in parallel / 并行运行每个主机的预检查
     // Pass install_dir and ports so precheck can verify the installation path and port availability
@@ -412,6 +478,8 @@ export function ClusterDeployWizard({
     config.httpPort,
     config.workerPort,
     config.deploymentMode,
+    config.runtime.enable_http,
+    httpServiceSupported,
   ]);
 
   // Check if all prechecks passed / 检查是否所有预检查都通过
@@ -467,6 +535,96 @@ export function ClusterDeployWizard({
       return {...prev, ...newUpdates};
     });
   }, []);
+
+  const applyCheckpointToImap = useCallback(() => {
+    updateConfig({
+      imap: {
+        storage_type: config.checkpoint.storage_type,
+        namespace: config.checkpoint.namespace,
+        hdfs_namenode_host: config.checkpoint.hdfs_namenode_host,
+        hdfs_namenode_port: config.checkpoint.hdfs_namenode_port,
+        kerberos_principal: config.checkpoint.kerberos_principal,
+        kerberos_keytab_file_path: config.checkpoint.kerberos_keytab_file_path,
+        hdfs_ha_enabled: config.checkpoint.hdfs_ha_enabled,
+        hdfs_name_services: config.checkpoint.hdfs_name_services,
+        hdfs_ha_namenodes: config.checkpoint.hdfs_ha_namenodes,
+        hdfs_namenode_rpc_address_1:
+          config.checkpoint.hdfs_namenode_rpc_address_1,
+        hdfs_namenode_rpc_address_2:
+          config.checkpoint.hdfs_namenode_rpc_address_2,
+        hdfs_failover_proxy_provider:
+          config.checkpoint.hdfs_failover_proxy_provider,
+        storage_endpoint: config.checkpoint.storage_endpoint,
+        storage_access_key: config.checkpoint.storage_access_key,
+        storage_secret_key: config.checkpoint.storage_secret_key,
+        storage_bucket: config.checkpoint.storage_bucket,
+      },
+    });
+    setStorageValidation((prev) => ({...prev, imap: undefined}));
+    toast.success(t('installer.runtimeStorage.applyCheckpointToImapSuccess'));
+  }, [config.checkpoint, t, updateConfig]);
+
+  const applyImapToCheckpoint = useCallback(() => {
+    if (config.imap.storage_type === 'DISABLED') {
+      toast.warning(t('installer.runtimeStorage.applyImapDisabledWarning'));
+      return;
+    }
+    updateConfig({
+      checkpoint: {
+        storage_type: config.imap.storage_type,
+        namespace: config.imap.namespace,
+        hdfs_namenode_host: config.imap.hdfs_namenode_host,
+        hdfs_namenode_port: config.imap.hdfs_namenode_port,
+        kerberos_principal: config.imap.kerberos_principal,
+        kerberos_keytab_file_path: config.imap.kerberos_keytab_file_path,
+        hdfs_ha_enabled: config.imap.hdfs_ha_enabled,
+        hdfs_name_services: config.imap.hdfs_name_services,
+        hdfs_ha_namenodes: config.imap.hdfs_ha_namenodes,
+        hdfs_namenode_rpc_address_1: config.imap.hdfs_namenode_rpc_address_1,
+        hdfs_namenode_rpc_address_2: config.imap.hdfs_namenode_rpc_address_2,
+        hdfs_failover_proxy_provider: config.imap.hdfs_failover_proxy_provider,
+        storage_endpoint: config.imap.storage_endpoint,
+        storage_access_key: config.imap.storage_access_key,
+        storage_secret_key: config.imap.storage_secret_key,
+        storage_bucket: config.imap.storage_bucket,
+      },
+    });
+    setStorageValidation((prev) => ({...prev, checkpoint: undefined}));
+    toast.success(t('installer.runtimeStorage.applyImapToCheckpointSuccess'));
+  }, [config.imap, t, updateConfig]);
+
+  const validateRuntimeStorage = useCallback(
+    async (kind: RuntimeStorageValidationKind) => {
+      if (selectedHostIds.length === 0) {
+        toast.warning(t('installer.runtimeStorage.noHostsSelected'));
+        return;
+      }
+      try {
+        setValidatingKind(kind);
+        const result = await services.installer.validateRuntimeStorage({
+          host_ids: selectedHostIds,
+          kind,
+          checkpoint: kind === 'checkpoint' ? config.checkpoint : undefined,
+          imap: kind === 'imap' ? config.imap : undefined,
+        });
+        setStorageValidation((prev) => ({...prev, [kind]: result}));
+        if (result.success) {
+          toast.success(t('installer.runtimeStorage.validationPassed'));
+        } else {
+          toast.warning(t('installer.runtimeStorage.validationWarning'));
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : t('installer.runtimeStorage.validationFailed'),
+        );
+      } finally {
+        setValidatingKind(null);
+      }
+    },
+    [config.checkpoint, config.imap, selectedHostIds, t],
+  );
 
   // Toggle host selection / 切换主机选择
   const toggleHostSelection = useCallback((hostId: number) => {
@@ -592,7 +750,10 @@ export function ClusterDeployWizard({
           version: config.version,
           install_dir: config.installDir,
           config: {
+            runtime: config.runtime,
             jvm: config.jvm,
+            checkpoint: config.checkpoint,
+            imap: config.imap,
             ports: {
               master_hazelcast_port: config.clusterPort,
               master_api_port: config.httpPort,
@@ -711,8 +872,18 @@ export function ClusterDeployWizard({
             cluster_port: config.clusterPort,
             worker_port: config.workerPort,
             http_port: config.httpPort,
+            enable_http: config.runtime.enable_http,
+            dynamic_slot: config.runtime.dynamic_slot,
+            slot_num: config.runtime.slot_num,
+            slot_allocation_strategy: config.runtime.slot_allocation_strategy,
+            job_schedule_strategy: config.runtime.job_schedule_strategy,
+            history_job_expire_minutes:
+              config.runtime.history_job_expire_minutes,
+            scheduled_deletion_enable: config.runtime.scheduled_deletion_enable,
+            job_log_mode: config.runtime.job_log_mode,
             jvm: config.jvm,
             checkpoint: config.checkpoint,
+            imap: config.imap,
             connector:
               config.selectedPlugins.length > 0
                 ? {
@@ -1155,6 +1326,13 @@ export function ClusterDeployWizard({
       (pkg) => pkg.version === config.version,
     );
     const isPackageLocal = !!currentPackage;
+    const checkpointNeedsSharedWarning =
+      selectedHosts.length > 1 &&
+      config.checkpoint.storage_type === 'LOCAL_FILE';
+    const checkpointLocalRecommended =
+      selectedHosts.length <= 1 &&
+      config.checkpoint.storage_type !== 'LOCAL_FILE';
+    const imapExternalEnabled = config.imap.storage_type !== 'DISABLED';
 
     return (
       <div className='h-full flex flex-col overflow-hidden'>
@@ -1293,22 +1471,49 @@ export function ClusterDeployWizard({
                     </p>
                   </div>
                   <div className='space-y-2'>
-                    <Label>{t('cluster.wizard.httpPort')}</Label>
-                    <Input
-                      type='number'
-                      value={config.httpPort}
-                      onChange={(e) =>
-                        updateConfig({
-                          httpPort: parseInt(e.target.value) || 8080,
-                        })
-                      }
-                      min={1024}
-                      max={65535}
-                      placeholder='8080'
-                    />
-                    <p className='text-xs text-muted-foreground'>
-                      {t('cluster.wizard.httpPortDesc')}
-                    </p>
+                    <div className='flex items-center justify-between gap-2'>
+                      <Label>{t('cluster.wizard.httpPort')}</Label>
+                      <label className='flex items-center gap-2 text-xs text-muted-foreground'>
+                        <Checkbox
+                          checked={config.runtime.enable_http}
+                          onCheckedChange={(checked) =>
+                            updateConfig({
+                              runtime: {
+                                ...config.runtime,
+                                enable_http: checked === true,
+                              },
+                            })
+                          }
+                        />
+                        <span>{t('installer.httpService.enableLabel')}</span>
+                      </label>
+                    </div>
+                    {httpServiceSupported ? (
+                      <>
+                        <Input
+                          type='number'
+                          value={config.httpPort}
+                          onChange={(e) =>
+                            updateConfig({
+                              httpPort: parseInt(e.target.value) || 8080,
+                            })
+                          }
+                          min={1024}
+                          max={65535}
+                          placeholder='8080'
+                          disabled={!config.runtime.enable_http}
+                        />
+                        <p className='text-xs text-muted-foreground'>
+                          {config.runtime.enable_http
+                            ? t('cluster.wizard.httpPortDesc')
+                            : t('installer.httpService.disabledHint')}
+                        </p>
+                      </>
+                    ) : (
+                      <p className='text-xs text-muted-foreground'>
+                        {t('installer.httpService.unsupportedHint')}
+                      </p>
+                    )}
                   </div>
                   {config.deploymentMode === DeploymentMode.SEPARATED && (
                     <div className='space-y-2'>
@@ -1404,14 +1609,61 @@ export function ClusterDeployWizard({
               </Card>
             </div>
 
+            <RuntimeAdvancedConfigCard
+              version={config.version}
+              capabilities={versionCapabilities}
+              runtime={config.runtime}
+              onChange={(updates) =>
+                updateConfig({
+                  runtime: {...config.runtime, ...updates},
+                })
+              }
+            />
+
             {/* Checkpoint Config / 检查点配置 */}
             <Card>
               <CardHeader className='pb-2'>
-                <CardTitle className='text-base'>
-                  {t('installer.checkpointConfig')}
-                </CardTitle>
+                <div className='flex items-start justify-between gap-3'>
+                  <div>
+                    <CardTitle className='text-base'>
+                      {t('installer.checkpointConfig')}
+                    </CardTitle>
+                    <p className='text-sm text-muted-foreground'>
+                      {t('installer.runtimeStorage.checkpointDescription')}
+                    </p>
+                  </div>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={applyCheckpointToImap}
+                  >
+                    {t('installer.runtimeStorage.applyToImap')}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className='space-y-3'>
+                {checkpointNeedsSharedWarning && (
+                  <div className='rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100'>
+                    <div className='flex items-start gap-2'>
+                      <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0' />
+                      <div>
+                        {t('installer.runtimeStorage.checkpointLocalWarning')}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {checkpointLocalRecommended && (
+                  <div className='rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-100'>
+                    <div className='flex items-start gap-2'>
+                      <Info className='mt-0.5 h-4 w-4 shrink-0' />
+                      <div>
+                        {t(
+                          'installer.runtimeStorage.checkpointLocalRecommended',
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className='grid grid-cols-2 gap-4'>
                   <div className='space-y-2'>
                     <Label>{t('installer.storageType')}</Label>
@@ -1750,6 +2002,475 @@ export function ClusterDeployWizard({
                     </div>
                   </div>
                 )}
+                <div className='flex items-center justify-between rounded-md border p-3'>
+                  <div className='space-y-1'>
+                    <div className='text-sm font-medium'>
+                      {t('installer.runtimeStorage.validateConnectivity')}
+                    </div>
+                    <div className='text-xs text-muted-foreground'>
+                      {t('installer.runtimeStorage.validationHint')}
+                    </div>
+                  </div>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => validateRuntimeStorage('checkpoint')}
+                    disabled={validatingKind === 'checkpoint'}
+                  >
+                    {validatingKind === 'checkpoint' && (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    )}
+                    {t('installer.runtimeStorage.validateNow')}
+                  </Button>
+                </div>
+                {storageValidation.checkpoint && (
+                  <div className='rounded-md border p-3 text-sm space-y-2'>
+                    <div className='flex items-center gap-2 font-medium'>
+                      {storageValidation.checkpoint.success ? (
+                        <CheckCircle2 className='h-4 w-4 text-green-600' />
+                      ) : (
+                        <AlertTriangle className='h-4 w-4 text-amber-600' />
+                      )}
+                      <span>
+                        {storageValidation.checkpoint.success
+                          ? t('installer.runtimeStorage.validationPassed')
+                          : t('installer.runtimeStorage.validationWarning')}
+                      </span>
+                    </div>
+                    {storageValidation.checkpoint.warning && (
+                      <div className='text-muted-foreground'>
+                        {storageValidation.checkpoint.warning}
+                      </div>
+                    )}
+                    <div className='space-y-1'>
+                      {storageValidation.checkpoint.hosts.map((host) => (
+                        <div key={host.host_id}>
+                          <span className='font-medium'>
+                            {host.host_name || host.host_id}
+                          </span>
+                          {' · '}
+                          <span>{host.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className='pb-2'>
+                <div className='flex items-start justify-between gap-3'>
+                  <div>
+                    <CardTitle className='text-base flex items-center gap-2'>
+                      <Database className='h-4 w-4' />
+                      {t('installer.runtimeStorage.imapTitle')}
+                    </CardTitle>
+                    <p className='text-sm text-muted-foreground'>
+                      {t('installer.runtimeStorage.imapDescription')}
+                    </p>
+                  </div>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={applyImapToCheckpoint}
+                    disabled={config.imap.storage_type === 'DISABLED'}
+                  >
+                    {t('installer.runtimeStorage.applyToCheckpoint')}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className='space-y-3'>
+                <div className='rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-100'>
+                  <div className='flex items-start gap-2'>
+                    <Info className='mt-0.5 h-4 w-4 shrink-0' />
+                    <div className='space-y-1'>
+                      <p>{t('installer.runtimeStorage.imapGuidanceMeta')}</p>
+                      <p>{t('installer.runtimeStorage.imapGuidanceBatch')}</p>
+                      <p>
+                        {t('installer.runtimeStorage.imapGuidanceStreaming')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-2'>
+                    <Label>{t('installer.storageType')}</Label>
+                    <Select
+                      value={config.imap.storage_type}
+                      onValueChange={(value: IMAPStorageType) =>
+                        updateConfig({
+                          imap: {
+                            ...config.imap,
+                            storage_type: value,
+                          },
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='DISABLED'>
+                          {t('installer.runtimeStorage.imapDisabled')}
+                        </SelectItem>
+                        <SelectItem value='LOCAL_FILE'>
+                          {t('installer.runtimeStorage.localFile')}
+                        </SelectItem>
+                        <SelectItem value='HDFS'>HDFS</SelectItem>
+                        <SelectItem value='OSS'>Aliyun OSS</SelectItem>
+                        <SelectItem value='S3'>AWS S3</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className='space-y-2'>
+                    <Label>{t('installer.storagePath')}</Label>
+                    <Input
+                      value={config.imap.namespace}
+                      onChange={(e) =>
+                        updateConfig({
+                          imap: {
+                            ...config.imap,
+                            namespace: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder='/tmp/seatunnel/imap/'
+                    />
+                    <p className='text-xs text-muted-foreground'>
+                      {t('installer.runtimeStorage.imapPathHint')}
+                    </p>
+                  </div>
+                </div>
+
+                {config.imap.storage_type === 'HDFS' && (
+                  <div className='space-y-4'>
+                    <div className='flex items-center space-x-2'>
+                      <Checkbox
+                        id='deploy-imap-ha'
+                        checked={config.imap.hdfs_ha_enabled || false}
+                        onCheckedChange={(checked) =>
+                          updateConfig({
+                            imap: {
+                              ...config.imap,
+                              hdfs_ha_enabled: checked === true,
+                            },
+                          })
+                        }
+                      />
+                      <Label htmlFor='deploy-imap-ha'>
+                        {t('installer.hdfsHAMode')}
+                      </Label>
+                    </div>
+                    {!config.imap.hdfs_ha_enabled && (
+                      <div className='grid grid-cols-2 gap-4'>
+                        <div className='space-y-2'>
+                          <Label>{t('installer.hdfsNameNodeHost')}</Label>
+                          <Input
+                            value={config.imap.hdfs_namenode_host || ''}
+                            onChange={(e) =>
+                              updateConfig({
+                                imap: {
+                                  ...config.imap,
+                                  hdfs_namenode_host: e.target.value,
+                                },
+                              })
+                            }
+                            placeholder='namenode.example.com'
+                          />
+                        </div>
+                        <div className='space-y-2'>
+                          <Label>{t('installer.hdfsNameNodePort')}</Label>
+                          <Input
+                            type='number'
+                            value={config.imap.hdfs_namenode_port || ''}
+                            onChange={(e) =>
+                              updateConfig({
+                                imap: {
+                                  ...config.imap,
+                                  hdfs_namenode_port:
+                                    parseInt(e.target.value) || 0,
+                                },
+                              })
+                            }
+                            placeholder='8020'
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {config.imap.hdfs_ha_enabled && (
+                      <div className='space-y-3 p-3 border rounded-md bg-muted/30'>
+                        <div className='grid grid-cols-2 gap-4'>
+                          <div className='space-y-2'>
+                            <Label>{t('installer.hdfsNameServices')}</Label>
+                            <Input
+                              value={config.imap.hdfs_name_services || ''}
+                              onChange={(e) =>
+                                updateConfig({
+                                  imap: {
+                                    ...config.imap,
+                                    hdfs_name_services: e.target.value,
+                                  },
+                                })
+                              }
+                              placeholder='mycluster'
+                            />
+                          </div>
+                          <div className='space-y-2'>
+                            <Label>{t('installer.hdfsHANamenodes')}</Label>
+                            <Input
+                              value={config.imap.hdfs_ha_namenodes || ''}
+                              onChange={(e) =>
+                                updateConfig({
+                                  imap: {
+                                    ...config.imap,
+                                    hdfs_ha_namenodes: e.target.value,
+                                  },
+                                })
+                              }
+                              placeholder='nn1,nn2'
+                            />
+                          </div>
+                        </div>
+                        <div className='grid grid-cols-2 gap-4'>
+                          <div className='space-y-2'>
+                            <Label>
+                              {t('installer.hdfsNamenodeRPCAddress1')}
+                            </Label>
+                            <Input
+                              value={
+                                config.imap.hdfs_namenode_rpc_address_1 || ''
+                              }
+                              onChange={(e) =>
+                                updateConfig({
+                                  imap: {
+                                    ...config.imap,
+                                    hdfs_namenode_rpc_address_1: e.target.value,
+                                  },
+                                })
+                              }
+                              placeholder='nn1-host:8020'
+                            />
+                          </div>
+                          <div className='space-y-2'>
+                            <Label>
+                              {t('installer.hdfsNamenodeRPCAddress2')}
+                            </Label>
+                            <Input
+                              value={
+                                config.imap.hdfs_namenode_rpc_address_2 || ''
+                              }
+                              onChange={(e) =>
+                                updateConfig({
+                                  imap: {
+                                    ...config.imap,
+                                    hdfs_namenode_rpc_address_2: e.target.value,
+                                  },
+                                })
+                              }
+                              placeholder='nn2-host:8020'
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className='flex items-center space-x-2'>
+                      <Checkbox
+                        id='deploy-imap-kerberos'
+                        checked={
+                          Boolean(config.imap.kerberos_principal) ||
+                          Boolean(config.imap.kerberos_keytab_file_path)
+                        }
+                        onCheckedChange={(checked) =>
+                          updateConfig({
+                            imap: {
+                              ...config.imap,
+                              kerberos_principal:
+                                checked === true
+                                  ? config.imap.kerberos_principal || ''
+                                  : undefined,
+                              kerberos_keytab_file_path:
+                                checked === true
+                                  ? config.imap.kerberos_keytab_file_path || ''
+                                  : undefined,
+                            },
+                          })
+                        }
+                      />
+                      <Label htmlFor='deploy-imap-kerberos'>
+                        {t('installer.hdfsKerberos')}
+                      </Label>
+                    </div>
+                    {(Boolean(config.imap.kerberos_principal) ||
+                      Boolean(config.imap.kerberos_keytab_file_path)) && (
+                      <div className='grid grid-cols-2 gap-4 p-3 border rounded-md bg-muted/30'>
+                        <div className='space-y-2'>
+                          <Label>{t('installer.kerberosPrincipal')}</Label>
+                          <Input
+                            value={config.imap.kerberos_principal || ''}
+                            onChange={(e) =>
+                              updateConfig({
+                                imap: {
+                                  ...config.imap,
+                                  kerberos_principal: e.target.value,
+                                },
+                              })
+                            }
+                            placeholder='hdfs/namenode@EXAMPLE.COM'
+                          />
+                        </div>
+                        <div className='space-y-2'>
+                          <Label>{t('installer.kerberosKeytabPath')}</Label>
+                          <Input
+                            value={config.imap.kerberos_keytab_file_path || ''}
+                            onChange={(e) =>
+                              updateConfig({
+                                imap: {
+                                  ...config.imap,
+                                  kerberos_keytab_file_path: e.target.value,
+                                },
+                              })
+                            }
+                            placeholder='/etc/security/keytabs/hdfs.keytab'
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {(config.imap.storage_type === 'OSS' ||
+                  config.imap.storage_type === 'S3') && (
+                  <div className='space-y-3'>
+                    <div className='grid grid-cols-2 gap-4'>
+                      <div className='space-y-2'>
+                        <Label>{t('installer.endpoint')}</Label>
+                        <Input
+                          value={config.imap.storage_endpoint || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              imap: {
+                                ...config.imap,
+                                storage_endpoint: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder={
+                            config.imap.storage_type === 'OSS'
+                              ? 'oss-cn-hangzhou.aliyuncs.com'
+                              : 'http://minio.example.com:9000'
+                          }
+                        />
+                      </div>
+                      <div className='space-y-2'>
+                        <Label>{t('installer.bucket')}</Label>
+                        <Input
+                          value={config.imap.storage_bucket || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              imap: {
+                                ...config.imap,
+                                storage_bucket: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder='my-imap-bucket'
+                        />
+                      </div>
+                    </div>
+                    <div className='grid grid-cols-2 gap-4'>
+                      <div className='space-y-2'>
+                        <Label>{t('installer.accessKey')}</Label>
+                        <Input
+                          type='password'
+                          value={config.imap.storage_access_key || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              imap: {
+                                ...config.imap,
+                                storage_access_key: e.target.value,
+                              },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className='space-y-2'>
+                        <Label>{t('installer.secretKey')}</Label>
+                        <Input
+                          type='password'
+                          value={config.imap.storage_secret_key || ''}
+                          onChange={(e) =>
+                            updateConfig({
+                              imap: {
+                                ...config.imap,
+                                storage_secret_key: e.target.value,
+                              },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {imapExternalEnabled && (
+                  <>
+                    <div className='flex items-center justify-between rounded-md border p-3'>
+                      <div className='space-y-1'>
+                        <div className='text-sm font-medium'>
+                          {t('installer.runtimeStorage.validateConnectivity')}
+                        </div>
+                        <div className='text-xs text-muted-foreground'>
+                          {t('installer.runtimeStorage.validationHint')}
+                        </div>
+                      </div>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => validateRuntimeStorage('imap')}
+                        disabled={validatingKind === 'imap'}
+                      >
+                        {validatingKind === 'imap' && (
+                          <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                        )}
+                        {t('installer.runtimeStorage.validateNow')}
+                      </Button>
+                    </div>
+                    {storageValidation.imap && (
+                      <div className='rounded-md border p-3 text-sm space-y-2'>
+                        <div className='flex items-center gap-2 font-medium'>
+                          {storageValidation.imap.success ? (
+                            <CheckCircle2 className='h-4 w-4 text-green-600' />
+                          ) : (
+                            <AlertTriangle className='h-4 w-4 text-amber-600' />
+                          )}
+                          <span>
+                            {storageValidation.imap.success
+                              ? t('installer.runtimeStorage.validationPassed')
+                              : t('installer.runtimeStorage.validationWarning')}
+                          </span>
+                        </div>
+                        {storageValidation.imap.warning && (
+                          <div className='text-muted-foreground'>
+                            {storageValidation.imap.warning}
+                          </div>
+                        )}
+                        <div className='space-y-1'>
+                          {storageValidation.imap.hosts.map((host) => (
+                            <div key={host.host_id}>
+                              <span className='font-medium'>
+                                {host.host_name || host.host_id}
+                              </span>
+                              {' · '}
+                              <span>{host.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1772,7 +2493,8 @@ export function ClusterDeployWizard({
             </p>
           </div>
           <Badge variant='outline'>
-            {config.selectedPlugins.length} {t('cluster.wizard.selectedPlugins')}
+            {config.selectedPlugins.length}{' '}
+            {t('cluster.wizard.selectedPlugins')}
           </Badge>
         </div>
 
@@ -1785,8 +2507,8 @@ export function ClusterDeployWizard({
           onPluginsChange={(plugins) => {
             const selectedPluginSet = new Set(plugins);
             const nextProfiles = Object.fromEntries(
-              Object.entries(config.selectedPluginProfiles).filter(([pluginName]) =>
-                selectedPluginSet.has(pluginName),
+              Object.entries(config.selectedPluginProfiles).filter(
+                ([pluginName]) => selectedPluginSet.has(pluginName),
               ),
             );
             updateConfig({

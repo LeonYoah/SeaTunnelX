@@ -499,7 +499,134 @@ func (s *Service) getPluginInfoWithMirror(ctx context.Context, name string, vers
 // ListInstalledPlugins returns installed plugins for a cluster.
 // ListInstalledPlugins 返回集群上已安装的插件列表。
 func (s *Service) ListInstalledPlugins(ctx context.Context, clusterID uint) ([]InstalledPlugin, error) {
-	return s.repo.ListByCluster(ctx, clusterID)
+	plugins, err := s.repo.ListByCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	plugins = s.reconcileInstalledPluginVersions(ctx, clusterID, plugins)
+	plugins = s.dedupeInstalledPlugins(ctx, clusterID, plugins)
+
+	localPlugins, err := s.downloader.ListLocalPlugins()
+	if err != nil {
+		logger.WarnF(ctx, "[Plugin] 加载本地插件元数据失败: %v", err)
+		return plugins, nil
+	}
+
+	type localPluginMetadataView struct {
+		selectedProfileKeys []string
+		attachedConnectors  []string
+		dependencies        []PluginDependency
+	}
+
+	localByKey := make(map[string]localPluginMetadataView, len(localPlugins))
+	for _, local := range localPlugins {
+		key := fmt.Sprintf("%s:%s", local.Name, local.Version)
+		localByKey[key] = localPluginMetadataView{
+			selectedProfileKeys: append([]string(nil), local.SelectedProfileKeys...),
+			attachedConnectors:  append([]string(nil), local.AttachedConnectors...),
+			dependencies:        append([]PluginDependency(nil), local.Dependencies...),
+		}
+	}
+
+	for index := range plugins {
+		key := fmt.Sprintf("%s:%s", plugins[index].PluginName, plugins[index].Version)
+		if metadata, ok := localByKey[key]; ok {
+			plugins[index].SelectedProfileKeys = metadata.selectedProfileKeys
+			plugins[index].AttachedConnectors = metadata.attachedConnectors
+			plugins[index].Dependencies = metadata.dependencies
+		}
+	}
+
+	return plugins, nil
+}
+
+func (s *Service) dedupeInstalledPlugins(ctx context.Context, clusterID uint, plugins []InstalledPlugin) []InstalledPlugin {
+	if len(plugins) <= 1 {
+		return plugins
+	}
+
+	result := make([]InstalledPlugin, 0, len(plugins))
+	seen := make(map[string]InstalledPlugin, len(plugins))
+	for _, plugin := range plugins {
+		key := strings.TrimSpace(plugin.PluginName)
+		if key == "" {
+			result = append(result, plugin)
+			continue
+		}
+
+		existing, exists := seen[key]
+		if !exists {
+			seen[key] = plugin
+			continue
+		}
+
+		keep := existing
+		drop := plugin
+		if plugin.UpdatedAt.After(existing.UpdatedAt) || plugin.InstalledAt.After(existing.InstalledAt) {
+			keep = plugin
+			drop = existing
+			seen[key] = plugin
+		}
+
+		if drop.ID > 0 {
+			if err := s.repo.Delete(ctx, drop.ID); err != nil {
+				logger.WarnF(ctx, "[Plugin] 删除集群 %d 重复插件记录失败: plugin=%s, id=%d, err=%v", clusterID, drop.PluginName, drop.ID, err)
+			} else {
+				logger.InfoF(ctx, "[Plugin] 已清理集群 %d 的重复插件记录: plugin=%s, removed_id=%d, kept_id=%d", clusterID, drop.PluginName, drop.ID, keep.ID)
+			}
+		}
+	}
+
+	for _, plugin := range plugins {
+		key := strings.TrimSpace(plugin.PluginName)
+		if key == "" {
+			continue
+		}
+		if kept, ok := seen[key]; ok && kept.ID == plugin.ID {
+			result = append(result, kept)
+			delete(seen, key)
+		}
+	}
+
+	return result
+}
+
+func (s *Service) reconcileInstalledPluginVersions(ctx context.Context, clusterID uint, plugins []InstalledPlugin) []InstalledPlugin {
+	if len(plugins) == 0 || s.clusterGetter == nil {
+		return plugins
+	}
+
+	clusterVersion, err := s.clusterGetter.GetClusterVersion(ctx, clusterID)
+	if err != nil || strings.TrimSpace(clusterVersion) == "" {
+		return plugins
+	}
+	clusterVersion = strings.TrimSpace(clusterVersion)
+	now := time.Now()
+
+	for index := range plugins {
+		if strings.TrimSpace(plugins[index].Version) == clusterVersion {
+			continue
+		}
+
+		plugins[index].Version = clusterVersion
+		if strings.TrimSpace(plugins[index].ArtifactID) != "" {
+			plugins[index].InstallPath = fmt.Sprintf("connectors/%s-%s.jar", plugins[index].ArtifactID, clusterVersion)
+		}
+		plugins[index].UpdatedAt = now
+
+		if updateErr := s.repo.Update(ctx, &plugins[index]); updateErr != nil {
+			logger.WarnF(
+				ctx,
+				"[Plugin] 对齐集群 %d 已安装插件 %s 版本到 %s 失败: %v",
+				clusterID,
+				plugins[index].PluginName,
+				clusterVersion,
+				updateErr,
+			)
+		}
+	}
+
+	return plugins
 }
 
 // GetInstalledPlugin returns an installed plugin by cluster and name.
