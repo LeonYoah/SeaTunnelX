@@ -29,6 +29,7 @@ AGENT_TEMPLATE="${ROOT_DIR}/config.e2e.agent-real.yaml"
 MINIO_MC_IMAGE="${E2E_INSTALLER_REAL_MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-03-12T17-29-24Z}"
 PLAYWRIGHT_PROJECT="${PLAYWRIGHT_PROJECT:-}"
 PLAYWRIGHT_GREP="${PLAYWRIGHT_GREP:-}"
+PLAYWRIGHT_SPEC="${E2E_REAL_PLAYWRIGHT_SPEC:-e2e/install-wizard-real.spec.ts}"
 
 if [[ -z "${SKIP_LOCAL_CLEANUP}" ]]; then
   if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
@@ -160,7 +161,7 @@ docker run --rm --network host --entrypoint /bin/sh "${MINIO_MC_IMAGE}" -c "\
   mc mb -p e2e/${IMAP_BUCKET_NAME}" >/dev/null
 
 cd "${FRONTEND_DIR}"
-playwright_args=(e2e/install-wizard-real.spec.ts)
+playwright_args=("${PLAYWRIGHT_SPEC}")
 if [[ -n "${PLAYWRIGHT_PROJECT}" ]]; then
   playwright_args+=(--project "${PLAYWRIGHT_PROJECT}")
 fi

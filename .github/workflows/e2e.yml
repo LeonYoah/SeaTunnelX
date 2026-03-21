@@ -30,6 +30,7 @@ on:
           - all
           - smoke
           - installer-real
+          - upgrade-real
   schedule:
     - cron: '0 18 * * *'
 
@@ -52,6 +53,7 @@ jobs:
       backend: ${{ steps.scope.outputs.backend }}
       run_smoke: ${{ steps.scope.outputs.run_smoke }}
       run_installer_real: ${{ steps.scope.outputs.run_installer_real }}
+      run_upgrade_real: ${{ steps.scope.outputs.run_upgrade_real }}
 
     steps:
       - name: Checkout
@@ -79,6 +81,40 @@ jobs:
               - '.github/workflows/ci-main.yml'
               - '.github/workflows/e2e.yml'
               - 'scripts/restart.sh'
+            installer_real:
+              - 'frontend/e2e/install-wizard-real.spec.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/installer/**'
+              - 'frontend/lib/services/installer/**'
+              - 'frontend/app/(main)/e2e-lab/install-wizard/**'
+              - 'internal/apps/installer/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
+            upgrade_real:
+              - 'frontend/e2e/upgrade-real.spec.ts'
+              - 'frontend/e2e/helpers/upgrade-real.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/scripts/e2e/run-real-upgrade.sh'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/cluster/upgrade/**'
+              - 'frontend/lib/services/st-upgrade/**'
+              - 'frontend/lib/st-upgrade-session.ts'
+              - 'internal/apps/stupgrade/**'
+              - 'internal/apps/plugin/**'
+              - 'internal/apps/config/**'
+              - 'internal/apps/cluster/**'
+              - 'internal/seatunnel/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
 
       - name: Resolve E2E scope
         id: scope
@@ -87,11 +123,14 @@ jobs:
           INPUT_SUITES: ${{ github.event.inputs.suites || 'all' }}
           FILTER_FRONTEND: ${{ steps.filter.outputs.frontend }}
           FILTER_BACKEND: ${{ steps.filter.outputs.backend }}
+          FILTER_INSTALLER_REAL: ${{ steps.filter.outputs.installer_real }}
+          FILTER_UPGRADE_REAL: ${{ steps.filter.outputs.upgrade_real }}
         run: |
           frontend=false
           backend=false
           run_smoke=false
           run_installer_real=false
+          run_upgrade_real=false
 
           if [ "${EVENT_NAME}" = "pull_request" ]; then
             frontend="${FILTER_FRONTEND}"
@@ -99,8 +138,11 @@ jobs:
             if [ "${frontend}" = "true" ]; then
               run_smoke=true
             fi
-            if [ "${frontend}" = "true" ] || [ "${backend}" = "true" ]; then
+            if [ "${FILTER_INSTALLER_REAL}" = "true" ]; then
               run_installer_real=true
+            fi
+            if [ "${FILTER_UPGRADE_REAL}" = "true" ]; then
+              run_upgrade_real=true
             fi
           else
             frontend=true
@@ -112,9 +154,13 @@ jobs:
               installer-real)
                 run_installer_real=true
                 ;;
+              upgrade-real)
+                run_upgrade_real=true
+                ;;
               *)
                 run_smoke=true
                 run_installer_real=true
+                run_upgrade_real=true
                 ;;
             esac
           fi
@@ -123,6 +169,7 @@ jobs:
           echo "backend=${backend}" >> "$GITHUB_OUTPUT"
           echo "run_smoke=${run_smoke}" >> "$GITHUB_OUTPUT"
           echo "run_installer_real=${run_installer_real}" >> "$GITHUB_OUTPUT"
+          echo "run_upgrade_real=${run_upgrade_real}" >> "$GITHUB_OUTPUT"
 
       - name: Print E2E scope
         run: |
@@ -130,6 +177,7 @@ jobs:
           echo "backend=${{ steps.scope.outputs.backend }}"
           echo "run_smoke=${{ steps.scope.outputs.run_smoke }}"
           echo "run_installer_real=${{ steps.scope.outputs.run_installer_real }}"
+          echo "run_upgrade_real=${{ steps.scope.outputs.run_upgrade_real }}"
 
   smoke-select:
     name: E2E Smoke Select
@@ -306,10 +354,70 @@ jobs:
             frontend/test-results
           if-no-files-found: ignore
 
+  upgrade-real:
+    name: E2E Real Upgrade
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run_upgrade_real == 'true'
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run real upgrade E2E
+        run: |
+          cd frontend
+          pnpm run test:e2e:upgrade-real
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-upgrade-real
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
   gate:
     name: E2E Gate
     runs-on: ubuntu-latest
-    needs: [changes, smoke-select, smoke, installer-real]
+    needs: [changes, smoke-select, smoke, installer-real, upgrade-real]
     if: always()
 
     steps:
@@ -320,6 +428,8 @@ jobs:
           echo "smoke_result=${{ needs.smoke.result }}"
           echo "run_installer_real=${{ needs.changes.outputs.run_installer_real }}"
           echo "installer_real_result=${{ needs.installer-real.result }}"
+          echo "run_upgrade_real=${{ needs.changes.outputs.run_upgrade_real }}"
+          echo "upgrade_real_result=${{ needs.upgrade-real.result }}"
 
           if [ "${{ needs.changes.outputs.run_smoke }}" = "true" ] &&
              [ "${{ needs.smoke-select.outputs.has_specs }}" = "true" ] &&
@@ -331,6 +441,12 @@ jobs:
           if [ "${{ needs.changes.outputs.run_installer_real }}" = "true" ] &&
              [ "${{ needs.installer-real.result }}" != "success" ]; then
             echo "::error::Real installer E2E did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.run_upgrade_real }}" = "true" ] &&
+             [ "${{ needs.upgrade-real.result }}" != "success" ]; then
+            echo "::error::Real upgrade E2E did not succeed."
             exit 1
           fi
 

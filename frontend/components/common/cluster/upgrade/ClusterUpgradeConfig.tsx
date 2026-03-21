@@ -333,7 +333,7 @@ export function ClusterUpgradeConfig({clusterId}: ClusterUpgradeConfigProps) {
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='space-y-6' data-testid='upgrade-config-page'>
       <div className='flex flex-wrap items-center justify-between gap-4'>
         <div className='space-y-2'>
           <div className='flex items-center gap-3'>
@@ -373,6 +373,7 @@ export function ClusterUpgradeConfig({clusterId}: ClusterUpgradeConfigProps) {
             {t('backToPrepare')}
           </Button>
           <Button
+            data-testid='upgrade-config-create-plan'
             onClick={handleCreatePlan}
             disabled={creatingPlan || unresolvedCount > 0}
           >

@@ -25,6 +25,7 @@ const backendBaseURL =
 export interface OnlineHostFixture {
   id: number;
   name: string;
+  ipAddress: string;
 }
 
 interface HostListResponse {
@@ -32,6 +33,7 @@ interface HostListResponse {
     hosts?: Array<{
       id?: number | string;
       name?: string;
+      ip_address?: string;
       is_online?: boolean;
       agent_status?: string;
     }>;
@@ -58,6 +60,7 @@ export async function waitForOnlineHost(
         return {
           id: Number(onlineHost.id),
           name: String(onlineHost.name || `Host-${onlineHost.id}`),
+          ipAddress: String(onlineHost.ip_address || '127.0.0.1'),
         };
       }
     }
