@@ -264,6 +264,7 @@ export function ClusterDeployWizard({
     'idle' | 'running' | 'success' | 'failed'
   >('idle');
   const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployWarnings, setDeployWarnings] = useState<string[]>([]);
   const [createdClusterId, setCreatedClusterId] = useState<number | null>(null);
   // Detailed deploy steps state / 详细部署步骤状态
   const [deploySteps, setDeploySteps] = useState<
@@ -374,7 +375,9 @@ export function ClusterDeployWizard({
     () => resolveSeatunnelVersionCapabilities(packages, config.version),
     [packages, config.version],
   );
-  const httpServiceSupported = Boolean(versionCapabilities?.supports_http_service);
+  const httpServiceSupported = Boolean(
+    versionCapabilities?.supports_http_service,
+  );
 
   useEffect(() => {
     if (!open || !resolvedRecommendedVersion || config.version) {
@@ -400,7 +403,8 @@ export function ClusterDeployWizard({
           ? prev.runtime.enable_http
           : false,
         job_log_mode: versionCapabilities.supports_job_log_mode
-          ? prev.runtime.job_log_mode || versionCapabilities.default_job_log_mode
+          ? prev.runtime.job_log_mode ||
+            versionCapabilities.default_job_log_mode
           : 'mixed',
       },
     }));
@@ -431,11 +435,15 @@ export function ClusterDeployWizard({
         ? [
             config.clusterPort,
             config.workerPort,
-            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+            ...(httpServiceSupported && config.runtime.enable_http
+              ? [config.httpPort]
+              : []),
           ]
         : [
             config.clusterPort,
-            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+            ...(httpServiceSupported && config.runtime.enable_http
+              ? [config.httpPort]
+              : []),
           ];
 
     // Run precheck for each host in parallel / 并行运行每个主机的预检查
@@ -707,6 +715,7 @@ export function ClusterDeployWizard({
     setDeployStatus('running');
     setDeployProgress(0);
     setDeployError(null);
+    setDeployWarnings([]);
     setDeploySteps([]);
 
     // Helper to update step status / 更新步骤状态的辅助函数
@@ -729,6 +738,22 @@ export function ClusterDeployWizard({
           );
         }
         return [...prev, {step, status, message, hostName, progress}];
+      });
+    };
+
+    const mergeWarnings = (hostLabel: string, warnings?: string[]) => {
+      if (!Array.isArray(warnings) || warnings.length === 0) {
+        return;
+      }
+      setDeployWarnings((prev) => {
+        const merged = new Set(prev);
+        warnings.forEach((warning) => {
+          const trimmed = warning.trim();
+          if (trimmed) {
+            merged.add(`${hostLabel}: ${trimmed}`);
+          }
+        });
+        return Array.from(merged);
       });
     };
 
@@ -901,6 +926,7 @@ export function ClusterDeployWizard({
 
         // Helper to update steps from backend response / 从后端响应更新步骤的辅助函数
         const updateStepsFromStatus = () => {
+          mergeWarnings(label, status.warnings);
           if (status.steps && status.steps.length > 0) {
             for (const step of status.steps) {
               const stepKey = `${step.step}_${host.id}_${role}`;
@@ -1025,6 +1051,7 @@ export function ClusterDeployWizard({
     setDeployStatus('idle');
     setDeployProgress(0);
     setDeployError(null);
+    setDeployWarnings([]);
     setCreatedClusterId(null);
     setPrecheckResults([]);
     setPrecheckRunning(false);
@@ -2819,6 +2846,7 @@ export function ClusterDeployWizard({
                           setDeployStatus('idle');
                           setDeployProgress(0);
                           setDeployError(null);
+                          setDeployWarnings([]);
                           setDeploySteps([]);
                           setCurrentStepIndex(4); // plugins step index
                         }}
@@ -2847,6 +2875,29 @@ export function ClusterDeployWizard({
                 </div>
                 <Progress value={deployProgress} className='h-3' />
               </div>
+
+              {deployWarnings.length > 0 && (
+                <div className='mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30'>
+                  <div className='flex items-start gap-3'>
+                    <AlertTriangle className='mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600' />
+                    <div className='space-y-2'>
+                      <p className='text-sm font-medium text-amber-900 dark:text-amber-200'>
+                        {t('cluster.wizard.warning')}
+                      </p>
+                      <div className='space-y-1'>
+                        {deployWarnings.map((warning) => (
+                          <p
+                            key={warning}
+                            className='break-words text-sm text-amber-800 dark:text-amber-300'
+                          >
+                            {warning}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Detailed steps / 详细步骤 */}
               {deploySteps.length > 0 && (
@@ -2930,6 +2981,31 @@ export function ClusterDeployWizard({
               </div>
             </CardContent>
           </Card>
+
+          {deployWarnings.length > 0 && (
+            <Card className='border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30'>
+              <CardContent className='pt-6'>
+                <div className='flex items-start gap-3'>
+                  <AlertTriangle className='mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600' />
+                  <div className='space-y-2'>
+                    <p className='text-sm font-medium text-amber-900 dark:text-amber-200'>
+                      {t('cluster.wizard.warning')}
+                    </p>
+                    <div className='space-y-1'>
+                      {deployWarnings.map((warning) => (
+                        <p
+                          key={warning}
+                          className='break-words text-sm text-amber-800 dark:text-amber-300'
+                        >
+                          {warning}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <div className='flex justify-center gap-4'>
             <Button variant='outline' onClick={handleClose}>

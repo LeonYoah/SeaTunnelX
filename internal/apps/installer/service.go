@@ -2240,6 +2240,9 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 			s.installMu.Lock()
 			status.Progress = progress
 			status.Message = message
+			if warningMessage := extractInstallationWarning(message); warningMessage != "" {
+				appendInstallationWarning(status, warningMessage)
+			}
 
 			// Parse step from message format: [step] message
 			// 从消息格式解析步骤: [step] message
@@ -2258,7 +2261,11 @@ func (s *Service) pollInstallationStatus(ctx context.Context, commandID string, 
 				now := time.Now()
 				status.Status = StepStatusSuccess
 				status.Progress = 100
-				status.Message = "Installation completed, starting cluster... / 安装完成，正在启动集群..."
+				if len(status.Warnings) > 0 {
+					status.Message = "Installation completed with warnings, starting cluster... / 安装完成，但存在警告，正在启动集群..."
+				} else {
+					status.Message = "Installation completed, starting cluster... / 安装完成，正在启动集群..."
+				}
 				status.EndTime = &now
 				// Mark all steps as complete
 				// 将所有步骤标记为完成
@@ -2406,7 +2413,15 @@ func (s *Service) startClusterAfterInstall(ctx context.Context, agentID string, 
 	// Final status update
 	// 最终状态更新
 	s.installMu.Lock()
-	status.Message = fmt.Sprintf("Installation and node (%s) startup completed / 安装和节点 (%s) 启动完成", nodeRole, nodeRole)
+	if len(status.Warnings) > 0 {
+		status.Message = fmt.Sprintf(
+			"Installation and node (%s) startup completed with warnings / 安装和节点 (%s) 启动完成，但存在警告",
+			nodeRole,
+			nodeRole,
+		)
+	} else {
+		status.Message = fmt.Sprintf("Installation and node (%s) startup completed / 安装和节点 (%s) 启动完成", nodeRole, nodeRole)
+	}
 	s.installMu.Unlock()
 }
 
@@ -2466,6 +2481,36 @@ func updateStepStatus(status *InstallationStatus, currentStep string, progress i
 	}
 	status.Steps[currentIdx].Message = msgWithoutPrefix
 	status.Steps[currentIdx].Progress = progress
+}
+
+func extractInstallationWarning(message string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.Index(trimmed, "] "); idx != -1 {
+		trimmed = strings.TrimSpace(trimmed[idx+2:])
+	}
+	if strings.HasPrefix(trimmed, "Warning:") {
+		return trimmed
+	}
+	return ""
+}
+
+func appendInstallationWarning(status *InstallationStatus, warning string) {
+	if status == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(warning)
+	if trimmed == "" {
+		return
+	}
+	for _, existing := range status.Warnings {
+		if existing == trimmed {
+			return
+		}
+	}
+	status.Warnings = append(status.Warnings, trimmed)
 }
 
 // buildInstallParams builds installation parameters for Agent command.

@@ -323,6 +323,7 @@ export interface InstallationStatus {
   progress: number;
   message?: string;
   error?: string;
+  warnings?: string[];
   start_time: string;
   end_time?: string;
 }

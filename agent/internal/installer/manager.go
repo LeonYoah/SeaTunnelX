@@ -1401,8 +1401,8 @@ func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *Instal
 		{InstallStepVerify, func() error { return m.executeStepVerify(params, reporter) }},
 		{InstallStepExtract, func() error { return m.executeStepExtract(ctx, params, reporter) }},
 		{InstallStepConfigureCluster, func() error { return m.executeStepConfigureCluster(params, reporter) }},
-		{InstallStepConfigureCheckpoint, func() error { return m.executeStepConfigureCheckpoint(params, reporter) }},
-		{InstallStepConfigureIMAP, func() error { return m.executeStepConfigureIMAP(params, reporter) }},
+		{InstallStepConfigureCheckpoint, func() error { return m.executeStepConfigureCheckpoint(ctx, params, reporter) }},
+		{InstallStepConfigureIMAP, func() error { return m.executeStepConfigureIMAP(ctx, params, reporter) }},
 		{InstallStepConfigureJVM, func() error { return m.executeStepConfigureJVM(params, reporter) }},
 		{InstallStepInstallPlugins, func() error { return m.executeStepInstallPlugins(ctx, params, reporter) }},
 		{InstallStepRegisterCluster, func() error { return m.executeStepRegisterCluster(params, reporter) }},
@@ -1463,9 +1463,9 @@ func (m *InstallerManager) ExecuteStep(ctx context.Context, step InstallStep, pa
 	case InstallStepConfigureCluster:
 		err = m.executeStepConfigureCluster(params, reporter)
 	case InstallStepConfigureCheckpoint:
-		err = m.executeStepConfigureCheckpoint(params, reporter)
+		err = m.executeStepConfigureCheckpoint(ctx, params, reporter)
 	case InstallStepConfigureIMAP:
-		err = m.executeStepConfigureIMAP(params, reporter)
+		err = m.executeStepConfigureIMAP(ctx, params, reporter)
 	case InstallStepConfigureJVM:
 		err = m.executeStepConfigureJVM(params, reporter)
 	case InstallStepInstallPlugins:
@@ -1663,15 +1663,28 @@ func (m *InstallerManager) executeStepConfigureCluster(params *InstallParams, re
 
 // executeStepConfigureCheckpoint configures checkpoint storage
 // executeStepConfigureCheckpoint 配置检查点存储
-func (m *InstallerManager) executeStepConfigureCheckpoint(params *InstallParams, reporter ProgressReporter) error {
+func (m *InstallerManager) executeStepConfigureCheckpoint(ctx context.Context, params *InstallParams, reporter ProgressReporter) error {
 	if params.Checkpoint == nil {
 		reporter.Report(InstallStepConfigureCheckpoint, 100, "Checkpoint configuration skipped (using defaults) / 跳过检查点配置（使用默认值）")
 		return nil
 	}
 
 	reporter.Report(InstallStepConfigureCheckpoint, 0, "Configuring checkpoint storage... / 配置检查点存储...")
+	warningMessage := m.maybeProbeCheckpointRuntimeStorage(ctx, params)
 	if err := m.configureCheckpointStorage(params); err != nil {
 		return err
+	}
+	if warningMessage != "" {
+		reporter.Report(
+			InstallStepConfigureCheckpoint,
+			100,
+			fmt.Sprintf(
+				"Warning: checkpoint runtime probe issue: %s; configuration applied / 警告：checkpoint 运行时探测存在问题：%s；配置已应用",
+				warningMessage,
+				warningMessage,
+			),
+		)
+		return nil
 	}
 	reporter.Report(InstallStepConfigureCheckpoint, 100, "Checkpoint storage configured / 检查点存储配置完成")
 	return nil
@@ -1679,15 +1692,28 @@ func (m *InstallerManager) executeStepConfigureCheckpoint(params *InstallParams,
 
 // executeStepConfigureIMAP configures IMAP persistence storage
 // executeStepConfigureIMAP 配置 IMAP 持久化存储
-func (m *InstallerManager) executeStepConfigureIMAP(params *InstallParams, reporter ProgressReporter) error {
+func (m *InstallerManager) executeStepConfigureIMAP(ctx context.Context, params *InstallParams, reporter ProgressReporter) error {
 	if params.IMAP == nil {
 		reporter.Report(InstallStepConfigureIMAP, 100, "IMAP configuration skipped (using defaults) / 跳过 IMAP 配置（使用默认值）")
 		return nil
 	}
 
 	reporter.Report(InstallStepConfigureIMAP, 0, "Configuring IMAP persistence... / 配置 IMAP 持久化...")
+	warningMessage := m.maybeProbeIMAPRuntimeStorage(ctx, params)
 	if err := m.configureIMAPStorage(params); err != nil {
 		return err
+	}
+	if warningMessage != "" {
+		reporter.Report(
+			InstallStepConfigureIMAP,
+			100,
+			fmt.Sprintf(
+				"Warning: IMAP runtime probe issue: %s; configuration applied / 警告：IMAP 运行时探测存在问题：%s；配置已应用",
+				warningMessage,
+				warningMessage,
+			),
+		)
+		return nil
 	}
 	reporter.Report(InstallStepConfigureIMAP, 100, "IMAP persistence configured / IMAP 持久化配置完成")
 	return nil
@@ -1876,104 +1902,9 @@ func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) err
 		return fmt.Errorf("%w: failed to parse seatunnel.yaml: %v", ErrConfigGenerationFailed, err)
 	}
 
-	// Ensure namespace ends with "/" / 确保 namespace 以 "/" 结尾
-	namespace := params.Checkpoint.Namespace
-	if namespace != "" && !strings.HasSuffix(namespace, "/") {
-		namespace = namespace + "/"
-	}
-
-	// Build plugin-config map based on storage type
-	// 根据存储类型构建 plugin-config map
-	pluginConfig := make(map[string]string)
-
-	switch params.Checkpoint.StorageType {
-	case CheckpointStorageLocalFile:
-		pluginConfig["storage.type"] = "hdfs"
-		pluginConfig["namespace"] = namespace
-		pluginConfig["fs.defaultFS"] = "file:///"
-
-	case CheckpointStorageHDFS:
-		pluginConfig["storage.type"] = "hdfs"
-		pluginConfig["namespace"] = namespace
-
-		// Check if HA mode is enabled / 检查是否启用 HA 模式
-		if params.Checkpoint.HDFSHAEnabled {
-			if strings.TrimSpace(params.Checkpoint.HDFSNameServices) == "" {
-				return fmt.Errorf("%w: hdfs_name_services is required for HDFS HA storage", ErrConfigGenerationFailed)
-			}
-			haEndpoints, err := seatunnelmeta.ResolveHDFSHARPCAddresses(
-				params.Checkpoint.HDFSHANamenodes,
-				params.Checkpoint.HDFSNamenodeRPCAddress1,
-				params.Checkpoint.HDFSNamenodeRPCAddress2,
-			)
-			if err != nil {
-				return fmt.Errorf("%w: %v", ErrConfigGenerationFailed, err)
-			}
-			// HA mode configuration / HA 模式配置
-			pluginConfig["fs.defaultFS"] = fmt.Sprintf("hdfs://%s", params.Checkpoint.HDFSNameServices)
-			pluginConfig["seatunnel.hadoop.dfs.nameservices"] = params.Checkpoint.HDFSNameServices
-			pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.ha.namenodes.%s", params.Checkpoint.HDFSNameServices)] = params.Checkpoint.HDFSHANamenodes
-			for _, endpoint := range haEndpoints {
-				pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, endpoint.Name)] = endpoint.Address
-			}
-
-			// Failover proxy provider / 故障转移代理提供者
-			failoverProvider := params.Checkpoint.HDFSFailoverProxyProvider
-			if failoverProvider == "" {
-				failoverProvider = "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider"
-			}
-			pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.client.failover.proxy.provider.%s", params.Checkpoint.HDFSNameServices)] = failoverProvider
-		} else {
-			// Standard HDFS mode / 标准 HDFS 模式
-			pluginConfig["fs.defaultFS"] = fmt.Sprintf("hdfs://%s:%d", params.Checkpoint.HDFSNameNodeHost, params.Checkpoint.HDFSNameNodePort)
-		}
-
-		// Kerberos authentication / Kerberos 认证
-		if params.Checkpoint.KerberosPrincipal != "" {
-			pluginConfig["kerberosPrincipal"] = params.Checkpoint.KerberosPrincipal
-		}
-		if params.Checkpoint.KerberosKeytabFilePath != "" {
-			pluginConfig["kerberosKeytabFilePath"] = params.Checkpoint.KerberosKeytabFilePath
-		}
-
-	case CheckpointStorageOSS:
-		pluginConfig["storage.type"] = "oss"
-		pluginConfig["namespace"] = namespace
-		if params.Checkpoint.StorageBucket != "" {
-			pluginConfig["oss.bucket"] = params.Checkpoint.StorageBucket
-		}
-		if params.Checkpoint.StorageEndpoint != "" {
-			pluginConfig["fs.oss.endpoint"] = params.Checkpoint.StorageEndpoint
-		}
-		if params.Checkpoint.StorageAccessKey != "" {
-			pluginConfig["fs.oss.accessKeyId"] = params.Checkpoint.StorageAccessKey
-		}
-		if params.Checkpoint.StorageSecretKey != "" {
-			pluginConfig["fs.oss.accessKeySecret"] = params.Checkpoint.StorageSecretKey
-		}
-
-	case CheckpointStorageS3:
-		pluginConfig["storage.type"] = "s3"
-		pluginConfig["namespace"] = namespace
-		if params.Checkpoint.StorageBucket != "" {
-			pluginConfig["s3.bucket"] = params.Checkpoint.StorageBucket
-		}
-		if params.Checkpoint.StorageEndpoint != "" {
-			pluginConfig["fs.s3a.endpoint"] = params.Checkpoint.StorageEndpoint
-		}
-		if params.Checkpoint.StorageAccessKey != "" {
-			pluginConfig["fs.s3a.access.key"] = params.Checkpoint.StorageAccessKey
-		}
-		if params.Checkpoint.StorageSecretKey != "" {
-			pluginConfig["fs.s3a.secret.key"] = params.Checkpoint.StorageSecretKey
-		}
-		pluginConfig["fs.s3a.aws.credentials.provider"] = "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
-
-	default:
-		// Default to local file / 默认使用本地文件
-		pluginConfig["storage.type"] = "hdfs"
-		pluginConfig["namespace"] = namespace
-		pluginConfig["fs.defaultFS"] = "file:///"
+	pluginConfig, err := buildCheckpointPluginConfig(params.Checkpoint)
+	if err != nil {
+		return fmt.Errorf("%w: failed to build checkpoint plugin config: %v", ErrConfigGenerationFailed, err)
 	}
 
 	// Update plugin-config in YAML tree using yaml.Node / 使用 yaml.Node 更新 YAML 树中的 plugin-config

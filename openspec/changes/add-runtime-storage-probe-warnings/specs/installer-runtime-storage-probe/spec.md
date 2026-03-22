@@ -1,0 +1,52 @@
+## ADDED Requirements
+
+### Requirement: The installer SHALL attempt real runtime storage probes for remote checkpoint and IMAP backends
+
+The system SHALL attempt a real SeaTunnel runtime storage probe for remote checkpoint and IMAP storage backends during installation after the SeaTunnel package has been extracted and before the related configuration step completes. The probe MUST use the `seatunnel-capability-proxy` one-shot CLI and the extracted installation directory as `SEATUNNEL_HOME`.
+
+#### Scenario: Probe remote checkpoint storage during installation
+
+- **WHEN** a host is installing SeaTunnel with checkpoint storage type `HDFS`, `S3`, or `OSS`
+- **THEN** the Agent SHALL attempt a one-shot checkpoint runtime probe during the checkpoint configuration step
+
+#### Scenario: Probe remote IMAP storage during installation
+
+- **WHEN** a host is installing SeaTunnel with IMAP storage type `HDFS`, `S3`, or `OSS`
+- **THEN** the Agent SHALL attempt a one-shot IMAP runtime probe during the IMAP configuration step
+
+#### Scenario: Skip local-only storage runtime probe
+
+- **WHEN** checkpoint or IMAP storage is configured as `LOCAL_FILE` or IMAP is `DISABLED`
+- **THEN** the installer SHALL skip the runtime probe for that storage target
+
+### Requirement: Runtime storage probe failures SHALL not block installation
+
+If the runtime storage probe fails, times out, or cannot be started, the installer SHALL record a warning and continue installation. The related configuration step MUST still be allowed to finish successfully unless the configuration write itself fails.
+
+#### Scenario: Continue installation when checkpoint probe fails
+
+- **WHEN** the checkpoint runtime probe returns an error such as invalid credentials or bucket access denied
+- **THEN** the installer SHALL keep the checkpoint configuration step non-fatal
+- **AND** the installation SHALL continue with a warning that includes the probe failure summary
+
+#### Scenario: Continue installation when IMAP probe fails
+
+- **WHEN** the IMAP runtime probe returns an initialization or read/write failure
+- **THEN** the installer SHALL keep the IMAP configuration step non-fatal
+- **AND** the installation SHALL continue with a warning that includes the probe failure summary
+
+#### Scenario: Continue installation when proxy assets are unavailable
+
+- **WHEN** the Agent cannot locate the proxy script or the ordinary capability-proxy jar needed for one-shot execution
+- **THEN** the installer SHALL skip the runtime probe
+- **AND** the installation SHALL continue with a warning indicating that the real runtime probe was not executed
+
+### Requirement: Installation warnings SHALL be visible to operators
+
+The installer SHALL preserve warning messages emitted during runtime storage probing and expose them in installation status so the frontend can display them separately from fatal errors.
+
+#### Scenario: Surface runtime probe warnings in installation status
+
+- **WHEN** one or more runtime storage probes emit warning messages during installation
+- **THEN** the installation status SHALL include a deduplicated warnings collection
+- **AND** the frontend SHALL render those warnings in the installation progress view

@@ -342,6 +342,7 @@ type InstallationStatus struct {
 	Progress    int         `json:"progress"`
 	Message     string      `json:"message,omitempty"`
 	Error       string      `json:"error,omitempty"`
+	Warnings    []string    `json:"warnings,omitempty"`
 	StartTime   time.Time   `json:"start_time"`
 	EndTime     *time.Time  `json:"end_time,omitempty"`
 }
