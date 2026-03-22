@@ -471,10 +471,12 @@ func Serve() {
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
 			agentHandler := agent.NewHandler(&agent.HandlerConfig{
-				ControlPlaneAddr:  config.GetExternalURL(),
-				AgentBinaryDir:    "./lib/agent",
-				GRPCPort:          fmt.Sprintf("%d", config.GetGRPCPort()),
-				HeartbeatInterval: config.Config.GRPC.HeartbeatInterval,
+				ControlPlaneAddr:          config.GetExternalURL(),
+				AgentBinaryDir:            "./lib/agent",
+				CapabilityProxyJarPath:    "./lib/seatunnel-capability-proxy-2.3.13.jar",
+				CapabilityProxyScriptPath: "./scripts/seatunnel-capability-proxy.sh",
+				GRPCPort:                  fmt.Sprintf("%d", config.GetGRPCPort()),
+				HeartbeatInterval:         config.Config.GRPC.HeartbeatInterval,
 			})
 
 			agentRouter := apiV1Router.Group("/agent")
@@ -490,6 +492,14 @@ func Serve() {
 				// GET /api/v1/agent/download - 下载 Agent 二进制文件
 				// GET /api/v1/agent/download - Download Agent binary
 				agentRouter.GET("/download", agentHandler.DownloadAgent)
+
+				// GET /api/v1/agent/assets/capability-proxy.jar - 下载 capability proxy 薄 jar
+				// GET /api/v1/agent/assets/capability-proxy.jar - Download capability proxy thin jar
+				agentRouter.GET("/assets/capability-proxy.jar", agentHandler.DownloadCapabilityProxyJar)
+
+				// GET /api/v1/agent/assets/capability-proxy.sh - 下载 capability proxy 启动脚本
+				// GET /api/v1/agent/assets/capability-proxy.sh - Download capability proxy launcher script
+				agentRouter.GET("/assets/capability-proxy.sh", agentHandler.DownloadCapabilityProxyScript)
 			}
 
 			// SeaTunnelX 离线发布包分发 API（无需认证，供客户机器一键下载安装控制面）。

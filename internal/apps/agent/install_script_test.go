@@ -22,6 +22,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
 // TestNewInstallScriptGenerator tests the creation of InstallScriptGenerator.
@@ -88,16 +90,25 @@ func TestInstallScriptGenerate(t *testing.T) {
 		"#!/bin/bash",
 		"CONTROL_PLANE_ADDR=\"http://test-server:8080\"",
 		"GRPC_ADDR=\"test-server:50051\"",
+		"SUPPORT_DIR=\"/usr/local/lib/seatunnelx-agent\"",
 		"detect_os()",
 		"detect_arch()",
 		"download_agent",
+		"download_support_assets",
+		"install_support_assets",
 		"install_agent",
 		"create_systemd_service",
 		"start_agent",
 		"systemctl",
 		"/usr/local/bin",
 		"/etc/seatunnelx-agent",
+		"CAPABILITY_PROXY_VERSION=\"" + seatunnelmeta.DefaultCapabilityProxyVersion + "\"",
+		"/api/v1/agent/assets/capability-proxy.jar?version=${CAPABILITY_PROXY_VERSION}",
+		"/api/v1/agent/assets/capability-proxy.sh",
+		"SEATUNNEL_CAPABILITY_PROXY_HOME",
+		"SEATUNNEL_CAPABILITY_PROXY_SCRIPT",
 		"seatunnelx-agent",
+		seatunnelmeta.CapabilityProxyJarFileName(seatunnelmeta.DefaultCapabilityProxyVersion),
 	}
 
 	for _, expected := range expectedContents {
@@ -122,6 +133,7 @@ func TestInstallScriptGenerateWithData(t *testing.T) {
 		ConfigDir:        "/opt/custom/config",
 		AgentBinary:      "custom-agent",
 		ServiceName:      "custom-service",
+		SupportDir:       "/opt/custom/support",
 	}
 
 	script, err := gen.GenerateWithData(data)
@@ -136,6 +148,7 @@ func TestInstallScriptGenerateWithData(t *testing.T) {
 		"custom-server:60000",
 		"/opt/custom/bin",
 		"/opt/custom/config",
+		"/opt/custom/support",
 		"custom-agent",
 		"custom-service",
 	}
@@ -327,6 +340,11 @@ func TestInstallScriptContainsRequirements(t *testing.T) {
 	if !strings.Contains(script, "download_agent") || !strings.Contains(script, "/api/v1/agent/download") {
 		t.Error("Script missing download functionality (Requirement 2.2)")
 	}
+	if !strings.Contains(script, "download_support_assets") ||
+		!strings.Contains(script, "CAPABILITY_PROXY_VERSION=\""+seatunnelmeta.DefaultCapabilityProxyVersion+"\"") ||
+		!strings.Contains(script, "/api/v1/agent/assets/capability-proxy.jar?version=${CAPABILITY_PROXY_VERSION}") {
+		t.Error("Script missing capability proxy asset download functionality")
+	}
 
 	// Requirement 2.3: Install to /usr/local/bin and create config
 	// 需求 2.3: 安装到 /usr/local/bin 并创建配置
@@ -335,6 +353,9 @@ func TestInstallScriptContainsRequirements(t *testing.T) {
 	}
 	if !strings.Contains(script, "config.yaml") {
 		t.Error("Script missing config file creation (Requirement 2.3)")
+	}
+	if !strings.Contains(script, "/usr/local/lib/seatunnelx-agent") {
+		t.Error("Script missing support asset installation path")
 	}
 
 	// Requirement 2.4: Create systemd service with auto-start

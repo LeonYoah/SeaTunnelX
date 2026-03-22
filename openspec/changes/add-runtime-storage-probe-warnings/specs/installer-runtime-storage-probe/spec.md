@@ -50,3 +50,26 @@ The installer SHALL preserve warning messages emitted during runtime storage pro
 - **WHEN** one or more runtime storage probes emit warning messages during installation
 - **THEN** the installation status SHALL include a deduplicated warnings collection
 - **AND** the frontend SHALL render those warnings in the installation progress view
+
+### Requirement: Capability proxy assets SHALL be distributed with installable artifacts
+
+The system SHALL package the capability proxy thin jar and launcher script with installable SeaTunnelX artifacts and SHALL install them onto target hosts as part of Agent distribution so runtime storage probes do not depend on a local source checkout. The Agent SHALL prefer a jar whose file name matches the SeaTunnel cluster version and SHALL fall back to the packaged `2.3.13` jar when an exact versioned jar is unavailable.
+
+#### Scenario: Bundle capability proxy assets in the control-plane release package
+
+- **WHEN** the control-plane release package is built
+- **THEN** it SHALL include `lib/seatunnel-capability-proxy-2.3.13.jar`
+- **AND** it SHALL include `scripts/seatunnel-capability-proxy.sh`
+
+#### Scenario: Install capability proxy assets with the Agent
+
+- **WHEN** an operator runs the generated Agent install script
+- **THEN** the script SHALL download the capability proxy jar and script from the control plane
+- **AND** it SHALL install them into a fixed local support directory
+- **AND** the Agent process SHALL receive environment variables pointing at the installed support home and launcher script path
+
+#### Scenario: Pick a versioned capability proxy jar with fallback
+
+- **WHEN** the Agent runs a runtime storage probe for SeaTunnel version `X`
+- **THEN** it SHALL first look for `seatunnel-capability-proxy-X.jar`
+- **AND** if that jar is unavailable it SHALL fall back to `seatunnel-capability-proxy-2.3.13.jar`

@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
 // InstallScriptGenerator generates Agent installation scripts.
@@ -90,6 +92,22 @@ type InstallScriptData struct {
 	// ServiceName 是 systemd 服务名称。
 	ServiceName string
 
+	// SupportDir is the directory for Agent-managed support assets such as proxy jars and scripts.
+	// SupportDir 是 Agent 管理的辅助资产目录，例如 proxy jar 和脚本。
+	SupportDir string
+
+	// CapabilityProxyVersion is the default packaged capability proxy version.
+	// CapabilityProxyVersion 是默认打包的 capability proxy 版本。
+	CapabilityProxyVersion string
+
+	// CapabilityProxyJarFileName is the packaged default capability proxy jar file name.
+	// CapabilityProxyJarFileName 是默认打包的 capability proxy jar 文件名。
+	CapabilityProxyJarFileName string
+
+	// CapabilityProxyScriptFileName is the packaged capability proxy script file name.
+	// CapabilityProxyScriptFileName 是打包的 capability proxy 脚本文件名。
+	CapabilityProxyScriptFileName string
+
 	// HeartbeatInterval is the heartbeat interval string (e.g., "60s").
 	// HeartbeatInterval 是心跳间隔字符串（如 "60s"）。
 	HeartbeatInterval string
@@ -126,6 +144,10 @@ const DefaultAgentBinary = "seatunnelx-agent"
 // DefaultServiceName is the default systemd service name.
 // DefaultServiceName 是默认的 systemd 服务名称。
 const DefaultServiceName = "seatunnelx-agent"
+
+// DefaultSupportDir is the default directory for Agent-managed support assets.
+// DefaultSupportDir 是 Agent 管理辅助资产的默认目录。
+const DefaultSupportDir = "/usr/local/lib/seatunnelx-agent"
 
 // SupportedPlatforms defines all supported OS and architecture combinations.
 // SupportedPlatforms 定义所有支持的操作系统和架构组合。
@@ -181,13 +203,17 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 // Requirements: 2.1 - Returns shell script with auto-detection logic for OS and architecture.
 func (g *InstallScriptGenerator) Generate() (string, error) {
 	data := &InstallScriptData{
-		ControlPlaneAddr:  g.formatControlPlaneURL(),
-		GRPCAddr:          g.grpcAddr,
-		InstallDir:        DefaultInstallDir,
-		ConfigDir:         DefaultConfigDir,
-		AgentBinary:       DefaultAgentBinary,
-		ServiceName:       DefaultServiceName,
-		HeartbeatInterval: fmt.Sprintf("%ds", g.heartbeatInterval),
+		ControlPlaneAddr:              g.formatControlPlaneURL(),
+		GRPCAddr:                      g.grpcAddr,
+		InstallDir:                    DefaultInstallDir,
+		ConfigDir:                     DefaultConfigDir,
+		AgentBinary:                   DefaultAgentBinary,
+		ServiceName:                   DefaultServiceName,
+		SupportDir:                    DefaultSupportDir,
+		CapabilityProxyVersion:        seatunnelmeta.DefaultCapabilityProxyVersion,
+		CapabilityProxyJarFileName:    seatunnelmeta.CapabilityProxyJarFileName(seatunnelmeta.DefaultCapabilityProxyVersion),
+		CapabilityProxyScriptFileName: seatunnelmeta.CapabilityProxyScriptFileName,
+		HeartbeatInterval:             fmt.Sprintf("%ds", g.heartbeatInterval),
 	}
 
 	return g.GenerateWithData(data)
@@ -219,6 +245,18 @@ func (g *InstallScriptGenerator) GenerateWithData(data *InstallScriptData) (stri
 	}
 	if data.ServiceName == "" {
 		data.ServiceName = DefaultServiceName
+	}
+	if data.SupportDir == "" {
+		data.SupportDir = DefaultSupportDir
+	}
+	if data.CapabilityProxyVersion == "" {
+		data.CapabilityProxyVersion = seatunnelmeta.DefaultCapabilityProxyVersion
+	}
+	if data.CapabilityProxyJarFileName == "" {
+		data.CapabilityProxyJarFileName = seatunnelmeta.CapabilityProxyJarFileName(data.CapabilityProxyVersion)
+	}
+	if data.CapabilityProxyScriptFileName == "" {
+		data.CapabilityProxyScriptFileName = seatunnelmeta.CapabilityProxyScriptFileName
 	}
 
 	var buf bytes.Buffer
@@ -330,6 +368,12 @@ CONFIG_DIR="{{.ConfigDir}}"
 AGENT_BINARY="{{.AgentBinary}}"
 SERVICE_NAME="{{.ServiceName}}"
 LOG_DIR="/var/log/${SERVICE_NAME}"
+SUPPORT_DIR="{{.SupportDir}}"
+SUPPORT_LIB_DIR="${SUPPORT_DIR}/lib"
+SUPPORT_SCRIPT_DIR="${SUPPORT_DIR}/scripts"
+CAPABILITY_PROXY_VERSION="{{.CapabilityProxyVersion}}"
+CAPABILITY_PROXY_JAR="${SUPPORT_LIB_DIR}/{{.CapabilityProxyJarFileName}}"
+CAPABILITY_PROXY_SCRIPT="${SUPPORT_SCRIPT_DIR}/{{.CapabilityProxyScriptFileName}}"
 
 # ==================== Colors 颜色 ====================
 RED='\033[0;31m'
@@ -373,10 +417,14 @@ cleanup() {
         # Remove installed files
         # 删除已安装的文件
         rm -f "${INSTALL_DIR}/${AGENT_BINARY}" 2>/dev/null || true
+        rm -f "${INSTALL_DIR}/${AGENT_BINARY}-start.sh" 2>/dev/null || true
         rm -rf "${CONFIG_DIR}" 2>/dev/null || true
         rm -rf "${LOG_DIR}" 2>/dev/null || true
+        rm -rf "${SUPPORT_DIR}" 2>/dev/null || true
         rm -f "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null || true
         rm -f "/tmp/${AGENT_BINARY}" 2>/dev/null || true
+        rm -f "/tmp/${SERVICE_NAME}-{{.CapabilityProxyJarFileName}}" 2>/dev/null || true
+        rm -f "/tmp/${SERVICE_NAME}-{{.CapabilityProxyScriptFileName}}" 2>/dev/null || true
         
         # Reload systemd
         # 重新加载 systemd
@@ -523,6 +571,55 @@ download_agent() {
     log_info "已下载 ${file_size} 字节"
 }
 
+# ==================== Download Support Assets 下载辅助资产 ====================
+download_support_assets() {
+    local jar_url="${CONTROL_PLANE_ADDR}/api/v1/agent/assets/capability-proxy.jar?version=${CAPABILITY_PROXY_VERSION}"
+    local script_url="${CONTROL_PLANE_ADDR}/api/v1/agent/assets/capability-proxy.sh"
+    local temp_jar="/tmp/${SERVICE_NAME}-{{.CapabilityProxyJarFileName}}"
+    local temp_script="/tmp/${SERVICE_NAME}-{{.CapabilityProxyScriptFileName}}"
+
+    log_step "Downloading Agent support assets..."
+    log_step "正在下载 Agent 辅助资产..."
+
+    if command -v curl &> /dev/null; then
+        if ! curl -fsSL -o "${temp_jar}" "${jar_url}"; then
+            log_error "Failed to download capability proxy jar using curl"
+            log_error "使用 curl 下载 capability proxy jar 失败"
+            exit 1
+        fi
+        if ! curl -fsSL -o "${temp_script}" "${script_url}"; then
+            log_error "Failed to download capability proxy script using curl"
+            log_error "使用 curl 下载 capability proxy 脚本失败"
+            exit 1
+        fi
+    elif command -v wget &> /dev/null; then
+        if ! wget -q -O "${temp_jar}" "${jar_url}"; then
+            log_error "Failed to download capability proxy jar using wget"
+            log_error "使用 wget 下载 capability proxy jar 失败"
+            exit 1
+        fi
+        if ! wget -q -O "${temp_script}" "${script_url}"; then
+            log_error "Failed to download capability proxy script using wget"
+            log_error "使用 wget 下载 capability proxy 脚本失败"
+            exit 1
+        fi
+    fi
+
+    if [ ! -s "${temp_jar}" ]; then
+        log_error "Downloaded capability proxy jar is missing or empty"
+        log_error "下载的 capability proxy jar 不存在或为空"
+        exit 1
+    fi
+    if [ ! -s "${temp_script}" ]; then
+        log_error "Downloaded capability proxy script is missing or empty"
+        log_error "下载的 capability proxy 脚本不存在或为空"
+        exit 1
+    fi
+
+    log_info "Capability proxy assets downloaded"
+    log_info "Capability proxy 资产下载完成"
+}
+
 # ==================== Install Agent 安装 Agent ====================
 # Requirements: 2.3 - Installs Agent to /usr/local/bin and creates config.
 install_agent() {
@@ -634,6 +731,26 @@ EOF
     log_info "配置文件已创建于 ${CONFIG_DIR}/config.yaml"
 }
 
+install_support_assets() {
+    local temp_jar="/tmp/${SERVICE_NAME}-{{.CapabilityProxyJarFileName}}"
+    local temp_script="/tmp/${SERVICE_NAME}-{{.CapabilityProxyScriptFileName}}"
+
+    log_step "Installing Agent support assets..."
+    log_step "正在安装 Agent 辅助资产..."
+
+    mkdir -p "${SUPPORT_LIB_DIR}" "${SUPPORT_SCRIPT_DIR}"
+
+    mv "${temp_jar}" "${CAPABILITY_PROXY_JAR}"
+    mv "${temp_script}" "${CAPABILITY_PROXY_SCRIPT}"
+    chmod 0644 "${CAPABILITY_PROXY_JAR}"
+    chmod +x "${CAPABILITY_PROXY_SCRIPT}"
+
+    log_info "Capability proxy jar installed to ${CAPABILITY_PROXY_JAR}"
+    log_info "Capability proxy jar 已安装到 ${CAPABILITY_PROXY_JAR}"
+    log_info "Capability proxy script installed to ${CAPABILITY_PROXY_SCRIPT}"
+    log_info "Capability proxy 脚本已安装到 ${CAPABILITY_PROXY_SCRIPT}"
+}
+
 # ==================== Create Systemd Service 创建 Systemd 服务 ====================
 # Requirements: 2.4 - Creates systemd service with auto-start.
 create_systemd_service() {
@@ -695,6 +812,11 @@ if [ -n "$JAVA_HOME" ] && [ -d "$JAVA_HOME/bin" ]; then
     export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
+# Export support asset locations for runtime storage probe execution
+# 导出运行时存储探测所需的辅助资产路径
+export SEATUNNEL_CAPABILITY_PROXY_HOME="CAPABILITY_PROXY_HOME_PLACEHOLDER"
+export SEATUNNEL_CAPABILITY_PROXY_SCRIPT="CAPABILITY_PROXY_SCRIPT_PLACEHOLDER"
+
 # Log environment info for debugging
 # 记录环境信息用于调试
 echo "[$(date)] Starting SeaTunnelX Agent..."
@@ -713,6 +835,8 @@ WRAPPER_EOF
     # 替换包装脚本中的占位符
     sed -i "s|INSTALL_DIR_PLACEHOLDER|${INSTALL_DIR}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     sed -i "s|AGENT_BINARY_PLACEHOLDER|${AGENT_BINARY}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    sed -i "s|CAPABILITY_PROXY_HOME_PLACEHOLDER|${SUPPORT_DIR}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    sed -i "s|CAPABILITY_PROXY_SCRIPT_PLACEHOLDER|${CAPABILITY_PROXY_SCRIPT}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     chmod +x "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     
     log_info "Startup wrapper script created at ${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
@@ -789,7 +913,7 @@ start_agent() {
     if ! command -v systemctl &> /dev/null; then
         log_warn "systemctl not available, please start Agent manually:"
         log_warn "systemctl 不可用，请手动启动 Agent:"
-        log_info "  ${INSTALL_DIR}/${AGENT_BINARY} --config ${CONFIG_DIR}/config.yaml"
+        log_info "  /bin/bash ${INSTALL_DIR}/${AGENT_BINARY}-start.sh --config ${CONFIG_DIR}/config.yaml"
         return 0
     fi
     
@@ -838,6 +962,8 @@ print_summary() {
     echo -e "  Binary:  ${INSTALL_DIR}/${AGENT_BINARY}"
     echo -e "  Config:  ${CONFIG_DIR}/config.yaml"
     echo -e "  Logs:    ${LOG_DIR}/agent.log"
+    echo -e "  Proxy:   ${CAPABILITY_PROXY_JAR}"
+    echo -e "  Script:  ${CAPABILITY_PROXY_SCRIPT}"
     echo -e "  Service: ${SERVICE_NAME}"
     echo ""
     echo -e "${BLUE}Useful Commands / 常用命令:${NC}"
@@ -859,8 +985,10 @@ print_summary() {
     echo -e "    systemctl disable ${SERVICE_NAME}"
     echo -e "    rm -f /etc/systemd/system/${SERVICE_NAME}.service"
     echo -e "    rm -f ${INSTALL_DIR}/${AGENT_BINARY}"
+    echo -e "    rm -f ${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     echo -e "    rm -rf ${CONFIG_DIR}"
     echo -e "    rm -rf ${LOG_DIR}"
+    echo -e "    rm -rf ${SUPPORT_DIR}"
     echo -e "    systemctl daemon-reload"
     echo ""
 }
@@ -899,20 +1027,28 @@ main() {
     # 步骤 4: 下载 Agent
     download_agent "${os_type}" "${arch}"
     
-    # Step 5: Install Agent
-    # 步骤 5: 安装 Agent
+    # Step 5: Download support assets
+    # 步骤 5: 下载辅助资产
+    download_support_assets
+
+    # Step 6: Install Agent
+    # 步骤 6: 安装 Agent
     install_agent
     
-    # Step 6: Create systemd service
-    # 步骤 6: 创建 systemd 服务
+    # Step 7: Install support assets
+    # 步骤 7: 安装辅助资产
+    install_support_assets
+
+    # Step 8: Create systemd service
+    # 步骤 8: 创建 systemd 服务
     create_systemd_service
     
-    # Step 7: Start Agent
-    # 步骤 7: 启动 Agent
+    # Step 9: Start Agent
+    # 步骤 9: 启动 Agent
     start_agent
     
-    # Step 8: Print summary
-    # 步骤 8: 打印摘要
+    # Step 10: Print summary
+    # 步骤 10: 打印摘要
     print_summary
     
     # Disable trap on successful completion

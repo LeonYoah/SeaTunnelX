@@ -32,6 +32,7 @@ APP_VERSION="${APP_VERSION:-}"
 PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-3.9.1}"
 ALERTMANAGER_VERSION="${ALERTMANAGER_VERSION:-0.31.1}"
 GRAFANA_VERSION="${GRAFANA_VERSION:-12.3.3}"
+CAPABILITY_PROXY_DEFAULT_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
 
 usage() {
   cat <<'EOF'
@@ -109,7 +110,7 @@ require_cmd() {
   fi
 }
 
-for cmd in go tar curl python3; do
+for cmd in go tar curl python3 mvn; do
   require_cmd "$cmd"
 done
 
@@ -325,7 +326,43 @@ build_agent_binaries() {
   )
 }
 
+build_capability_proxy_jar() {
+  local proxy_project_dir="$ROOT_DIR/tools/seatunnel-capability-proxy"
+  local proxy_target_dir="$proxy_project_dir/target"
+  local proxy_out="$BUILD_DIR/seatunnel-capability-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
+
+  echo "building seatunnel-capability-proxy thin jar ..."
+  (
+    cd "$ROOT_DIR"
+    mvn -q -f "$proxy_project_dir/pom.xml" -DskipTests package
+  )
+
+  local built_proxy_jar
+  built_proxy_jar="$(find "$proxy_target_dir" -maxdepth 1 -type f -name 'seatunnel-capability-proxy-*.jar' ! -name '*-bin.jar' | sort | head -n1)"
+  if [[ -z "$built_proxy_jar" || ! -f "$built_proxy_jar" ]]; then
+    echo "failed to locate built capability proxy thin jar under $proxy_target_dir"
+    exit 1
+  fi
+
+  cp "$built_proxy_jar" "$proxy_out"
+  CAPABILITY_PROXY_JAR="$proxy_out"
+}
+
+stage_capability_proxy_jars() {
+  local destination_dir="$1"
+  mkdir -p "$destination_dir"
+
+  if [[ -d "$ROOT_DIR/lib" ]]; then
+    find "$ROOT_DIR/lib" -maxdepth 1 -type f -name 'seatunnel-capability-proxy-*.jar' -print0 | while IFS= read -r -d '' jar_path; do
+      cp "$jar_path" "$destination_dir/"
+    done
+  fi
+
+  cp "$CAPABILITY_PROXY_JAR" "$destination_dir/$(basename "$CAPABILITY_PROXY_JAR")"
+}
+
 build_agent_binaries
+build_capability_proxy_jar
 for arch in "${ARCHES[@]}"; do
   build_seatunnelx_binary "$arch"
 done
@@ -407,10 +444,13 @@ for arch in "${ARCHES[@]}"; do
     cp "$ROOT_DIR/config.example.yaml" "$pkg_dir/config.example.yaml"
     cp "$ROOT_DIR/support-files/release/install.sh" "$pkg_dir/install.sh"
 
-    mkdir -p "$pkg_dir/lib/agent"
+    mkdir -p "$pkg_dir/lib/agent" "$pkg_dir/scripts"
     cp "$BUILD_DIR/seatunnelx-agent-linux-amd64" "$pkg_dir/lib/agent/seatunnelx-agent-linux-amd64"
     cp "$BUILD_DIR/seatunnelx-agent-linux-arm64" "$pkg_dir/lib/agent/seatunnelx-agent-linux-arm64"
+    stage_capability_proxy_jars "$pkg_dir/lib"
+    cp "$ROOT_DIR/scripts/seatunnel-capability-proxy.sh" "$pkg_dir/scripts/seatunnel-capability-proxy.sh"
     chmod +x "$pkg_dir/lib/agent/seatunnelx-agent-linux-amd64" "$pkg_dir/lib/agent/seatunnelx-agent-linux-arm64"
+    chmod +x "$pkg_dir/scripts/seatunnel-capability-proxy.sh"
 
     mkdir -p "$pkg_dir/frontend"
     cp -a "$FRONTEND_DIST"/. "$pkg_dir/frontend/"

@@ -29,6 +29,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/logger"
+	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
 // Handler provides HTTP handlers for Agent distribution operations.
@@ -41,6 +42,14 @@ type Handler struct {
 	// agentBinaryDir is the directory containing Agent binary files.
 	// agentBinaryDir 是包含 Agent 二进制文件的目录。
 	agentBinaryDir string
+
+	// capabilityProxyJarPath is the path to the packaged capability proxy thin jar.
+	// capabilityProxyJarPath 是 capability proxy 薄 jar 的打包路径。
+	capabilityProxyJarPath string
+
+	// capabilityProxyScriptPath is the path to the packaged capability proxy launcher script.
+	// capabilityProxyScriptPath 是 capability proxy 启动脚本的打包路径。
+	capabilityProxyScriptPath string
 
 	// grpcPort is the gRPC port for Agent to connect.
 	// grpcPort 是 Agent 连接的 gRPC 端口。
@@ -61,6 +70,14 @@ type HandlerConfig struct {
 	// AgentBinaryDir is the directory containing Agent binary files.
 	// AgentBinaryDir 是包含 Agent 二进制文件的目录。
 	AgentBinaryDir string
+
+	// CapabilityProxyJarPath is the path to the packaged capability proxy thin jar.
+	// CapabilityProxyJarPath 是 capability proxy 薄 jar 的打包路径。
+	CapabilityProxyJarPath string
+
+	// CapabilityProxyScriptPath is the path to the packaged capability proxy launcher script.
+	// CapabilityProxyScriptPath 是 capability proxy 启动脚本的打包路径。
+	CapabilityProxyScriptPath string
 
 	// GRPCPort is the gRPC port for Agent connections.
 	// GRPCPort 是 Agent 连接的 gRPC 端口。
@@ -86,6 +103,12 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	if cfg.AgentBinaryDir == "" {
 		cfg.AgentBinaryDir = "./lib/agent"
 	}
+	if cfg.CapabilityProxyJarPath == "" {
+		cfg.CapabilityProxyJarPath = filepath.Join("./lib", seatunnelmeta.CapabilityProxyJarFileName(seatunnelmeta.DefaultCapabilityProxyVersion))
+	}
+	if cfg.CapabilityProxyScriptPath == "" {
+		cfg.CapabilityProxyScriptPath = filepath.Join("./scripts", seatunnelmeta.CapabilityProxyScriptFileName)
+	}
 	if cfg.GRPCPort == "" {
 		cfg.GRPCPort = "50051"
 	}
@@ -94,10 +117,12 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	}
 
 	return &Handler{
-		controlPlaneAddr:  cfg.ControlPlaneAddr,
-		agentBinaryDir:    cfg.AgentBinaryDir,
-		grpcPort:          cfg.GRPCPort,
-		heartbeatInterval: cfg.HeartbeatInterval,
+		controlPlaneAddr:          cfg.ControlPlaneAddr,
+		agentBinaryDir:            cfg.AgentBinaryDir,
+		capabilityProxyJarPath:    cfg.CapabilityProxyJarPath,
+		capabilityProxyScriptPath: cfg.CapabilityProxyScriptPath,
+		grpcPort:                  cfg.GRPCPort,
+		heartbeatInterval:         cfg.HeartbeatInterval,
 	}
 }
 
@@ -236,6 +261,73 @@ func (h *Handler) DownloadAgent(c *gin.Context) {
 	c.File(binaryPath)
 
 	logger.InfoF(c.Request.Context(), "[Agent] Binary downloaded: %s-%s", osType, arch)
+}
+
+// DownloadCapabilityProxyJar handles GET /api/v1/agent/assets/capability-proxy.jar - downloads the capability proxy thin jar.
+// DownloadCapabilityProxyJar 处理 GET /api/v1/agent/assets/capability-proxy.jar - 下载 capability proxy 薄 jar。
+func (h *Handler) DownloadCapabilityProxyJar(c *gin.Context) {
+	assetPath, downloadName := h.resolveCapabilityProxyJarAsset(c.Query("version"))
+	h.serveStaticAssetDownload(
+		c,
+		assetPath,
+		downloadName,
+		"application/java-archive",
+		"Capability proxy jar",
+		"Capability proxy jar",
+	)
+}
+
+// DownloadCapabilityProxyScript handles GET /api/v1/agent/assets/capability-proxy.sh - downloads the capability proxy launcher script.
+// DownloadCapabilityProxyScript 处理 GET /api/v1/agent/assets/capability-proxy.sh - 下载 capability proxy 启动脚本。
+func (h *Handler) DownloadCapabilityProxyScript(c *gin.Context) {
+	h.serveStaticAssetDownload(
+		c,
+		h.capabilityProxyScriptPath,
+		seatunnelmeta.CapabilityProxyScriptFileName,
+		"text/x-shellscript; charset=utf-8",
+		"Capability proxy script",
+		"Capability proxy script",
+	)
+}
+
+func (h *Handler) resolveCapabilityProxyJarAsset(version string) (string, string) {
+	requestedVersion := strings.TrimSpace(version)
+	if requestedVersion == "" || requestedVersion == seatunnelmeta.DefaultCapabilityProxyVersion {
+		return h.capabilityProxyJarPath, filepath.Base(h.capabilityProxyJarPath)
+	}
+
+	versionedPath := filepath.Join(
+		filepath.Dir(h.capabilityProxyJarPath),
+		seatunnelmeta.CapabilityProxyJarFileName(requestedVersion),
+	)
+	if _, err := os.Stat(versionedPath); err == nil {
+		return versionedPath, filepath.Base(versionedPath)
+	}
+
+	return h.capabilityProxyJarPath, filepath.Base(h.capabilityProxyJarPath)
+}
+
+func (h *Handler) serveStaticAssetDownload(
+	c *gin.Context,
+	assetPath string,
+	downloadName string,
+	contentType string,
+	logLabel string,
+	errorLabel string,
+) {
+	if _, err := os.Stat(assetPath); os.IsNotExist(err) {
+		logger.WarnF(c.Request.Context(), "[Agent] %s not found: %s", logLabel, assetPath)
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			ErrorMsg: fmt.Sprintf("%s not found. Please contact administrator / 未找到 %s，请联系管理员", errorLabel, errorLabel),
+		})
+		return
+	}
+
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", downloadName))
+	c.File(assetPath)
+
+	logger.InfoF(c.Request.Context(), "[Agent] %s downloaded: %s", logLabel, assetPath)
 }
 
 // ==================== Helper Methods 辅助方法 ====================

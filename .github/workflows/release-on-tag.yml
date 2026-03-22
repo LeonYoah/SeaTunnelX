@@ -49,6 +49,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
       - name: Build release packages
         env:
           APP_VERSION: ${{ github.ref_name }}

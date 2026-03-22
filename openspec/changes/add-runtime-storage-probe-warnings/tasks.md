@@ -22,3 +22,12 @@
 - [x] 4.1 验证远端 checkpoint probe 失败后安装仍能继续
 - [x] 4.2 验证远端 IMAP probe 失败后安装仍能继续
 - [x] 4.3 验证 proxy 资产缺失时用户能看到明确 warning
+
+## 5. 资产分发与打包
+
+- [x] 5.1 调整根目录 `.gitignore`，移除对 `src/main` 的误伤规则
+- [x] 5.2 将 capability proxy 启动脚本统一维护到根 `scripts/` 目录，并保留旧工具目录包装入口
+- [x] 5.3 在控制面发布包中分发 `lib/seatunnel-capability-proxy-{seatunnelVersion}.jar` 与 `scripts/seatunnel-capability-proxy.sh`
+- [x] 5.4 在控制面 Agent 分发接口中提供 capability proxy jar / script 下载端点
+- [x] 5.5 在 Agent 安装脚本中下载并安装 capability proxy 资产，并通过 support home / script 环境变量注入给 Agent 进程
+- [x] 5.6 支持按 SeaTunnel 版本选择 capability proxy jar，找不到时回退到 `2.3.13`

@@ -11,6 +11,7 @@ SeaTunnelX 目前对 checkpoint 和 IMAP 的“运行时存储校验”仍然只
 - 探测时机放在 Agent 端安装流程的 `extract` 之后、`configure_checkpoint` / `configure_imap` 步骤内部，确保已有真实 `SEATUNNEL_HOME`。
 - 探测失败不阻塞安装，而是记录为安装 warning，并在控制面与前端安装进度里明确提示。
 - 第一阶段不改造安装前的 `/installer/runtime-storage/validate` 页面逻辑，避免在 proxy 资产分发方案尚未完全稳定前引入“假 runtime 校验”。
+- 在 SeaTunnelX 发布包中统一分发 proxy 薄 jar 与启动脚本，并让 Agent 安装脚本同步把这两个资产安装到目标主机固定目录。
 
 ## Capabilities
 
@@ -28,4 +29,4 @@ SeaTunnelX 目前对 checkpoint 和 IMAP 的“运行时存储校验”仍然只
 - 安装流程：`configure_checkpoint` 和 `configure_imap` 在写入配置前后增加非阻塞 runtime probe。
 - 控制面：安装状态需要保留 warnings，轮询进度时从步骤消息中聚合 warning。
 - 前端：安装进度页/向导需要展示 warning 列表，避免用户误以为探测失败被吞掉。
-- 约束：当前阶段依赖 Agent 运行环境能访问 proxy 脚本和非 `-bin` jar；若资产不存在，必须退化为 warning 而不是安装失败。
+- 发布与分发：控制面安装包需要带上 `lib/seatunnel-capability-proxy-{seatunnelVersion}.jar` 与 `scripts/seatunnel-capability-proxy.sh`，Agent 运行时优先按 SeaTunnel 版本选 jar，找不到时回退到 `2.3.13` 默认 jar。

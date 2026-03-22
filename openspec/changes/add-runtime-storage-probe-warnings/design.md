@@ -21,7 +21,6 @@
 **Non-Goals:**
 
 - 本阶段不把安装前的 `/installer/runtime-storage/validate` 改造成真实 runtime probe。
-- 本阶段不引入新的 proxy 资产远端分发协议。
 - 本阶段不把 probe 结果设计成安装硬门槛。
 
 ## Decisions
@@ -47,14 +46,21 @@
 - 备选方案：统一改用 `-bin.jar`。
 - 不选原因：更重，也更容易与真实安装目录下的运行时依赖重复或冲突。
 
-### Decision 4: Agent 侧以“资产发现 + graceful fallback”运行 proxy
+### Decision 4: 通过控制面发布包与 Agent 安装脚本统一分发 proxy 资产，并预留多版本 jar 选择能力
+
+- 选择：控制面发布包统一内置 `lib/seatunnel-capability-proxy-{seatunnelVersion}.jar` 与 `scripts/seatunnel-capability-proxy.sh`；Agent 安装脚本默认下载 `2.3.13` 版本 jar，并在运行时优先按 SeaTunnel 集群版本选择对应 jar，找不到时回退到 `2.3.13`。
+- 原因：runtime probe 最终是在目标主机上的 Agent 进程内执行，只改控制面本地工作区路径无法真正闭环；同时平台会长期支持多个 SeaTunnel 版本，需要让 proxy jar 的选择规则可扩展，而不是把单一 jar 名写死。
+- 备选方案：仅靠 Agent 本地“搜索工作区 / tools 目录”发现资产。
+- 不选原因：这只适用于开发环境，无法覆盖正式 Agent 安装。
+
+### Decision 5: Agent 侧仍保留“资产发现 + graceful fallback”作为兼容兜底
 
 - 选择：Agent 在本地搜索 proxy 脚本和普通 jar；若二者齐备则执行探测，否则记录 warning 并跳过。
-- 原因：在 proxy 远端分发机制未成型前，这能让开发/部署环境先把主链路跑通，同时保证缺少资产时不会把安装打挂。
+- 原因：即使正式分发链路已经建立，开发环境、源码运行和历史安装仍可能依赖旧路径；保留兼容搜索可以降低切换成本。
 - 备选方案：要求缺失资产直接失败。
 - 不选原因：不符合 warning-only 目标，也不利于渐进落地。
 
-### Decision 5: 控制面安装状态新增 `warnings` 聚合字段
+### Decision 6: 控制面安装状态新增 `warnings` 聚合字段
 
 - 选择：控制面在轮询安装进度时从步骤消息聚合 warning，并持久保存在 `InstallationStatus.warnings` 中；前端用独立黄色提示区域展示。
 - 原因：如果只把 warning 混在 step message 里，最终完成态容易被淹没，用户感知不够强。
@@ -63,8 +69,8 @@
 
 ## Risks / Trade-offs
 
-- [风险] Agent 运行环境找不到 proxy 脚本或 jar。  
-  → 缓解：记录 warning 并继续安装，同时在设计文档中保留后续“正式分发 proxy 资产”的任务。
+- [风险] 控制面发布包或 Agent 安装脚本漏带 proxy 资产。  
+  → 缓解：发布脚本、控制面分发接口、Agent 安装脚本同时纳入改造；若运行时仍缺失，安装步骤继续 warning-only。
 
 - [风险] 真实 probe 本身依赖外部存储/Hadoop 版本组合，报错信息较长。  
   → 缓解：控制面保留原始 warning message，前端做折叠显示；日志中打印完整错误。
@@ -81,9 +87,9 @@
 2. 在 Agent 中新增 runtime storage probe helper，并接入 checkpoint / IMAP 安装步骤。
 3. 控制面安装状态新增 `warnings` 字段，并在进度轮询时聚合 warning。
 4. 前端安装进度展示 warnings。
-5. 后续单独变更 proxy 资产分发与安装前 runtime validate 页面升级。
+5. 在控制面发布包、控制面 Agent 分发接口和 Agent 安装脚本中补齐 proxy 资产分发。
+6. 后续单独变更安装前 runtime validate 页面升级。
 
 ## Open Questions
 
-- proxy 脚本和普通 jar 的正式发布位置最终放在 Agent 包、Control Plane 包还是 SeaTunnel 安装目录内，需要后续补齐。
 - 第二阶段是否要在安装前页面增加“需要已准备 runtime probe 资产”的环境提示，再切换到真实 probe。

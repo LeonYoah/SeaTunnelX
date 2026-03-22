@@ -34,9 +34,11 @@ import (
 )
 
 const (
+	capabilityProxyHomeEnvVar   = "SEATUNNEL_CAPABILITY_PROXY_HOME"
 	capabilityProxyJarEnvVar    = "SEATUNNEL_CAPABILITY_PROXY_JAR"
 	capabilityProxyScriptEnvVar = "SEATUNNEL_CAPABILITY_PROXY_SCRIPT"
 	seatunnelProxyJarEnvVar     = "SEATUNNEL_PROXY_JAR"
+	seatunnelProxyVersionEnvVar = "SEATUNNEL_CAPABILITY_PROXY_VERSION"
 	runtimeProbeTimeout         = 20 * time.Second
 	runtimeProbeBusinessName    = "imap-probe"
 	runtimeProbeClusterName     = "seatunnel-cluster"
@@ -154,7 +156,7 @@ func (m *InstallerManager) maybeProbeCheckpointRuntimeStorage(ctx context.Contex
 	if err != nil {
 		return fmt.Sprintf("failed to build checkpoint probe request: %v", err)
 	}
-	response, err := m.executeRuntimeStorageProbe(ctx, params.InstallDir, "checkpoint", request)
+	response, err := m.executeRuntimeStorageProbe(ctx, params.InstallDir, params.Version, "checkpoint", request)
 	if err != nil {
 		logger.WarnF(ctx, "[Install] checkpoint runtime probe execution failed: install_dir=%s, error=%v", params.InstallDir, err)
 		return err.Error()
@@ -181,7 +183,7 @@ func (m *InstallerManager) maybeProbeIMAPRuntimeStorage(ctx context.Context, par
 	if err != nil {
 		return fmt.Sprintf("failed to build IMAP probe request: %v", err)
 	}
-	response, err := m.executeRuntimeStorageProbe(ctx, params.InstallDir, "imap", request)
+	response, err := m.executeRuntimeStorageProbe(ctx, params.InstallDir, params.Version, "imap", request)
 	if err != nil {
 		logger.WarnF(ctx, "[Install] IMAP runtime probe execution failed: install_dir=%s, error=%v", params.InstallDir, err)
 		return err.Error()
@@ -241,6 +243,7 @@ func buildIMAPRuntimeProbeRequest(params *InstallParams) (map[string]interface{}
 func (m *InstallerManager) executeRuntimeStorageProbe(
 	ctx context.Context,
 	installDir string,
+	seatunnelVersion string,
 	kind string,
 	request map[string]interface{},
 ) (*runtimeStorageProbeResponse, error) {
@@ -248,7 +251,7 @@ func (m *InstallerManager) executeRuntimeStorageProbe(
 	if err != nil {
 		return nil, err
 	}
-	jarPath, err := resolveCapabilityProxyJarPath(installDir)
+	jarPath, err := resolveCapabilityProxyJarPath(installDir, seatunnelVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +290,7 @@ func (m *InstallerManager) executeRuntimeStorageProbe(
 		os.Environ(),
 		fmt.Sprintf("SEATUNNEL_HOME=%s", installDir),
 		fmt.Sprintf("%s=%s", seatunnelProxyJarEnvVar, jarPath),
+		fmt.Sprintf("%s=%s", seatunnelProxyVersionEnvVar, firstNonBlank(strings.TrimSpace(seatunnelVersion), seatunnelmeta.DefaultCapabilityProxyVersion)),
 	)
 	output, execErr := cmd.CombinedOutput()
 
@@ -381,7 +385,7 @@ func resolveCapabilityProxyScriptPath(installDir string) (string, error) {
 	return "", fmt.Errorf("capability proxy script is unavailable")
 }
 
-func resolveCapabilityProxyJarPath(installDir string) (string, error) {
+func resolveCapabilityProxyJarPath(installDir string, seatunnelVersion string) (string, error) {
 	if envPath := strings.TrimSpace(os.Getenv(capabilityProxyJarEnvVar)); envPath != "" {
 		if fileExists(envPath) {
 			return envPath, nil
@@ -389,7 +393,7 @@ func resolveCapabilityProxyJarPath(installDir string) (string, error) {
 		return "", fmt.Errorf("capability proxy jar not found at %s", envPath)
 	}
 
-	for _, candidate := range capabilityProxyJarCandidates(installDir) {
+	for _, candidate := range capabilityProxyJarCandidates(installDir, seatunnelVersion) {
 		if strings.Contains(candidate, "*") {
 			matches, _ := filepath.Glob(candidate)
 			sort.Strings(matches)
@@ -408,14 +412,23 @@ func resolveCapabilityProxyJarPath(installDir string) (string, error) {
 }
 
 func capabilityProxyScriptCandidates(installDir string) []string {
-	candidates := []string{
-		filepath.Join(installDir, "bin", "seatunnel-capability-proxy.sh"),
-		filepath.Join("tools", "seatunnel-capability-proxy", "bin", "seatunnel-capability-proxy.sh"),
+	candidates := make([]string, 0, 8)
+	if homeDir := strings.TrimSpace(os.Getenv(capabilityProxyHomeEnvVar)); homeDir != "" {
+		candidates = append(candidates, filepath.Join(homeDir, "scripts", seatunnelmeta.CapabilityProxyScriptFileName))
 	}
+	candidates = append(candidates,
+		filepath.Join(installDir, "scripts", "seatunnel-capability-proxy.sh"),
+		filepath.Join(installDir, "bin", "seatunnel-capability-proxy.sh"),
+		filepath.Join("scripts", "seatunnel-capability-proxy.sh"),
+		filepath.Join("tools", "seatunnel-capability-proxy", "bin", "seatunnel-capability-proxy.sh"),
+	)
 	if executable, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(executable)
 		candidates = append(
 			candidates,
+			filepath.Join(execDir, "..", "lib", "seatunnelx-agent", "scripts", seatunnelmeta.CapabilityProxyScriptFileName),
+			filepath.Join(execDir, "..", "..", "scripts", seatunnelmeta.CapabilityProxyScriptFileName),
+			filepath.Join(execDir, "..", "scripts", seatunnelmeta.CapabilityProxyScriptFileName),
 			filepath.Join(execDir, "tools", "seatunnel-capability-proxy", "bin", "seatunnel-capability-proxy.sh"),
 			filepath.Join(execDir, "..", "tools", "seatunnel-capability-proxy", "bin", "seatunnel-capability-proxy.sh"),
 			filepath.Join(execDir, "..", "..", "tools", "seatunnel-capability-proxy", "bin", "seatunnel-capability-proxy.sh"),
@@ -424,20 +437,64 @@ func capabilityProxyScriptCandidates(installDir string) []string {
 	return dedupeStrings(candidates)
 }
 
-func capabilityProxyJarCandidates(installDir string) []string {
+func capabilityProxyJarCandidates(installDir string, seatunnelVersion string) []string {
+	candidates := make([]string, 0, 16)
+	for _, libDir := range capabilityProxyLibDirCandidates(installDir) {
+		for _, version := range capabilityProxyVersionCandidates(seatunnelVersion) {
+			candidates = append(candidates, filepath.Join(libDir, seatunnelmeta.CapabilityProxyJarFileName(version)))
+		}
+		candidates = append(candidates, filepath.Join(libDir, "seatunnel-capability-proxy.jar"))
+	}
+	candidates = append(candidates, filepath.Join(installDir, "tools", "seatunnel-capability-proxy.jar"))
+	for _, targetDir := range capabilityProxyDevelopmentJarDirs() {
+		for _, version := range capabilityProxyVersionCandidates(seatunnelVersion) {
+			candidates = append(candidates, filepath.Join(targetDir, fmt.Sprintf("seatunnel-capability-proxy-%s*.jar", version)))
+		}
+		candidates = append(candidates, filepath.Join(targetDir, "seatunnel-capability-proxy-*.jar"))
+	}
+	return dedupeStrings(candidates)
+}
+
+func capabilityProxyLibDirCandidates(installDir string) []string {
+	candidates := make([]string, 0, 8)
+	if homeDir := strings.TrimSpace(os.Getenv(capabilityProxyHomeEnvVar)); homeDir != "" {
+		candidates = append(candidates, filepath.Join(homeDir, "lib"))
+	}
+	candidates = append(candidates, filepath.Join(installDir, "lib"), "lib")
+	if executable, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(executable)
+		candidates = append(
+			candidates,
+			filepath.Join(execDir, "..", "lib", "seatunnelx-agent", "lib"),
+			filepath.Join(execDir, ".."),
+			filepath.Join(execDir, "..", "..", "lib"),
+		)
+	}
+	return dedupeStrings(candidates)
+}
+
+func capabilityProxyDevelopmentJarDirs() []string {
 	candidates := []string{
-		filepath.Join(installDir, "tools", "seatunnel-capability-proxy.jar"),
-		filepath.Join("tools", "seatunnel-capability-proxy", "target", "seatunnel-capability-proxy-*.jar"),
+		filepath.Join("tools", "seatunnel-capability-proxy", "target"),
 	}
 	if executable, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(executable)
 		candidates = append(
 			candidates,
-			filepath.Join(execDir, "tools", "seatunnel-capability-proxy", "target", "seatunnel-capability-proxy-*.jar"),
-			filepath.Join(execDir, "..", "tools", "seatunnel-capability-proxy", "target", "seatunnel-capability-proxy-*.jar"),
-			filepath.Join(execDir, "..", "..", "tools", "seatunnel-capability-proxy", "target", "seatunnel-capability-proxy-*.jar"),
+			filepath.Join(execDir, "tools", "seatunnel-capability-proxy", "target"),
+			filepath.Join(execDir, "..", "tools", "seatunnel-capability-proxy", "target"),
+			filepath.Join(execDir, "..", "..", "tools", "seatunnel-capability-proxy", "target"),
 		)
 	}
+	return dedupeStrings(candidates)
+}
+
+func capabilityProxyVersionCandidates(seatunnelVersion string) []string {
+	candidates := []string{}
+	if version := strings.TrimSpace(seatunnelVersion); version != "" {
+		candidates = append(candidates, version)
+	}
+	candidates = append(candidates, seatunnelmeta.DefaultCapabilityProxyVersion)
 	return dedupeStrings(candidates)
 }
 
