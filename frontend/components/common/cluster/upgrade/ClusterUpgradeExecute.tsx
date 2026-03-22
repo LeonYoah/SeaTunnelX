@@ -399,7 +399,7 @@ export function ClusterUpgradeExecute({clusterId}: ClusterUpgradeExecuteProps) {
   }
 
   return (
-    <div className='space-y-6'>
+    <div className='space-y-6' data-testid='upgrade-execute-page'>
       <div className='space-y-3'>
         <Breadcrumb>
           <BreadcrumbList>
@@ -455,6 +455,7 @@ export function ClusterUpgradeExecute({clusterId}: ClusterUpgradeExecuteProps) {
             </Button>
             {showPrimaryExecutionButton ? (
               <Button
+                data-testid='upgrade-execute-start'
                 onClick={handleStartExecution}
                 disabled={starting || !plan || hasActiveTask}
               >
@@ -500,7 +501,10 @@ export function ClusterUpgradeExecute({clusterId}: ClusterUpgradeExecuteProps) {
       </div>
 
       {task?.status === 'succeeded' ? (
-        <Card className='border-emerald-500/40 bg-emerald-500/5'>
+        <Card
+          className='border-emerald-500/40 bg-emerald-500/5'
+          data-testid='upgrade-execute-success'
+        >
           <CardContent className='flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between'>
             <div className='space-y-1'>
               <div className='font-medium'>{t('upgradeCompletedTitle')}</div>

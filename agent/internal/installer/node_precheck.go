@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,8 +36,9 @@ import (
 // NodePrecheckResult represents the result of a node precheck
 // NodePrecheckResult 表示节点预检查的结果
 type NodePrecheckResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Success bool              `json:"success"`
+	Message string            `json:"message"`
+	Details map[string]string `json:"details,omitempty"`
 }
 
 // CheckPortListening checks if a port is listening (service is running)
@@ -57,6 +59,37 @@ func CheckPortListening(port int) *NodePrecheckResult {
 	}
 }
 
+// CheckTCPConnection checks whether a remote TCP endpoint is reachable.
+// CheckTCPConnection 检查远程 TCP 端点是否可达。
+func CheckTCPConnection(host string, port int, timeout time.Duration) *NodePrecheckResult {
+	if strings.TrimSpace(host) == "" || port <= 0 {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: "host and port are required",
+		}
+	}
+	addr := net.JoinHostPort(strings.TrimSpace(host), strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("TCP endpoint %s is not reachable: %v", addr, err),
+			Details: map[string]string{
+				"host": host,
+				"port": strconv.Itoa(port),
+			},
+		}
+	}
+	_ = conn.Close()
+	return &NodePrecheckResult{
+		Success: true,
+		Message: fmt.Sprintf("TCP endpoint %s is reachable", addr),
+		Details: map[string]string{
+			"host": host,
+			"port": strconv.Itoa(port),
+		},
+	}
+}
 
 // CheckDirectoryExists checks if a directory exists and is writable
 // CheckDirectoryExists 检查目录是否存在且可写
@@ -100,6 +133,176 @@ func CheckDirectoryExists(path string) *NodePrecheckResult {
 	}
 }
 
+// CheckPathReady checks whether a local directory path exists and is writable,
+// or can be created because its parent directory is writable.
+// CheckPathReady 检查本地目录路径是否已存在可写，或其父目录是否可写从而可以创建。
+func CheckPathReady(path string) *NodePrecheckResult {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: "path parameter is required",
+		}
+	}
+	normalized := filepath.Clean(trimmed)
+	info, err := os.Stat(normalized)
+	if err == nil {
+		if !info.IsDir() {
+			return &NodePrecheckResult{
+				Success: false,
+				Message: fmt.Sprintf("Path %s is not a directory", trimmed),
+			}
+		}
+		return CheckDirectoryExists(normalized)
+	}
+	if !os.IsNotExist(err) {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("Failed to check path %s: %v", trimmed, err),
+		}
+	}
+
+	parent := filepath.Dir(normalized)
+	if parent == "." || parent == "" {
+		parent = "/"
+	}
+	parentResult := CheckDirectoryExists(parent)
+	if !parentResult.Success {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("Path %s does not exist and parent %s is not writable", trimmed, parent),
+			Details: map[string]string{
+				"path":   trimmed,
+				"parent": parent,
+			},
+		}
+	}
+
+	return &NodePrecheckResult{
+		Success: true,
+		Message: fmt.Sprintf("Path %s can be created (parent %s is writable)", trimmed, parent),
+		Details: map[string]string{
+			"path":   trimmed,
+			"parent": parent,
+		},
+	}
+}
+
+// PathStatResult describes basic local path status and size.
+// PathStatResult 描述本地路径的基本状态和大小。
+type PathStatResult struct {
+	Exists    bool   `json:"exists"`
+	IsDir     bool   `json:"is_dir"`
+	SizeBytes int64  `json:"size_bytes"`
+	Path      string `json:"path"`
+}
+
+// StatPath returns path existence and recursive size information.
+// StatPath 返回路径存在性及递归大小信息。
+func StatPath(path string) (*PathStatResult, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil, fmt.Errorf("path parameter is required")
+	}
+	info, err := os.Stat(trimmed)
+	if os.IsNotExist(err) {
+		return &PathStatResult{Exists: false, Path: trimmed}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PathStatResult{
+		Exists: true,
+		IsDir:  info.IsDir(),
+		Path:   trimmed,
+	}
+	if !info.IsDir() {
+		result.SizeBytes = info.Size()
+		return result, nil
+	}
+
+	var total int64
+	err = filepath.Walk(trimmed, func(_ string, fi os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if fi != nil && !fi.IsDir() {
+			total += fi.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.SizeBytes = total
+	return result, nil
+}
+
+// CleanupDirectoryContents removes all children under a directory but keeps the directory itself.
+// CleanupDirectoryContents 清理目录下所有子项，但保留目录本身。
+func CleanupDirectoryContents(path string) *NodePrecheckResult {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return &NodePrecheckResult{Success: false, Message: "path parameter is required"}
+	}
+	cleaned := filepath.Clean(trimmed)
+	switch cleaned {
+	case "/", ".", "":
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("refusing to clean unsafe path: %s", cleaned),
+		}
+	}
+
+	info, err := os.Stat(cleaned)
+	if os.IsNotExist(err) {
+		return &NodePrecheckResult{
+			Success: true,
+			Message: fmt.Sprintf("Directory %s does not exist, nothing to clean", cleaned),
+			Details: map[string]string{"path": cleaned},
+		}
+	}
+	if err != nil {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("Failed to inspect directory %s: %v", cleaned, err),
+		}
+	}
+	if !info.IsDir() {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("Path %s is not a directory", cleaned),
+		}
+	}
+
+	entries, err := os.ReadDir(cleaned)
+	if err != nil {
+		return &NodePrecheckResult{
+			Success: false,
+			Message: fmt.Sprintf("Failed to list directory %s: %v", cleaned, err),
+		}
+	}
+	removed := 0
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(cleaned, entry.Name())); err != nil {
+			return &NodePrecheckResult{
+				Success: false,
+				Message: fmt.Sprintf("Failed to remove %s: %v", entry.Name(), err),
+			}
+		}
+		removed++
+	}
+	return &NodePrecheckResult{
+		Success: true,
+		Message: fmt.Sprintf("Cleaned %d entries under %s", removed, cleaned),
+		Details: map[string]string{
+			"path":          cleaned,
+			"removed_count": strconv.Itoa(removed),
+		},
+	}
+}
+
 // CheckHTTPEndpoint checks if an HTTP endpoint is accessible
 // CheckHTTPEndpoint 检查 HTTP 端点是否可访问
 func CheckHTTPEndpoint(url string) *NodePrecheckResult {
@@ -128,7 +331,6 @@ func CheckHTTPEndpoint(url string) *NodePrecheckResult {
 		Message: fmt.Sprintf("HTTP endpoint %s returned error status: %d", url, resp.StatusCode),
 	}
 }
-
 
 // SeaTunnelProcessInfo represents information about a SeaTunnel process
 // SeaTunnelProcessInfo 表示 SeaTunnel 进程的信息

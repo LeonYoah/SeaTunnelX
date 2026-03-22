@@ -25,6 +25,7 @@
 
 import {BaseService} from '../core/base.service';
 import apiClient from '../core/api-client';
+import {localizeBackendText} from '@/lib/i18n/localize-text';
 import {
   ClusterInfo,
   ClusterListData,
@@ -50,7 +51,11 @@ import {
   RemoveNodeResponse,
   ClusterOperationResponse,
   GetClusterStatusResponse,
+  GetRuntimeStorageResponse,
+  CleanupRuntimeStorageResponse,
   PrecheckNodeResponse,
+  RuntimeStorageDetails,
+  RuntimeStorageCleanupResult,
 } from './types';
 
 /**
@@ -376,6 +381,72 @@ export class ClusterService extends BaseService {
     return response.data.data;
   }
 
+  /**
+   * Get runtime storage details
+   * 获取运行时存储详情
+   */
+  static async getRuntimeStorage(clusterId: number): Promise<RuntimeStorageDetails> {
+    const response = await apiClient.get<GetRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage`,
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    const data = response.data.data;
+    return {
+      ...data,
+      checkpoint: data.checkpoint
+        ? {
+            ...data.checkpoint,
+            warning: localizeBackendText(data.checkpoint.warning),
+            nodes: Array.isArray(data.checkpoint.nodes)
+              ? data.checkpoint.nodes.map((node) => ({
+                  ...node,
+                  message: localizeBackendText(node.message),
+                }))
+              : [],
+          }
+        : data.checkpoint,
+      imap: data.imap
+        ? {
+            ...data.imap,
+            warning: localizeBackendText(data.imap.warning),
+            nodes: Array.isArray(data.imap.nodes)
+              ? data.imap.nodes.map((node) => ({
+                  ...node,
+                  message: localizeBackendText(node.message),
+                }))
+              : [],
+          }
+        : data.imap,
+    };
+  }
+
+  /**
+   * Cleanup local IMAP storage
+   * 清理本地 IMAP 存储
+   */
+  static async cleanupIMAPStorage(clusterId: number): Promise<RuntimeStorageCleanupResult> {
+    const response = await apiClient.post<CleanupRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/imap/cleanup`,
+      {},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    const data = response.data.data;
+    return {
+      ...data,
+      message: localizeBackendText(data.message),
+      nodes: Array.isArray(data.nodes)
+        ? data.nodes.map((node) => ({
+            ...node,
+            message: localizeBackendText(node.message),
+          }))
+        : [],
+    };
+  }
+
   // ==================== Safe Methods (with error handling) 安全方法（带错误处理） ====================
 
   /**
@@ -679,6 +750,36 @@ export class ClusterService extends BaseService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : '获取集群状态失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async getRuntimeStorageSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: RuntimeStorageDetails;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getRuntimeStorage(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取运行时存储详情失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async cleanupIMAPStorageSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: RuntimeStorageCleanupResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.cleanupIMAPStorage(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '清理 IMAP 失败';
       return {success: false, error: errorMessage};
     }
   }

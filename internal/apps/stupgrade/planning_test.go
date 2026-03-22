@@ -71,6 +71,7 @@ type stubPluginProvider struct {
 	local        []pluginapp.LocalPlugin
 	dependencies map[string][]pluginapp.PluginDependency
 	requested    map[string][]string
+	recorded     map[string]string
 }
 
 func (s *stubPluginProvider) ListInstalledPlugins(ctx context.Context, clusterID uint) ([]pluginapp.InstalledPlugin, error) {
@@ -94,6 +95,14 @@ func (s *stubPluginProvider) GetPluginArtifactID(pluginName string) string {
 }
 
 func (s *stubPluginProvider) TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error {
+	return nil
+}
+
+func (s *stubPluginProvider) RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error {
+	if s.recorded == nil {
+		s.recorded = make(map[string]string)
+	}
+	s.recorded[pluginName] = version
 	return nil
 }
 

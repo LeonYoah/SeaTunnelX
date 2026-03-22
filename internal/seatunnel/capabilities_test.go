@@ -1,0 +1,116 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package seatunnel
+
+import "testing"
+
+func TestCapabilitiesForVersion(t *testing.T) {
+	t.Run("2.3.2 has no history or schedule cleanup settings", func(t *testing.T) {
+		capabilities := CapabilitiesForVersion("2.3.2")
+		if !capabilities.SupportsDynamicSlot || !capabilities.SupportsSlotNum {
+			t.Fatalf("expected 2.3.2 to support slot settings, got %+v", capabilities)
+		}
+		if capabilities.SupportsHistoryJobExpireMinutes {
+			t.Fatalf("expected 2.3.2 not to support history_job_expire_minutes, got %+v", capabilities)
+		}
+		if capabilities.SupportsScheduledDeletionEnable || capabilities.SupportsJobScheduleStrategy {
+			t.Fatalf("expected 2.3.2 not to support scheduled deletion or job schedule strategy, got %+v", capabilities)
+		}
+		if capabilities.SupportsSlotAllocationStrategy {
+			t.Fatalf("expected 2.3.2 not to support slot allocation strategy, got %+v", capabilities)
+		}
+		if capabilities.SupportsHTTPService || capabilities.SupportsJobLogMode {
+			t.Fatalf("expected 2.3.2 not to support http service or job log mode, got %+v", capabilities)
+		}
+	})
+
+	t.Run("2.3.3 supports historical retention only", func(t *testing.T) {
+		capabilities := CapabilitiesForVersion("2.3.3")
+		if !capabilities.SupportsHistoryJobExpireMinutes {
+			t.Fatalf("expected 2.3.3 to support history_job_expire_minutes, got %+v", capabilities)
+		}
+		if capabilities.SupportsScheduledDeletionEnable || capabilities.SupportsJobScheduleStrategy {
+			t.Fatalf("expected 2.3.3 not to support scheduled deletion or job schedule strategy, got %+v", capabilities)
+		}
+		if capabilities.SupportsSlotAllocationStrategy {
+			t.Fatalf("expected 2.3.3 not to support slot allocation strategy, got %+v", capabilities)
+		}
+	})
+
+	t.Run("2.3.9 supports retention cleanup and job schedule strategy", func(t *testing.T) {
+		capabilities := CapabilitiesForVersion("2.3.9")
+		if !capabilities.SupportsHistoryJobExpireMinutes || !capabilities.SupportsScheduledDeletionEnable || !capabilities.SupportsJobScheduleStrategy {
+			t.Fatalf("expected 2.3.9 to support advanced retention settings, got %+v", capabilities)
+		}
+		if !capabilities.SupportsHTTPService || !capabilities.SupportsJobLogMode {
+			t.Fatalf("expected 2.3.9 to support http service and job log mode, got %+v", capabilities)
+		}
+		if capabilities.SupportsSlotAllocationStrategy {
+			t.Fatalf("expected 2.3.9 not to support slot allocation strategy yet, got %+v", capabilities)
+		}
+	})
+
+	t.Run("2.3.8 supports per-job log mode but not http service", func(t *testing.T) {
+		capabilities := CapabilitiesForVersion("2.3.8")
+		if !capabilities.SupportsJobLogMode {
+			t.Fatalf("expected 2.3.8 to support job log mode, got %+v", capabilities)
+		}
+		if capabilities.SupportsHTTPService {
+			t.Fatalf("expected 2.3.8 not to support http service, got %+v", capabilities)
+		}
+	})
+
+	t.Run("2.3.10 supports slot allocation strategy", func(t *testing.T) {
+		capabilities := CapabilitiesForVersion("2.3.10")
+		if !capabilities.SupportsSlotAllocationStrategy {
+			t.Fatalf("expected 2.3.10 to support slot allocation strategy, got %+v", capabilities)
+		}
+		if capabilities.DefaultSlotAllocationStrategy != "RANDOM" {
+			t.Fatalf("expected default slot allocation strategy RANDOM, got %+v", capabilities)
+		}
+	})
+}
+
+func TestCompareVersions(t *testing.T) {
+	testCases := []struct {
+		name string
+		v1   string
+		v2   string
+		want int
+	}{
+		{name: "equal", v1: "2.3.9", v2: "2.3.9", want: 0},
+		{name: "greater", v1: "2.3.10", v2: "2.3.9", want: 1},
+		{name: "less", v1: "2.3.8", v2: "2.3.9", want: -1},
+		{name: "suffix", v1: "2.2.0", v2: "2.2.0-beta", want: 1},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := CompareVersions(testCase.v1, testCase.v2)
+			if testCase.want == 0 && got != 0 {
+				t.Fatalf("CompareVersions(%q, %q) = %d, want 0", testCase.v1, testCase.v2, got)
+			}
+			if testCase.want > 0 && got <= 0 {
+				t.Fatalf("CompareVersions(%q, %q) = %d, want > 0", testCase.v1, testCase.v2, got)
+			}
+			if testCase.want < 0 && got >= 0 {
+				t.Fatalf("CompareVersions(%q, %q) = %d, want < 0", testCase.v1, testCase.v2, got)
+			}
+		})
+	}
+}

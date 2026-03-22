@@ -1,0 +1,46 @@
+{
+  "id": "installer-real-e2e",
+  "name": "installer-real-e2e",
+  "title": "installer real e2e",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P2",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/imap-checkpoint-install-flow",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "03-21-real-e2e-expansion-and-incremental-matrix"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -39,8 +40,10 @@ const bufSize = 1024 * 1024
 // testServer 包装 gRPC 服务器用于测试。
 type testServer struct {
 	server       *Server
+	grpcServer   *grpc.Server
 	listener     *bufconn.Listener
 	agentManager *agent.Manager
+	serveErrCh   chan error
 }
 
 // newTestServer creates a new test server with in-memory connection.
@@ -62,17 +65,22 @@ func newTestServer(t *testing.T) *testServer {
 	// 手动创建 gRPC 服务器用于测试
 	grpcServer := grpc.NewServer()
 	pb.RegisterAgentServiceServer(grpcServer, server)
+	serveErrCh := make(chan error, 1)
 
 	go func() {
-		if err := grpcServer.Serve(listener); err != nil {
-			t.Logf("Server exited: %v", err)
+		if err := grpcServer.Serve(listener); err != nil &&
+			!errors.Is(err, grpc.ErrServerStopped) {
+			serveErrCh <- err
 		}
+		close(serveErrCh)
 	}()
 
 	return &testServer{
 		server:       server,
+		grpcServer:   grpcServer,
 		listener:     listener,
 		agentManager: agentManager,
+		serveErrCh:   serveErrCh,
 	}
 }
 
@@ -90,7 +98,29 @@ func (ts *testServer) dial(ctx context.Context) (*grpc.ClientConn, error) {
 // close closes the test server.
 // close 关闭测试服务器。
 func (ts *testServer) close() {
-	ts.listener.Close()
+	if ts.grpcServer != nil {
+		ts.grpcServer.Stop()
+	}
+	if ts.listener != nil {
+		_ = ts.listener.Close()
+	}
+	select {
+	case err, ok := <-ts.serveErrCh:
+		if ok {
+			panic(err)
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// getFreeTCPPort allocates a free TCP port for test servers.
+// getFreeTCPPort 为测试服务器分配一个空闲 TCP 端口。
+func getFreeTCPPort(t *testing.T) int {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 // TestNewServer tests server creation with various configurations.
@@ -138,7 +168,7 @@ func TestServerStartStop(t *testing.T) {
 
 	t.Run("start and stop server", func(t *testing.T) {
 		config := &ServerConfig{
-			Port: 19000, // Use a different port to avoid conflicts
+			Port: getFreeTCPPort(t),
 		}
 		server := NewServer(config, agentManager, nil, nil, logger)
 
@@ -157,7 +187,7 @@ func TestServerStartStop(t *testing.T) {
 
 	t.Run("double start returns error", func(t *testing.T) {
 		config := &ServerConfig{
-			Port: 19001,
+			Port: getFreeTCPPort(t),
 		}
 		server := NewServer(config, agentManager, nil, nil, logger)
 
@@ -172,7 +202,7 @@ func TestServerStartStop(t *testing.T) {
 
 	t.Run("stop when not running is safe", func(t *testing.T) {
 		config := &ServerConfig{
-			Port: 19002,
+			Port: getFreeTCPPort(t),
 		}
 		server := NewServer(config, agentManager, nil, nil, logger)
 

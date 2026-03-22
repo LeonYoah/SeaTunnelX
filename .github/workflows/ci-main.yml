@@ -26,6 +26,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: ci-main-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -146,7 +149,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -178,7 +181,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -192,154 +195,44 @@ jobs:
           cd frontend
           pnpm run pack:standalone
 
-  frontend-e2e-select:
-    name: Frontend E2E Select
+  ci-gate:
+    name: CI Gate
     runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    outputs:
-      mode: ${{ steps.select-e2e.outputs.mode }}
-      has_specs: ${{ steps.select-e2e.outputs.has_specs }}
-      spec_count: ${{ steps.select-e2e.outputs.spec_count }}
-      matched_groups: ${{ steps.select-e2e.outputs.matched_groups }}
-      spec_args: ${{ steps.select-e2e.outputs.spec_args }}
+    needs: [changes, backend-core-test, agent-test, frontend-unit, frontend-build]
+    if: always()
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Fetch base branch
-        if: github.event_name == 'pull_request'
-        run: git fetch origin "${{ github.base_ref }}" --depth=1
-
-      - name: Resolve diff base
-        id: diff-base
+      - name: Evaluate CI gate
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "value=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Select incremental E2E specs
-        id: select-e2e
-        run: |
-          node frontend/scripts/e2e/select-e2e-specs.mjs \
-            --base "${{ steps.diff-base.outputs.value }}" \
-            --head "${{ github.sha }}" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Print E2E selection
-        run: |
-          echo "mode=${{ steps.select-e2e.outputs.mode }}"
-          echo "matched_groups=${{ steps.select-e2e.outputs.matched_groups }}"
-          echo "spec_count=${{ steps.select-e2e.outputs.spec_count }}"
-          echo "spec_args=${{ steps.select-e2e.outputs.spec_args }}"
-
-  frontend-e2e-smoke:
-    name: Frontend E2E Smoke
-    runs-on: ${{ matrix.runner }}
-    needs: [changes, frontend-e2e-select]
-    if: needs.changes.outputs.frontend == 'true' && needs.frontend-e2e-select.outputs.has_specs == 'true'
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.10.0
-
-      - name: Setup Node cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-
-      - name: Install Playwright browser
-        run: |
-          cd frontend
-          pnpm exec playwright install --with-deps chromium
-
-      - name: Print E2E execution plan
-        run: |
-          echo "runner=${{ matrix.runner }}"
-          echo "arch=${{ matrix.arch }}"
-          echo "mode=${{ needs.frontend-e2e-select.outputs.mode }}"
-          echo "matched_groups=${{ needs.frontend-e2e-select.outputs.matched_groups }}"
-          echo "spec_count=${{ needs.frontend-e2e-select.outputs.spec_count }}"
-          echo "spec_args=${{ needs.frontend-e2e-select.outputs.spec_args }}"
-
-      - name: Run selected E2E specs
-        run: |
-          cd frontend
-          pnpm exec playwright test ${{ needs.frontend-e2e-select.outputs.spec_args }}
-
-      - name: Upload Playwright report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-${{ matrix.arch }}
-          path: |
-            frontend/playwright-report
-            frontend/test-results
-          if-no-files-found: ignore
-
-  frontend-e2e-gate:
-    name: Frontend E2E Gate
-    runs-on: ubuntu-latest
-    needs: [changes, frontend-e2e-select, frontend-e2e-smoke]
-    if: ${{ always() }}
-
-    steps:
-      - name: Evaluate E2E gate
-        run: |
+          echo "backend=${{ needs.changes.outputs.backend }}"
+          echo "backend_core_result=${{ needs.backend-core-test.result }}"
+          echo "agent_result=${{ needs.agent-test.result }}"
           echo "frontend=${{ needs.changes.outputs.frontend }}"
-          echo "has_specs=${{ needs.frontend-e2e-select.outputs.has_specs }}"
-          echo "smoke_result=${{ needs.frontend-e2e-smoke.result }}"
+          echo "frontend_unit_result=${{ needs.frontend-unit.result }}"
+          echo "frontend_build_result=${{ needs.frontend-build.result }}"
 
-          if [ "${{ needs.changes.outputs.frontend }}" != "true" ]; then
-            echo "No frontend changes detected; passing E2E gate."
-            exit 0
-          fi
-
-          if [ "${{ needs.frontend-e2e-select.outputs.has_specs }}" != "true" ]; then
-            echo "No frontend E2E specs selected; passing E2E gate."
-            exit 0
-          fi
-
-          if [ "${{ needs.frontend-e2e-smoke.result }}" != "success" ]; then
-            echo "::error::Frontend E2E smoke matrix did not succeed."
+          if [ "${{ needs.changes.outputs.backend }}" = "true" ] &&
+             [ "${{ needs.backend-core-test.result }}" != "success" ]; then
+            echo "::error::Backend Core Tests did not succeed."
             exit 1
           fi
 
-          echo "Frontend E2E smoke matrix succeeded."
+          if [ "${{ needs.changes.outputs.backend }}" = "true" ] &&
+             [ "${{ needs.agent-test.result }}" != "success" ]; then
+            echo "::error::Agent Tests did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.frontend }}" = "true" ] &&
+             [ "${{ needs.frontend-unit.result }}" != "success" ]; then
+            echo "::error::Frontend Unit Tests did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.frontend }}" = "true" ] &&
+             [ "${{ needs.frontend-build.result }}" != "success" ]; then
+            echo "::error::Frontend Build did not succeed."
+            exit 1
+          fi
+
+          echo "All required CI suites succeeded."

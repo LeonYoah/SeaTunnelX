@@ -1,0 +1,44 @@
+{
+  "id": "real-e2e-expansion-and-incremental-matrix",
+  "name": "real-e2e-expansion-and-incremental-matrix",
+  "title": "real e2e expansion and incremental matrix",
+  "description": "Design next-stage real-environment E2E suites and incremental trigger matrix.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "frontend-e2e,installer,upgrade,plugin,config",
+  "priority": "P2",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-21",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/imap-checkpoint-install-flow",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "03-21-installer-real-e2e",
+  "relatedFiles": [],
+  "notes": "Follow-up planning task linked from 03-21-installer-real-e2e.",
+  "meta": {}
+}

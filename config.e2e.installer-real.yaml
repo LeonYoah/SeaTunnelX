@@ -1,0 +1,83 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+app:
+  app_name: "SeaTunnelX"
+  env: "testing"
+  addr: ":18000"
+  external_url: "http://127.0.0.1:18000"
+  session_cookie_name: "seatunnelx_e2e_real_session"
+  session_secret: "seatunnelx-e2e-real-secret"
+  session_domain: "127.0.0.1"
+  session_age: 86400
+  session_secure: false
+  session_http_only: true
+  api_prefix: "/api"
+
+auth:
+  default_admin_username: "admin"
+  default_admin_password: "admin123"
+  bcrypt_cost: 10
+
+database:
+  enabled: true
+  type: "sqlite"
+  sqlite_path: "../tmp/e2e/installer-real/seatunnelx.db"
+  log_level: "warn"
+
+grpc:
+  enabled: true
+  port: 19090
+  tls_enabled: false
+  max_recv_msg_size: 16
+  max_send_msg_size: 16
+  heartbeat_interval: 3
+  heartbeat_timeout: 12
+
+storage:
+  base_dir: "../tmp/e2e/installer-real/storage"
+  packages_dir: "../tmp/e2e/installer-real/storage/packages"
+  plugins_dir: "../tmp/e2e/installer-real/storage/plugins"
+  temp_dir: "../tmp/e2e/installer-real/storage/temp"
+  max_package_size: 20480
+  cleanup_interval_hours: 24
+
+log:
+  level: "info"
+  format: "text"
+  output: "file"
+  file_path: "../tmp/e2e/installer-real/logs/seatunnelx.log"
+  max_size: 20
+  max_age: 7
+  max_backups: 2
+  compress: false
+
+telemetry:
+  enabled: false
+  endpoint: ""
+
+observability:
+  enabled: false
+  prometheus:
+    url: ""
+    http_sd_path: "/api/v1/monitoring/prometheus/discovery"
+  alertmanager:
+    url: ""
+    webhook_path: "/api/v1/monitoring/alertmanager/webhook"
+  grafana:
+    url: ""
+  seatunnel_metrics:
+    path: "/hazelcast/rest/instance/metrics"
+    probe_timeout_seconds: 2

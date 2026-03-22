@@ -1,0 +1,655 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: E2E suites to run
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - smoke
+          - installer-real
+          - config-real
+          - upgrade-real
+          - plugin-real
+  schedule:
+    - cron: '0 18 * * *'
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect E2E Scope
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.scope.outputs.frontend }}
+      backend: ${{ steps.scope.outputs.backend }}
+      run_smoke: ${{ steps.scope.outputs.run_smoke }}
+      run_installer_real: ${{ steps.scope.outputs.run_installer_real }}
+      run_config_real: ${{ steps.scope.outputs.run_config_real }}
+      run_upgrade_real: ${{ steps.scope.outputs.run_upgrade_real }}
+      run_plugin_real: ${{ steps.scope.outputs.run_plugin_real }}
+
+    steps:
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect frontend/backend changes
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci-main.yml'
+              - '.github/workflows/e2e.yml'
+              - 'scripts/restart.sh'
+            backend:
+              - 'internal/**'
+              - 'agent/**'
+              - 'go.mod'
+              - 'go.sum'
+              - '.github/workflows/ci-main.yml'
+              - '.github/workflows/e2e.yml'
+              - 'scripts/restart.sh'
+            installer_real:
+              - 'frontend/e2e/install-wizard-real.spec.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/installer/**'
+              - 'frontend/lib/services/installer/**'
+              - 'frontend/app/(main)/e2e-lab/install-wizard/**'
+              - 'internal/apps/installer/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
+            config_real:
+              - 'frontend/e2e/config-real.spec.ts'
+              - 'frontend/e2e/helpers/config-real.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/e2e/helpers/upgrade-real.ts'
+              - 'frontend/scripts/e2e/run-real-config.sh'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/cluster/ClusterConfigs.tsx'
+              - 'frontend/components/common/cluster/ClusterDetail.tsx'
+              - 'frontend/lib/services/config/**'
+              - 'internal/apps/config/**'
+              - 'internal/apps/cluster/**'
+              - 'internal/apps/installer/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
+            upgrade_real:
+              - 'frontend/e2e/upgrade-real.spec.ts'
+              - 'frontend/e2e/helpers/upgrade-real.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/scripts/e2e/run-real-upgrade.sh'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/cluster/upgrade/**'
+              - 'frontend/lib/services/st-upgrade/**'
+              - 'frontend/lib/st-upgrade-session.ts'
+              - 'internal/apps/stupgrade/**'
+              - 'internal/apps/plugin/**'
+              - 'internal/apps/config/**'
+              - 'internal/apps/cluster/handler.go'
+              - 'internal/apps/cluster/service.go'
+              - 'internal/apps/cluster/types.go'
+              - 'internal/seatunnel/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
+            plugin_real:
+              - 'frontend/e2e/plugin-real.spec.ts'
+              - 'frontend/e2e/helpers/plugin-real.ts'
+              - 'frontend/e2e/helpers/install-wizard-real.ts'
+              - 'frontend/e2e/helpers/upgrade-real.ts'
+              - 'frontend/scripts/e2e/run-real-plugin.sh'
+              - 'frontend/scripts/e2e/run-real-installer.sh'
+              - 'frontend/playwright.config.ts'
+              - 'frontend/components/common/plugin/**'
+              - 'frontend/components/common/cluster/ClusterPlugins.tsx'
+              - 'frontend/components/common/cluster/ClusterDetail.tsx'
+              - 'frontend/lib/services/plugin/**'
+              - 'internal/apps/plugin/**'
+              - 'internal/apps/installer/**'
+              - 'agent/internal/installer/**'
+              - 'internal/router/router.go'
+              - 'config.e2e.installer-real.yaml'
+              - 'config.e2e.agent-real.yaml'
+              - '.github/workflows/e2e.yml'
+
+      - name: Resolve E2E scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_SUITES: ${{ github.event.inputs.suites || 'all' }}
+          FILTER_FRONTEND: ${{ steps.filter.outputs.frontend }}
+          FILTER_BACKEND: ${{ steps.filter.outputs.backend }}
+          FILTER_INSTALLER_REAL: ${{ steps.filter.outputs.installer_real }}
+          FILTER_CONFIG_REAL: ${{ steps.filter.outputs.config_real }}
+          FILTER_UPGRADE_REAL: ${{ steps.filter.outputs.upgrade_real }}
+          FILTER_PLUGIN_REAL: ${{ steps.filter.outputs.plugin_real }}
+        run: |
+          frontend=false
+          backend=false
+          run_smoke=false
+          run_installer_real=false
+          run_config_real=false
+          run_upgrade_real=false
+          run_plugin_real=false
+
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            frontend="${FILTER_FRONTEND}"
+            backend="${FILTER_BACKEND}"
+            if [ "${frontend}" = "true" ]; then
+              run_smoke=true
+            fi
+            if [ "${FILTER_INSTALLER_REAL}" = "true" ]; then
+              run_installer_real=true
+            fi
+            if [ "${FILTER_CONFIG_REAL}" = "true" ]; then
+              run_config_real=true
+            fi
+            if [ "${FILTER_UPGRADE_REAL}" = "true" ]; then
+              run_upgrade_real=true
+            fi
+            if [ "${FILTER_PLUGIN_REAL}" = "true" ]; then
+              run_plugin_real=true
+            fi
+          else
+            frontend=true
+            backend=true
+            case "${INPUT_SUITES}" in
+              smoke)
+                run_smoke=true
+                ;;
+              installer-real)
+                run_installer_real=true
+                ;;
+              config-real)
+                run_config_real=true
+                ;;
+              upgrade-real)
+                run_upgrade_real=true
+                ;;
+              plugin-real)
+                run_plugin_real=true
+                ;;
+              *)
+                run_smoke=true
+                run_installer_real=true
+                run_config_real=true
+                run_upgrade_real=true
+                run_plugin_real=true
+                ;;
+            esac
+          fi
+
+          echo "frontend=${frontend}" >> "$GITHUB_OUTPUT"
+          echo "backend=${backend}" >> "$GITHUB_OUTPUT"
+          echo "run_smoke=${run_smoke}" >> "$GITHUB_OUTPUT"
+          echo "run_installer_real=${run_installer_real}" >> "$GITHUB_OUTPUT"
+          echo "run_config_real=${run_config_real}" >> "$GITHUB_OUTPUT"
+          echo "run_upgrade_real=${run_upgrade_real}" >> "$GITHUB_OUTPUT"
+          echo "run_plugin_real=${run_plugin_real}" >> "$GITHUB_OUTPUT"
+
+      - name: Print E2E scope
+        run: |
+          echo "frontend=${{ steps.scope.outputs.frontend }}"
+          echo "backend=${{ steps.scope.outputs.backend }}"
+          echo "run_smoke=${{ steps.scope.outputs.run_smoke }}"
+          echo "run_installer_real=${{ steps.scope.outputs.run_installer_real }}"
+          echo "run_config_real=${{ steps.scope.outputs.run_config_real }}"
+          echo "run_upgrade_real=${{ steps.scope.outputs.run_upgrade_real }}"
+          echo "run_plugin_real=${{ steps.scope.outputs.run_plugin_real }}"
+
+  smoke-select:
+    name: E2E Smoke Select
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.run_smoke == 'true'
+    outputs:
+      mode: ${{ steps.select-e2e.outputs.mode || steps.select-all.outputs.mode }}
+      has_specs: ${{ steps.select-e2e.outputs.has_specs || steps.select-all.outputs.has_specs }}
+      spec_count: ${{ steps.select-e2e.outputs.spec_count || steps.select-all.outputs.spec_count }}
+      matched_groups: ${{ steps.select-e2e.outputs.matched_groups || steps.select-all.outputs.matched_groups }}
+      spec_args: ${{ steps.select-e2e.outputs.spec_args || steps.select-all.outputs.spec_args }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "${{ github.base_ref }}" --depth=1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Select incremental E2E specs for pull requests
+        if: github.event_name == 'pull_request'
+        id: select-e2e
+        run: |
+          node frontend/scripts/e2e/select-e2e-specs.mjs \
+            --base "origin/${{ github.base_ref }}" \
+            --head "${{ github.sha }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Select full smoke suite for scheduled/manual runs
+        if: github.event_name != 'pull_request'
+        id: select-all
+        run: |
+          node frontend/scripts/e2e/select-e2e-specs.mjs \
+            --all \
+            --github-output "$GITHUB_OUTPUT"
+
+  smoke:
+    name: E2E Smoke
+    runs-on: ${{ matrix.runner }}
+    needs: [changes, smoke-select]
+    if: needs.changes.outputs.run_smoke == 'true' && needs.smoke-select.outputs.has_specs == 'true'
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Print E2E execution plan
+        run: |
+          echo "runner=${{ matrix.runner }}"
+          echo "arch=${{ matrix.arch }}"
+          echo "mode=${{ needs.smoke-select.outputs.mode }}"
+          echo "matched_groups=${{ needs.smoke-select.outputs.matched_groups }}"
+          echo "spec_count=${{ needs.smoke-select.outputs.spec_count }}"
+          echo "spec_args=${{ needs.smoke-select.outputs.spec_args }}"
+
+      - name: Run selected E2E specs
+        run: |
+          cd frontend
+          pnpm exec playwright test ${{ needs.smoke-select.outputs.spec_args }}
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.arch }}
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  installer-real:
+    name: E2E Real Installer
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run_installer_real == 'true'
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run real installer E2E
+        run: |
+          cd frontend
+          pnpm run test:e2e:installer-real
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-installer-real
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  config-real:
+    name: E2E Real Config
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run_config_real == 'true'
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run real config E2E
+        run: |
+          cd frontend
+          pnpm run test:e2e:config-real
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-config-real
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  upgrade-real:
+    name: E2E Real Upgrade
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run_upgrade_real == 'true'
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run real upgrade E2E
+        run: |
+          cd frontend
+          pnpm run test:e2e:upgrade-real
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-upgrade-real
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  plugin-real:
+    name: E2E Real Plugin
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.run_plugin_real == 'true'
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: |
+          cd frontend
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run real plugin E2E
+        run: |
+          cd frontend
+          pnpm run test:e2e:plugin-real
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-plugin-real
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  gate:
+    name: E2E Gate
+    runs-on: ubuntu-latest
+    needs: [changes, smoke-select, smoke, installer-real, config-real, upgrade-real, plugin-real]
+    if: always()
+
+    steps:
+      - name: Evaluate E2E gate
+        run: |
+          echo "run_smoke=${{ needs.changes.outputs.run_smoke }}"
+          echo "has_specs=${{ needs.smoke-select.outputs.has_specs }}"
+          echo "smoke_result=${{ needs.smoke.result }}"
+          echo "run_installer_real=${{ needs.changes.outputs.run_installer_real }}"
+          echo "installer_real_result=${{ needs.installer-real.result }}"
+          echo "run_config_real=${{ needs.changes.outputs.run_config_real }}"
+          echo "config_real_result=${{ needs.config-real.result }}"
+          echo "run_upgrade_real=${{ needs.changes.outputs.run_upgrade_real }}"
+          echo "upgrade_real_result=${{ needs.upgrade-real.result }}"
+          echo "run_plugin_real=${{ needs.changes.outputs.run_plugin_real }}"
+          echo "plugin_real_result=${{ needs.plugin-real.result }}"
+
+          if [ "${{ needs.changes.outputs.run_smoke }}" = "true" ] &&
+             [ "${{ needs.smoke-select.outputs.has_specs }}" = "true" ] &&
+             [ "${{ needs.smoke.result }}" != "success" ]; then
+            echo "::error::E2E smoke matrix did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.run_installer_real }}" = "true" ] &&
+             [ "${{ needs.installer-real.result }}" != "success" ]; then
+            echo "::error::Real installer E2E did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.run_config_real }}" = "true" ] &&
+             [ "${{ needs.config-real.result }}" != "success" ]; then
+            echo "::error::Real config E2E did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.run_upgrade_real }}" = "true" ] &&
+             [ "${{ needs.upgrade-real.result }}" != "success" ]; then
+            echo "::error::Real upgrade E2E did not succeed."
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.run_plugin_real }}" = "true" ] &&
+             [ "${{ needs.plugin-real.result }}" != "success" ]; then
+            echo "::error::Real plugin E2E did not succeed."
+            exit 1
+          fi
+
+          echo "All required E2E suites succeeded."

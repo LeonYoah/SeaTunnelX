@@ -42,11 +42,13 @@ const (
 	defaultInitialTail    = int64(256 * 1024)
 	defaultMaxPayloadSize = 16 * 1024
 	defaultMaxEntries     = 200
+	errorBlockMergeWindow = 2 * time.Second
 )
 
 var (
-	logHeaderPattern = regexp.MustCompile(`^(?:\[([^\]]*)\]\s+)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[\.,]\d{3})?)\s+(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\b(.*)$`)
-	jobLogPattern    = regexp.MustCompile(`^job-([^./]+)\.log$`)
+	logHeaderPattern         = regexp.MustCompile(`^(?:\[([^\]]*)\]\s+)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[\.,]\d{3})?)\s+(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\b(.*)$`)
+	jobLogPattern            = regexp.MustCompile(`^job-([^./]+)\.log$`)
+	headerOnlyMessagePattern = regexp.MustCompile(`^(?:\[[^\]]*\]\s*){1,4}-?\s*$`)
 )
 
 // LogSender describes the gRPC sender needed by the collector.
@@ -488,15 +490,17 @@ func (c *Collector) scanFile(target *ScanTarget, filePath string, cursor *fileCu
 		trimmed := strings.TrimRight(line, "\r\n")
 
 		if header := parseLogHeader(trimmed); header != nil {
-			if current != nil {
+			if current != nil && shouldMergeSeatunnelErrorHeader(current, header) {
+				current.AppendHeaderLine(trimmed, header)
+			} else if current != nil {
 				current.EndOffset = lineStart
 				if entry := current.Build(c.maxPayloadSize); entry != nil {
 					entries = append(entries, entry)
 				}
+				current = nil
 			}
 
-			current = nil
-			if header.Level == "ERROR" || header.Level == "FATAL" {
+			if current == nil && (header.Level == "ERROR" || header.Level == "FATAL") {
 				current = &entryBuilder{
 					OccurredAt:  header.Timestamp,
 					Summary:     header.Message,
@@ -728,6 +732,99 @@ func parseLogTime(value string) time.Time {
 	return time.Now()
 }
 
+// shouldMergeSeatunnelErrorHeader decides whether a new ERROR/FATAL header should
+// be treated as part of the current Seatunnel fatal-wrapper block.
+// shouldMergeSeatunnelErrorHeader 判断新 ERROR/FATAL 头是否应并入当前 Seatunnel 致命错误包装块。
+func shouldMergeSeatunnelErrorHeader(current *entryBuilder, next *logHeader) bool {
+	if current == nil || next == nil {
+		return false
+	}
+	if !isSeatunnelContinuationHeader(next.Message) {
+		return false
+	}
+	if current.ExecutionID != strings.TrimSpace(next.ExecutionID) {
+		return false
+	}
+	if current.LoggerName != strings.TrimSpace(next.LoggerName) {
+		return false
+	}
+	if current.ThreadName != strings.TrimSpace(next.ThreadName) {
+		return false
+	}
+	if current.OccurredAt.IsZero() || next.Timestamp.IsZero() {
+		return true
+	}
+	delta := next.Timestamp.Sub(current.OccurredAt)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= errorBlockMergeWindow
+}
+
+func isSeatunnelContinuationHeader(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(normalizeCollectorMessageLine(message)))
+	if normalized == "" {
+		return true
+	}
+	return normalized == "fatal error" ||
+		normalized == "fatal error," ||
+		normalized == "please submit bug report in https://github.com/apache/seatunnel/issues" ||
+		strings.HasPrefix(normalized, "reason:") ||
+		strings.HasPrefix(normalized, "exception stacktrace:") ||
+		strings.HasPrefix(normalized, "caused by:")
+}
+
+func normalizeCollectorMessageLine(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if headerOnlyMessagePattern.MatchString(trimmed) {
+		return ""
+	}
+	if header := parseLogHeader(trimmed); header != nil {
+		trimmed = strings.TrimSpace(header.Message)
+		if headerOnlyMessagePattern.MatchString(trimmed) {
+			return ""
+		}
+	}
+	return strings.TrimSpace(trimmed)
+}
+
+func summarizeCollectorLine(value string) string {
+	line := strings.TrimSpace(normalizeCollectorMessageLine(value))
+	if line == "" {
+		return ""
+	}
+	for _, prefix := range []string{"Caused by:", "Exception StackTrace:", "Reason:"} {
+		if strings.HasPrefix(line, prefix) {
+			line = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			break
+		}
+	}
+	return strings.TrimSpace(line)
+}
+
+func collectorSummaryPriority(value string) int {
+	normalized := strings.ToLower(strings.TrimSpace(normalizeCollectorMessageLine(value)))
+	switch {
+	case normalized == "":
+		return 0
+	case strings.HasPrefix(normalized, "caused by:"):
+		return 5
+	case strings.HasPrefix(normalized, "exception stacktrace:"):
+		return 4
+	case strings.HasPrefix(normalized, "reason:"):
+		return 3
+	case normalized == "fatal error" || normalized == "fatal error,":
+		return 1
+	case normalized == "please submit bug report in https://github.com/apache/seatunnel/issues":
+		return 1
+	default:
+		return 2
+	}
+}
+
 type entryBuilder struct {
 	OccurredAt  time.Time
 	Summary     string
@@ -737,6 +834,22 @@ type entryBuilder struct {
 	ExecutionID string
 	LoggerName  string
 	ThreadName  string
+}
+
+// AppendHeaderLine merges one additional ERROR/FATAL header into the current
+// builder so multi-line Seatunnel fatal-wrapper blocks stay as one event.
+// AppendHeaderLine 将额外的 ERROR/FATAL 头并入当前构建器，使 Seatunnel 致命错误包装块保持为单条事件。
+func (b *entryBuilder) AppendHeaderLine(rawLine string, header *logHeader) {
+	if b == nil {
+		return
+	}
+	b.Lines = append(b.Lines, rawLine)
+	if header == nil {
+		return
+	}
+	if better := chooseCollectorSummary(b.Summary, header.Message); better != "" {
+		b.Summary = better
+	}
 }
 
 func (b *entryBuilder) Build(maxPayloadSize int) *parsedEntry {
@@ -750,10 +863,7 @@ func (b *entryBuilder) Build(maxPayloadSize int) *parsedEntry {
 	if len(body) > maxPayloadSize {
 		body = body[:maxPayloadSize]
 	}
-	summary := strings.TrimSpace(b.Summary)
-	if summary == "" {
-		summary = firstNonEmptyLine(b.Lines)
-	}
+	summary := chooseCollectorSummary(b.Summary, b.Lines...)
 	if summary == "" {
 		summary = body
 	}
@@ -776,9 +886,32 @@ func (b *entryBuilder) Build(maxPayloadSize int) *parsedEntry {
 	}
 }
 
+func chooseCollectorSummary(current string, candidates ...string) string {
+	best := strings.TrimSpace(summarizeCollectorLine(current))
+	bestPriority := collectorSummaryPriority(current)
+	for _, candidate := range candidates {
+		priority := collectorSummaryPriority(candidate)
+		if priority < bestPriority {
+			continue
+		}
+		line := strings.TrimSpace(summarizeCollectorLine(candidate))
+		if line == "" {
+			continue
+		}
+		if priority > bestPriority || best == "" {
+			best = line
+			bestPriority = priority
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return firstNonEmptyLine(candidates)
+}
+
 func firstNonEmptyLine(lines []string) string {
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		trimmed := strings.TrimSpace(summarizeCollectorLine(line))
 		if trimmed != "" {
 			return trimmed
 		}

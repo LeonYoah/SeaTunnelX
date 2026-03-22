@@ -925,6 +925,7 @@ export function PluginMain() {
 
   return (
     <motion.div
+      data-testid='plugin-marketplace-root'
       className='space-y-6'
       initial='hidden'
       animate='visible'
@@ -1015,6 +1016,7 @@ export function PluginMain() {
       >
         <div className='flex-1 min-w-[200px] max-w-sm'>
           <Input
+            data-testid='plugin-search-input'
             placeholder={t('plugin.searchPlaceholder')}
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)}
@@ -1024,7 +1026,7 @@ export function PluginMain() {
 
         {/* Version selector / 版本选择器 */}
         <Select value={selectedVersion} onValueChange={setSelectedVersion}>
-          <SelectTrigger className='w-[130px]'>
+          <SelectTrigger className='w-[130px]' data-testid='plugin-version-select'>
             <SelectValue placeholder={t('plugin.version')} />
           </SelectTrigger>
           <SelectContent>
@@ -1042,7 +1044,7 @@ export function PluginMain() {
         </Select>
 
         <Select value={filterCategory} onValueChange={setFilterCategory}>
-          <SelectTrigger className='w-[150px]'>
+          <SelectTrigger className='w-[150px]' data-testid='plugin-category-select'>
             <SelectValue placeholder={t('plugin.category.all')} />
           </SelectTrigger>
           <SelectContent>
@@ -1057,7 +1059,7 @@ export function PluginMain() {
           value={selectedMirror}
           onValueChange={(v) => setSelectedMirror(v as MirrorSource)}
         >
-          <SelectTrigger className='w-[150px]'>
+          <SelectTrigger className='w-[150px]' data-testid='plugin-mirror-select'>
             <SelectValue placeholder={t('plugin.mirror')} />
           </SelectTrigger>
           <SelectContent>
@@ -1091,11 +1093,19 @@ export function PluginMain() {
         }
       >
         <TabsList>
-          <TabsTrigger value='available' className='flex items-center gap-2'>
+          <TabsTrigger
+            value='available'
+            className='flex items-center gap-2'
+            data-testid='plugin-tab-available'
+          >
             <Package className='h-4 w-4' />
             {t('plugin.available')}
           </TabsTrigger>
-          <TabsTrigger value='local' className='flex items-center gap-2'>
+          <TabsTrigger
+            value='local'
+            className='flex items-center gap-2'
+            data-testid='plugin-tab-local'
+          >
             <HardDrive className='h-4 w-4' />
             {t('plugin.localPlugins')}
             {(getFilteredLocalPlugins().length > 0 ||
@@ -1116,7 +1126,11 @@ export function PluginMain() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value='custom' className='flex items-center gap-2'>
+          <TabsTrigger
+            value='custom'
+            className='flex items-center gap-2'
+            data-testid='plugin-tab-custom'
+          >
             <Upload className='h-4 w-4' />
             {t('plugin.custom')}
           </TabsTrigger>
@@ -1337,7 +1351,10 @@ export function PluginMain() {
                           : [];
 
                         return (
-                          <TableRow key={`${plugin.name}-${plugin.version}`}>
+                          <TableRow
+                            key={`${plugin.name}-${plugin.version}`}
+                            data-testid={`plugin-local-row-${plugin.name}-${plugin.version}`}
+                          >
                             <TableCell>
                               <Checkbox
                                 checked={selectedLocalPlugins.has(
@@ -1386,6 +1403,7 @@ export function PluginMain() {
                               <Button
                                 variant='outline'
                                 size='sm'
+                                data-testid={`plugin-local-manage-${plugin.name}-${plugin.version}`}
                                 onClick={() => {
                                   const pluginForInstall: Plugin = {
                                     name: plugin.name,
@@ -1413,6 +1431,7 @@ export function PluginMain() {
                               <Button
                                 variant='ghost'
                                 size='sm'
+                                data-testid={`plugin-local-delete-${plugin.name}-${plugin.version}`}
                                 className='text-destructive hover:text-destructive'
                                 onClick={() => {
                                   setPluginToDelete(plugin);

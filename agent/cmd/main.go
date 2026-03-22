@@ -979,6 +979,38 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 		HTTPPort:       getParamInt(cmd.Parameters, "http_port", 8080),
 		ClusterID:      getParamString(cmd.Parameters, "cluster_id", ""),
 	}
+	if enableHTTPValue := strings.TrimSpace(getParamString(cmd.Parameters, "enable_http", "")); enableHTTPValue != "" {
+		enableHTTP := strings.EqualFold(enableHTTPValue, "true")
+		params.EnableHTTP = &enableHTTP
+	}
+
+	if dynamicSlotValue := strings.TrimSpace(getParamString(cmd.Parameters, "dynamic_slot", "")); dynamicSlotValue != "" {
+		dynamicSlot := strings.EqualFold(dynamicSlotValue, "true")
+		params.DynamicSlot = &dynamicSlot
+	}
+	if slotNumValue := strings.TrimSpace(getParamString(cmd.Parameters, "slot_num", "")); slotNumValue != "" {
+		if slotNum, err := strconv.Atoi(slotNumValue); err == nil && slotNum > 0 {
+			params.SlotNum = &slotNum
+		}
+	}
+	if slotAllocationStrategy := strings.TrimSpace(getParamString(cmd.Parameters, "slot_allocation_strategy", "")); slotAllocationStrategy != "" {
+		params.SlotAllocationStrategy = strings.ToUpper(slotAllocationStrategy)
+	}
+	if jobScheduleStrategy := strings.TrimSpace(getParamString(cmd.Parameters, "job_schedule_strategy", "")); jobScheduleStrategy != "" {
+		params.JobScheduleStrategy = strings.ToUpper(jobScheduleStrategy)
+	}
+	if historyJobExpireValue := strings.TrimSpace(getParamString(cmd.Parameters, "history_job_expire_minutes", "")); historyJobExpireValue != "" {
+		if historyJobExpireMinutes, err := strconv.Atoi(historyJobExpireValue); err == nil && historyJobExpireMinutes > 0 {
+			params.HistoryJobExpireMinutes = &historyJobExpireMinutes
+		}
+	}
+	if scheduledDeletionValue := strings.TrimSpace(getParamString(cmd.Parameters, "scheduled_deletion_enable", "")); scheduledDeletionValue != "" {
+		scheduledDeletionEnable := strings.EqualFold(scheduledDeletionValue, "true")
+		params.ScheduledDeletionEnable = &scheduledDeletionEnable
+	}
+	if jobLogMode := strings.TrimSpace(getParamString(cmd.Parameters, "job_log_mode", "")); jobLogMode != "" {
+		params.JobLogMode = installer.JobLogMode(strings.ToLower(jobLogMode))
+	}
 
 	// Parse JVM config / 解析 JVM 配置
 	jvmHybridHeap := getParamInt(cmd.Parameters, "jvm_hybrid_heap", 0)
@@ -1038,6 +1070,45 @@ func (a *Agent) handleInstallCommand(ctx context.Context, cmd *pb.CommandRequest
 			params.Checkpoint.StorageSecretKey = getParamString(cmd.Parameters, "checkpoint_storage_secret_key", "")
 		}
 		logger.InfoF(ctx, "[Install] Checkpoint config created: type=%s, namespace=%s", checkpointStorageType, checkpointNamespace)
+	}
+
+	// Parse IMAP config / 解析 IMAP 配置
+	imapStorageType := getParamString(cmd.Parameters, "imap_storage_type", "")
+	imapNamespace := getParamString(cmd.Parameters, "imap_namespace", "")
+	if imapStorageType != "" {
+		params.IMAP = &installer.IMAPConfig{
+			StorageType: installer.IMAPStorageType(imapStorageType),
+			Namespace:   imapNamespace,
+		}
+		imapHDFSHost := getParamString(cmd.Parameters, "imap_hdfs_host", "")
+		if imapHDFSHost != "" {
+			params.IMAP.HDFSNameNodeHost = imapHDFSHost
+			params.IMAP.HDFSNameNodePort = getParamInt(cmd.Parameters, "imap_hdfs_port", 8020)
+		}
+		imapKerberosPrincipal := getParamString(cmd.Parameters, "imap_kerberos_principal", "")
+		if imapKerberosPrincipal != "" {
+			params.IMAP.KerberosPrincipal = imapKerberosPrincipal
+		}
+		imapKerberosKeytabPath := getParamString(cmd.Parameters, "imap_kerberos_keytab_path", "")
+		if imapKerberosKeytabPath != "" {
+			params.IMAP.KerberosKeytabFilePath = imapKerberosKeytabPath
+		}
+		if getParamString(cmd.Parameters, "imap_hdfs_ha_enabled", "") == "true" {
+			params.IMAP.HDFSHAEnabled = true
+			params.IMAP.HDFSNameServices = getParamString(cmd.Parameters, "imap_hdfs_name_services", "")
+			params.IMAP.HDFSHANamenodes = getParamString(cmd.Parameters, "imap_hdfs_ha_namenodes", "")
+			params.IMAP.HDFSNamenodeRPCAddress1 = getParamString(cmd.Parameters, "imap_hdfs_namenode_rpc_address_1", "")
+			params.IMAP.HDFSNamenodeRPCAddress2 = getParamString(cmd.Parameters, "imap_hdfs_namenode_rpc_address_2", "")
+			params.IMAP.HDFSFailoverProxyProvider = getParamString(cmd.Parameters, "imap_hdfs_failover_proxy_provider", "")
+		}
+		imapStorageEndpoint := getParamString(cmd.Parameters, "imap_storage_endpoint", "")
+		if imapStorageEndpoint != "" {
+			params.IMAP.StorageEndpoint = imapStorageEndpoint
+			params.IMAP.StorageBucket = getParamString(cmd.Parameters, "imap_storage_bucket", "")
+			params.IMAP.StorageAccessKey = getParamString(cmd.Parameters, "imap_storage_access_key", "")
+			params.IMAP.StorageSecretKey = getParamString(cmd.Parameters, "imap_storage_secret_key", "")
+		}
+		logger.InfoF(ctx, "[Install] IMAP config created: type=%s, namespace=%s", imapStorageType, imapNamespace)
 	}
 
 	// Parse master addresses / 解析 master 地址列表

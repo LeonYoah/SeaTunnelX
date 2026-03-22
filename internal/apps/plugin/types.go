@@ -154,17 +154,20 @@ type Plugin struct {
 // Note: Plugins are managed at cluster level, not host level.
 // 注意：插件在集群级别管理，而非主机级别。
 type InstalledPlugin struct {
-	ID          uint           `gorm:"primaryKey" json:"id"`
-	ClusterID   uint           `gorm:"index;not null" json:"cluster_id"`                 // 集群 ID / Cluster ID
-	PluginName  string         `gorm:"size:100;not null;index" json:"plugin_name"`       // 插件名称 / Plugin name
-	ArtifactID  string         `gorm:"size:100" json:"artifact_id"`                      // Maven artifact ID (e.g., connector-cdc-mysql)
-	Category    PluginCategory `gorm:"size:20;not null" json:"category"`                 // 分类 / Category
-	Version     string         `gorm:"size:20;not null" json:"version"`                  // 版本号 / Version
-	Status      PluginStatus   `gorm:"size:20;not null;default:installed" json:"status"` // 状态 / Status
-	InstallPath string         `gorm:"size:255" json:"install_path"`                     // 安装路径 / Install path
-	InstalledAt time.Time      `gorm:"not null" json:"installed_at"`                     // 安装时间 / Installed at
-	UpdatedAt   time.Time      `json:"updated_at"`                                       // 更新时间 / Updated at
-	InstalledBy uint           `json:"installed_by,omitempty"`                           // 安装者 ID / Installed by
+	ID                  uint               `gorm:"primaryKey" json:"id"`
+	ClusterID           uint               `gorm:"index;not null" json:"cluster_id"`                 // 集群 ID / Cluster ID
+	PluginName          string             `gorm:"size:100;not null;index" json:"plugin_name"`       // 插件名称 / Plugin name
+	ArtifactID          string             `gorm:"size:100" json:"artifact_id"`                      // Maven artifact ID (e.g., connector-cdc-mysql)
+	Category            PluginCategory     `gorm:"size:20;not null" json:"category"`                 // 分类 / Category
+	Version             string             `gorm:"size:20;not null" json:"version"`                  // 版本号 / Version
+	Status              PluginStatus       `gorm:"size:20;not null;default:installed" json:"status"` // 状态 / Status
+	InstallPath         string             `gorm:"size:255" json:"install_path"`                     // 安装路径 / Install path
+	InstalledAt         time.Time          `gorm:"not null" json:"installed_at"`                     // 安装时间 / Installed at
+	UpdatedAt           time.Time          `json:"updated_at"`                                       // 更新时间 / Updated at
+	InstalledBy         uint               `json:"installed_by,omitempty"`                           // 安装者 ID / Installed by
+	SelectedProfileKeys []string           `gorm:"-" json:"selected_profile_keys,omitempty"`         // 选中的画像 / Selected profiles
+	AttachedConnectors  []string           `gorm:"-" json:"attached_connectors,omitempty"`           // 自动附带的连接器 / Attached connectors
+	Dependencies        []PluginDependency `gorm:"-" json:"dependencies,omitempty"`                  // 自动附带的依赖 / Attached dependencies
 }
 
 // TableName returns the table name for InstalledPlugin.

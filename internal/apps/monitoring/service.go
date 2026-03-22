@@ -205,6 +205,10 @@ func (s *Service) GetClusterOverview(ctx context.Context, clusterID uint) (*Clus
 
 	e24 := toEventStats(eventStats24hRaw)
 	e1 := toEventStats(eventStats1hRaw)
+	activeAlertCount, err := s.countFiringAlertsForCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
 
 	events, _, err := s.monitorService.ListEvents(ctx, &monitor.ProcessEventFilter{
 		ClusterID: clusterID,
@@ -243,7 +247,7 @@ func (s *Service) GetClusterOverview(ctx context.Context, clusterID uint) (*Clus
 			OfflineNodes:           status.OfflineNodes,
 			CrashedEvents24h:       e24.Crashed,
 			RestartFailedEvents24h: e24.RestartFailed + e24.RestartLimitReached,
-			ActiveAlerts1h:         e1.CriticalCount(),
+			ActiveAlerts1h:         activeAlertCount,
 		},
 		EventStats24h: e24,
 		EventStats1h:  e1,
@@ -251,6 +255,22 @@ func (s *Service) GetClusterOverview(ctx context.Context, clusterID uint) (*Clus
 		Nodes:         nodes,
 		RecentEvents:  events,
 	}, nil
+}
+
+func (s *Service) countFiringAlertsForCluster(ctx context.Context, clusterID uint) (int64, error) {
+	alerts, err := s.ListAlertInstances(ctx, &AlertInstanceFilter{
+		ClusterID: strconv.FormatUint(uint64(clusterID), 10),
+		Status:    AlertDisplayStatusFiring,
+		Page:      1,
+		PageSize:  1,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if alerts == nil {
+		return 0, nil
+	}
+	return alerts.Stats.Firing, nil
 }
 
 // ListAlerts returns alert center data.

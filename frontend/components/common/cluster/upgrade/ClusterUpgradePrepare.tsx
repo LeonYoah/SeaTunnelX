@@ -404,7 +404,10 @@ export function ClusterUpgradePrepare({clusterId}: ClusterUpgradePrepareProps) {
             <div className='space-y-2'>
               <Label htmlFor='target-version'>{t('targetVersion')}</Label>
               <Select value={targetVersion} onValueChange={setTargetVersion}>
-                <SelectTrigger id='target-version'>
+                <SelectTrigger
+                  id='target-version'
+                  data-testid='upgrade-prepare-target-version'
+                >
                   <SelectValue placeholder={t('targetVersionPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -433,6 +436,7 @@ export function ClusterUpgradePrepare({clusterId}: ClusterUpgradePrepareProps) {
               </Label>
               <Input
                 id='target-install-dir'
+                data-testid='upgrade-prepare-target-install-dir'
                 value={targetInstallDir}
                 onChange={(event) => {
                   setTargetInstallDir(event.target.value);

@@ -127,6 +127,9 @@ export interface InstalledPlugin {
   installed_at: string;
   updated_at: string;
   installed_by?: number;
+  selected_profile_keys?: string[];
+  attached_connectors?: string[];
+  dependencies?: PluginDependency[];
 }
 
 // ==================== Request Types 请求类型 ====================

@@ -17,16 +17,40 @@
 
 'use client';
 
+import {Suspense} from 'react';
+import {useSearchParams} from 'next/navigation';
 import {InstallWizard} from '@/components/common/installer';
 
-export default function E2EInstallWizardPage() {
+function E2EInstallWizardContent() {
+  const searchParams = useSearchParams();
+  const hostId = Number(searchParams.get('hostId') || '1') || 1;
+  const hostName = searchParams.get('hostName') || 'E2E Host';
+  const initialVersion = searchParams.get('initialVersion') || '2.3.13';
+  const initialInstallDir =
+    searchParams.get('initialInstallDir') || undefined;
+  const initialClusterPort =
+    Number(searchParams.get('initialClusterPort') || '0') || undefined;
+  const initialHttpPort =
+    Number(searchParams.get('initialHttpPort') || '0') || undefined;
+
   return (
     <InstallWizard
       open
       onOpenChange={() => {}}
-      hostId={1}
-      hostName='E2E Host'
-      initialVersion='2.3.13'
+      hostId={hostId}
+      hostName={hostName}
+      initialVersion={initialVersion}
+      initialInstallDir={initialInstallDir}
+      initialClusterPort={initialClusterPort}
+      initialHttpPort={initialHttpPort}
     />
+  );
+}
+
+export default function E2EInstallWizardPage() {
+  return (
+    <Suspense fallback={null}>
+      <E2EInstallWizardContent />
+    </Suspense>
   );
 }

@@ -142,9 +142,47 @@ func TestCollectorParsesSeatunnelPrefixedErrorLogs(t *testing.T) {
 	assert.NotContains(t, first.Message, "AbstractMilvusGrpcClient")
 
 	last := sender.batches[0][2]
-	assert.Contains(t, last.Message, "SeaTunnelRuntimeException")
+	assert.Contains(t, last.Message, "Failed to initialize connection")
 	assert.Contains(t, last.Fields["body"], "Caused by: java.lang.RuntimeException")
+	assert.Contains(t, last.Fields["body"], "SeaTunnelRuntimeException")
 	assert.NotContains(t, last.Fields["body"], "Connection[id=2] closed")
+}
+
+func TestCollectorMergesSeatunnelFatalWrapperBlockIntoSingleEntry(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "seatunnel")
+	logDir := filepath.Join(installDir, "logs")
+	require.NoError(t, os.MkdirAll(logDir, 0o755))
+
+	engineLog := filepath.Join(logDir, "seatunnel-engine-server.log")
+	content := "" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - \n" +
+		"===============================================================================\n" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Fatal Error,\n" +
+		"[] 2026-03-21 13:21:35,462 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Please submit bug report in https://github.com/apache/seatunnel/issues\n" +
+		"[] 2026-03-21 13:21:35,466 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Reason:Invalid YAML configuration\n" +
+		"[] 2026-03-21 13:21:35,471 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - Exception StackTrace:com.hazelcast.config.InvalidConfigurationException: Invalid YAML configuration\n" +
+		"\tat com.hazelcast.config.YamlConfigBuilder.parseAndBuildConfig(YamlConfigBuilder.java:151)\n" +
+		"Caused by: com.hazelcast.internal.yaml.YamlException: An error occurred while loading and parsing the YAML stream\n" +
+		"[] 2026-03-21 13:21:35,471 ERROR [o.a.s.c.s.SeaTunnel           ] [main] - \n" +
+		"===============================================================================\n" +
+		"[] 2026-03-21 13:21:35,900 INFO [o.a.s.c.s.SeaTunnel           ] [main] - startup aborted\n"
+	require.NoError(t, os.WriteFile(engineLog, []byte(content), 0o644))
+
+	sender := &fakeLogSender{agentID: "agent-1", connected: true}
+	collector := NewCollector(sender)
+	collector.ReplaceTargets([]*ScanTarget{{Name: "seatunnel-server", InstallDir: installDir, Role: "server"}})
+
+	require.NoError(t, collector.CollectOnce(t.Context()))
+	require.Len(t, sender.batches, 1)
+	require.Len(t, sender.batches[0], 1)
+
+	entry := sender.batches[0][0]
+	assert.Contains(t, entry.Message, "YamlException")
+	assert.Contains(t, entry.Message, "loading and parsing the YAML stream")
+	assert.Contains(t, entry.Fields["body"], "Reason:Invalid YAML configuration")
+	assert.Contains(t, entry.Fields["body"], "Exception StackTrace:com.hazelcast.config.InvalidConfigurationException")
+	assert.Contains(t, entry.Fields["body"], "Caused by: com.hazelcast.internal.yaml.YamlException")
 }
 
 func TestCollectorRecoversErrorsFromRotatedLogGap(t *testing.T) {

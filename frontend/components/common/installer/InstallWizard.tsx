@@ -60,6 +60,7 @@ import type {
   PrecheckResult,
   InstallationStatus,
 } from '@/lib/services/installer/types';
+import {isSeatunnelVersionAtLeast} from '@/lib/seatunnel-version';
 
 // Wizard step type / 向导步骤类型
 export type WizardStepType =
@@ -119,6 +120,12 @@ interface InstallWizardProps {
   onComplete?: (status: InstallationStatus) => void;
   /** Initial version to select / 初始选择的版本 */
   initialVersion?: string;
+  /** Initial install directory override / 初始安装目录 */
+  initialInstallDir?: string;
+  /** Initial cluster communication port override / 初始集群通信端口 */
+  initialClusterPort?: number;
+  /** Initial HTTP port override / 初始 HTTP 端口 */
+  initialHttpPort?: number;
 }
 
 export function InstallWizard({
@@ -129,6 +136,9 @@ export function InstallWizard({
   clusterId,
   onComplete,
   initialVersion,
+  initialInstallDir,
+  initialClusterPort,
+  initialHttpPort,
 }: InstallWizardProps) {
   const t = useTranslations();
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -167,6 +177,24 @@ export function InstallWizard({
       updateConfig({version: initialVersion});
     }
   }, [initialVersion, updateConfig]);
+
+  useEffect(() => {
+    if (initialInstallDir) {
+      updateConfig({installDir: initialInstallDir});
+    }
+  }, [initialInstallDir, updateConfig]);
+
+  useEffect(() => {
+    if (initialHttpPort) {
+      updateConfig({httpPort: initialHttpPort});
+    }
+  }, [initialHttpPort, updateConfig]);
+
+  useEffect(() => {
+    if (initialClusterPort) {
+      updateConfig({clusterPort: initialClusterPort});
+    }
+  }, [initialClusterPort, updateConfig]);
 
   // Set cluster ID if provided / 如果提供了集群 ID 则设置
   useEffect(() => {
@@ -298,17 +326,30 @@ export function InstallWizard({
 
   // Handle precheck / 处理预检查
   const handleRunPrecheck = useCallback(async () => {
+    const supportsHTTPService = isSeatunnelVersionAtLeast(config.version, '2.3.9');
+    const ports =
+      supportsHTTPService && config.runtime.enable_http
+        ? [config.clusterPort, config.httpPort]
+        : [config.clusterPort];
     try {
       await runPrecheck({
         min_memory_mb: 2048,
         min_cpu_cores: 2,
         min_disk_space_mb: 5120,
-        ports: [5801, 8080],
+        install_dir: config.installDir || undefined,
+        ports,
       });
     } catch (err) {
       console.error('Precheck failed:', err);
     }
-  }, [runPrecheck]);
+  }, [
+    config.clusterPort,
+    config.httpPort,
+    config.installDir,
+    config.runtime.enable_http,
+    config.version,
+    runPrecheck,
+  ]);
 
   // Render step content / 渲染步骤内容
   const renderStepContent = () => {
@@ -323,7 +364,13 @@ export function InstallWizard({
           />
         );
       case 'config':
-        return <ConfigStep config={config} onConfigChange={updateConfig} />;
+        return (
+          <ConfigStep
+            config={config}
+            onConfigChange={updateConfig}
+            hostIds={[hostId]}
+          />
+        );
       case 'plugins':
         return (
           <PluginSelectStep

@@ -397,97 +397,97 @@ export function MonitoringOverview({compact = false}: {compact?: boolean} = {}) 
 
   return (
     <div className='space-y-4'>
-      <Card>
-        <CardHeader className='space-y-2'>
-          <div className='flex items-center justify-between gap-3'>
-            <CardTitle>{t('platformHealth.title')}</CardTitle>
-            <div className='flex flex-wrap items-center gap-2'>
-              {!compact && (
+      {!compact && (
+        <Card>
+          <CardHeader className='space-y-2'>
+            <div className='flex items-center justify-between gap-3'>
+              <CardTitle>{t('platformHealth.title')}</CardTitle>
+              <div className='flex flex-wrap items-center gap-2'>
                 <Button variant='outline' onClick={loadHealth} size='sm'>
                   <RefreshCw className='mr-2 h-4 w-4' />
                   {t('refresh')}
                 </Button>
-              )}
+              </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          {healthLoading ? (
-            <div className='text-sm text-muted-foreground'>{t('loading')}</div>
-          ) : platformHealth ? (
-            <>
-              <div className='overflow-x-auto'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('clusterName')}</TableHead>
-                      <TableHead>{t('healthStatus')}</TableHead>
-                      <TableHead>{t('nodes')}</TableHead>
-                      <TableHead>{t('activeAlerts')}</TableHead>
-                      <TableHead>{t('criticalAlerts')}</TableHead>
-                      <TableHead className='w-[1%] whitespace-nowrap text-right'>
-                        {t('actions')}
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {!clusterHealth.length ? (
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            {healthLoading ? (
+              <div className='text-sm text-muted-foreground'>{t('loading')}</div>
+            ) : platformHealth ? (
+              <>
+                <div className='overflow-x-auto'>
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell
-                          colSpan={6}
-                          className='text-center text-muted-foreground'
-                        >
-                          {t('noClusters')}
-                        </TableCell>
+                        <TableHead>{t('clusterName')}</TableHead>
+                        <TableHead>{t('healthStatus')}</TableHead>
+                        <TableHead>{t('nodes')}</TableHead>
+                        <TableHead>{t('activeAlerts')}</TableHead>
+                        <TableHead>{t('criticalAlerts')}</TableHead>
+                        <TableHead className='w-[1%] whitespace-nowrap text-right'>
+                          {t('actions')}
+                        </TableHead>
                       </TableRow>
-                    ) : (
-                      clusterHealth.map((cluster) => (
-                        <TableRow key={cluster.cluster_id}>
-                          <TableCell>{cluster.cluster_name}</TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={resolveHealthBadgeVariant(
-                                cluster.health_status,
-                              )}
-                            >
-                              {resolveHealthLabel(cluster.health_status)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{`${cluster.online_nodes}/${cluster.total_nodes}`}</TableCell>
-                          <TableCell>{cluster.active_alerts}</TableCell>
-                          <TableCell>{cluster.critical_alerts}</TableCell>
-                          <TableCell className='w-[1%] whitespace-nowrap'>
-                            <div className='flex items-center gap-2 justify-end'>
-                              <Button asChild size='sm' variant='outline'>
-                                <Link
-                                  href={`/clusters/${cluster.cluster_id}`}
-                                >
-                                  {t('viewDetails')}
-                                </Link>
-                              </Button>
-                              <Button asChild size='sm' variant='outline'>
-                                <Link
-                                  href={`/monitoring?tab=alerts&cluster_id=${cluster.cluster_id}`}
-                                >
-                                  {t('tabs.alerts')}
-                                </Link>
-                              </Button>
-                            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {!clusterHealth.length ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={6}
+                            className='text-center text-muted-foreground'
+                          >
+                            {t('noClusters')}
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                      ) : (
+                        clusterHealth.map((cluster) => (
+                          <TableRow key={cluster.cluster_id}>
+                            <TableCell>{cluster.cluster_name}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={resolveHealthBadgeVariant(
+                                  cluster.health_status,
+                                )}
+                              >
+                                {resolveHealthLabel(cluster.health_status)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{`${cluster.online_nodes}/${cluster.total_nodes}`}</TableCell>
+                            <TableCell>{cluster.active_alerts}</TableCell>
+                            <TableCell>{cluster.critical_alerts}</TableCell>
+                            <TableCell className='w-[1%] whitespace-nowrap'>
+                              <div className='flex items-center gap-2 justify-end'>
+                                <Button asChild size='sm' variant='outline'>
+                                  <Link
+                                    href={`/clusters/${cluster.cluster_id}`}
+                                  >
+                                    {t('viewDetails')}
+                                  </Link>
+                                </Button>
+                                <Button asChild size='sm' variant='outline'>
+                                  <Link
+                                    href={`/monitoring?tab=alerts&cluster_id=${cluster.cluster_id}`}
+                                  >
+                                    {t('tabs.alerts')}
+                                  </Link>
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            ) : (
+              <div className='text-sm text-muted-foreground'>
+                {t('platformHealth.unavailable')}
               </div>
-            </>
-          ) : (
-            <div className='text-sm text-muted-foreground'>
-              {t('platformHealth.unavailable')}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className='space-y-3'>

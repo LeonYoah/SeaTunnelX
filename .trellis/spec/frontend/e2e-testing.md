@@ -31,6 +31,10 @@
     - `frontend/e2e/install-wizard-negative.spec.ts`
     - `frontend/e2e/upgrade-prepare-template.spec.ts`
     - `frontend/e2e/upgrade-prepare-negative.spec.ts`
+    - `frontend/e2e/install-wizard-real.spec.ts`
+    - `frontend/e2e/config-real.spec.ts`
+    - `frontend/e2e/upgrade-real.spec.ts`
+    - `frontend/e2e/plugin-real.spec.ts`
 
 ### 3. Contracts
 
@@ -40,8 +44,9 @@
     - 如果本次沉淀出新的复用模式，还要把样例入口补到 `frontend/index.md` 可索引的位置
 - 反例契约：
     - 主流程模板除了“成功路径”，还应至少保留一个失败或阻断样例
-    - 安装类流程优先覆盖“失败后停留在当前步骤并给出重试/回滚提示”
-    - 升级类流程优先覆盖“存在阻断问题时禁止继续，并给出明确处置入口”
+- 安装类流程优先覆盖“失败后停留在当前步骤并给出重试/回滚提示”
+- 升级类流程优先覆盖“存在阻断问题时禁止继续，并给出明确处置入口”
+- 真实环境 E2E（real suites）允许“**UI 触发关键用户动作 + API/文件系统验证最终收敛**”的混合模式，不要求所有等待条件都绑死在页面提示或横幅上
 - 登录契约：
     - `auth.setup.ts` 负责生成 `frontend/.playwright/auth/admin.json`
     - 业务 spec 默认复用登录态，不要每条用例都从登录页重新走一遍
@@ -58,9 +63,10 @@
     - 禁止把 `nth()`、长 CSS 选择器、过深 DOM 路径当成主选择器
 - 夹具契约：
     - 优先“真实登录 + 业务接口定向夹具”的混合模式
-    - 只拦截不稳定、昂贵、依赖外部仓库或数据准备过重的接口
-    - 登录、路由守卫、主布局等公共链路尽量保持真实
-    - 如果组件只有弹窗、没有稳定页面入口，可增加一个**不进导航**的 `e2e-lab` 内部挂载页承载真实组件
+- 只拦截不稳定、昂贵、依赖外部仓库或数据准备过重的接口
+- 登录、路由守卫、主布局等公共链路尽量保持真实
+- 如果组件只有弹窗、没有稳定页面入口，可增加一个**不进导航**的 `e2e-lab` 内部挂载页承载真实组件
+- 对 real suites，优先把“创建资源 / 触发同步 / 回滚”等**易抖的收尾动作**沉到 API helper，再用页面去验证用户可见结果，避免因为弹窗按钮、toast 消失时机或 banner 轮询导致死循环
 
 ### 4. Validation & Error Matrix
 
@@ -78,12 +84,14 @@
     - 真实后端负责登录、会话、主布局
     - 当前业务链路的重接口用固定夹具
     - 用例断言“用户看见了什么变化”
+    - real suites 里先用 UI 触发关键路径，再用 API 与真实文件落盘确认最终状态
 - Base：
     - `test:e2e:mock` 用于最小 smoke，确保无 Go 环境时也能起一条基础校验
 - Bad：
     - 依赖共享测试环境中的历史数据
     - 用固定等待时间代替业务完成信号
     - 把接口细节断言到实现噪音级别，导致一改文案或布局就全碎
+    - 把“保存成功 toast 消失”“banner 自动消失”“dialog 焦点变化”当成 real suite 的唯一完成条件
 
 ### 6. Tests Required
 
@@ -154,6 +162,7 @@
     - 安装向导（正向 + 失败态）
     - 升级准备（正向 + 阻断态）
     - 登录 / Dashboard
+- 真实环境 E2E（例如 installer-real / config-real / upgrade-real / plugin-real）不进入 smoke 选择器，改由统一 `E2E` workflow 的 suite 级 path filter 决定是否运行
 - 下列共享变更会退化为全量 E2E smoke：
     - `frontend/playwright.config.ts`
     - `frontend/package.json`
@@ -175,3 +184,43 @@
 - 先补稳定锚点，再写用例，不要把脆弱选择器写进 spec。
 - spec 命名优先按“用户流”命名，而不是按组件命名。
 - 每个新增业务流都应该提供一个“最小可运行样例”，供后续场景复制扩展。
+
+## Real E2E 注意事项
+
+- **优先验证“最终状态”，不要死等中间 UI 态。**
+    - 例如：
+        - 配置同步后优先看 API 返回或真实文件落盘
+        - 插件下载后优先看 metadata / 本地文件
+        - 升级后优先看任务步骤与目标目录内容
+- **关键用户入口仍然要走 UI。**
+    - 例如：
+        - 打开详情
+        - 选择 profile
+        - 点击智能修复
+        - 打开版本对比
+    - 但保存、同步、回滚、从节点回灌这类动作，如果页面交互不稳定，可以沉到 API helper。
+- **避免形成等待死循环。**
+    - 不要把这些当成唯一收敛条件：
+        - toast 自动消失
+        - tooltip / banner 自动隐藏
+        - modal 焦点切换
+        - 页面某个按钮临时可点
+    - 应优先使用：
+        - API 轮询
+        - 真实文件内容轮询
+        - 明确的数据版本变化
+- **real suites 要主动输出阶段日志。**
+    - 例如：
+        - `cluster configs initialized from node`
+        - `template synced to node and file updated`
+        - `plugin metadata downloaded`
+    - 这样 GitHub CI 卡住时能马上知道卡在哪一步。
+- **本地和 CI 的资源策略不同。**
+    - 本地：
+        - 可以清理临时目录
+        - 真实 E2E 运行前后要注意停掉残留 SeaTunnel / MinIO / agent 进程
+        - 8G 开发机上优先把 SeaTunnel JVM 调小后再跑
+    - CI：
+        - runner 是一次性的
+        - 默认不做破坏性本地目录删除
+        - 仍然要停掉容器和子进程，避免影响同 job 后续步骤

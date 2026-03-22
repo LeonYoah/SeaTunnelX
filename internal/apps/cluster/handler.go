@@ -22,7 +22,10 @@ package cluster
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -205,6 +208,20 @@ type ClusterOperationResponse struct {
 type GetClusterStatusResponse struct {
 	ErrorMsg string             `json:"error_msg"`
 	Data     *ClusterStatusInfo `json:"data"`
+}
+
+// GetRuntimeStorageResponse represents runtime storage details response.
+// GetRuntimeStorageResponse 表示运行时存储详情响应。
+type GetRuntimeStorageResponse struct {
+	ErrorMsg string                 `json:"error_msg"`
+	Data     *RuntimeStorageDetails `json:"data"`
+}
+
+// CleanupRuntimeStorageResponse represents runtime storage cleanup response.
+// CleanupRuntimeStorageResponse 表示运行时存储清理响应。
+type CleanupRuntimeStorageResponse struct {
+	ErrorMsg string                       `json:"error_msg"`
+	Data     *RuntimeStorageCleanupResult `json:"data"`
 }
 
 // PrecheckNodeResponse represents the response for node precheck.
@@ -680,6 +697,157 @@ func (h *Handler) GetClusterStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, GetClusterStatusResponse{Data: status})
+}
+
+// GetRuntimeStorage handles GET /api/v1/clusters/:id/runtime-storage.
+// GetRuntimeStorage 处理 GET /api/v1/clusters/:id/runtime-storage。
+func (h *Handler) GetRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, GetRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	result, err := h.service.GetRuntimeStorageDetails(c.Request.Context(), uint(clusterID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, GetRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GetRuntimeStorageResponse{Data: result})
+}
+
+// ProxyWebUI handles proxying the SeaTunnel Web UI through the control plane.
+// ProxyWebUI 处理通过控制平面反向代理 SeaTunnel Web UI。
+func (h *Handler) ProxyWebUI(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error_msg": "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+
+	nodes, err := h.service.GetNodes(c.Request.Context(), uint(clusterID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error_msg": err.Error()})
+		return
+	}
+
+	var targetNode *NodeInfo
+	for _, node := range nodes {
+		if node == nil || node.APIPort <= 0 {
+			continue
+		}
+		if node.Role != NodeRoleMaster && node.Role != NodeRoleMasterWorker {
+			continue
+		}
+		if targetNode == nil || node.IsOnline {
+			targetNode = node
+		}
+		if node.IsOnline {
+			break
+		}
+	}
+
+	if targetNode == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error_msg": "当前集群未找到可用的 SeaTunnel Web UI 节点 / No available SeaTunnel Web UI node found"})
+		return
+	}
+
+	upstreamHost := strings.TrimSpace(targetNode.HostIP)
+	if upstreamHost == "" {
+		upstreamHost = strings.TrimSpace(targetNode.HostName)
+	}
+	if upstreamHost == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error_msg": "目标节点缺少主机地址，无法代理 Web UI / Target node has no host address for Web UI proxy"})
+		return
+	}
+
+	target, err := url.Parse("http://" + upstreamHost + ":" + strconv.Itoa(targetNode.APIPort))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error_msg": err.Error()})
+		return
+	}
+
+	prefix := "/api/v1/clusters/" + strconv.FormatUint(clusterID, 10) + "/webui"
+	proxyPath := c.Param("proxyPath")
+	if proxyPath == "" {
+		proxyPath = "/"
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		if proxyPath == "/" {
+			req.URL.Path = "/"
+		} else {
+			req.URL.Path = proxyPath
+		}
+		req.URL.RawPath = req.URL.EscapedPath()
+		req.Host = target.Host
+		req.Header.Set("X-Forwarded-Prefix", prefix)
+		req.Header.Set("X-Forwarded-Host", c.Request.Host)
+		if req.TLS != nil {
+			req.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			req.Header.Set("X-Forwarded-Proto", "http")
+		}
+	}
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+		shouldRewrite := strings.Contains(contentType, "text/html") ||
+			strings.Contains(contentType, "javascript")
+		if !shouldRewrite {
+			return nil
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+
+		content := string(body)
+		if strings.Contains(contentType, "text/html") && !strings.Contains(strings.ToLower(content), "<base ") {
+			content = strings.Replace(content, "<head>", "<head><base href=\""+prefix+"/\">", 1)
+		}
+		content = strings.ReplaceAll(content, "href=\"/", "href=\""+prefix+"/")
+		content = strings.ReplaceAll(content, "src=\"/", "src=\""+prefix+"/")
+		content = strings.ReplaceAll(content, "action=\"/", "action=\""+prefix+"/")
+		content = strings.ReplaceAll(content, "fetch('/api/", "fetch('"+prefix+"/api/")
+		content = strings.ReplaceAll(content, "fetch(\"/api/", "fetch(\""+prefix+"/api/")
+		content = strings.ReplaceAll(content, "baseURL:\"/api\"", "baseURL:\""+prefix+"/api\"")
+		content = strings.ReplaceAll(content, "baseURL: '/api'", "baseURL: '"+prefix+"/api'")
+		content = strings.ReplaceAll(content, "baseURL:'/api'", "baseURL:'"+prefix+"/api'")
+		content = strings.ReplaceAll(content, "axios.defaults.baseURL=\"/api\"", "axios.defaults.baseURL=\""+prefix+"/api\"")
+
+		resp.Body = io.NopCloser(strings.NewReader(content))
+		resp.ContentLength = int64(len(content))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(content)))
+		return nil
+	}
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+		logger.WarnF(c.Request.Context(), "[Cluster] Web UI proxy failed: cluster=%d, target=%s, err=%v", clusterID, target.String(), proxyErr)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusBadGateway)
+		_, _ = rw.Write([]byte(`{"error_msg":"SeaTunnel Web UI 代理失败 / Failed to proxy SeaTunnel Web UI"}`))
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+// CleanupIMAPStorage handles POST /api/v1/clusters/:id/runtime-storage/imap/cleanup.
+// CleanupIMAPStorage 处理 POST /api/v1/clusters/:id/runtime-storage/imap/cleanup。
+func (h *Handler) CleanupIMAPStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, CleanupRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	result, err := h.service.CleanupIMAPStorage(c.Request.Context(), uint(clusterID))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, CleanupRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, CleanupRuntimeStorageResponse{Data: result})
 }
 
 // ==================== Node Precheck Handlers 节点预检查处理器 ====================

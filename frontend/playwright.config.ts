@@ -19,20 +19,32 @@ import path from 'node:path';
 import {defineConfig, devices} from '@playwright/test';
 
 const apiMode = process.env.E2E_API_MODE ?? 'real';
+const installerRealMode = process.env.E2E_INSTALLER_REAL === '1';
+const frontendPort = process.env.E2E_FRONTEND_PORT ?? '3000';
+const frontendHost =
+  process.env.E2E_FRONTEND_HOST ??
+  (installerRealMode ? '127.0.0.1' : 'localhost');
 const frontendBaseURL =
-  process.env.E2E_FRONTEND_BASE_URL ?? 'http://localhost:3000';
+  process.env.E2E_FRONTEND_BASE_URL ??
+  `http://${frontendHost}:${installerRealMode ? frontendPort : '3000'}`;
 const backendBaseURL =
   process.env.E2E_BACKEND_BASE_URL ??
-  (apiMode === 'real' ? 'http://localhost:8000' : 'http://127.0.0.1:8010');
+  (installerRealMode
+    ? 'http://127.0.0.1:18000'
+    : apiMode === 'real'
+      ? 'http://localhost:8000'
+      : 'http://127.0.0.1:8010');
 const authFile = path.join(__dirname, '.playwright', 'auth', 'admin.json');
 const backendServer =
   apiMode === 'real'
     ? {
         command:
-          'bash -lc \'CONFIG_PATH=../config.e2e.yaml "${GO_BIN:-go}" run .. api\'',
+          installerRealMode
+            ? `bash -lc 'CONFIG_PATH=${process.env.E2E_INSTALLER_REAL_CONFIG_PATH ?? '../config.e2e.installer-real.yaml'} \"\${GO_BIN:-go}\" run .. api'`
+            : 'bash -lc \'CONFIG_PATH=../config.e2e.yaml "${GO_BIN:-go}" run .. api\'',
         url: `${backendBaseURL}/api/v1/health`,
-        reuseExistingServer: !process.env.CI,
-        timeout: 300_000,
+        reuseExistingServer: installerRealMode ? false : !process.env.CI,
+        timeout: installerRealMode ? 600_000 : 300_000,
       }
     : {
         command: 'node ./scripts/e2e/mock-api-server.mjs',
@@ -44,9 +56,9 @@ const backendServer =
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
-  timeout: 60_000,
+  timeout: installerRealMode ? 900_000 : 60_000,
   expect: {
-    timeout: 10_000,
+    timeout: installerRealMode ? 30_000 : 10_000,
   },
   reporter: [
     ['list'],
@@ -86,14 +98,24 @@ export default defineConfig({
   ],
   webServer: [
     backendServer,
+    ...(installerRealMode
+      ? [
+          {
+            command: 'node ./scripts/e2e/real-agent-supervisor.mjs',
+            url: `http://127.0.0.1:${process.env.E2E_AGENT_SUPERVISOR_PORT ?? '18181'}/health`,
+            reuseExistingServer: false,
+            timeout: 300_000,
+          },
+        ]
+      : []),
     {
       command:
         `NEXT_PUBLIC_BACKEND_BASE_URL=${backendBaseURL} ` +
         `NEXT_PUBLIC_FRONTEND_BASE_URL=${frontendBaseURL} ` +
-        'pnpm exec next dev --hostname localhost --port 3000',
+        `pnpm exec next dev --hostname ${frontendHost} --port ${installerRealMode ? frontendPort : '3000'}`,
       url: `${frontendBaseURL}/login`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      reuseExistingServer: installerRealMode ? false : !process.env.CI,
+      timeout: installerRealMode ? 300_000 : 120_000,
     },
   ],
 });

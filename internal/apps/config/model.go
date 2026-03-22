@@ -35,8 +35,8 @@ const (
 	ConfigTypeLog4j2          ConfigType = "log4j2.properties"
 
 	// 分离模式配置（Separated 模式）
-	ConfigTypeHazelcastMaster ConfigType = "hazelcast-master.yaml"
-	ConfigTypeHazelcastWorker ConfigType = "hazelcast-worker.yaml"
+	ConfigTypeHazelcastMaster  ConfigType = "hazelcast-master.yaml"
+	ConfigTypeHazelcastWorker  ConfigType = "hazelcast-worker.yaml"
 	ConfigTypeJVMMasterOptions ConfigType = "jvm_master_options"
 	ConfigTypeJVMWorkerOptions ConfigType = "jvm_worker_options"
 )
@@ -113,11 +113,11 @@ func GetConfigTypesForMode(deploymentMode string) []ConfigType {
 type Config struct {
 	ID         uint       `json:"id" gorm:"primaryKey;autoIncrement"`
 	ClusterID  uint       `json:"cluster_id" gorm:"index;not null"`
-	HostID     *uint      `json:"host_id" gorm:"index"`                     // NULL = 集群模板
-	ConfigType ConfigType `json:"config_type" gorm:"size:50;not null"`      // 配置类型
-	FilePath   string     `json:"file_path" gorm:"size:255"`                // 节点上的实际路径
-	Content    string     `json:"content" gorm:"type:text"`                 // 配置内容
-	Version    int        `json:"version" gorm:"default:1"`                 // 当前版本号
+	HostID     *uint      `json:"host_id" gorm:"index"`                // NULL = 集群模板
+	ConfigType ConfigType `json:"config_type" gorm:"size:50;not null"` // 配置类型
+	FilePath   string     `json:"file_path" gorm:"size:255"`           // 节点上的实际路径
+	Content    string     `json:"content" gorm:"type:text"`            // 配置内容
+	Version    int        `json:"version" gorm:"default:1"`            // 当前版本号
 	UpdatedAt  time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
 	UpdatedBy  uint       `json:"updated_by"`
 	CreatedAt  time.Time  `json:"created_at" gorm:"autoCreateTime"`
@@ -209,18 +209,24 @@ type RollbackConfigRequest struct {
 	Comment string `json:"comment"`
 }
 
+// NormalizeConfigRequest 配置规范化请求
+type NormalizeConfigRequest struct {
+	ConfigType ConfigType `json:"config_type" binding:"required"`
+	Content    string     `json:"content" binding:"required"`
+}
+
 // ConfigFilter 配置过滤条件
 type ConfigFilter struct {
-	ClusterID  uint       `json:"cluster_id"`
-	HostID     *uint      `json:"host_id"`
-	ConfigType ConfigType `json:"config_type"`
-	OnlyTemplate bool     `json:"only_template"`
+	ClusterID    uint       `json:"cluster_id"`
+	HostID       *uint      `json:"host_id"`
+	ConfigType   ConfigType `json:"config_type"`
+	OnlyTemplate bool       `json:"only_template"`
 }
 
 // SyncAllResult 批量同步结果
 type SyncAllResult struct {
-	SyncedCount int           `json:"synced_count"` // 同步成功的数量
-	PushErrors  []*PushError  `json:"push_errors"`  // 推送失败的节点列表
+	SyncedCount int          `json:"synced_count"` // 同步成功的数量
+	PushErrors  []*PushError `json:"push_errors"`  // 推送失败的节点列表
 }
 
 // PushError 推送错误信息

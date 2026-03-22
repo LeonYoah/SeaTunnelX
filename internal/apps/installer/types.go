@@ -19,6 +19,8 @@ package installer
 
 import (
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
 // MirrorSource represents the download mirror source
@@ -81,6 +83,7 @@ const (
 	InstallStepExtract             InstallStep = "extract"
 	InstallStepConfigureCluster    InstallStep = "configure_cluster"
 	InstallStepConfigureCheckpoint InstallStep = "configure_checkpoint"
+	InstallStepConfigureIMAP       InstallStep = "configure_imap"
 	InstallStepConfigureJVM        InstallStep = "configure_jvm"
 	InstallStepInstallPlugins      InstallStep = "install_plugins"
 	InstallStepRegisterCluster     InstallStep = "register_cluster"
@@ -113,10 +116,39 @@ type PackageInfo struct {
 // AvailableVersions contains available SeaTunnel versions
 // AvailableVersions 包含可用的 SeaTunnel 版本
 type AvailableVersions struct {
-	Versions           []string      `json:"versions"`
-	RecommendedVersion string        `json:"recommended_version"`
-	LocalPackages      []PackageInfo `json:"local_packages"`
+	Versions            []string                                 `json:"versions"`
+	RecommendedVersion  string                                   `json:"recommended_version"`
+	LocalPackages       []PackageInfo                            `json:"local_packages"`
+	VersionCapabilities map[string]seatunnel.VersionCapabilities `json:"version_capabilities"`
 }
+
+// JobScheduleStrategy represents the SeaTunnel job schedule strategy.
+// JobScheduleStrategy 表示 SeaTunnel 作业调度策略。
+type JobScheduleStrategy string
+
+const (
+	JobScheduleStrategyWait   JobScheduleStrategy = "WAIT"
+	JobScheduleStrategyReject JobScheduleStrategy = "REJECT"
+)
+
+// SlotAllocationStrategy represents the SeaTunnel slot allocation strategy.
+// SlotAllocationStrategy 表示 SeaTunnel slot 分配策略。
+type SlotAllocationStrategy string
+
+const (
+	SlotAllocationStrategyRandom     SlotAllocationStrategy = "RANDOM"
+	SlotAllocationStrategySystemLoad SlotAllocationStrategy = "SYSTEM_LOAD"
+	SlotAllocationStrategySlotRatio  SlotAllocationStrategy = "SLOT_RATIO"
+)
+
+// JobLogMode represents the SeaTunnel log output mode.
+// JobLogMode 表示 SeaTunnel 日志输出模式。
+type JobLogMode string
+
+const (
+	JobLogModeMixed  JobLogMode = "mixed"
+	JobLogModePerJob JobLogMode = "per_job"
+)
 
 // JVMConfig contains JVM memory configuration
 // JVMConfig 包含 JVM 内存配置
@@ -137,6 +169,18 @@ const (
 	CheckpointStorageS3        CheckpointStorageType = "S3"
 )
 
+// IMAPStorageType represents the IMAP persistence storage type.
+// IMAPStorageType 表示 IMAP 持久化存储类型。
+type IMAPStorageType string
+
+const (
+	IMAPStorageDisabled  IMAPStorageType = "DISABLED"
+	IMAPStorageLocalFile IMAPStorageType = "LOCAL_FILE"
+	IMAPStorageHDFS      IMAPStorageType = "HDFS"
+	IMAPStorageOSS       IMAPStorageType = "OSS"
+	IMAPStorageS3        IMAPStorageType = "S3"
+)
+
 // CheckpointConfig contains checkpoint storage configuration
 // CheckpointConfig 包含检查点存储配置
 type CheckpointConfig struct {
@@ -144,6 +188,31 @@ type CheckpointConfig struct {
 	Namespace        string                `json:"namespace"`
 	HDFSNameNodeHost string                `json:"hdfs_namenode_host,omitempty"`
 	HDFSNameNodePort int                   `json:"hdfs_namenode_port,omitempty"`
+	// HDFS Kerberos authentication / HDFS Kerberos 认证
+	KerberosPrincipal      string `json:"kerberos_principal,omitempty"`
+	KerberosKeytabFilePath string `json:"kerberos_keytab_file_path,omitempty"`
+	// HDFS HA mode configuration / HDFS HA 模式配置
+	HDFSHAEnabled             bool   `json:"hdfs_ha_enabled,omitempty"`
+	HDFSNameServices          string `json:"hdfs_name_services,omitempty"`
+	HDFSHANamenodes           string `json:"hdfs_ha_namenodes,omitempty"`
+	HDFSNamenodeRPCAddress1   string `json:"hdfs_namenode_rpc_address_1,omitempty"`
+	HDFSNamenodeRPCAddress2   string `json:"hdfs_namenode_rpc_address_2,omitempty"`
+	HDFSFailoverProxyProvider string `json:"hdfs_failover_proxy_provider,omitempty"`
+	// OSS/S3 configuration / OSS/S3 配置
+	StorageEndpoint  string `json:"storage_endpoint,omitempty"`
+	StorageAccessKey string `json:"storage_access_key,omitempty"`
+	StorageSecretKey string `json:"storage_secret_key,omitempty"`
+	StorageBucket    string `json:"storage_bucket,omitempty"`
+}
+
+// IMAPConfig contains IMAP persistence configuration.
+// IMAPConfig 包含 IMAP 持久化配置。
+type IMAPConfig struct {
+	StorageType IMAPStorageType `json:"storage_type"`
+	Namespace   string          `json:"namespace"`
+	// HDFS configuration / HDFS 配置
+	HDFSNameNodeHost string `json:"hdfs_namenode_host,omitempty"`
+	HDFSNameNodePort int    `json:"hdfs_namenode_port,omitempty"`
 	// HDFS Kerberos authentication / HDFS Kerberos 认证
 	KerberosPrincipal      string `json:"kerberos_principal,omitempty"`
 	KerberosKeytabFilePath string `json:"kerberos_keytab_file_path,omitempty"`
@@ -219,23 +288,32 @@ const (
 // InstallationRequest is the request for one-click installation
 // InstallationRequest 是一键安装的请求
 type InstallationRequest struct {
-	HostID          string            `json:"host_id"`
-	ClusterID       string            `json:"cluster_id"`
-	Version         string            `json:"version" binding:"required"`
-	InstallDir      string            `json:"install_dir"`
-	InstallMode     InstallMode       `json:"install_mode"`
-	Mirror          MirrorSource      `json:"mirror,omitempty"`
-	PackagePath     string            `json:"package_path,omitempty"`
-	DeploymentMode  DeploymentMode    `json:"deployment_mode"`
-	NodeRole        NodeRole          `json:"node_role"`
-	MasterAddresses []string          `json:"master_addresses,omitempty"`
-	WorkerAddresses []string          `json:"worker_addresses,omitempty"` // Worker addresses for separated mode / 分离模式的 worker 地址
-	ClusterPort     int               `json:"cluster_port,omitempty"`  // Master hazelcast port / Master Hazelcast 端口
-	WorkerPort      int               `json:"worker_port,omitempty"`   // Worker hazelcast port / Worker Hazelcast 端口
-	HTTPPort        int               `json:"http_port,omitempty"`     // SeaTunnel HTTP API 端口
-	JVM             *JVMConfig        `json:"jvm,omitempty"`
-	Checkpoint      *CheckpointConfig `json:"checkpoint,omitempty"`
-	Connector       *ConnectorConfig  `json:"connector,omitempty"`
+	HostID                  string                 `json:"host_id"`
+	ClusterID               string                 `json:"cluster_id"`
+	Version                 string                 `json:"version" binding:"required"`
+	InstallDir              string                 `json:"install_dir"`
+	InstallMode             InstallMode            `json:"install_mode"`
+	Mirror                  MirrorSource           `json:"mirror,omitempty"`
+	PackagePath             string                 `json:"package_path,omitempty"`
+	DeploymentMode          DeploymentMode         `json:"deployment_mode"`
+	NodeRole                NodeRole               `json:"node_role"`
+	MasterAddresses         []string               `json:"master_addresses,omitempty"`
+	WorkerAddresses         []string               `json:"worker_addresses,omitempty"` // Worker addresses for separated mode / 分离模式的 worker 地址
+	ClusterPort             int                    `json:"cluster_port,omitempty"`     // Master hazelcast port / Master Hazelcast 端口
+	WorkerPort              int                    `json:"worker_port,omitempty"`      // Worker hazelcast port / Worker Hazelcast 端口
+	HTTPPort                int                    `json:"http_port,omitempty"`        // SeaTunnel HTTP API 端口
+	EnableHTTP              *bool                  `json:"enable_http,omitempty"`      // 是否开启 SeaTunnel HTTP / Web UI
+	DynamicSlot             *bool                  `json:"dynamic_slot,omitempty"`
+	SlotNum                 *int                   `json:"slot_num,omitempty"`
+	SlotAllocationStrategy  SlotAllocationStrategy `json:"slot_allocation_strategy,omitempty"`
+	JobScheduleStrategy     JobScheduleStrategy    `json:"job_schedule_strategy,omitempty"`
+	HistoryJobExpireMinutes *int                   `json:"history_job_expire_minutes,omitempty"`
+	ScheduledDeletionEnable *bool                  `json:"scheduled_deletion_enable,omitempty"`
+	JobLogMode              JobLogMode             `json:"job_log_mode,omitempty"`
+	JVM                     *JVMConfig             `json:"jvm,omitempty"`
+	Checkpoint              *CheckpointConfig      `json:"checkpoint,omitempty"`
+	IMAP                    *IMAPConfig            `json:"imap,omitempty"`
+	Connector               *ConnectorConfig       `json:"connector,omitempty"`
 }
 
 // StepInfo contains information about an installation step
@@ -290,11 +368,11 @@ type PrecheckResult struct {
 type DownloadStatus string
 
 const (
-	DownloadStatusPending    DownloadStatus = "pending"
+	DownloadStatusPending     DownloadStatus = "pending"
 	DownloadStatusDownloading DownloadStatus = "downloading"
-	DownloadStatusCompleted  DownloadStatus = "completed"
-	DownloadStatusFailed     DownloadStatus = "failed"
-	DownloadStatusCancelled  DownloadStatus = "cancelled"
+	DownloadStatusCompleted   DownloadStatus = "completed"
+	DownloadStatusFailed      DownloadStatus = "failed"
+	DownloadStatusCancelled   DownloadStatus = "cancelled"
 )
 
 // DownloadTask represents a package download task
@@ -305,10 +383,10 @@ type DownloadTask struct {
 	Mirror          MirrorSource   `json:"mirror"`
 	DownloadURL     string         `json:"download_url"`
 	Status          DownloadStatus `json:"status"`
-	Progress        int            `json:"progress"`          // 0-100
+	Progress        int            `json:"progress"` // 0-100
 	DownloadedBytes int64          `json:"downloaded_bytes"`
 	TotalBytes      int64          `json:"total_bytes"`
-	Speed           int64          `json:"speed"`             // bytes per second
+	Speed           int64          `json:"speed"` // bytes per second
 	Message         string         `json:"message,omitempty"`
 	Error           string         `json:"error,omitempty"`
 	StartTime       time.Time      `json:"start_time"`
@@ -320,4 +398,41 @@ type DownloadTask struct {
 type DownloadRequest struct {
 	Version string       `json:"version" binding:"required"`
 	Mirror  MirrorSource `json:"mirror"`
+}
+
+// RuntimeStorageValidationKind indicates which runtime storage config to validate.
+// RuntimeStorageValidationKind 表示需要校验的运行时存储配置类型。
+type RuntimeStorageValidationKind string
+
+const (
+	RuntimeStorageValidationCheckpoint RuntimeStorageValidationKind = "checkpoint"
+	RuntimeStorageValidationIMAP       RuntimeStorageValidationKind = "imap"
+)
+
+// RuntimeStorageValidationRequest validates checkpoint or IMAP storage reachability from hosts.
+// RuntimeStorageValidationRequest 用于校验主机到 checkpoint 或 IMAP 存储的可达性。
+type RuntimeStorageValidationRequest struct {
+	HostIDs    []uint                       `json:"host_ids" binding:"required,min=1"`
+	Kind       RuntimeStorageValidationKind `json:"kind" binding:"required"`
+	Checkpoint *CheckpointConfig            `json:"checkpoint,omitempty"`
+	IMAP       *IMAPConfig                  `json:"imap,omitempty"`
+}
+
+// RuntimeStorageValidationHostResult describes one host validation result.
+// RuntimeStorageValidationHostResult 描述单个主机的校验结果。
+type RuntimeStorageValidationHostResult struct {
+	HostID   uint              `json:"host_id"`
+	HostName string            `json:"host_name,omitempty"`
+	Success  bool              `json:"success"`
+	Message  string            `json:"message"`
+	Details  map[string]string `json:"details,omitempty"`
+}
+
+// RuntimeStorageValidationResult is the aggregated validation result.
+// RuntimeStorageValidationResult 是聚合后的校验结果。
+type RuntimeStorageValidationResult struct {
+	Success bool                                  `json:"success"`
+	Kind    RuntimeStorageValidationKind          `json:"kind"`
+	Warning string                                `json:"warning,omitempty"`
+	Hosts   []*RuntimeStorageValidationHostResult `json:"hosts"`
 }

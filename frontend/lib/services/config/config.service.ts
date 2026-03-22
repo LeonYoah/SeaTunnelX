@@ -25,6 +25,7 @@
 
 import {BaseService} from '../core/base.service';
 import apiClient from '../core/api-client';
+import {localizeBackendText} from '@/lib/i18n/localize-text';
 import type {
   ConfigInfo,
   ConfigVersionInfo,
@@ -32,6 +33,7 @@ import type {
   RollbackConfigRequest,
   PromoteConfigRequest,
   SyncConfigRequest,
+  NormalizeConfigRequest,
   GetClusterConfigsResponse,
   GetConfigResponse,
   UpdateConfigResponse,
@@ -39,6 +41,7 @@ import type {
   RollbackConfigResponse,
   PromoteConfigResponse,
   SyncConfigResponse,
+  NormalizeConfigResponse,
 } from './types';
 
 /**
@@ -64,7 +67,7 @@ export class ConfigService extends BaseService {
       `${this.basePath}/clusters/${clusterId}/configs`
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -81,9 +84,27 @@ export class ConfigService extends BaseService {
       `${this.basePath}/configs/${configId}`
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
+  }
+
+  /**
+   * Normalize YAML config content
+   * 规范化 YAML 配置内容
+   *
+   * @param request - Normalize request / 规范化请求
+   * @returns Normalized content / 规范化后的内容
+   */
+  static async normalizeConfig(request: NormalizeConfigRequest): Promise<string> {
+    const response = await apiClient.post<NormalizeConfigResponse>(
+      `${this.basePath}/configs/normalize`,
+      request
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return response.data.data.content;
   }
 
   /**
@@ -103,7 +124,7 @@ export class ConfigService extends BaseService {
       request
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -120,7 +141,7 @@ export class ConfigService extends BaseService {
       `${this.basePath}/configs/${configId}/versions`
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -142,7 +163,7 @@ export class ConfigService extends BaseService {
       request
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -164,7 +185,7 @@ export class ConfigService extends BaseService {
       request || {}
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data as unknown as { message: string };
   }
@@ -186,7 +207,7 @@ export class ConfigService extends BaseService {
       request || {}
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -210,7 +231,7 @@ export class ConfigService extends BaseService {
       { host_id: hostId, install_dir: installDir }
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -232,7 +253,7 @@ export class ConfigService extends BaseService {
       { install_dir: installDir }
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }
@@ -437,7 +458,7 @@ export class ConfigService extends BaseService {
       { config_type: configType }
     );
     if (response.data.error_msg) {
-      throw new Error(response.data.error_msg);
+      throw new Error(localizeBackendText(response.data.error_msg));
     }
     return response.data.data;
   }

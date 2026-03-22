@@ -114,6 +114,30 @@ var MirrorURLs = map[MirrorSource]string{
 	MirrorHuaweiCloud: "https://mirrors.huaweicloud.com/apache/seatunnel",
 }
 
+var mavenRepoBaseURLs = map[MirrorSource]string{
+	MirrorAliyun:      "https://maven.aliyun.com/repository/central",
+	MirrorApache:      "https://repo.maven.apache.org/maven2",
+	MirrorHuaweiCloud: "https://repo.huaweicloud.com/repository/maven",
+}
+
+type runtimeDependencySpec struct {
+	GroupPath  string
+	ArtifactID string
+	Version    string
+}
+
+func (d runtimeDependencySpec) FileName() string {
+	return fmt.Sprintf("%s-%s.jar", d.ArtifactID, d.Version)
+}
+
+var ossRuntimeDependencySpecs = []runtimeDependencySpec{
+	{GroupPath: "com/aliyun/oss", ArtifactID: "aliyun-sdk-oss", Version: "3.13.2"},
+	{GroupPath: "org/apache/hadoop", ArtifactID: "hadoop-aliyun", Version: "3.3.6"},
+	{GroupPath: "org/jdom", ArtifactID: "jdom2", Version: "2.0.6"},
+	{GroupPath: "io/netty", ArtifactID: "netty-buffer", Version: "4.1.89.Final"},
+	{GroupPath: "io/netty", ArtifactID: "netty-common", Version: "4.1.89.Final"},
+}
+
 // GetDownloadURL generates the download URL for a specific version and mirror
 // GetDownloadURL 为特定版本和镜像生成下载 URL
 func GetDownloadURL(mirror MirrorSource, version string) string {
@@ -172,6 +196,19 @@ const (
 	DeploymentModeSeparated DeploymentMode = "separated"
 )
 
+// JobLogMode represents the SeaTunnel log output mode.
+// JobLogMode 表示 SeaTunnel 日志输出模式。
+type JobLogMode string
+
+const (
+	// JobLogModeMixed writes all jobs into the shared engine log.
+	// JobLogModeMixed 将所有作业写入共享引擎日志。
+	JobLogModeMixed JobLogMode = "mixed"
+	// JobLogModePerJob writes each job into a dedicated log file.
+	// JobLogModePerJob 将每个作业写入独立日志文件。
+	JobLogModePerJob JobLogMode = "per_job"
+)
+
 // NodeRole represents the node role in a cluster
 // NodeRole 表示集群中的节点角色
 type NodeRole string
@@ -215,6 +252,10 @@ const (
 	// InstallStepConfigureCheckpoint 是检查点配置步骤
 	InstallStepConfigureCheckpoint InstallStep = "configure_checkpoint"
 
+	// InstallStepConfigureIMAP is the IMAP persistence configuration step
+	// InstallStepConfigureIMAP 是 IMAP 持久化配置步骤
+	InstallStepConfigureIMAP InstallStep = "configure_imap"
+
 	// InstallStepConfigureJVM is the JVM configuration step
 	// InstallStepConfigureJVM 是 JVM 配置步骤
 	InstallStepConfigureJVM InstallStep = "configure_jvm"
@@ -254,6 +295,18 @@ const (
 	CheckpointStorageS3 CheckpointStorageType = "S3"
 )
 
+// IMAPStorageType represents the IMAP persistence storage type.
+// IMAPStorageType 表示 IMAP 持久化存储类型
+type IMAPStorageType string
+
+const (
+	IMAPStorageDisabled  IMAPStorageType = "DISABLED"
+	IMAPStorageLocalFile IMAPStorageType = "LOCAL_FILE"
+	IMAPStorageHDFS      IMAPStorageType = "HDFS"
+	IMAPStorageOSS       IMAPStorageType = "OSS"
+	IMAPStorageS3        IMAPStorageType = "S3"
+)
+
 // CheckpointConfig contains checkpoint storage configuration
 // CheckpointConfig 包含检查点存储配置
 type CheckpointConfig struct {
@@ -282,6 +335,31 @@ type CheckpointConfig struct {
 	HDFSFailoverProxyProvider string `json:"hdfs_failover_proxy_provider,omitempty"` // default: org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider
 
 	// OSS/S3 configuration / OSS/S3 配置
+	StorageEndpoint  string `json:"storage_endpoint,omitempty"`
+	StorageAccessKey string `json:"storage_access_key,omitempty"`
+	StorageSecretKey string `json:"storage_secret_key,omitempty"`
+	StorageBucket    string `json:"storage_bucket,omitempty"`
+}
+
+// IMAPConfig contains IMAP persistence storage configuration.
+// IMAPConfig 包含 IMAP 持久化存储配置
+type IMAPConfig struct {
+	StorageType IMAPStorageType `json:"storage_type"`
+	Namespace   string          `json:"namespace"`
+
+	HDFSNameNodeHost string `json:"hdfs_namenode_host,omitempty"`
+	HDFSNameNodePort int    `json:"hdfs_namenode_port,omitempty"`
+
+	KerberosPrincipal      string `json:"kerberos_principal,omitempty"`
+	KerberosKeytabFilePath string `json:"kerberos_keytab_file_path,omitempty"`
+
+	HDFSHAEnabled             bool   `json:"hdfs_ha_enabled,omitempty"`
+	HDFSNameServices          string `json:"hdfs_name_services,omitempty"`
+	HDFSHANamenodes           string `json:"hdfs_ha_namenodes,omitempty"`
+	HDFSNamenodeRPCAddress1   string `json:"hdfs_namenode_rpc_address_1,omitempty"`
+	HDFSNamenodeRPCAddress2   string `json:"hdfs_namenode_rpc_address_2,omitempty"`
+	HDFSFailoverProxyProvider string `json:"hdfs_failover_proxy_provider,omitempty"`
+
 	StorageEndpoint  string `json:"storage_endpoint,omitempty"`
 	StorageAccessKey string `json:"storage_access_key,omitempty"`
 	StorageSecretKey string `json:"storage_secret_key,omitempty"`
@@ -402,6 +480,7 @@ var InstallationSteps = []StepInfo{
 	{Step: InstallStepExtract, Name: "extract", Description: "Extract package / 解压安装包", Retryable: true},
 	{Step: InstallStepConfigureCluster, Name: "configure_cluster", Description: "Configure cluster / 配置集群", Retryable: true},
 	{Step: InstallStepConfigureCheckpoint, Name: "configure_checkpoint", Description: "Configure checkpoint / 配置检查点", Retryable: true},
+	{Step: InstallStepConfigureIMAP, Name: "configure_imap", Description: "Configure IMAP / 配置 IMAP", Retryable: true},
 	{Step: InstallStepConfigureJVM, Name: "configure_jvm", Description: "Configure JVM / 配置 JVM", Retryable: true},
 	{Step: InstallStepInstallPlugins, Name: "install_plugins", Description: "Install plugins / 安装插件", Retryable: true},
 	{Step: InstallStepRegisterCluster, Name: "register_cluster", Description: "Register to cluster / 注册到集群", Retryable: true},
@@ -497,6 +576,10 @@ type InstallationRequest struct {
 	// Checkpoint is the checkpoint configuration
 	// Checkpoint 是检查点配置
 	Checkpoint *CheckpointConfig `json:"checkpoint,omitempty"`
+
+	// IMAP is the IMAP persistence configuration
+	// IMAP 是 IMAP 持久化配置
+	IMAP *IMAPConfig `json:"imap,omitempty"`
 
 	// Connector is the connector configuration
 	// Connector 是连接器配置
@@ -840,9 +923,37 @@ type InstallParams struct {
 	// HTTPPort 是 HTTP API 端口
 	HTTPPort int `json:"http_port"`
 
+	// EnableHTTP controls whether the built-in HTTP API / Web UI is enabled.
+	// EnableHTTP 控制是否启用内置 HTTP API / Web UI。
+	EnableHTTP *bool `json:"enable_http,omitempty"`
+
 	// DynamicSlot enables dynamic slot allocation (default: true)
 	// DynamicSlot 启用动态槽位分配（默认：true）
 	DynamicSlot *bool `json:"dynamic_slot,omitempty"`
+
+	// SlotNum is the explicit static slot count written when dynamic slot is disabled.
+	// SlotNum 是关闭动态 slot 时写入的显式静态 slot 数量。
+	SlotNum *int `json:"slot_num,omitempty"`
+
+	// SlotAllocationStrategy controls how slot-service picks workers when supported.
+	// SlotAllocationStrategy 控制在版本支持时 slot-service 如何选择 worker。
+	SlotAllocationStrategy string `json:"slot_allocation_strategy,omitempty"`
+
+	// JobScheduleStrategy controls WAIT/REJECT behavior for static slot mode.
+	// JobScheduleStrategy 控制静态 slot 模式下的 WAIT/REJECT 调度行为。
+	JobScheduleStrategy string `json:"job_schedule_strategy,omitempty"`
+
+	// HistoryJobExpireMinutes configures finished job metadata retention.
+	// HistoryJobExpireMinutes 配置历史作业元数据保留时长。
+	HistoryJobExpireMinutes *int `json:"history_job_expire_minutes,omitempty"`
+
+	// ScheduledDeletionEnable controls whether expired history also deletes log files.
+	// ScheduledDeletionEnable 控制历史过期时是否连带删除日志文件。
+	ScheduledDeletionEnable *bool `json:"scheduled_deletion_enable,omitempty"`
+
+	// JobLogMode controls mixed vs per-job file output.
+	// JobLogMode 控制混合日志或单 Job 独立日志文件模式。
+	JobLogMode JobLogMode `json:"job_log_mode,omitempty"`
 
 	// JVM is the JVM memory configuration
 	// JVM 是 JVM 内存配置
@@ -851,6 +962,10 @@ type InstallParams struct {
 	// Checkpoint is the checkpoint storage configuration
 	// Checkpoint 是检查点存储配置
 	Checkpoint *CheckpointConfig `json:"checkpoint,omitempty"`
+
+	// IMAP is the IMAP persistence configuration
+	// IMAP 是 IMAP 持久化配置
+	IMAP *IMAPConfig `json:"imap,omitempty"`
 
 	// Connector is the connector installation configuration
 	// Connector 是连接器安装配置
@@ -864,16 +979,27 @@ type InstallParams struct {
 // DefaultInstallParams returns default installation parameters
 // DefaultInstallParams 返回默认安装参数
 func DefaultInstallParams() *InstallParams {
-	dynamicSlot := true
+	dynamicSlot := seatunnelmeta.DefaultInstallerDynamicSlot
 	defaultVersion := seatunnelmeta.DefaultVersion()
+	slotNum := seatunnelmeta.DefaultInstallerStaticSlotNum
+	historyJobExpireMinutes := seatunnelmeta.DefaultInstallerHistoryJobExpireMinutes
+	scheduledDeletionEnable := seatunnelmeta.DefaultInstallerScheduledDeletionEnable
+	httpEnabled := true
 	return &InstallParams{
-		Version:        defaultVersion,
-		InstallDir:     seatunnelmeta.DefaultInstallDir(defaultVersion),
-		DeploymentMode: DeploymentModeHybrid,
-		ClusterPort:    5801,
-		WorkerPort:     5802,
-		HTTPPort:       8080,
-		DynamicSlot:    &dynamicSlot,
+		Version:                 defaultVersion,
+		InstallDir:              seatunnelmeta.DefaultInstallDir(defaultVersion),
+		DeploymentMode:          DeploymentModeHybrid,
+		ClusterPort:             5801,
+		WorkerPort:              5802,
+		HTTPPort:                8080,
+		EnableHTTP:              &httpEnabled,
+		DynamicSlot:             &dynamicSlot,
+		SlotNum:                 &slotNum,
+		SlotAllocationStrategy:  seatunnelmeta.DefaultInstallerSlotAllocationStrategy,
+		JobScheduleStrategy:     seatunnelmeta.DefaultInstallerJobScheduleStrategy,
+		HistoryJobExpireMinutes: &historyJobExpireMinutes,
+		ScheduledDeletionEnable: &scheduledDeletionEnable,
+		JobLogMode:              JobLogModeMixed,
 		JVM: &JVMConfig{
 			HybridHeapSize: 3, // 3GB for hybrid mode / 混合模式 3GB
 			MasterHeapSize: 2, // 2GB for master / master 2GB
@@ -882,6 +1008,10 @@ func DefaultInstallParams() *InstallParams {
 		Checkpoint: &CheckpointConfig{
 			StorageType: CheckpointStorageLocalFile,
 			Namespace:   "/tmp/seatunnel/checkpoint/",
+		},
+		IMAP: &IMAPConfig{
+			StorageType: IMAPStorageDisabled,
+			Namespace:   "/tmp/seatunnel/imap/",
 		},
 		Connector: &ConnectorConfig{
 			InstallConnectors: true,
@@ -910,6 +1040,15 @@ func DefaultCheckpointConfig() *CheckpointConfig {
 	}
 }
 
+// DefaultIMAPConfig returns default IMAP configuration
+// DefaultIMAPConfig 返回默认 IMAP 配置
+func DefaultIMAPConfig() *IMAPConfig {
+	return &IMAPConfig{
+		StorageType: IMAPStorageDisabled,
+		Namespace:   "/tmp/seatunnel/imap/",
+	}
+}
+
 // DefaultConnectorConfig returns default connector configuration
 // DefaultConnectorConfig 返回默认连接器配置
 func DefaultConnectorConfig() *ConnectorConfig {
@@ -929,14 +1068,17 @@ func (c *CheckpointConfig) Validate() error {
 			return errors.New("namespace is required for LOCAL_FILE storage")
 		}
 	case CheckpointStorageHDFS:
-		if c.Namespace == "" {
-			return errors.New("namespace is required for HDFS storage")
-		}
-		if c.HDFSNameNodeHost == "" {
-			return errors.New("hdfs_namenode_host is required for HDFS storage")
-		}
-		if c.HDFSNameNodePort == 0 {
-			return errors.New("hdfs_namenode_port is required for HDFS storage")
+		if err := validateHDFSStorageConfig(
+			c.Namespace,
+			c.HDFSNameNodeHost,
+			c.HDFSNameNodePort,
+			c.HDFSHAEnabled,
+			c.HDFSNameServices,
+			c.HDFSHANamenodes,
+			c.HDFSNamenodeRPCAddress1,
+			c.HDFSNamenodeRPCAddress2,
+		); err != nil {
+			return err
 		}
 	case CheckpointStorageOSS, CheckpointStorageS3:
 		if c.Namespace == "" {
@@ -956,6 +1098,84 @@ func (c *CheckpointConfig) Validate() error {
 		}
 	default:
 		return fmt.Errorf("unsupported checkpoint storage type: %s", c.StorageType)
+	}
+	return nil
+}
+
+// Validate validates the IMAP configuration
+// Validate 验证 IMAP 配置
+func (c *IMAPConfig) Validate() error {
+	switch c.StorageType {
+	case IMAPStorageDisabled:
+		return nil
+	case IMAPStorageLocalFile:
+		if c.Namespace == "" {
+			return errors.New("namespace is required for LOCAL_FILE storage")
+		}
+	case IMAPStorageHDFS:
+		if err := validateHDFSStorageConfig(
+			c.Namespace,
+			c.HDFSNameNodeHost,
+			c.HDFSNameNodePort,
+			c.HDFSHAEnabled,
+			c.HDFSNameServices,
+			c.HDFSHANamenodes,
+			c.HDFSNamenodeRPCAddress1,
+			c.HDFSNamenodeRPCAddress2,
+		); err != nil {
+			return err
+		}
+	case IMAPStorageOSS, IMAPStorageS3:
+		if c.Namespace == "" {
+			return errors.New("namespace is required for OSS/S3 storage")
+		}
+		if c.StorageEndpoint == "" {
+			return errors.New("storage_endpoint is required for OSS/S3 storage")
+		}
+		if c.StorageAccessKey == "" {
+			return errors.New("storage_access_key is required for OSS/S3 storage")
+		}
+		if c.StorageSecretKey == "" {
+			return errors.New("storage_secret_key is required for OSS/S3 storage")
+		}
+		if c.StorageBucket == "" {
+			return errors.New("storage_bucket is required for OSS/S3 storage")
+		}
+	default:
+		return fmt.Errorf("unsupported imap storage type: %s", c.StorageType)
+	}
+	return nil
+}
+
+func validateHDFSStorageConfig(
+	namespace string,
+	host string,
+	port int,
+	haEnabled bool,
+	nameServices string,
+	haNamenodes string,
+	rpcAddress1 string,
+	rpcAddress2 string,
+) error {
+	if strings.TrimSpace(namespace) == "" {
+		return errors.New("namespace is required for HDFS storage")
+	}
+	if haEnabled {
+		if strings.TrimSpace(nameServices) == "" {
+			return errors.New("hdfs_name_services is required for HDFS HA storage")
+		}
+		_, err := seatunnelmeta.ResolveHDFSHARPCAddresses(
+			haNamenodes,
+			rpcAddress1,
+			rpcAddress2,
+		)
+		return err
+	}
+	if strings.TrimSpace(host) == "" {
+		return errors.New("hdfs_namenode_host is required for HDFS storage")
+	}
+	if port == 0 {
+		return errors.New("hdfs_namenode_port is required for HDFS storage")
 	}
 	return nil
 }
@@ -1018,6 +1238,12 @@ func (p *InstallParams) Validate() error {
 	if p.Checkpoint != nil {
 		if err := p.Checkpoint.Validate(); err != nil {
 			return fmt.Errorf("checkpoint config validation failed: %w", err)
+		}
+	}
+
+	if p.IMAP != nil {
+		if err := p.IMAP.Validate(); err != nil {
+			return fmt.Errorf("imap config validation failed: %w", err)
 		}
 	}
 
@@ -1176,6 +1402,7 @@ func (m *InstallerManager) InstallStepByStep(ctx context.Context, params *Instal
 		{InstallStepExtract, func() error { return m.executeStepExtract(ctx, params, reporter) }},
 		{InstallStepConfigureCluster, func() error { return m.executeStepConfigureCluster(params, reporter) }},
 		{InstallStepConfigureCheckpoint, func() error { return m.executeStepConfigureCheckpoint(params, reporter) }},
+		{InstallStepConfigureIMAP, func() error { return m.executeStepConfigureIMAP(params, reporter) }},
 		{InstallStepConfigureJVM, func() error { return m.executeStepConfigureJVM(params, reporter) }},
 		{InstallStepInstallPlugins, func() error { return m.executeStepInstallPlugins(ctx, params, reporter) }},
 		{InstallStepRegisterCluster, func() error { return m.executeStepRegisterCluster(params, reporter) }},
@@ -1237,6 +1464,8 @@ func (m *InstallerManager) ExecuteStep(ctx context.Context, step InstallStep, pa
 		err = m.executeStepConfigureCluster(params, reporter)
 	case InstallStepConfigureCheckpoint:
 		err = m.executeStepConfigureCheckpoint(params, reporter)
+	case InstallStepConfigureIMAP:
+		err = m.executeStepConfigureIMAP(params, reporter)
 	case InstallStepConfigureJVM:
 		err = m.executeStepConfigureJVM(params, reporter)
 	case InstallStepInstallPlugins:
@@ -1448,6 +1677,22 @@ func (m *InstallerManager) executeStepConfigureCheckpoint(params *InstallParams,
 	return nil
 }
 
+// executeStepConfigureIMAP configures IMAP persistence storage
+// executeStepConfigureIMAP 配置 IMAP 持久化存储
+func (m *InstallerManager) executeStepConfigureIMAP(params *InstallParams, reporter ProgressReporter) error {
+	if params.IMAP == nil {
+		reporter.Report(InstallStepConfigureIMAP, 100, "IMAP configuration skipped (using defaults) / 跳过 IMAP 配置（使用默认值）")
+		return nil
+	}
+
+	reporter.Report(InstallStepConfigureIMAP, 0, "Configuring IMAP persistence... / 配置 IMAP 持久化...")
+	if err := m.configureIMAPStorage(params); err != nil {
+		return err
+	}
+	reporter.Report(InstallStepConfigureIMAP, 100, "IMAP persistence configured / IMAP 持久化配置完成")
+	return nil
+}
+
 // executeStepConfigureJVM configures JVM settings
 // executeStepConfigureJVM 配置 JVM 设置
 func (m *InstallerManager) executeStepConfigureJVM(params *InstallParams, reporter ProgressReporter) error {
@@ -1605,6 +1850,11 @@ func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) err
 	if params.Checkpoint == nil {
 		return nil
 	}
+	if params.Checkpoint.StorageType == CheckpointStorageOSS {
+		if err := m.ensureOSSLibraryDependencies(context.Background(), params.InstallDir, params.Mirror); err != nil {
+			return fmt.Errorf("%w: failed to prepare OSS runtime dependencies: %v", ErrConfigGenerationFailed, err)
+		}
+	}
 
 	seatunnelYaml := filepath.Join(params.InstallDir, "config", "seatunnel.yaml")
 
@@ -1647,22 +1897,24 @@ func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) err
 		pluginConfig["namespace"] = namespace
 
 		// Check if HA mode is enabled / 检查是否启用 HA 模式
-		if params.Checkpoint.HDFSHAEnabled && params.Checkpoint.HDFSNameServices != "" {
+		if params.Checkpoint.HDFSHAEnabled {
+			if strings.TrimSpace(params.Checkpoint.HDFSNameServices) == "" {
+				return fmt.Errorf("%w: hdfs_name_services is required for HDFS HA storage", ErrConfigGenerationFailed)
+			}
+			haEndpoints, err := seatunnelmeta.ResolveHDFSHARPCAddresses(
+				params.Checkpoint.HDFSHANamenodes,
+				params.Checkpoint.HDFSNamenodeRPCAddress1,
+				params.Checkpoint.HDFSNamenodeRPCAddress2,
+			)
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrConfigGenerationFailed, err)
+			}
 			// HA mode configuration / HA 模式配置
 			pluginConfig["fs.defaultFS"] = fmt.Sprintf("hdfs://%s", params.Checkpoint.HDFSNameServices)
 			pluginConfig["seatunnel.hadoop.dfs.nameservices"] = params.Checkpoint.HDFSNameServices
-
-			if params.Checkpoint.HDFSHANamenodes != "" {
-				pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.ha.namenodes.%s", params.Checkpoint.HDFSNameServices)] = params.Checkpoint.HDFSHANamenodes
-
-				// Parse namenodes (e.g., "nn1,nn2") / 解析 namenodes
-				namenodes := strings.Split(params.Checkpoint.HDFSHANamenodes, ",")
-				if len(namenodes) >= 1 && params.Checkpoint.HDFSNamenodeRPCAddress1 != "" {
-					pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, strings.TrimSpace(namenodes[0]))] = params.Checkpoint.HDFSNamenodeRPCAddress1
-				}
-				if len(namenodes) >= 2 && params.Checkpoint.HDFSNamenodeRPCAddress2 != "" {
-					pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, strings.TrimSpace(namenodes[1]))] = params.Checkpoint.HDFSNamenodeRPCAddress2
-				}
+			pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.ha.namenodes.%s", params.Checkpoint.HDFSNameServices)] = params.Checkpoint.HDFSHANamenodes
+			for _, endpoint := range haEndpoints {
+				pluginConfig[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", params.Checkpoint.HDFSNameServices, endpoint.Name)] = endpoint.Address
 			}
 
 			// Failover proxy provider / 故障转移代理提供者
@@ -1740,6 +1992,315 @@ func (m *InstallerManager) configureCheckpointStorage(params *InstallParams) err
 	}
 
 	return nil
+}
+
+// configureIMAPStorage configures Hazelcast IMap persistence in hazelcast config files.
+// configureIMAPStorage 在 hazelcast 配置文件中配置 Hazelcast IMap 持久化。
+func (m *InstallerManager) configureIMAPStorage(params *InstallParams) error {
+	if params.IMAP == nil {
+		return nil
+	}
+	if params.IMAP.StorageType == IMAPStorageOSS {
+		if err := m.ensureOSSLibraryDependencies(context.Background(), params.InstallDir, params.Mirror); err != nil {
+			return fmt.Errorf("%w: failed to prepare OSS runtime dependencies: %v", ErrConfigGenerationFailed, err)
+		}
+	}
+
+	configFiles := []string{}
+	configDir := filepath.Join(params.InstallDir, "config")
+	if params.DeploymentMode == DeploymentModeSeparated {
+		configFiles = []string{
+			filepath.Join(configDir, "hazelcast-master.yaml"),
+			filepath.Join(configDir, "hazelcast-worker.yaml"),
+		}
+	} else {
+		configFiles = []string{
+			filepath.Join(configDir, "hazelcast.yaml"),
+		}
+	}
+
+	for _, configFile := range configFiles {
+		if err := backupFile(configFile); err != nil {
+			return fmt.Errorf("%w: %v", ErrConfigGenerationFailed, err)
+		}
+
+		content, err := os.ReadFile(configFile)
+		if err != nil {
+			return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filepath.Base(configFile), err)
+		}
+
+		var root yaml.Node
+		if err := yaml.Unmarshal(content, &root); err != nil {
+			return fmt.Errorf("%w: failed to parse %s: %v", ErrConfigGenerationFailed, filepath.Base(configFile), err)
+		}
+
+		hazelcastNode, mapStoreNode, err := ensureHazelcastMapStoreNode(&root)
+		if err != nil {
+			return fmt.Errorf("%w: failed to prepare hazelcast map-store: %v", ErrConfigGenerationFailed, err)
+		}
+
+		clusterName := getMappingString(hazelcastNode, "cluster-name")
+		if strings.TrimSpace(clusterName) == "" {
+			clusterName = "seatunnel-cluster"
+		}
+
+		if params.IMAP.StorageType == IMAPStorageDisabled {
+			setMappingScalarValue(mapStoreNode, "enabled", false)
+			removeMappingKey(mapStoreNode, "initial-mode")
+			removeMappingKey(mapStoreNode, "factory-class-name")
+			removeMappingKey(mapStoreNode, "properties")
+		} else {
+			namespace := strings.TrimSpace(params.IMAP.Namespace)
+			if namespace != "" && !strings.HasSuffix(namespace, "/") {
+				namespace += "/"
+			}
+
+			properties, buildErr := buildIMAPProperties(params.IMAP, namespace, clusterName)
+			if buildErr != nil {
+				return fmt.Errorf("%w: failed to build IMAP storage properties: %v", ErrConfigGenerationFailed, buildErr)
+			}
+			setMappingScalarValue(mapStoreNode, "enabled", true)
+			setMappingScalarValue(mapStoreNode, "initial-mode", "EAGER")
+			setMappingScalarValue(mapStoreNode, "factory-class-name", "org.apache.seatunnel.engine.server.persistence.FileMapStoreFactory")
+			propertiesNode := ensureMappingChildNode(mapStoreNode, "properties")
+			propertiesNode.Kind = yaml.MappingNode
+			propertiesNode.Tag = "!!map"
+			propertiesNode.Content = buildStringMapNodeContent(properties)
+		}
+
+		output, err := yaml.Marshal(&root)
+		if err != nil {
+			return fmt.Errorf("%w: failed to marshal %s: %v", ErrConfigGenerationFailed, filepath.Base(configFile), err)
+		}
+		if err := os.WriteFile(configFile, output, 0644); err != nil {
+			return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filepath.Base(configFile), err)
+		}
+	}
+
+	return nil
+}
+
+func ensureHazelcastMapStoreNode(root *yaml.Node) (*yaml.Node, *yaml.Node, error) {
+	if root == nil {
+		return nil, nil, fmt.Errorf("root is nil")
+	}
+
+	documentRoot := ensureDocumentMappingNode(root)
+	hazelcastNode := ensureMappingChildNode(documentRoot, "hazelcast")
+	hazelcastNode.Kind = yaml.MappingNode
+	hazelcastNode.Tag = "!!map"
+
+	mapNode := ensureMappingChildNode(hazelcastNode, "map")
+	mapNode.Kind = yaml.MappingNode
+	mapNode.Tag = "!!map"
+
+	// Normalize previously malformed files by moving hazelcast keys back to the hazelcast root.
+	// 规范化此前错误生成的文件，把误写到 map 下的 hazelcast 级字段挪回 hazelcast 根。
+	for _, key := range []string{"cluster-name", "network", "properties"} {
+		if moved := removeMappingKey(mapNode, key); moved != nil && findMappingChildNode(hazelcastNode, key) == nil {
+			appendMappingChildNode(hazelcastNode, key, moved)
+		}
+	}
+
+	engineNode := ensureMappingChildNode(mapNode, "engine*")
+	engineNode.Kind = yaml.MappingNode
+	engineNode.Tag = "!!map"
+
+	mapStoreNode := ensureMappingChildNode(engineNode, "map-store")
+	mapStoreNode.Kind = yaml.MappingNode
+	mapStoreNode.Tag = "!!map"
+
+	return hazelcastNode, mapStoreNode, nil
+}
+
+func buildIMAPProperties(cfg *IMAPConfig, namespace string, clusterName string) (map[string]string, error) {
+	properties := map[string]string{
+		"type":        "hdfs",
+		"namespace":   namespace,
+		"clusterName": clusterName,
+	}
+
+	switch cfg.StorageType {
+	case IMAPStorageLocalFile:
+		properties["storage.type"] = "hdfs"
+		properties["fs.defaultFS"] = "file:///"
+	case IMAPStorageHDFS:
+		properties["storage.type"] = "hdfs"
+		if cfg.HDFSHAEnabled {
+			if strings.TrimSpace(cfg.HDFSNameServices) == "" {
+				return nil, errors.New("hdfs_name_services is required for HDFS HA storage")
+			}
+			haEndpoints, err := seatunnelmeta.ResolveHDFSHARPCAddresses(
+				cfg.HDFSHANamenodes,
+				cfg.HDFSNamenodeRPCAddress1,
+				cfg.HDFSNamenodeRPCAddress2,
+			)
+			if err != nil {
+				return nil, err
+			}
+			properties["fs.defaultFS"] = fmt.Sprintf("hdfs://%s", cfg.HDFSNameServices)
+			properties["seatunnel.hadoop.dfs.nameservices"] = cfg.HDFSNameServices
+			properties[fmt.Sprintf("seatunnel.hadoop.dfs.ha.namenodes.%s", cfg.HDFSNameServices)] = cfg.HDFSHANamenodes
+			for _, endpoint := range haEndpoints {
+				properties[fmt.Sprintf("seatunnel.hadoop.dfs.namenode.rpc-address.%s.%s", cfg.HDFSNameServices, endpoint.Name)] = endpoint.Address
+			}
+			failoverProvider := cfg.HDFSFailoverProxyProvider
+			if failoverProvider == "" {
+				failoverProvider = "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider"
+			}
+			properties[fmt.Sprintf("seatunnel.hadoop.dfs.client.failover.proxy.provider.%s", cfg.HDFSNameServices)] = failoverProvider
+		} else if cfg.HDFSNameNodeHost != "" && cfg.HDFSNameNodePort > 0 {
+			properties["fs.defaultFS"] = fmt.Sprintf("hdfs://%s:%d", cfg.HDFSNameNodeHost, cfg.HDFSNameNodePort)
+		}
+		if cfg.KerberosPrincipal != "" {
+			properties["kerberosPrincipal"] = cfg.KerberosPrincipal
+		}
+		if cfg.KerberosKeytabFilePath != "" {
+			properties["kerberosKeytabFilePath"] = cfg.KerberosKeytabFilePath
+		}
+	case IMAPStorageOSS:
+		properties["storage.type"] = "oss"
+		if cfg.StorageBucket != "" {
+			properties["oss.bucket"] = cfg.StorageBucket
+		}
+		if cfg.StorageEndpoint != "" {
+			properties["fs.oss.endpoint"] = cfg.StorageEndpoint
+		}
+		if cfg.StorageAccessKey != "" {
+			properties["fs.oss.accessKeyId"] = cfg.StorageAccessKey
+		}
+		if cfg.StorageSecretKey != "" {
+			properties["fs.oss.accessKeySecret"] = cfg.StorageSecretKey
+		}
+	case IMAPStorageS3:
+		properties["storage.type"] = "s3"
+		if cfg.StorageBucket != "" {
+			properties["s3.bucket"] = cfg.StorageBucket
+			properties["fs.defaultFS"] = cfg.StorageBucket
+		}
+		if cfg.StorageEndpoint != "" {
+			properties["fs.s3a.endpoint"] = cfg.StorageEndpoint
+		}
+		if cfg.StorageAccessKey != "" {
+			properties["fs.s3a.access.key"] = cfg.StorageAccessKey
+		}
+		if cfg.StorageSecretKey != "" {
+			properties["fs.s3a.secret.key"] = cfg.StorageSecretKey
+		}
+		properties["fs.s3a.aws.credentials.provider"] = "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+	}
+
+	return properties, nil
+}
+
+func (m *InstallerManager) ensureOSSLibraryDependencies(ctx context.Context, installDir string, preferredMirror MirrorSource) error {
+	libDir := filepath.Join(installDir, "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		return err
+	}
+
+	for _, dep := range ossRuntimeDependencySpecs {
+		targetPath := filepath.Join(libDir, dep.FileName())
+		if info, err := os.Stat(targetPath); err == nil && info.Size() > 0 {
+			continue
+		}
+
+		if err := m.downloadRuntimeDependencyWithFallback(ctx, dep, targetPath, preferredMirror); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *InstallerManager) downloadRuntimeDependencyWithFallback(ctx context.Context, dep runtimeDependencySpec, targetPath string, preferredMirror MirrorSource) error {
+	var lastErr error
+	for _, mirror := range runtimeDependencyMirrorOrder(preferredMirror) {
+		url := runtimeDependencyURL(mirror, dep)
+		if err := m.downloadFile(ctx, url, targetPath); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no download mirror available")
+	}
+	return fmt.Errorf("download %s failed: %w", dep.FileName(), lastErr)
+}
+
+func runtimeDependencyURL(mirror MirrorSource, dep runtimeDependencySpec) string {
+	baseURL := strings.TrimSuffix(mavenRepoBaseURLs[mirror], "/")
+	if baseURL == "" {
+		baseURL = strings.TrimSuffix(mavenRepoBaseURLs[MirrorApache], "/")
+	}
+	return fmt.Sprintf(
+		"%s/%s/%s/%s/%s",
+		baseURL,
+		strings.Trim(dep.GroupPath, "/"),
+		dep.ArtifactID,
+		dep.Version,
+		dep.FileName(),
+	)
+}
+
+func runtimeDependencyMirrorOrder(preferredMirror MirrorSource) []MirrorSource {
+	ordered := []MirrorSource{}
+	appendMirror := func(mirror MirrorSource) {
+		if mirror == "" {
+			return
+		}
+		for _, item := range ordered {
+			if item == mirror {
+				return
+			}
+		}
+		ordered = append(ordered, mirror)
+	}
+
+	appendMirror(preferredMirror)
+	appendMirror(MirrorAliyun)
+	appendMirror(MirrorApache)
+	appendMirror(MirrorHuaweiCloud)
+	return ordered
+}
+
+func (m *InstallerManager) downloadFile(ctx context.Context, url string, targetPath string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+
+	response, err := m.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code %d", response.StatusCode)
+	}
+
+	tempFile, err := os.CreateTemp(filepath.Dir(targetPath), ".runtime-dep-*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if _, err := io.Copy(tempFile, response.Body); err != nil {
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempPath, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, targetPath)
 }
 
 // configureJVM configures JVM options
@@ -2129,6 +2690,13 @@ func (m *InstallerManager) ConfigureCluster(params *InstallParams) (string, erro
 		return "", err
 	}
 
+	// Modify log4j2.properties for mixed/per-job job log output
+	// 修改 log4j2.properties 以支持混合模式或单 Job 独立日志输出
+	log4j2Path := filepath.Join(configDir, "log4j2.properties")
+	if err := m.modifyLog4j2Config(log4j2Path, params); err != nil {
+		return "", err
+	}
+
 	return seatunnelPath, nil
 }
 
@@ -2325,27 +2893,69 @@ func (m *InstallerManager) modifySeaTunnelConfig(filePath string, params *Instal
 		return fmt.Errorf("%w: failed to parse %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
+	capabilities := seatunnelmeta.CapabilitiesForVersion(params.Version)
+
 	// Configure HTTP settings (SeaTunnel 2.3.9+)
 	// 配置 HTTP 设置（SeaTunnel 2.3.9+）
-	if params.HTTPPort > 0 {
-		// Set HTTP configuration / 设置 HTTP 配置
-		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "enable-http"}, true)
-		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "port"}, params.HTTPPort)
-		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "enable-dynamic-port"}, false)
+	if capabilities.SupportsHTTPService {
+		enableHTTP := capabilities.DefaultHTTPEnabled
+		if params.EnableHTTP != nil {
+			enableHTTP = *params.EnableHTTP
+		}
+		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "enable-http"}, enableHTTP)
+		if params.HTTPPort > 0 {
+			_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "port"}, params.HTTPPort)
+			_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "http", "enable-dynamic-port"}, false)
+		}
 	}
 
-	// Set dynamic-slot value (default: true, can be overridden by user)
-	// 设置 dynamic-slot 值（默认：true，可由用户覆盖）
-	dynamicSlotValue := true
-	if params.DynamicSlot != nil && !*params.DynamicSlot {
-		dynamicSlotValue = false
+	if capabilities.SupportsDynamicSlot {
+		dynamicSlotValue := capabilities.DefaultDynamicSlot
+		if params.DynamicSlot != nil {
+			dynamicSlotValue = *params.DynamicSlot
+		}
+		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "slot-service", "dynamic-slot"}, dynamicSlotValue)
+		if capabilities.SupportsSlotAllocationStrategy {
+			slotAllocationStrategy := capabilities.DefaultSlotAllocationStrategy
+			if strings.TrimSpace(params.SlotAllocationStrategy) != "" {
+				slotAllocationStrategy = strings.ToUpper(strings.TrimSpace(params.SlotAllocationStrategy))
+			}
+			_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "slot-service", "slot-allocation-strategy"}, slotAllocationStrategy)
+		}
+		if !dynamicSlotValue && capabilities.SupportsSlotNum {
+			slotNumValue := capabilities.DefaultStaticSlotNum
+			if params.SlotNum != nil && *params.SlotNum > 0 {
+				slotNumValue = *params.SlotNum
+			}
+			_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "slot-service", "slot-num"}, slotNumValue)
+			if capabilities.SupportsJobScheduleStrategy {
+				jobScheduleStrategy := capabilities.DefaultJobScheduleStrategy
+				if strings.TrimSpace(params.JobScheduleStrategy) != "" {
+					jobScheduleStrategy = strings.ToUpper(strings.TrimSpace(params.JobScheduleStrategy))
+				}
+				_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "job-schedule-strategy"}, jobScheduleStrategy)
+			}
+		}
 	}
-	_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "slot-service", "dynamic-slot"}, dynamicSlotValue)
+
+	if capabilities.SupportsHistoryJobExpireMinutes {
+		historyJobExpireMinutes := capabilities.DefaultHistoryJobExpireMinutes
+		if params.HistoryJobExpireMinutes != nil && *params.HistoryJobExpireMinutes > 0 {
+			historyJobExpireMinutes = *params.HistoryJobExpireMinutes
+		}
+		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "history-job-expire-minutes"}, historyJobExpireMinutes)
+	}
 
 	// Ensure telemetry metric and log settings are enabled by default (best-effort).
 	// If the path does not exist, it will be created.
 	_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "telemetry", "metric", "enabled"}, true)
-	_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "telemetry", "logs", "scheduled-deletion-enable"}, true)
+	if capabilities.SupportsScheduledDeletionEnable {
+		scheduledDeletionEnable := capabilities.DefaultScheduledDeletionEnable
+		if params.ScheduledDeletionEnable != nil {
+			scheduledDeletionEnable = *params.ScheduledDeletionEnable
+		}
+		_ = setYAMLValueCreate(&root, []string{"seatunnel", "engine", "telemetry", "logs", "scheduled-deletion-enable"}, scheduledDeletionEnable)
+	}
 
 	// Write modified content / 写入修改后的内容
 	output, err := yaml.Marshal(&root)
@@ -2357,6 +2967,39 @@ func (m *InstallerManager) modifySeaTunnelConfig(filePath string, params *Instal
 		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
 	}
 
+	return nil
+}
+
+// modifyLog4j2Config modifies config/log4j2.properties to switch mixed/per-job log output.
+// modifyLog4j2Config 修改 config/log4j2.properties 以切换混合日志或单 Job 日志输出。
+func (m *InstallerManager) modifyLog4j2Config(filePath string, params *InstallParams) error {
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil
+	}
+	if err := backupFile(filePath); err != nil {
+		return fmt.Errorf("%w: %v", ErrConfigGenerationFailed, err)
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("%w: failed to read %s: %v", ErrConfigGenerationFailed, filePath, err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	appenderRef := "fileAppender"
+	if strings.EqualFold(strings.TrimSpace(string(params.JobLogMode)), string(JobLogModePerJob)) {
+		appenderRef = "routingAppender"
+	}
+
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "rootLogger.appenderRef.file.ref") {
+			lines[index] = fmt.Sprintf("rootLogger.appenderRef.file.ref = %s", appenderRef)
+		}
+	}
+
+	if err := os.WriteFile(filePath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return fmt.Errorf("%w: failed to write %s: %v", ErrConfigGenerationFailed, filePath, err)
+	}
 	return nil
 }
 
@@ -2514,6 +3157,69 @@ func setYAMLValueCreate(root *yaml.Node, path []string, value interface{}) error
 	return nil
 }
 
+// setYAMLMapValueCreate sets a map value at the specified path, creating nodes as needed.
+// setYAMLMapValueCreate 在指定路径设置 map 值，如有需要则创建节点。
+func setYAMLMapValueCreate(root *yaml.Node, path []string, values map[string]string) error {
+	if err := setYAMLValueCreate(root, path, ""); err != nil {
+		return err
+	}
+	// Reset the node again as mapping with supplied values.
+	node := root
+	if node.Kind == yaml.DocumentNode {
+		node = node.Content[0]
+	}
+	for i := 0; i < len(path); i++ {
+		key := path[i]
+		found := false
+		if node.Kind == yaml.MappingNode {
+			for j := 0; j < len(node.Content); j += 2 {
+				if node.Content[j].Value == key {
+					node = node.Content[j+1]
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("path not found: %s", strings.Join(path[:i+1], "."))
+		}
+	}
+	if node.Kind != yaml.MappingNode {
+		node.Kind = yaml.MappingNode
+		node.Tag = "!!map"
+		node.Content = nil
+	}
+	return setYAMLMapValue(root, path, values)
+}
+
+// getYAMLString reads a string scalar from the YAML tree.
+// getYAMLString 从 YAML 树读取字符串值。
+func getYAMLString(root *yaml.Node, path []string) string {
+	if root == nil || len(path) == 0 {
+		return ""
+	}
+	node := root
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
+	}
+	for _, key := range path {
+		found := false
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i < len(node.Content); i += 2 {
+				if node.Content[i].Value == key {
+					node = node.Content[i+1]
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return ""
+		}
+	}
+	return strings.TrimSpace(node.Value)
+}
+
 // setYAMLMapValue sets a map value at the specified path in a YAML node tree
 // setYAMLMapValue 在 YAML 节点树中的指定路径设置 map 值
 // This replaces all children of the target node with the new map entries
@@ -2585,6 +3291,107 @@ func setYAMLMapValue(root *yaml.Node, path []string, values map[string]string) e
 
 	node.Content = newContent
 	return nil
+}
+
+func ensureDocumentMappingNode(root *yaml.Node) *yaml.Node {
+	node := root
+	if node.Kind == yaml.DocumentNode {
+		if len(node.Content) == 0 {
+			node.Content = []*yaml.Node{{
+				Kind: yaml.MappingNode,
+				Tag:  "!!map",
+			}}
+		}
+		node = node.Content[0]
+	}
+	if node.Kind != yaml.MappingNode {
+		node.Kind = yaml.MappingNode
+		node.Tag = "!!map"
+		node.Content = nil
+	}
+	return node
+}
+
+func findMappingChildNode(parent *yaml.Node, key string) *yaml.Node {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(parent.Content); i += 2 {
+		if parent.Content[i].Value == key {
+			return parent.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func ensureMappingChildNode(parent *yaml.Node, key string) *yaml.Node {
+	if existing := findMappingChildNode(parent, key); existing != nil {
+		return existing
+	}
+	valueNode := &yaml.Node{
+		Kind: yaml.MappingNode,
+		Tag:  "!!map",
+	}
+	appendMappingChildNode(parent, key, valueNode)
+	return valueNode
+}
+
+func appendMappingChildNode(parent *yaml.Node, key string, value *yaml.Node) {
+	if parent.Kind != yaml.MappingNode {
+		parent.Kind = yaml.MappingNode
+		parent.Tag = "!!map"
+		parent.Content = nil
+	}
+	keyNode := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: key,
+	}
+	parent.Content = append(parent.Content, keyNode, value)
+}
+
+func removeMappingKey(parent *yaml.Node, key string) *yaml.Node {
+	if parent == nil || parent.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(parent.Content); i += 2 {
+		if parent.Content[i].Value == key {
+			value := parent.Content[i+1]
+			parent.Content = append(parent.Content[:i], parent.Content[i+2:]...)
+			return value
+		}
+	}
+	return nil
+}
+
+func setMappingScalarValue(parent *yaml.Node, key string, value interface{}) {
+	node := ensureMappingChildNode(parent, key)
+	_ = setNodeValue(node, value)
+}
+
+func getMappingString(parent *yaml.Node, key string) string {
+	node := findMappingChildNode(parent, key)
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return node.Value
+}
+
+func buildStringMapNodeContent(values map[string]string) []*yaml.Node {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	content := make([]*yaml.Node, 0, len(values)*2)
+	for _, key := range keys {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: values[key]},
+		)
+	}
+	return content
 }
 
 // Uninstall removes the SeaTunnel installation

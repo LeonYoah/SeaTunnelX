@@ -18,6 +18,7 @@
 package config
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -90,6 +91,35 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: config})
 }
 
+// NormalizeConfig 智能修复（规范化）配置内容
+// @Summary 规范化配置内容
+// @Tags Config
+// @Accept json
+// @Produce json
+// @Param body body NormalizeConfigRequest true "规范化请求"
+// @Success 200 {object} Response
+// @Router /api/v1/configs/normalize [post]
+func (h *Handler) NormalizeConfig(c *gin.Context) {
+	var req NormalizeConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, Response{ErrorMsg: err.Error(), Data: nil})
+		return
+	}
+
+	content, err := h.service.NormalizeContent(c.Request.Context(), &req)
+	if err != nil {
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{ErrorMsg: "", Data: map[string]string{"content": content}})
+}
+
 // UpdateConfig 更新配置
 // @Summary 更新配置
 // @Tags Config
@@ -117,6 +147,11 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 	if err != nil {
 		if err == ErrConfigNotFound {
 			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
+			return
+		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
@@ -182,6 +217,11 @@ func (h *Handler) RollbackConfig(c *gin.Context) {
 			c.JSON(http.StatusNotFound, Response{ErrorMsg: "version not found", Data: nil})
 			return
 		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
@@ -221,6 +261,11 @@ func (h *Handler) PromoteConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "cannot promote template config", Data: nil})
 			return
 		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
@@ -258,11 +303,16 @@ func (h *Handler) SyncFromTemplate(c *gin.Context) {
 			return
 		}
 		if err == ErrTemplateNotFound {
-			c.JSON(http.StatusNotFound, Response{ErrorMsg: "cluster template not found", Data: nil})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "configuration template not found", Data: nil})
 			return
 		}
 		if err == ErrCannotSyncTemplate {
 			c.JSON(http.StatusBadRequest, Response{ErrorMsg: "cannot sync template config", Data: nil})
+			return
+		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
@@ -302,6 +352,11 @@ func (h *Handler) InitClusterConfigs(c *gin.Context) {
 
 	userID := getUserID(c)
 	if err := h.service.InitClusterConfigs(c.Request.Context(), uint(clusterID), req.HostID, req.InstallDir, userID); err != nil {
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
 		return
 	}
@@ -339,6 +394,11 @@ func (h *Handler) PushConfigToNode(c *gin.Context) {
 	if err := h.service.PushConfigToNode(c.Request.Context(), uint(id), req.InstallDir); err != nil {
 		if err == ErrConfigNotFound {
 			c.JSON(http.StatusNotFound, Response{ErrorMsg: "config not found", Data: nil})
+			return
+		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})
@@ -379,7 +439,12 @@ func (h *Handler) SyncTemplateToAllNodes(c *gin.Context) {
 	result, err := h.service.SyncTemplateToAllNodes(c.Request.Context(), uint(clusterID), ConfigType(req.ConfigType), userID)
 	if err != nil {
 		if err == ErrTemplateNotFound {
-			c.JSON(http.StatusNotFound, Response{ErrorMsg: "cluster template not found", Data: nil})
+			c.JSON(http.StatusNotFound, Response{ErrorMsg: "configuration template not found", Data: nil})
+			return
+		}
+		var validationErr *ValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusBadRequest, Response{ErrorMsg: validationErr.Error(), Data: nil})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, Response{ErrorMsg: err.Error(), Data: nil})

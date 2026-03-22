@@ -61,6 +61,7 @@ type PluginProvider interface {
 	GetPluginDependenciesForVersion(ctx context.Context, pluginName, version string) ([]pluginapp.PluginDependency, error)
 	GetPluginArtifactID(pluginName string) string
 	TransferPluginToAgent(ctx context.Context, agentID, pluginName, version, installDir string, profileKeys []string) error
+	RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error
 }
 
 // ConfigProvider 定义升级预检查所需的配置读取能力。

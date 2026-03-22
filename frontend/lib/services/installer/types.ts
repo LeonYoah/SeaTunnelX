@@ -50,7 +50,12 @@ export type NodeRole = 'master' | 'worker' | 'master/worker';
  * Installation step status
  * 安装步骤状态
  */
-export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+export type StepStatus =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'skipped';
 
 /**
  * Installation step names
@@ -62,6 +67,7 @@ export type InstallStep =
   | 'extract'
   | 'configure_cluster'
   | 'configure_checkpoint'
+  | 'configure_imap'
   | 'configure_jvm'
   | 'install_plugins'
   | 'register_cluster'
@@ -78,6 +84,20 @@ export type CheckStatus = 'passed' | 'failed' | 'warning';
  * 检查点存储类型
  */
 export type CheckpointStorageType = 'LOCAL_FILE' | 'HDFS' | 'OSS' | 'S3';
+
+/**
+ * IMAP persistence storage type
+ * IMAP 持久化存储类型
+ */
+export type IMAPStorageType = 'DISABLED' | 'LOCAL_FILE' | 'HDFS' | 'OSS' | 'S3';
+
+/**
+ * Job schedule strategy for static slot mode
+ * 静态 slot 模式的作业调度策略
+ */
+export type JobScheduleStrategy = 'WAIT' | 'REJECT';
+export type SlotAllocationStrategy = 'RANDOM' | 'SYSTEM_LOAD' | 'SLOT_RATIO';
+export type JobLogMode = 'mixed' | 'per_job';
 
 // ==================== Package Types 安装包类型 ====================
 
@@ -104,6 +124,45 @@ export interface AvailableVersions {
   versions: string[];
   recommended_version: string;
   local_packages: PackageInfo[];
+  version_capabilities: Record<string, SeaTunnelVersionCapabilities>;
+}
+
+/**
+ * Version-aware runtime capability metadata
+ * 版本感知运行时能力元数据
+ */
+export interface SeaTunnelVersionCapabilities {
+  supports_dynamic_slot: boolean;
+  supports_slot_num: boolean;
+  supports_history_job_expire_minutes: boolean;
+  supports_scheduled_deletion_enable: boolean;
+  supports_job_schedule_strategy: boolean;
+  supports_slot_allocation_strategy: boolean;
+  supports_http_service: boolean;
+  supports_job_log_mode: boolean;
+  default_dynamic_slot: boolean;
+  default_static_slot_num: number;
+  default_history_job_expire_minutes: number;
+  default_scheduled_deletion_enable: boolean;
+  default_job_schedule_strategy: JobScheduleStrategy;
+  default_slot_allocation_strategy: SlotAllocationStrategy;
+  default_http_enabled: boolean;
+  default_job_log_mode: JobLogMode;
+}
+
+/**
+ * Advanced runtime configuration for SeaTunnel engine
+ * SeaTunnel 引擎高级运行时配置
+ */
+export interface RuntimeEngineConfig {
+  dynamic_slot: boolean;
+  slot_num: number;
+  slot_allocation_strategy: SlotAllocationStrategy;
+  job_schedule_strategy: JobScheduleStrategy;
+  history_job_expire_minutes: number;
+  scheduled_deletion_enable: boolean;
+  enable_http: boolean;
+  job_log_mode: JobLogMode;
 }
 
 // ==================== Configuration Types 配置类型 ====================
@@ -136,12 +195,35 @@ export interface CheckpointConfig {
   kerberos_keytab_file_path?: string;
   // HDFS HA mode configuration / HDFS HA 模式配置
   hdfs_ha_enabled?: boolean;
-  hdfs_name_services?: string;              // e.g., "usdp-bing"
-  hdfs_ha_namenodes?: string;               // e.g., "nn1,nn2"
-  hdfs_namenode_rpc_address_1?: string;     // e.g., "usdp-bing-nn1:8020"
-  hdfs_namenode_rpc_address_2?: string;     // e.g., "usdp-bing-nn2:8020"
-  hdfs_failover_proxy_provider?: string;    // default: org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider
+  hdfs_name_services?: string; // e.g., "usdp-bing"
+  hdfs_ha_namenodes?: string; // e.g., "nn1,nn2"
+  hdfs_namenode_rpc_address_1?: string; // e.g., "usdp-bing-nn1:8020"
+  hdfs_namenode_rpc_address_2?: string; // e.g., "usdp-bing-nn2:8020"
+  hdfs_failover_proxy_provider?: string; // default: org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider
   // OSS/S3 configuration / OSS/S3 配置
+  storage_endpoint?: string;
+  storage_access_key?: string;
+  storage_secret_key?: string;
+  storage_bucket?: string;
+}
+
+/**
+ * IMAP persistence configuration
+ * IMAP 持久化配置
+ */
+export interface IMAPConfig {
+  storage_type: IMAPStorageType;
+  namespace: string;
+  hdfs_namenode_host?: string;
+  hdfs_namenode_port?: number;
+  kerberos_principal?: string;
+  kerberos_keytab_file_path?: string;
+  hdfs_ha_enabled?: boolean;
+  hdfs_name_services?: string;
+  hdfs_ha_namenodes?: string;
+  hdfs_namenode_rpc_address_1?: string;
+  hdfs_namenode_rpc_address_2?: string;
+  hdfs_failover_proxy_provider?: string;
   storage_endpoint?: string;
   storage_access_key?: string;
   storage_secret_key?: string;
@@ -153,13 +235,13 @@ export interface CheckpointConfig {
  * 插件安装信息，用于跟踪 SeaTunnel 安装过程中的插件安装
  */
 export interface PluginInstallInfo {
-  name: string;           // 插件名称 / Plugin name
-  category: string;       // 插件分类 (source/sink/transform) / Plugin category
-  version: string;        // 插件版本 / Plugin version
-  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed';  // 安装状态 / Install status
-  progress: number;       // 安装进度 (0-100) / Install progress
-  message?: string;       // 状态消息 / Status message
-  error?: string;         // 错误信息 / Error message
+  name: string; // 插件名称 / Plugin name
+  category: string; // 插件分类 (source/sink/transform) / Plugin category
+  version: string; // 插件版本 / Plugin version
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed'; // 安装状态 / Install status
+  progress: number; // 安装进度 (0-100) / Install progress
+  message?: string; // 状态消息 / Status message
+  error?: string; // 错误信息 / Error message
 }
 
 /**
@@ -197,8 +279,17 @@ export interface InstallationRequest {
   cluster_port?: number; // Cluster communication port / 集群通信端口
   worker_port?: number; // Worker hazelcast port / Worker Hazelcast 端口
   http_port?: number; // HTTP API port / HTTP API 端口
+  enable_http?: boolean; // Enable SeaTunnel HTTP/Web UI / 是否开启 SeaTunnel HTTP/Web UI
+  dynamic_slot?: boolean;
+  slot_num?: number;
+  slot_allocation_strategy?: SlotAllocationStrategy;
+  job_schedule_strategy?: JobScheduleStrategy;
+  history_job_expire_minutes?: number;
+  scheduled_deletion_enable?: boolean;
+  job_log_mode?: JobLogMode;
   jvm?: JVMConfig;
   checkpoint?: CheckpointConfig;
+  imap?: IMAPConfig;
   connector?: ConnectorConfig;
 }
 
@@ -354,7 +445,12 @@ export interface InstallResponse {
  * Download status
  * 下载状态
  */
-export type DownloadStatus = 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+export type DownloadStatus =
+  | 'pending'
+  | 'downloading'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 /**
  * Download task
@@ -383,6 +479,51 @@ export interface DownloadTask {
 export interface DownloadRequest {
   version: string;
   mirror?: MirrorSource;
+}
+
+/**
+ * Runtime storage validation kind
+ * 运行时存储校验类型
+ */
+export type RuntimeStorageValidationKind = 'checkpoint' | 'imap';
+
+/**
+ * Runtime storage validation request
+ * 运行时存储校验请求
+ */
+export interface RuntimeStorageValidationRequest {
+  host_ids: number[];
+  kind: RuntimeStorageValidationKind;
+  checkpoint?: CheckpointConfig;
+  imap?: IMAPConfig;
+}
+
+/**
+ * Runtime storage validation result for one host
+ * 单主机运行时存储校验结果
+ */
+export interface RuntimeStorageValidationHostResult {
+  host_id: number;
+  host_name?: string;
+  success: boolean;
+  message: string;
+  details?: Record<string, string>;
+}
+
+/**
+ * Runtime storage validation response data
+ * 运行时存储校验响应数据
+ */
+export interface RuntimeStorageValidationResult {
+  success: boolean;
+  kind: RuntimeStorageValidationKind;
+  warning?: string;
+  hosts: RuntimeStorageValidationHostResult[];
+}
+
+export interface RuntimeStorageValidationResponse {
+  error_msg: string;
+  data: RuntimeStorageValidationResult | null;
 }
 
 /**

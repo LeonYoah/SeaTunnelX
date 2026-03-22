@@ -20,6 +20,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,15 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"gorm.io/gorm"
 )
+
+type stubClusterVersionGetter struct {
+	version string
+	err     error
+}
+
+func (s *stubClusterVersionGetter) GetClusterVersion(ctx context.Context, clusterID uint) (string, error) {
+	return s.version, s.err
+}
 
 func newTestPluginService(t *testing.T) (*Service, *Repository) {
 	t.Helper()
@@ -91,6 +101,27 @@ func disableSeedAutoLoad(service *Service, versions ...string) {
 	}
 }
 
+func newTestPluginServiceWithDownloader(t *testing.T, pluginsDir string) (*Service, *Repository) {
+	t.Helper()
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open sqlite: %v", err)
+	}
+	if err := database.AutoMigrate(
+		&InstalledPlugin{},
+		&PluginDependencyConfig{},
+		&PluginDependencyDisable{},
+		&PluginCatalogEntry{},
+		&PluginDependencyProfile{},
+		&PluginDependencyProfileItem{},
+	); err != nil {
+		t.Fatalf("failed to migrate plugin models: %v", err)
+	}
+	repo := NewRepository(database)
+	service := NewServiceWithDownloader(repo, pluginsDir)
+	return service, repo
+}
+
 func TestListAvailablePluginsUsesDatabaseSnapshot(t *testing.T) {
 	service, repo := newTestPluginService(t)
 	ctx := context.Background()
@@ -136,6 +167,119 @@ func TestListAvailablePluginsUsesDatabaseSnapshot(t *testing.T) {
 	}
 	if result.CatalogRefreshedAt == nil {
 		t.Fatalf("expected catalog refreshed_at to be returned")
+	}
+}
+
+func TestListInstalledPluginsEnrichesLocalMetadata(t *testing.T) {
+	tempDir := t.TempDir()
+	service, repo := newTestPluginServiceWithDownloader(t, tempDir)
+	ctx := context.Background()
+
+	installedAt := time.Now()
+	if err := repo.db.WithContext(ctx).Create(&InstalledPlugin{
+		ClusterID:   1,
+		PluginName:  "jdbc",
+		ArtifactID:  "connector-jdbc",
+		Category:    PluginCategoryConnector,
+		Version:     "2.3.13",
+		Status:      PluginStatusInstalled,
+		InstallPath: "/opt/seatunnel/connectors/connector-jdbc-2.3.13.jar",
+		InstalledAt: installedAt,
+	}).Error; err != nil {
+		t.Fatalf("failed to create installed plugin: %v", err)
+	}
+
+	connectorPath := filepath.Join(tempDir, "2.3.13", "connectors", "connector-jdbc-2.3.13.jar")
+	if err := os.MkdirAll(filepath.Dir(connectorPath), 0o755); err != nil {
+		t.Fatalf("failed to create connector dir: %v", err)
+	}
+	if err := os.WriteFile(connectorPath, []byte("jar"), 0o644); err != nil {
+		t.Fatalf("failed to create connector jar: %v", err)
+	}
+
+	metadata := localPluginMetadata{
+		Name:                "jdbc",
+		Version:             "2.3.13",
+		ArtifactID:          "connector-jdbc",
+		SelectedProfileKeys: []string{"mysql", "oracle"},
+		AttachedConnectors:  []string{"connector-cdc-base"},
+		Dependencies: []PluginDependency{{
+			GroupID:    "mysql",
+			ArtifactID: "mysql-connector-java",
+			Version:    "8.0.27",
+			TargetDir:  "plugins/connector-jdbc",
+		}},
+		UpdatedAt: time.Now(),
+	}
+	metadataPath := filepath.Join(tempDir, "2.3.13", "metadata", "jdbc.json")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	content, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, content, 0o644); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	plugins, err := service.ListInstalledPlugins(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListInstalledPlugins returned error: %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("expected 1 installed plugin, got %d", len(plugins))
+	}
+	if len(plugins[0].SelectedProfileKeys) != 2 {
+		t.Fatalf("expected selected profiles to be enriched, got %+v", plugins[0].SelectedProfileKeys)
+	}
+	if len(plugins[0].AttachedConnectors) != 1 || plugins[0].AttachedConnectors[0] != "connector-cdc-base" {
+		t.Fatalf("expected attached connectors to be enriched, got %+v", plugins[0].AttachedConnectors)
+	}
+	if len(plugins[0].Dependencies) != 1 || plugins[0].Dependencies[0].ArtifactID != "mysql-connector-java" {
+		t.Fatalf("expected dependencies to be enriched, got %+v", plugins[0].Dependencies)
+	}
+}
+
+func TestListInstalledPluginsReconcilesClusterVersion(t *testing.T) {
+	tempDir := t.TempDir()
+	service, repo := newTestPluginServiceWithDownloader(t, tempDir)
+	service.SetClusterGetter(&stubClusterVersionGetter{version: "2.3.13"})
+	ctx := context.Background()
+
+	if err := repo.db.WithContext(ctx).Create(&InstalledPlugin{
+		ClusterID:   1,
+		PluginName:  "jdbc",
+		ArtifactID:  "connector-jdbc",
+		Category:    PluginCategoryConnector,
+		Version:     "2.3.11",
+		Status:      PluginStatusInstalled,
+		InstallPath: "connectors/connector-jdbc-2.3.11.jar",
+		InstalledAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("failed to create installed plugin: %v", err)
+	}
+
+	plugins, err := service.ListInstalledPlugins(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListInstalledPlugins returned error: %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("expected 1 installed plugin, got %d", len(plugins))
+	}
+	if plugins[0].Version != "2.3.13" {
+		t.Fatalf("expected reconciled version 2.3.13, got %q", plugins[0].Version)
+	}
+	if plugins[0].InstallPath != "connectors/connector-jdbc-2.3.13.jar" {
+		t.Fatalf("expected reconciled install path, got %q", plugins[0].InstallPath)
+	}
+
+	var stored InstalledPlugin
+	if err := repo.db.WithContext(ctx).First(&stored, plugins[0].ID).Error; err != nil {
+		t.Fatalf("failed to reload stored plugin: %v", err)
+	}
+	if stored.Version != "2.3.13" {
+		t.Fatalf("expected stored version 2.3.13, got %q", stored.Version)
 	}
 }
 

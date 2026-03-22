@@ -24,6 +24,7 @@
 
 import {useState, useEffect, useCallback, useRef} from 'react';
 import {installerService} from '@/lib/services/installer';
+import {buildSeatunnelInstallDir} from '@/lib/seatunnel-version';
 import type {
   AvailableVersions,
   PackageInfo,
@@ -37,7 +38,9 @@ import type {
   MirrorSource,
   JVMConfig,
   CheckpointConfig,
+  IMAPConfig,
   ConnectorConfig,
+  RuntimeEngineConfig,
   DownloadTask,
 } from '@/lib/services/installer/types';
 
@@ -403,18 +406,28 @@ export function useInstallation(
 
 // ==================== useInstallWizard Hook ====================
 
-export type WizardStep = 'precheck' | 'config' | 'plugins' | 'install' | 'complete';
+export type WizardStep =
+  | 'precheck'
+  | 'config'
+  | 'plugins'
+  | 'install'
+  | 'complete';
 
 interface InstallWizardConfig {
   version: string;
+  installDir: string;
   installMode: InstallMode;
   mirror: MirrorSource;
   packagePath: string;
   deploymentMode: DeploymentMode;
   nodeRole: NodeRole;
   clusterId: string;
+  clusterPort: number;
+  httpPort: number;
+  runtime: RuntimeEngineConfig;
   jvm: JVMConfig;
   checkpoint: CheckpointConfig;
+  imap: IMAPConfig;
   connector: ConnectorConfig;
 }
 
@@ -430,12 +443,25 @@ interface UseInstallWizardReturn {
 
 const defaultConfig: InstallWizardConfig = {
   version: '',
+  installDir: buildSeatunnelInstallDir(),
   installMode: 'online',
   mirror: 'aliyun',
   packagePath: '',
   deploymentMode: 'hybrid',
   nodeRole: 'master',
   clusterId: '',
+  clusterPort: 5801,
+  httpPort: 8080,
+  runtime: {
+    dynamic_slot: true,
+    slot_num: 2,
+    slot_allocation_strategy: 'RANDOM',
+    job_schedule_strategy: 'REJECT',
+    history_job_expire_minutes: 1440,
+    scheduled_deletion_enable: true,
+    enable_http: true,
+    job_log_mode: 'mixed',
+  },
   jvm: {
     hybrid_heap_size: 3, // GB
     master_heap_size: 2, // GB
@@ -444,6 +470,10 @@ const defaultConfig: InstallWizardConfig = {
   checkpoint: {
     storage_type: 'LOCAL_FILE',
     namespace: '/tmp/seatunnel/checkpoint/',
+  },
+  imap: {
+    storage_type: 'DISABLED',
+    namespace: '/tmp/seatunnel/imap/',
   },
   connector: {
     install_connectors: false,
@@ -462,7 +492,22 @@ export function useInstallWizard(): UseInstallWizardReturn {
   const [config, setConfig] = useState<InstallWizardConfig>(defaultConfig);
 
   const updateConfig = useCallback((updates: Partial<InstallWizardConfig>) => {
-    setConfig((prev) => ({...prev, ...updates}));
+    setConfig((prev) => {
+      const next: InstallWizardConfig = {...prev, ...updates};
+
+      if (updates.version && updates.installDir === undefined) {
+        const previousDefaultDir = buildSeatunnelInstallDir(prev.version);
+        if (
+          !prev.installDir ||
+          prev.installDir === previousDefaultDir ||
+          prev.installDir === buildSeatunnelInstallDir()
+        ) {
+          next.installDir = buildSeatunnelInstallDir(updates.version);
+        }
+      }
+
+      return next;
+    });
   }, []);
 
   const resetWizard = useCallback(() => {
@@ -498,14 +543,26 @@ export function useInstallWizard(): UseInstallWizardReturn {
     return {
       cluster_id: config.clusterId || undefined,
       version: config.version,
+      install_dir: config.installDir || undefined,
       install_mode: config.installMode,
       mirror: config.installMode === 'online' ? config.mirror : undefined,
       package_path:
         config.installMode === 'offline' ? config.packagePath : undefined,
       deployment_mode: config.deploymentMode,
       node_role: config.nodeRole,
+      cluster_port: config.clusterPort,
+      http_port: config.httpPort,
+      enable_http: config.runtime.enable_http,
+      dynamic_slot: config.runtime.dynamic_slot,
+      slot_num: config.runtime.slot_num,
+      slot_allocation_strategy: config.runtime.slot_allocation_strategy,
+      job_schedule_strategy: config.runtime.job_schedule_strategy,
+      history_job_expire_minutes: config.runtime.history_job_expire_minutes,
+      scheduled_deletion_enable: config.runtime.scheduled_deletion_enable,
+      job_log_mode: config.runtime.job_log_mode,
       jvm: config.jvm,
       checkpoint: config.checkpoint,
+      imap: config.imap,
       connector: config.connector.install_connectors
         ? config.connector
         : undefined,
