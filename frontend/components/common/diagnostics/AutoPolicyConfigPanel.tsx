@@ -18,7 +18,9 @@
 'use client';
 
 import {useCallback, useEffect, useState} from 'react';
+import {isValidCron} from 'cron-validator';
 import {Loader2, Plus, Trash2} from 'lucide-react';
+import dynamic from 'next/dynamic';
 import {useTranslations} from 'next-intl';
 import {toast} from 'sonner';
 import services from '@/lib/services';
@@ -57,6 +59,173 @@ interface AutoPolicyConfigPanelProps {
   clusterOptions: DiagnosticsClusterOption[];
 }
 
+const ReUnixCron = dynamic(
+  () => import('@sbzen/re-cron').then((mod) => mod.ReUnixCron),
+  {ssr: false},
+);
+
+const cronEditorStyles = `
+  .stx-cron-editor {
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) - 2px);
+    background: hsl(var(--background));
+    padding: 0.75rem;
+  }
+
+  .stx-cron-editor .c-host {
+    font-size: 0.875rem;
+  }
+
+  .stx-cron-editor .nav,
+  .stx-cron-editor .nav-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0;
+    margin: 0 0 0.75rem;
+    list-style: none;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .stx-cron-editor .nav-item {
+    margin: 0;
+  }
+
+  .stx-cron-editor .nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.375rem 0.75rem;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius) - 4px);
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+  }
+
+  .stx-cron-editor .nav-link[aria-selected='true'] {
+    border-color: hsl(var(--border));
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .stx-cron-editor .c-tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .stx-cron-editor .form-group,
+  .stx-cron-editor .form-inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .stx-cron-editor .form-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .stx-cron-editor .form-check-input {
+    margin: 0;
+  }
+
+  .stx-cron-editor .form-check-label {
+    line-height: 1.4;
+  }
+
+  .stx-cron-editor .form-control {
+    min-width: 4.5rem;
+    height: 2rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) - 4px);
+    background: hsl(var(--background));
+    padding: 0 0.625rem;
+    color: hsl(var(--foreground));
+  }
+
+  .stx-cron-editor .row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
+    gap: 0.5rem;
+  }
+
+  .stx-cron-editor .row > div {
+    min-width: 0;
+  }
+`;
+
+export function shouldRenderCronExprInput(
+  template: InspectionConditionTemplate,
+): boolean {
+  return Boolean(template.default_cron_expr?.trim());
+}
+
+export function applyConditionTextOverride(
+  conditions: InspectionConditionItem[],
+  templateCode: string,
+  field: 'cron_expr_override',
+  value: string,
+): InspectionConditionItem[] {
+  return conditions.map((condition) =>
+    condition.template_code === templateCode
+      ? {...condition, [field]: value}
+      : condition,
+  );
+}
+
+export function normalizeConditionItemsForSave(
+  conditions: InspectionConditionItem[],
+): InspectionConditionItem[] {
+  return conditions.map((condition) => {
+    const cronExprOverride = condition.cron_expr_override?.trim();
+    if (!cronExprOverride) {
+      const {cron_expr_override, ...rest} = condition;
+      return rest;
+    }
+    return {...condition, cron_expr_override: cronExprOverride};
+  });
+}
+
+const cronValidationOptions = {
+  alias: true,
+  allowSevenAsSunday: true,
+  allowNthWeekdayOfMonth: true,
+};
+
+export function validateCronExpression(value: string): boolean {
+  return isValidCron(value.trim(), cronValidationOptions);
+}
+
+export function getCronConditionError(
+  condition: InspectionConditionItem | undefined,
+  template: InspectionConditionTemplate,
+): string | null {
+  if (!shouldRenderCronExprInput(template)) {
+    return null;
+  }
+  const rawValue = condition?.cron_expr_override ?? '';
+  if (!rawValue.trim()) {
+    return null;
+  }
+  return validateCronExpression(rawValue) ? null : 'invalid';
+}
+
+export function getCronEditorValue(
+  condition: InspectionConditionItem | undefined,
+  template: InspectionConditionTemplate,
+): string {
+  const rawValue = condition?.cron_expr_override ?? '';
+  if (rawValue.trim() && validateCronExpression(rawValue)) {
+    return rawValue.trim();
+  }
+  return template.default_cron_expr;
+}
+
 export function AutoPolicyConfigPanel({
   open,
   onOpenChange,
@@ -68,7 +237,8 @@ export function AutoPolicyConfigPanel({
   const [templates, setTemplates] = useState<InspectionConditionTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
-  const [editingPolicy, setEditingPolicy] = useState<InspectionAutoPolicy | null>(null);
+  const [editingPolicy, setEditingPolicy] =
+    useState<InspectionAutoPolicy | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
 
@@ -77,14 +247,17 @@ export function AutoPolicyConfigPanel({
   const [formClusterId, setFormClusterId] = useState(0);
   const [formEnabled, setFormEnabled] = useState(true);
   const [formCooldown, setFormCooldown] = useState(30);
-  const [formConditions, setFormConditions] = useState<InspectionConditionItem[]>([]);
+  const [formConditions, setFormConditions] = useState<
+    InspectionConditionItem[]
+  >([]);
   const [formAutoCreateTask, setFormAutoCreateTask] = useState(false);
   const [formAutoStartTask, setFormAutoStartTask] = useState(true);
-  const [formTaskOptions, setFormTaskOptions] = useState<DiagnosticsTaskOptions>({
-    include_thread_dump: true,
-    include_jvm_dump: false,
-    jvm_dump_min_free_mb: 2048,
-  });
+  const [formTaskOptions, setFormTaskOptions] =
+    useState<DiagnosticsTaskOptions>({
+      include_thread_dump: true,
+      include_jvm_dump: false,
+      jvm_dump_min_free_mb: 2048,
+    });
 
   const getCategoryLabel = useCallback(
     (category: string) => {
@@ -110,9 +283,7 @@ export function AutoPolicyConfigPanel({
 
   const getPolicyScopeLabel = useCallback(
     (clusterId: number) =>
-      clusterId === 0
-        ? t('scopeGlobal')
-        : t('scopeCluster', {id: clusterId}),
+      clusterId === 0 ? t('scopeGlobal') : t('scopeCluster', {id: clusterId}),
     [t],
   );
 
@@ -167,27 +338,24 @@ export function AutoPolicyConfigPanel({
     setFormOpen(true);
   }, []);
 
-  const openEditForm = useCallback(
-    (policy: InspectionAutoPolicy) => {
-      setEditingPolicy(policy);
-      setFormName(policy.name);
-      setFormClusterId(policy.cluster_id);
-      setFormEnabled(policy.enabled);
-      setFormCooldown(policy.cooldown_minutes);
-      setFormConditions(policy.conditions || []);
-      setFormAutoCreateTask(policy.auto_create_task);
-      setFormAutoStartTask(policy.auto_start_task);
-      setFormTaskOptions(
-        policy.task_options || {
-          include_thread_dump: true,
-          include_jvm_dump: false,
-          jvm_dump_min_free_mb: 2048,
-        },
-      );
-      setFormOpen(true);
-    },
-    [],
-  );
+  const openEditForm = useCallback((policy: InspectionAutoPolicy) => {
+    setEditingPolicy(policy);
+    setFormName(policy.name);
+    setFormClusterId(policy.cluster_id);
+    setFormEnabled(policy.enabled);
+    setFormCooldown(policy.cooldown_minutes);
+    setFormConditions(policy.conditions || []);
+    setFormAutoCreateTask(policy.auto_create_task);
+    setFormAutoStartTask(policy.auto_start_task);
+    setFormTaskOptions(
+      policy.task_options || {
+        include_thread_dump: true,
+        include_jvm_dump: false,
+        jvm_dump_min_free_mb: 2048,
+      },
+    );
+    setFormOpen(true);
+  }, []);
 
   const handleToggleCondition = useCallback(
     (templateCode: string, checked: boolean) => {
@@ -195,9 +363,7 @@ export function AutoPolicyConfigPanel({
         if (checked) {
           if (prev.some((c) => c.template_code === templateCode)) {
             return prev.map((c) =>
-              c.template_code === templateCode
-                ? {...c, enabled: true}
-                : c,
+              c.template_code === templateCode ? {...c, enabled: true} : c,
             );
           }
           return [...prev, {template_code: templateCode, enabled: true}];
@@ -223,9 +389,34 @@ export function AutoPolicyConfigPanel({
     [],
   );
 
+  const handleConditionTextOverride = useCallback(
+    (templateCode: string, field: 'cron_expr_override', value: string) => {
+      setFormConditions((prev) =>
+        applyConditionTextOverride(prev, templateCode, field, value),
+      );
+    },
+    [],
+  );
+
   const handleSave = useCallback(async () => {
     if (!formName.trim()) {
       toast.error(t('nameRequired'));
+      return;
+    }
+    const invalidScheduledCondition = formConditions.find((condition) => {
+      if (!condition.enabled) {
+        return false;
+      }
+      const template = templates.find(
+        (item) => item.code === condition.template_code,
+      );
+      if (!template) {
+        return false;
+      }
+      return getCronConditionError(condition, template) !== null;
+    });
+    if (invalidScheduledCondition) {
+      toast.error(t('cronExprInvalid'));
       return;
     }
     setSaving(true);
@@ -236,7 +427,7 @@ export function AutoPolicyConfigPanel({
           {
             name: formName,
             enabled: formEnabled,
-            conditions: formConditions,
+            conditions: normalizeConditionItemsForSave(formConditions),
             cooldown_minutes: formCooldown,
             auto_create_task: formAutoCreateTask,
             auto_start_task: formAutoStartTask,
@@ -253,7 +444,7 @@ export function AutoPolicyConfigPanel({
           cluster_id: formClusterId,
           name: formName,
           enabled: formEnabled,
-          conditions: formConditions,
+          conditions: normalizeConditionItemsForSave(formConditions),
           cooldown_minutes: formCooldown,
           auto_create_task: formAutoCreateTask,
           auto_start_task: formAutoStartTask,
@@ -281,6 +472,7 @@ export function AutoPolicyConfigPanel({
     formName,
     formTaskOptions,
     loadData,
+    templates,
     t,
   ]);
 
@@ -331,6 +523,9 @@ export function AutoPolicyConfigPanel({
 
   return (
     <>
+      <style jsx global>
+        {cronEditorStyles}
+      </style>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className='max-w-2xl max-h-[80vh] overflow-y-auto'>
           <DialogHeader>
@@ -394,9 +589,7 @@ export function AutoPolicyConfigPanel({
                       </div>
                       <Switch
                         checked={policy.enabled}
-                        onCheckedChange={() =>
-                          void handleToggleEnabled(policy)
-                        }
+                        onCheckedChange={() => void handleToggleEnabled(policy)}
                       />
                       <Button
                         variant='ghost'
@@ -486,9 +679,7 @@ export function AutoPolicyConfigPanel({
                 max={1440}
                 value={formCooldown}
                 onChange={(e) =>
-                  setFormCooldown(
-                    Number.parseInt(e.target.value, 10) || 30,
-                  )
+                  setFormCooldown(Number.parseInt(e.target.value, 10) || 30)
                 }
               />
               <div className='text-xs text-muted-foreground'>
@@ -497,10 +688,7 @@ export function AutoPolicyConfigPanel({
             </div>
 
             <div className='flex items-center gap-2'>
-              <Switch
-                checked={formEnabled}
-                onCheckedChange={setFormEnabled}
-              />
+              <Switch checked={formEnabled} onCheckedChange={setFormEnabled} />
               <Label>{t('enabledLabel')}</Label>
             </div>
 
@@ -522,7 +710,9 @@ export function AutoPolicyConfigPanel({
                 <div className='mt-3 grid gap-4 md:grid-cols-2'>
                   <div className='flex items-center justify-between rounded-lg border bg-background p-3'>
                     <div>
-                      <div className='font-medium'>{t('includeThreadDump')}</div>
+                      <div className='font-medium'>
+                        {t('includeThreadDump')}
+                      </div>
                       <div className='text-xs text-muted-foreground'>
                         {t('includeThreadDumpHint')}
                       </div>
@@ -530,10 +720,12 @@ export function AutoPolicyConfigPanel({
                     <Switch
                       checked={formTaskOptions.include_thread_dump}
                       onCheckedChange={(checked) =>
-                        setFormTaskOptions((current: DiagnosticsTaskOptions) => ({
-                          ...current,
-                          include_thread_dump: checked,
-                        }))
+                        setFormTaskOptions(
+                          (current: DiagnosticsTaskOptions) => ({
+                            ...current,
+                            include_thread_dump: checked,
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -548,10 +740,12 @@ export function AutoPolicyConfigPanel({
                     <Switch
                       checked={formTaskOptions.include_jvm_dump}
                       onCheckedChange={(checked) =>
-                        setFormTaskOptions((current: DiagnosticsTaskOptions) => ({
-                          ...current,
-                          include_jvm_dump: checked,
-                        }))
+                        setFormTaskOptions(
+                          (current: DiagnosticsTaskOptions) => ({
+                            ...current,
+                            include_jvm_dump: checked,
+                          }),
+                        )
                       }
                     />
                   </div>
@@ -567,11 +761,13 @@ export function AutoPolicyConfigPanel({
                       step={256}
                       value={formTaskOptions.jvm_dump_min_free_mb ?? 2048}
                       onChange={(event) =>
-                        setFormTaskOptions((current: DiagnosticsTaskOptions) => ({
-                          ...current,
-                          jvm_dump_min_free_mb:
-                            Number.parseInt(event.target.value, 10) || 2048,
-                        }))
+                        setFormTaskOptions(
+                          (current: DiagnosticsTaskOptions) => ({
+                            ...current,
+                            jvm_dump_min_free_mb:
+                              Number.parseInt(event.target.value, 10) || 2048,
+                          }),
+                        )
                       }
                       disabled={!formTaskOptions.include_jvm_dump}
                     />
@@ -611,6 +807,7 @@ export function AutoPolicyConfigPanel({
                       const condition = formConditions.find(
                         (c) => c.template_code === tpl.code,
                       );
+                      const cronError = getCronConditionError(condition, tpl);
                       return (
                         <div
                           key={tpl.code}
@@ -637,6 +834,52 @@ export function AutoPolicyConfigPanel({
                           </div>
                           {isChecked && !tpl.immediate_on_match ? (
                             <div className='ml-6 grid grid-cols-2 gap-2'>
+                              {shouldRenderCronExprInput(tpl) ? (
+                                <div className='space-y-1 col-span-2'>
+                                  <Label className='text-xs'>
+                                    {t('cronExprLabel')}
+                                  </Label>
+                                  <div className='text-xs text-muted-foreground'>
+                                    {t('cronEditorLabel')}
+                                  </div>
+                                  <div className='stx-cron-editor'>
+                                    <ReUnixCron
+                                      value={getCronEditorValue(condition, tpl)}
+                                      onChange={(value: string) =>
+                                        handleConditionTextOverride(
+                                          tpl.code,
+                                          'cron_expr_override',
+                                          value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <Input
+                                    type='text'
+                                    className='h-8 text-xs font-mono'
+                                    placeholder={tpl.default_cron_expr}
+                                    value={condition?.cron_expr_override ?? ''}
+                                    aria-invalid={cronError ? true : undefined}
+                                    onChange={(e) =>
+                                      handleConditionTextOverride(
+                                        tpl.code,
+                                        'cron_expr_override',
+                                        e.target.value,
+                                      )
+                                    }
+                                  />
+                                  <div className='text-xs text-muted-foreground'>
+                                    {t('cronExprHint', {
+                                      defaultExpr: tpl.default_cron_expr,
+                                    })}
+                                  </div>
+                                  {cronError ? (
+                                    <div className='text-xs text-destructive'>
+                                      {t('cronExprInvalid')}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {tpl.default_threshold > 0 ? (
                                 <div className='space-y-1'>
                                   <Label className='text-xs'>
@@ -647,12 +890,8 @@ export function AutoPolicyConfigPanel({
                                   <Input
                                     type='number'
                                     className='h-8 text-xs'
-                                    placeholder={String(
-                                      tpl.default_threshold,
-                                    )}
-                                    value={
-                                      condition?.threshold_override ?? ''
-                                    }
+                                    placeholder={String(tpl.default_threshold)}
+                                    value={condition?.threshold_override ?? ''}
                                     onChange={(e) =>
                                       handleConditionOverride(
                                         tpl.code,
@@ -669,8 +908,7 @@ export function AutoPolicyConfigPanel({
                                 <div className='space-y-1'>
                                   <Label className='text-xs'>
                                     {t('windowLabel', {
-                                      minutes:
-                                        tpl.default_window_minutes,
+                                      minutes: tpl.default_window_minutes,
                                     })}
                                   </Label>
                                   <Input
@@ -680,8 +918,7 @@ export function AutoPolicyConfigPanel({
                                       tpl.default_window_minutes,
                                     )}
                                     value={
-                                      condition?.window_minutes_override ??
-                                      ''
+                                      condition?.window_minutes_override ?? ''
                                     }
                                     onChange={(e) =>
                                       handleConditionOverride(
