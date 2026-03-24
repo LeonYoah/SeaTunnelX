@@ -480,12 +480,10 @@ func Serve() {
 			// Agent 分发 API（无需认证，供目标主机下载安装）
 			// Agent distribution API (no authentication required, for target hosts to download and install)
 			agentHandler := agent.NewHandler(&agent.HandlerConfig{
-				ControlPlaneAddr:              config.GetExternalURL(),
-				AgentBinaryDir:                "./lib/agent",
-				SeatunnelXJavaProxyJarPath:    "./lib/seatunnelx-java-proxy-2.3.13.jar",
-				SeatunnelXJavaProxyScriptPath: "./scripts/seatunnelx-java-proxy.sh",
-				GRPCPort:                      fmt.Sprintf("%d", config.GetGRPCPort()),
-				HeartbeatInterval:             config.Config.GRPC.HeartbeatInterval,
+				ControlPlaneAddr:  config.GetExternalURL(),
+				AgentBinaryDir:    "./lib/agent",
+				GRPCPort:          fmt.Sprintf("%d", config.GetGRPCPort()),
+				HeartbeatInterval: config.Config.GRPC.HeartbeatInterval,
 			})
 
 			agentRouter := apiV1Router.Group("/agent")

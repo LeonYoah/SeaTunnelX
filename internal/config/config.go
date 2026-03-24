@@ -135,10 +135,10 @@ func setDefaults(c *configModel) {
 		c.Storage.BaseDir = "./data/storage"
 	}
 	if c.Storage.PackagesDir == "" {
-		c.Storage.PackagesDir = "./data/storage/packages"
+		c.Storage.PackagesDir = "./lib/packages"
 	}
 	if c.Storage.PluginsDir == "" {
-		c.Storage.PluginsDir = "./data/storage/plugins"
+		c.Storage.PluginsDir = "./lib/plugins"
 	}
 	if c.Storage.TempDir == "" {
 		c.Storage.TempDir = "./data/storage/temp"
@@ -273,7 +273,7 @@ func GetPackagesDir() string {
 	if Config.Storage.PackagesDir != "" {
 		return Config.Storage.PackagesDir
 	}
-	return "./data/storage/packages"
+	return "./lib/packages"
 }
 
 // GetPluginsDir 获取插件存储目录
@@ -281,7 +281,7 @@ func GetPluginsDir() string {
 	if Config.Storage.PluginsDir != "" {
 		return Config.Storage.PluginsDir
 	}
-	return "./data/storage/plugins"
+	return "./lib/plugins"
 }
 
 // GetTempDir 获取临时文件目录
