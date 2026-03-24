@@ -57,6 +57,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {ScrollArea} from '@/components/ui/scroll-area';
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {toast} from 'sonner';
 import {
@@ -76,6 +84,10 @@ import {
   FileText,
   ExternalLink,
   MonitorSmartphone,
+  FolderOpen,
+  Eye,
+  ChevronUp,
+  Database,
 } from 'lucide-react';
 import {Checkbox} from '@/components/ui/checkbox';
 import {motion} from 'motion/react';
@@ -89,6 +101,12 @@ import {
   HealthStatus,
   RuntimeStorageDetails,
   RuntimeStorageSpec,
+  RuntimeStorageValidationResult,
+  RuntimeStorageListResult,
+  RuntimeStoragePreviewResult,
+  RuntimeStorageCheckpointInspectResult,
+  RuntimeStorageIMAPInspectResult,
+  SeatunnelXJavaProxyStatus,
 } from '@/lib/services/cluster/types';
 import type {UpgradeTaskSummary} from '@/lib/services/st-upgrade';
 import type {DiagnosticsErrorGroup} from '@/lib/services/diagnostics';
@@ -204,6 +222,33 @@ function formatBytes(bytes?: number): string {
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function trimTrailingSlashes(value?: string): string {
+  if (!value) {
+    return '';
+  }
+  return value.replace(/\/+$/, '');
+}
+
+function parentBrowsePath(currentPath?: string, rootPath?: string): string {
+  const current = trimTrailingSlashes(currentPath);
+  const root = trimTrailingSlashes(rootPath);
+  if (!current) {
+    return rootPath || '';
+  }
+  if (!root || current === root) {
+    return rootPath || currentPath || '';
+  }
+  const index = current.lastIndexOf('/');
+  if (index < 0) {
+    return rootPath || '';
+  }
+  const parent = current.slice(0, index);
+  if (!parent || (root && parent.length < root.length)) {
+    return rootPath || '';
+  }
+  return parent;
+}
+
 interface ClusterRuntimeConfigView {
   enableHTTP?: boolean;
   jobLogMode?: string;
@@ -276,7 +321,38 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [monitoringOverview, setMonitoringOverview] = useState<ClusterMonitoringOverviewData | null>(null);
   const [runtimeStorage, setRuntimeStorage] = useState<RuntimeStorageDetails | null>(null);
+  const [seatunnelxJavaProxy, setSeatunnelXJavaProxy] = useState<SeatunnelXJavaProxyStatus | null>(null);
+  const [seatunnelxJavaProxyLoading, setSeatunnelXJavaProxyLoading] = useState(false);
+  const [seatunnelxJavaProxyOperating, setSeatunnelXJavaProxyOperating] = useState<
+    'start' | 'stop' | 'restart' | null
+  >(null);
   const [runtimeStorageLoading, setRuntimeStorageLoading] = useState(false);
+  const [runtimeStorageValidationLoading, setRuntimeStorageValidationLoading] = useState<
+    'checkpoint' | 'imap' | null
+  >(null);
+  const [runtimeStorageValidation, setRuntimeStorageValidation] = useState<
+    Partial<Record<'checkpoint' | 'imap', RuntimeStorageValidationResult>>
+  >({});
+  const [runtimeStorageListingLoading, setRuntimeStorageListingLoading] = useState<
+    'checkpoint' | 'imap' | null
+  >(null);
+  const [runtimeStorageListing, setRuntimeStorageListing] = useState<
+    Partial<Record<'checkpoint' | 'imap', RuntimeStorageListResult>>
+  >({});
+  const [runtimeStorageBrowsePath, setRuntimeStorageBrowsePath] = useState<
+    Partial<Record<'checkpoint' | 'imap', string>>
+  >({});
+  const [runtimeStoragePreviewLoading, setRuntimeStoragePreviewLoading] = useState<
+    string | null
+  >(null);
+  const [runtimeStoragePreview, setRuntimeStoragePreview] = useState<RuntimeStoragePreviewResult | null>(null);
+  const [runtimeStoragePreviewOpen, setRuntimeStoragePreviewOpen] = useState(false);
+  const [checkpointInspectLoading, setCheckpointInspectLoading] = useState<string | null>(null);
+  const [checkpointInspectResult, setCheckpointInspectResult] = useState<RuntimeStorageCheckpointInspectResult | null>(null);
+  const [checkpointInspectOpen, setCheckpointInspectOpen] = useState(false);
+  const [imapInspectLoading, setImapInspectLoading] = useState<string | null>(null);
+  const [imapInspectResult, setImapInspectResult] = useState<RuntimeStorageIMAPInspectResult | null>(null);
+  const [imapInspectOpen, setImapInspectOpen] = useState(false);
   const [imapCleanupOpen, setImapCleanupOpen] = useState(false);
   const [imapCleanupRunning, setImapCleanupRunning] = useState(false);
   const [inspectionStarting, setInspectionStarting] = useState(false);
@@ -381,6 +457,29 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     setMonitoringOverview(result.data);
   }, [clusterId]);
 
+  const loadRuntimeStorageList = useCallback(
+    async (kind: 'checkpoint' | 'imap', path?: string) => {
+      setRuntimeStorageListingLoading(kind);
+      try {
+        if (path !== undefined) {
+          setRuntimeStorageBrowsePath((prev) => ({...prev, [kind]: path}));
+        }
+        const result = await services.cluster.listRuntimeStorageSafe(clusterId, kind, {
+          path,
+          limit: 200,
+        });
+        if (!result.success || !result.data) {
+          setRuntimeStorageListing((prev) => ({...prev, [kind]: undefined}));
+          return;
+        }
+        setRuntimeStorageListing((prev) => ({...prev, [kind]: result.data}));
+      } finally {
+        setRuntimeStorageListingLoading(null);
+      }
+    },
+    [clusterId],
+  );
+
   const loadRuntimeStorage = useCallback(async () => {
     setRuntimeStorageLoading(true);
     try {
@@ -390,10 +489,116 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         return;
       }
       setRuntimeStorage(result.data);
+      setRuntimeStorageBrowsePath({
+        checkpoint: result.data.checkpoint?.namespace || '',
+        imap: result.data.imap?.namespace || '',
+      });
+      if (result.data.checkpoint?.enabled) {
+        void loadRuntimeStorageList('checkpoint', result.data.checkpoint.namespace);
+      }
+      if (result.data.imap?.enabled) {
+        void loadRuntimeStorageList('imap', result.data.imap.namespace);
+      }
     } finally {
       setRuntimeStorageLoading(false);
     }
+  }, [clusterId, loadRuntimeStorageList]);
+
+  const handlePreviewRuntimeStorage = useCallback(
+    async (kind: 'checkpoint' | 'imap', path: string) => {
+      setRuntimeStoragePreviewLoading(`${kind}:${path}`);
+      try {
+        const result = await services.cluster.previewRuntimeStorageSafe(clusterId, kind, {
+          path,
+          max_bytes: 64 * 1024,
+        });
+        if (!result.success || !result.data) {
+          toast.error(result.error || t('cluster.runtimeStorage.previewFailed'));
+          return;
+        }
+        setRuntimeStoragePreview(result.data);
+        setRuntimeStoragePreviewOpen(true);
+      } finally {
+        setRuntimeStoragePreviewLoading(null);
+      }
+    },
+    [clusterId, t],
+  );
+
+  const handleInspectCheckpoint = useCallback(
+    async (path: string) => {
+      setCheckpointInspectLoading(path);
+      try {
+        const result = await services.cluster.inspectCheckpointRuntimeStorageSafe(clusterId, path);
+        if (!result.success || !result.data) {
+          toast.error(result.error || t('cluster.runtimeStorage.inspectFailed'));
+          return;
+        }
+        setCheckpointInspectResult(result.data);
+        setCheckpointInspectOpen(true);
+      } finally {
+        setCheckpointInspectLoading(null);
+      }
+    },
+    [clusterId, t],
+  );
+
+  const handleInspectIMAPWAL = useCallback(
+    async (path: string) => {
+      setImapInspectLoading(path);
+      try {
+        const result = await services.cluster.inspectIMAPRuntimeStorageSafe(clusterId, path);
+        if (!result.success || !result.data) {
+          toast.error(result.error || t('cluster.runtimeStorage.inspectWalFailed'));
+          return;
+        }
+        setImapInspectResult(result.data);
+        setImapInspectOpen(true);
+      } finally {
+        setImapInspectLoading(null);
+      }
+    },
+    [clusterId, t],
+  );
+
+  const loadSeatunnelXJavaProxyStatus = useCallback(async () => {
+    setSeatunnelXJavaProxyLoading(true);
+    try {
+      const result = await services.cluster.getSeatunnelXJavaProxyStatusSafe(clusterId);
+      if (!result.success || !result.data) {
+        setSeatunnelXJavaProxy(null);
+        return;
+      }
+      setSeatunnelXJavaProxy(result.data);
+    } finally {
+      setSeatunnelXJavaProxyLoading(false);
+    }
   }, [clusterId]);
+
+  const handleSeatunnelXJavaProxyOperation = useCallback(
+    async (operation: 'start' | 'stop' | 'restart') => {
+      setSeatunnelXJavaProxyOperating(operation);
+      try {
+        const result =
+          operation === 'start'
+            ? await services.cluster.startSeatunnelXJavaProxySafe(clusterId)
+            : operation === 'stop'
+              ? await services.cluster.stopSeatunnelXJavaProxySafe(clusterId)
+              : await services.cluster.restartSeatunnelXJavaProxySafe(clusterId);
+        if (!result.success || !result.data) {
+          toast.error(result.error || t(`cluster.seatunnelxJavaProxy.${operation}Error`));
+          return;
+        }
+        setSeatunnelXJavaProxy(result.data);
+        toast.success(
+          result.data.message || t(`cluster.seatunnelxJavaProxy.${operation}Success`),
+        );
+      } finally {
+        setSeatunnelXJavaProxyOperating(null);
+      }
+    },
+    [clusterId, t],
+  );
 
   const handleStartInspection = useCallback(async () => {
     setInspectionStarting(true);
@@ -454,7 +659,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     void loadDiagnosticsSummary();
     void loadMonitoringOverview();
     void loadRuntimeStorage();
-  }, [loadClusterData, loadDiagnosticsSummary, loadMonitoringOverview, loadRuntimeStorage]);
+    void loadSeatunnelXJavaProxyStatus();
+  }, [loadClusterData, loadDiagnosticsSummary, loadMonitoringOverview, loadRuntimeStorage, loadSeatunnelXJavaProxyStatus]);
 
   useEffect(() => {
     void loadUpgradeTasks(upgradeTasksPage, upgradeTasksPageSize);
@@ -465,7 +671,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       return;
     }
     void loadRuntimeStorage();
-  }, [activeTab, loadRuntimeStorage]);
+    void loadSeatunnelXJavaProxyStatus();
+  }, [activeTab, loadRuntimeStorage, loadSeatunnelXJavaProxyStatus]);
 
   const openUpgradeTaskDetail = useCallback(
     (task: UpgradeTaskSummary) => {
@@ -481,12 +688,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     void loadDiagnosticsSummary();
     void loadMonitoringOverview();
     void loadRuntimeStorage();
+    void loadSeatunnelXJavaProxyStatus();
     void loadUpgradeTasks(upgradeTasksPage, upgradeTasksPageSize);
   }, [
     loadClusterData,
     loadDiagnosticsSummary,
     loadMonitoringOverview,
     loadRuntimeStorage,
+    loadSeatunnelXJavaProxyStatus,
     loadUpgradeTasks,
     upgradeTasksPage,
     upgradeTasksPageSize,
@@ -511,6 +720,28 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       setImapCleanupOpen(false);
     }
   }, [clusterId, loadRuntimeStorage, t]);
+
+  const handleValidateRuntimeStorage = useCallback(
+    async (kind: 'checkpoint' | 'imap') => {
+      setRuntimeStorageValidationLoading(kind);
+      try {
+        const result = await services.cluster.validateRuntimeStorageSafe(clusterId, kind);
+        if (!result.success || !result.data) {
+          toast.error(result.error || t('cluster.runtimeStorage.validateFailed'));
+          return;
+        }
+        setRuntimeStorageValidation((prev) => ({...prev, [kind]: result.data}));
+        toast.success(
+          result.data.success
+            ? t('cluster.runtimeStorage.validateSuccess')
+            : t('cluster.runtimeStorage.validateWarning'),
+        );
+      } finally {
+        setRuntimeStorageValidationLoading(null);
+      }
+    },
+    [clusterId, t],
+  );
 
   /**
    * Handle delete cluster
@@ -943,6 +1174,23 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className='space-y-3 text-sm'>
+          <div className='flex justify-end'>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => void handleValidateRuntimeStorage(spec.kind as 'checkpoint' | 'imap')}
+              disabled={
+                runtimeStorageValidationLoading === (spec.kind as 'checkpoint' | 'imap')
+              }
+            >
+              {runtimeStorageValidationLoading === (spec.kind as 'checkpoint' | 'imap') ? (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              ) : (
+                <Activity className='mr-2 h-4 w-4' />
+              )}
+              {t('cluster.runtimeStorage.validate')}
+            </Button>
+          </div>
           <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
             <div>
               <div className='text-muted-foreground'>{t('cluster.runtimeStorage.path')}</div>
@@ -970,6 +1218,49 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               {spec.warning}
             </div>
           )}
+          {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap'] && (
+            <div className='space-y-2 rounded-md border p-3'>
+              <div className='flex items-center justify-between gap-2'>
+                <div className='font-medium'>
+                  {t('cluster.runtimeStorage.validateResult')}
+                </div>
+                <Badge
+                  variant={
+                    runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.success
+                      ? 'default'
+                      : 'destructive'
+                  }
+                >
+                  {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.success
+                    ? t('cluster.runtimeStorage.passed')
+                    : t('cluster.runtimeStorage.failed')}
+                </Badge>
+              </div>
+              {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.warning && (
+                <div className='text-xs text-muted-foreground'>
+                  {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.warning}
+                </div>
+              )}
+              <div className='space-y-2'>
+                {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.hosts?.map((host) => (
+                  <div
+                    key={`${spec.kind}-validate-${host.host_id}`}
+                    className='flex items-start justify-between gap-3 rounded-md border px-3 py-2'
+                  >
+                    <div className='min-w-0'>
+                      <div className='font-medium'>{host.host_name || host.host_id}</div>
+                      <div className='text-xs text-muted-foreground break-all'>{host.message}</div>
+                    </div>
+                    <Badge variant={host.success ? 'default' : 'destructive'}>
+                      {host.success
+                        ? t('cluster.runtimeStorage.passed')
+                        : t('cluster.runtimeStorage.failed')}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {spec.nodes && spec.nodes.length > 0 && (
             <div className='space-y-2'>
               {spec.nodes.map((node) => (
@@ -993,6 +1284,168 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               ))}
             </div>
           )}
+          <div className='space-y-2 rounded-md border p-3'>
+            <div className='flex items-center justify-between gap-2'>
+              <div className='font-medium'>{t('cluster.runtimeStorage.fileList')}</div>
+              <div className='flex items-center gap-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() =>
+                    void loadRuntimeStorageList(
+                      spec.kind as 'checkpoint' | 'imap',
+                      parentBrowsePath(
+                        runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'],
+                        spec.namespace,
+                      ),
+                    )
+                  }
+                  disabled={
+                    runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap') ||
+                    trimTrailingSlashes(runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'])
+                      === trimTrailingSlashes(spec.namespace)
+                  }
+                >
+                  <ChevronUp className='mr-2 h-4 w-4' />
+                  {t('cluster.runtimeStorage.upLevel')}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() =>
+                    void loadRuntimeStorageList(
+                      spec.kind as 'checkpoint' | 'imap',
+                      runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'] || spec.namespace,
+                    )
+                  }
+                  disabled={runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap')}
+                >
+                  {runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap') ? (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  ) : (
+                    <RefreshCw className='mr-2 h-4 w-4' />
+                  )}
+                  {t('common.refresh')}
+                </Button>
+              </div>
+            </div>
+            <div className='text-xs text-muted-foreground break-all'>
+              {runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'] || spec.namespace || '-'}
+            </div>
+            {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.path && (
+              <div className='text-xs text-muted-foreground break-all'>
+                {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.path}
+              </div>
+            )}
+            {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.items?.length ? (
+              <div className='space-y-2'>
+                {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.items?.map((item) => {
+                  const itemPath = item.path || item.name || '';
+                  const previewKey = `${spec.kind}:${itemPath}`;
+                  const isPreviewing = runtimeStoragePreviewLoading === previewKey;
+                  const isInspecting = checkpointInspectLoading === itemPath;
+                  const isInspectingWal = imapInspectLoading === itemPath;
+                  return (
+                    <div
+                      key={`${spec.kind}-item-${item.path}`}
+                      className='space-y-2 rounded-md border px-3 py-2'
+                    >
+                      <div className='flex items-start justify-between gap-3'>
+                        <div className='min-w-0'>
+                          <div className='font-medium break-all'>{item.name || item.path || '-'}</div>
+                          <div className='text-xs text-muted-foreground break-all'>
+                            {item.path || '-'}
+                          </div>
+                        </div>
+                        <div className='text-right text-xs text-muted-foreground'>
+                          <div>
+                            {item.directory
+                              ? item.size_bytes && item.size_bytes > 0
+                                ? `${t('cluster.runtimeStorage.directory')} · ${formatBytes(item.size_bytes)}`
+                                : t('cluster.runtimeStorage.directory')
+                              : formatBytes(item.size_bytes || 0)}
+                          </div>
+                          <div>{item.modified_at || '-'}</div>
+                        </div>
+                      </div>
+                      <div className='flex flex-wrap gap-2'>
+                        {item.directory ? (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void loadRuntimeStorageList(
+                                spec.kind as 'checkpoint' | 'imap',
+                                itemPath,
+                              )
+                            }
+                          >
+                            <FolderOpen className='mr-2 h-4 w-4' />
+                            {t('cluster.runtimeStorage.openDirectory')}
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                void handlePreviewRuntimeStorage(
+                                  spec.kind as 'checkpoint' | 'imap',
+                                  itemPath,
+                                )
+                              }
+                              disabled={isPreviewing}
+                            >
+                              {isPreviewing ? (
+                                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                              ) : (
+                                <Eye className='mr-2 h-4 w-4' />
+                              )}
+                              {t('cluster.runtimeStorage.preview')}
+                            </Button>
+                            {spec.kind === 'checkpoint' && itemPath.endsWith('.ser') && (
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                onClick={() => void handleInspectCheckpoint(itemPath)}
+                                disabled={isInspecting}
+                              >
+                                {isInspecting ? (
+                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                ) : (
+                                  <Database className='mr-2 h-4 w-4' />
+                                )}
+                                {t('cluster.runtimeStorage.deserializeCheckpoint')}
+                              </Button>
+                            )}
+                            {spec.kind === 'imap' && itemPath.endsWith('_wal.txt') && (
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                onClick={() => void handleInspectIMAPWAL(itemPath)}
+                                disabled={isInspectingWal}
+                              >
+                                {isInspectingWal ? (
+                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                ) : (
+                                  <Database className='mr-2 h-4 w-4' />
+                                )}
+                                {t('cluster.runtimeStorage.inspectWal')}
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className='text-xs text-muted-foreground'>
+                {t('cluster.runtimeStorage.noEntries')}
+              </div>
+            )}
+          </div>
           {spec.kind === 'imap' && spec.cleanup_supported && (
             <div className='flex justify-end'>
               <Button
@@ -1429,6 +1882,135 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                         source: runtimeStorage?.config_source || '-',
                       })}
                     </div>
+                    <Card data-testid='seatunnelx-java-proxy-card'>
+                      <CardHeader className='pb-3'>
+                        <div className='flex items-start justify-between gap-4'>
+                          <div>
+                            <CardTitle className='text-base'>
+                              {t('cluster.seatunnelxJavaProxy.title')}
+                            </CardTitle>
+                            <CardDescription>
+                              {t('cluster.seatunnelxJavaProxy.description')}
+                            </CardDescription>
+                          </div>
+                          <div className='flex items-center gap-2'>
+                            <Badge
+                              variant={
+                                seatunnelxJavaProxy?.healthy
+                                  ? 'default'
+                                  : seatunnelxJavaProxy?.running
+                                    ? 'outline'
+                                    : 'secondary'
+                              }
+                            >
+                              {seatunnelxJavaProxy?.healthy
+                                ? t('cluster.seatunnelxJavaProxy.healthy')
+                                : seatunnelxJavaProxy?.running
+                                  ? t('cluster.seatunnelxJavaProxy.unhealthy')
+                                  : t('cluster.seatunnelxJavaProxy.stopped')}
+                            </Badge>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              onClick={() => void loadSeatunnelXJavaProxyStatus()}
+                              disabled={seatunnelxJavaProxyLoading}
+                              data-testid='seatunnelx-java-proxy-refresh'
+                            >
+                              {seatunnelxJavaProxyLoading ? (
+                                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                              ) : (
+                                <RefreshCw className='mr-2 h-4 w-4' />
+                              )}
+                              {t('common.refresh')}
+                            </Button>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent className='space-y-4 text-sm'>
+                        <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
+                          <div>
+                            <div className='text-muted-foreground'>
+                              {t('cluster.seatunnelxJavaProxy.deploymentNode')}
+                            </div>
+                            <div className='font-medium break-all'>
+                              {seatunnelxJavaProxy?.host_name || '-'}
+                              {seatunnelxJavaProxy?.role
+                                ? ` (${t(`cluster.roles.${getRoleTranslationKey(seatunnelxJavaProxy.role)}`)})`
+                                : ''}
+                            </div>
+                          </div>
+                          <div>
+                            <div className='text-muted-foreground'>
+                              {t('cluster.seatunnelxJavaProxy.endpoint')}
+                            </div>
+                            <div className='font-medium break-all'>
+                              {seatunnelxJavaProxy?.endpoint || '-'}
+                            </div>
+                          </div>
+                          <div>
+                            <div className='text-muted-foreground'>
+                              {t('cluster.seatunnelxJavaProxy.pid')}
+                            </div>
+                            <div className='font-medium'>{seatunnelxJavaProxy?.pid ?? '-'}</div>
+                          </div>
+                          <div>
+                            <div className='text-muted-foreground'>
+                              {t('cluster.seatunnelxJavaProxy.logPath')}
+                            </div>
+                            <div className='font-medium break-all'>
+                              {seatunnelxJavaProxy?.log_path && seatunnelxJavaProxy.log_path.trim() !== '' ? seatunnelxJavaProxy.log_path : '-'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className='rounded-md border bg-muted/20 p-3 text-sm'>
+                          {seatunnelxJavaProxy?.message || t('cluster.seatunnelxJavaProxy.noStatus')}
+                        </div>
+                        <div className='flex flex-wrap gap-2'>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => void handleSeatunnelXJavaProxyOperation('start')}
+                            disabled={seatunnelxJavaProxyOperating !== null}
+                            data-testid='seatunnelx-java-proxy-start'
+                          >
+                            {seatunnelxJavaProxyOperating === 'start' ? (
+                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                            ) : (
+                              <Play className='mr-2 h-4 w-4' />
+                            )}
+                            {t('cluster.seatunnelxJavaProxy.start')}
+                          </Button>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => void handleSeatunnelXJavaProxyOperation('restart')}
+                            disabled={seatunnelxJavaProxyOperating !== null}
+                            data-testid='seatunnelx-java-proxy-restart'
+                          >
+                            {seatunnelxJavaProxyOperating === 'restart' ? (
+                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                            ) : (
+                              <RotateCcw className='mr-2 h-4 w-4' />
+                            )}
+                            {t('cluster.seatunnelxJavaProxy.restart')}
+                          </Button>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => void handleSeatunnelXJavaProxyOperation('stop')}
+                            disabled={seatunnelxJavaProxyOperating !== null}
+                            data-testid='seatunnelx-java-proxy-stop'
+                          >
+                            {seatunnelxJavaProxyOperating === 'stop' ? (
+                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                            ) : (
+                              <Square className='mr-2 h-4 w-4' />
+                            )}
+                            {t('cluster.seatunnelxJavaProxy.stop')}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
                     <div className='grid gap-4 xl:grid-cols-2'>
                       {renderRuntimeStorageSpec(
                         runtimeStorage?.checkpoint,
@@ -2109,6 +2691,131 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={runtimeStoragePreviewOpen} onOpenChange={setRuntimeStoragePreviewOpen}>
+        <DialogContent className='max-w-4xl'>
+          <DialogHeader>
+            <DialogTitle>{t('cluster.runtimeStorage.preview')}</DialogTitle>
+            <DialogDescription className='break-all'>
+              {runtimeStoragePreview?.path || '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3 text-sm md:grid-cols-4'>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
+              <div className='font-medium break-all'>{runtimeStoragePreview?.file_name || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
+              <div className='font-medium'>{formatBytes(runtimeStoragePreview?.size_bytes)}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
+              <div className='font-medium'>{runtimeStoragePreview?.encoding || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.truncated')}</div>
+              <div className='font-medium'>
+                {runtimeStoragePreview?.truncated ? 'Yes' : 'No'}
+              </div>
+            </div>
+          </div>
+          <ScrollArea className='h-[50vh] rounded-md border p-3'>
+            <pre className='text-xs whitespace-pre-wrap break-all'>
+              {runtimeStoragePreview?.binary
+                ? runtimeStoragePreview?.hex_preview || '-'
+                : runtimeStoragePreview?.text_preview || '-'}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={checkpointInspectOpen} onOpenChange={setCheckpointInspectOpen}>
+        <DialogContent className='max-w-5xl'>
+          <DialogHeader>
+            <DialogTitle>{t('cluster.runtimeStorage.deserializeCheckpoint')}</DialogTitle>
+            <DialogDescription className='break-all'>
+              {checkpointInspectResult?.path || '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3 text-sm md:grid-cols-4'>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
+              <div className='font-medium break-all'>{checkpointInspectResult?.file_name || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
+              <div className='font-medium'>{formatBytes(checkpointInspectResult?.size_bytes)}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
+              <div className='font-medium'>{checkpointInspectResult?.encoding || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.storageType')}</div>
+              <div className='font-medium'>{checkpointInspectResult?.storage_type || '-'}</div>
+            </div>
+          </div>
+          <ScrollArea className='h-[55vh] rounded-md border p-3'>
+            <pre className='text-xs whitespace-pre-wrap break-all'>
+              {JSON.stringify(
+                {
+                  pipeline_state: checkpointInspectResult?.pipeline_state,
+                  completed_checkpoint: checkpointInspectResult?.completed_checkpoint,
+                  action_states: checkpointInspectResult?.action_states,
+                  task_statistics: checkpointInspectResult?.task_statistics,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={imapInspectOpen} onOpenChange={setImapInspectOpen}>
+        <DialogContent className='max-w-5xl'>
+          <DialogHeader>
+            <DialogTitle>{t('cluster.runtimeStorage.inspectWal')}</DialogTitle>
+            <DialogDescription className='break-all'>
+              {imapInspectResult?.path || '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3 text-sm md:grid-cols-5'>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
+              <div className='font-medium break-all'>{imapInspectResult?.file_name || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
+              <div className='font-medium'>{formatBytes(imapInspectResult?.size_bytes)}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
+              <div className='font-medium'>{imapInspectResult?.encoding || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.storageType')}</div>
+              <div className='font-medium'>{imapInspectResult?.storage_type || '-'}</div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.entryCount')}</div>
+              <div className='font-medium'>{imapInspectResult?.entry_count ?? 0}</div>
+            </div>
+          </div>
+          <ScrollArea className='h-[55vh] rounded-md border p-3'>
+            <pre className='text-xs whitespace-pre-wrap break-all'>
+              {JSON.stringify(
+                {
+                  entries: imapInspectResult?.entries,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       {/* View Logs Dialog / 查看日志对话框 */}
       <AlertDialog open={isLogDialogOpen} onOpenChange={setIsLogDialogOpen}>

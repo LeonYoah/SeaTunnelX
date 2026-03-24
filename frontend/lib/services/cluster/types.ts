@@ -323,6 +323,103 @@ export interface RuntimeStorageCleanupResult {
   nodes?: RuntimeStorageCleanupNodeResult[];
 }
 
+export interface RuntimeStorageValidationHostResult {
+  host_id: number;
+  host_name?: string;
+  success: boolean;
+  message: string;
+  details?: Record<string, string>;
+}
+
+export interface RuntimeStorageValidationResult {
+  success: boolean;
+  kind: 'checkpoint' | 'imap';
+  warning?: string;
+  hosts?: RuntimeStorageValidationHostResult[];
+}
+
+export interface RuntimeStorageListItem {
+  path?: string;
+  name?: string;
+  directory?: boolean;
+  size_bytes?: number;
+  modified_at?: string;
+}
+
+export interface RuntimeStorageListResult {
+  cluster_id: number;
+  kind: 'checkpoint' | 'imap' | string;
+  path?: string;
+  items?: RuntimeStorageListItem[];
+}
+
+export interface RuntimeStoragePreviewResult {
+  cluster_id: number;
+  kind: 'checkpoint' | 'imap' | string;
+  storage_type?: string;
+  path?: string;
+  file_name?: string;
+  size_bytes?: number;
+  truncated?: boolean;
+  binary?: boolean;
+  encoding?: string;
+  text_preview?: string;
+  hex_preview?: string;
+}
+
+export interface RuntimeStorageCheckpointInspectResult {
+  cluster_id: number;
+  path?: string;
+  file_name?: string;
+  storage_type?: string;
+  size_bytes?: number;
+  truncated?: boolean;
+  binary?: boolean;
+  encoding?: string;
+  text_preview?: string;
+  hex_preview?: string;
+  pipeline_state?: Record<string, unknown>;
+  completed_checkpoint?: Record<string, unknown>;
+  action_states?: Record<string, unknown>[];
+  task_statistics?: Record<string, unknown>[];
+}
+
+export interface RuntimeStorageIMAPInspectResult {
+  cluster_id: number;
+  path?: string;
+  file_name?: string;
+  storage_type?: string;
+  size_bytes?: number;
+  truncated?: boolean;
+  binary?: boolean;
+  encoding?: string;
+  text_preview?: string;
+  hex_preview?: string;
+  entry_count?: number;
+  entries?: Record<string, unknown>[];
+}
+
+export interface SeatunnelXJavaProxyStatus {
+  cluster_id: number;
+  cluster_name?: string;
+  node_id?: number;
+  host_id?: number;
+  host_name?: string;
+  host_ip?: string;
+  role?: string;
+  install_dir?: string;
+  version?: string;
+  service?: string;
+  managed: boolean;
+  running: boolean;
+  healthy: boolean;
+  endpoint?: string;
+  port?: number;
+  pid?: number;
+  log_path?: string;
+  message?: string;
+}
+
 /**
  * Node operation result
  * 节点操作结果
@@ -740,6 +837,16 @@ export type GetRuntimeStorageResponse = BackendResponse<RuntimeStorageDetails>;
 
 /** Runtime storage cleanup response type / 运行时存储清理响应类型 */
 export type CleanupRuntimeStorageResponse = BackendResponse<RuntimeStorageCleanupResult>;
+
+/** Runtime storage validate response type / 运行时存储连通性校验响应类型 */
+export type ValidateRuntimeStorageResponse = BackendResponse<RuntimeStorageValidationResult>;
+export type ListRuntimeStorageResponse = BackendResponse<RuntimeStorageListResult>;
+export type PreviewRuntimeStorageResponse = BackendResponse<RuntimeStoragePreviewResult>;
+export type InspectCheckpointRuntimeStorageResponse = BackendResponse<RuntimeStorageCheckpointInspectResult>;
+export type InspectIMAPRuntimeStorageResponse = BackendResponse<RuntimeStorageIMAPInspectResult>;
+
+/** Capability proxy response type / seatunnelx-java-proxy 响应类型 */
+export type SeatunnelXJavaProxyResponse = BackendResponse<SeatunnelXJavaProxyStatus>;
 
 /**
  * Request to precheck a node before adding

@@ -572,6 +572,62 @@ export function ClusterDeployWizard({
     toast.success(t('installer.runtimeStorage.applyCheckpointToImapSuccess'));
   }, [config.checkpoint, t, updateConfig]);
 
+  const getRuntimeStorageMissingFields = useCallback(
+    (kind: 'checkpoint' | 'imap') => {
+      const target = kind === 'checkpoint' ? config.checkpoint : config.imap;
+      const fields: string[] = [];
+      if (!target.namespace?.trim()) {
+        fields.push(t('installer.path'));
+      }
+      switch (target.storage_type) {
+        case 'S3':
+        case 'OSS':
+          if (!target.storage_endpoint?.trim()) {
+            fields.push(t('installer.endpoint'));
+          }
+          if (!target.storage_access_key?.trim()) {
+            fields.push(t('installer.accessKey'));
+          }
+          if (!target.storage_secret_key?.trim()) {
+            fields.push(t('installer.secretKey'));
+          }
+          if (!target.storage_bucket?.trim()) {
+            fields.push(t('installer.bucket'));
+          }
+          break;
+        case 'HDFS':
+          if (target.hdfs_ha_enabled) {
+            if (!target.hdfs_name_services?.trim()) {
+              fields.push('NameService');
+            }
+            if (!target.hdfs_ha_namenodes?.trim()) {
+              fields.push('HA Namenodes');
+            }
+            if (!target.hdfs_namenode_rpc_address_1?.trim()) {
+              fields.push('RPC Address 1');
+            }
+            if (!target.hdfs_namenode_rpc_address_2?.trim()) {
+              fields.push('RPC Address 2');
+            }
+          } else {
+            if (!target.hdfs_namenode_host?.trim()) {
+              fields.push('NameNode Host');
+            }
+            if (!target.hdfs_namenode_port || Number(target.hdfs_namenode_port) <= 0) {
+              fields.push('NameNode Port');
+            }
+          }
+          break;
+        case 'DISABLED':
+          return [];
+        default:
+          break;
+      }
+      return fields;
+    },
+    [config.checkpoint, config.imap, t],
+  );
+
   const applyImapToCheckpoint = useCallback(() => {
     if (config.imap.storage_type === 'DISABLED') {
       toast.warning(t('installer.runtimeStorage.applyImapDisabledWarning'));
@@ -607,6 +663,15 @@ export function ClusterDeployWizard({
         toast.warning(t('installer.runtimeStorage.noHostsSelected'));
         return;
       }
+      const missingFields = getRuntimeStorageMissingFields(kind);
+      if (missingFields.length > 0) {
+        toast.warning(
+          t('installer.runtimeStorage.requiredFieldsMissing', {
+            fields: missingFields.join(', '),
+          }),
+        );
+        return;
+      }
       try {
         setValidatingKind(kind);
         const result = await services.installer.validateRuntimeStorage({
@@ -631,7 +696,7 @@ export function ClusterDeployWizard({
         setValidatingKind(null);
       }
     },
-    [config.checkpoint, config.imap, selectedHostIds, t],
+    [config.checkpoint, config.imap, getRuntimeStorageMissingFields, selectedHostIds, t],
   );
 
   // Toggle host selection / 切换主机选择
@@ -694,10 +759,13 @@ export function ClusterDeployWizard({
       case 'precheck':
         return allPrechecksPassed; // Must pass precheck / 必须通过预检查
       case 'config':
-        // Just need a valid version selected / 只需要选择有效版本
-        // Package will be downloaded automatically if not available locally
-        // 如果本地没有安装包会自动下载
-        return config.version.length > 0;
+        if (config.version.length === 0) {
+          return false;
+        }
+        return (
+          getRuntimeStorageMissingFields('checkpoint').length === 0 &&
+          getRuntimeStorageMissingFields('imap').length === 0
+        );
       case 'plugins':
         return !hasPluginProfileSelectionIssue; // Optional, but selected JDBC profiles must be explicit / 可选，但已选择的 JDBC 必须显式选择场景
       case 'deploy':
@@ -707,7 +775,7 @@ export function ClusterDeployWizard({
       default:
         return false;
     }
-  }, [currentStep.id, config, selectedHosts, deployStatus, allPrechecksPassed]);
+  }, [currentStep.id, config, selectedHosts, deployStatus, allPrechecksPassed, getRuntimeStorageMissingFields]);
 
   // Handle deploy / 处理部署
   const handleDeploy = useCallback(async () => {
