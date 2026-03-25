@@ -382,6 +382,7 @@ func (s *Service) ListWithInfo(ctx context.Context, filter *ClusterFilter) ([]*C
 		// Populate online_nodes and health_status so list UI can show "异常" when running but 0 online
 		status, err := s.GetStatus(ctx, c.ID)
 		if err == nil {
+			infos[i].Status = status.Status
 			infos[i].OnlineNodes = status.OnlineNodes
 			infos[i].HealthStatus = string(status.HealthStatus)
 		}
@@ -1226,6 +1227,13 @@ func (s *Service) GetStatus(ctx context.Context, clusterID uint) (*ClusterStatus
 		return nil, err
 	}
 
+	s.refreshNodeProcessesForStatus(ctx, cluster)
+
+	cluster, err = s.repo.GetByID(ctx, clusterID, true)
+	if err != nil {
+		return nil, err
+	}
+
 	statusInfo := &ClusterStatusInfo{
 		ClusterID:   cluster.ID,
 		ClusterName: cluster.Name,
@@ -1286,6 +1294,36 @@ func (s *Service) GetStatus(ctx context.Context, clusterID uint) (*ClusterStatus
 	}
 
 	return statusInfo, nil
+}
+
+func (s *Service) refreshNodeProcessesForStatus(ctx context.Context, cluster *Cluster) {
+	if cluster == nil || s.hostProvider == nil || s.agentSender == nil {
+		return
+	}
+
+	shouldRefresh := cluster.Status == ClusterStatusRunning || cluster.Status == ClusterStatusDeploying
+	if !shouldRefresh {
+		for _, node := range cluster.Nodes {
+			if node.Status == NodeStatusRunning || node.ProcessPID > 0 {
+				shouldRefresh = true
+				break
+			}
+		}
+	}
+
+	if !shouldRefresh {
+		return
+	}
+
+	for i := range cluster.Nodes {
+		node := &cluster.Nodes[i]
+		if node.Status != NodeStatusRunning && node.ProcessPID <= 0 {
+			continue
+		}
+		s.detectAndUpdateNodeProcess(ctx, node, node.HostID)
+	}
+
+	s.updateClusterStatusFromNodes(ctx, cluster.ID)
 }
 
 // IsClusterHealthy checks if all nodes in a cluster are online.
@@ -1726,8 +1764,7 @@ func (s *Service) detectAndUpdateNodeProcess(ctx context.Context, node *ClusterN
 			_ = s.repo.UpdateNodeStatus(ctx, node.ID, NodeStatusRunning)
 		}
 	}
-	// If process is not running, keep the pending status
-	// 如果进程未运行，保持待部署状态
+	_ = s.repo.UpdateNodeProcess(ctx, node.ID, 0, "stopped")
 }
 
 // extractPIDFromMessage extracts PID from Agent response message.
