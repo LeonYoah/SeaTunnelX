@@ -1409,6 +1409,21 @@ func ExecuteCheckpointInspectFromBase64(
 	return executeCheckpointRuntimeStorageInspectViaManagedService(ctx, installDir, seatunnelVersion, request)
 }
 
+func ExecuteCheckpointInspect(
+	ctx context.Context,
+	installDir string,
+	seatunnelVersion string,
+	cfg *CheckpointConfig,
+	path string,
+) (*RuntimeStorageCheckpointInspectResult, error) {
+	request, err := buildCheckpointRuntimeStatRequest(cfg)
+	if err != nil {
+		return nil, err
+	}
+	request["path"] = strings.TrimSpace(path)
+	return executeCheckpointRuntimeStorageInspectViaManagedService(ctx, installDir, seatunnelVersion, request)
+}
+
 func ExecuteIMAPWALInspect(
 	ctx context.Context,
 	installDir string,

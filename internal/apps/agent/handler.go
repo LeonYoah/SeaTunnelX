@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,8 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/logger"
 	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
+
+var seatunnelXJavaProxyVersionPattern = regexp.MustCompile(`^[0-9A-Za-z._-]+$`)
 
 // Handler provides HTTP handlers for Agent distribution operations.
 // Handler 提供 Agent 分发操作的 HTTP 处理器。
@@ -266,7 +269,11 @@ func (h *Handler) DownloadAgent(c *gin.Context) {
 // DownloadSeatunnelXJavaProxyJar handles GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - downloads the seatunnelx-java-proxy thin jar.
 // DownloadSeatunnelXJavaProxyJar 处理 GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - 下载 seatunnelx-java-proxy 薄 jar。
 func (h *Handler) DownloadSeatunnelXJavaProxyJar(c *gin.Context) {
-	assetPath, downloadName := h.resolveSeatunnelXJavaProxyJarAsset(c.Query("version"))
+	assetPath, downloadName, err := h.resolveSeatunnelXJavaProxyJarAsset(c.Query("version"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{ErrorMsg: err.Error()})
+		return
+	}
 	h.serveStaticAssetDownload(
 		c,
 		assetPath,
@@ -290,21 +297,30 @@ func (h *Handler) DownloadSeatunnelXJavaProxyScript(c *gin.Context) {
 	)
 }
 
-func (h *Handler) resolveSeatunnelXJavaProxyJarAsset(version string) (string, string) {
+func (h *Handler) resolveSeatunnelXJavaProxyJarAsset(version string) (string, string, error) {
 	requestedVersion := strings.TrimSpace(version)
 	if requestedVersion == "" || requestedVersion == seatunnelmeta.DefaultSeatunnelXJavaProxyVersion {
-		return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath)
+		return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath), nil
 	}
 
+	if !seatunnelXJavaProxyVersionPattern.MatchString(requestedVersion) {
+		return "", "", fmt.Errorf("invalid version parameter: only letters, numbers, dot, underscore, and hyphen are allowed")
+	}
+
+	baseDir := filepath.Dir(h.seatunnelxJavaProxyJarPath)
 	versionedPath := filepath.Join(
-		filepath.Dir(h.seatunnelxJavaProxyJarPath),
+		baseDir,
 		seatunnelmeta.SeatunnelXJavaProxyJarFileName(requestedVersion),
 	)
+	relativePath, err := filepath.Rel(baseDir, versionedPath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("invalid version parameter")
+	}
 	if _, err := os.Stat(versionedPath); err == nil {
-		return versionedPath, filepath.Base(versionedPath)
+		return versionedPath, filepath.Base(versionedPath), nil
 	}
 
-	return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath)
+	return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath), nil
 }
 
 func (h *Handler) serveStaticAssetDownload(

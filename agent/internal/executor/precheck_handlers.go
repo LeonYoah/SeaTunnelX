@@ -588,10 +588,22 @@ func handleSeatunnelXJavaProxyInspectCheckpoint(ctx context.Context, params map[
 	version := params["version"]
 	path := params["path"]
 	contentBase64 := params["content_base64"]
-	if installDir == "" || strings.TrimSpace(path) == "" || strings.TrimSpace(contentBase64) == "" {
-		return &PrecheckResult{Success: false, Message: "install_dir, path, and content_base64 parameters are required"}, nil
+	if installDir == "" || strings.TrimSpace(path) == "" {
+		return &PrecheckResult{Success: false, Message: "install_dir and path parameters are required"}, nil
 	}
-	result, err := installer.ExecuteCheckpointInspectFromBase64(ctx, installDir, version, path, contentBase64)
+	var (
+		result *installer.RuntimeStorageCheckpointInspectResult
+		err    error
+	)
+	if strings.TrimSpace(contentBase64) != "" {
+		result, err = installer.ExecuteCheckpointInspectFromBase64(ctx, installDir, version, path, contentBase64)
+	} else {
+		cfg, cfgErr := checkpointConfigFromParams(params)
+		if cfgErr != nil {
+			return &PrecheckResult{Success: false, Message: cfgErr.Error()}, nil
+		}
+		result, err = installer.ExecuteCheckpointInspect(ctx, installDir, version, cfg, path)
+	}
 	if err != nil {
 		return &PrecheckResult{Success: false, Message: err.Error()}, nil
 	}

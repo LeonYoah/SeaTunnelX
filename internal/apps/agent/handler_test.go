@@ -428,6 +428,35 @@ func TestDownloadSeatunnelXJavaProxyJarFallsBackToDefaultVersion(t *testing.T) {
 	}
 }
 
+func TestDownloadSeatunnelXJavaProxyJarRejectsInvalidVersion(t *testing.T) {
+	tempDir := t.TempDir()
+	defaultJarPath := filepath.Join(tempDir, seatunnelmeta.SeatunnelXJavaProxyJarFileName(seatunnelmeta.DefaultSeatunnelXJavaProxyVersion))
+	if err := os.WriteFile(defaultJarPath, []byte("default-jar"), 0o644); err != nil {
+		t.Fatalf("Failed to create default proxy jar: %v", err)
+	}
+
+	handler := NewHandler(&HandlerConfig{
+		SeatunnelXJavaProxyJarPath: defaultJarPath,
+	})
+	router := setupTestRouter(handler)
+
+	req, _ := http.NewRequest("GET", "/api/v1/agent/assets/seatunnelx-java-proxy.jar?version=../../../tmp/evil", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status 400, got %d", w.Code)
+	}
+
+	var resp ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if !strings.Contains(resp.ErrorMsg, "invalid version parameter") {
+		t.Fatalf("Unexpected error message: %q", resp.ErrorMsg)
+	}
+}
+
 func TestDownloadSeatunnelXJavaProxyScriptNotFound(t *testing.T) {
 	handler := NewHandler(&HandlerConfig{
 		SeatunnelXJavaProxyScriptPath: filepath.Join(t.TempDir(), "missing-seatunnelx-java-proxy.sh"),
