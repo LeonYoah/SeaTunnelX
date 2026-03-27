@@ -34,13 +34,15 @@ interface PositionedNode extends SyncWebUIDagVertexInfo {
   row: number;
   x: number;
   y: number;
+  height: number;
 }
 
 const NODE_WIDTH = 220;
-const NODE_HEIGHT = 86;
+const NODE_MIN_HEIGHT = 120;
 const COLUMN_GAP = 92;
 const ROW_GAP = 44;
 const PADDING = 28;
+const CANVAS_RIGHT_PADDING = 96;
 
 function normalizeVertices(
   job: SyncWebUIDagPreviewJob,
@@ -103,16 +105,21 @@ function computeNodeLevels(
   }
 
   const rowsByLevel = new Map<number, number>();
+  const yOffsetByLevel = new Map<number, number>();
   return vertices.map((vertex) => {
     const level = levels.get(vertex.vertexId) || 0;
     const row = rowsByLevel.get(level) || 0;
+    const height = estimateNodeHeight(vertex);
+    const y = yOffsetByLevel.get(level) || PADDING;
     rowsByLevel.set(level, row + 1);
+    yOffsetByLevel.set(level, y + height + ROW_GAP);
     return {
       ...vertex,
       level,
       row,
       x: PADDING + level * (NODE_WIDTH + COLUMN_GAP),
-      y: PADDING + row * (NODE_HEIGHT + ROW_GAP),
+      y,
+      height,
     };
   });
 }
@@ -143,6 +150,12 @@ function normalizeTablePaths(paths?: string[]): string[] {
   return (paths || []).filter(Boolean);
 }
 
+function estimateNodeHeight(node: SyncWebUIDagVertexInfo): number {
+  const connectorLines = Math.max(1, Math.ceil((node.connectorType?.length || 0) / 22));
+  const tablePathRows = Math.max(1, Math.ceil(normalizeTablePaths(node.tablePaths).length / 2));
+  return Math.max(NODE_MIN_HEIGHT, 72 + connectorLines * 18 + tablePathRows * 28);
+}
+
 export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
   const vertices = useMemo(() => normalizeVertices(job), [job]);
   const edges = useMemo(() => normalizeEdges(job), [job]);
@@ -160,12 +173,12 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
       ? 0
       : Math.max(...positionedNodes.map((node) => node.x)) +
         NODE_WIDTH +
-        PADDING;
+        PADDING +
+        CANVAS_RIGHT_PADDING;
   const height =
     positionedNodes.length === 0
       ? 0
-      : Math.max(...positionedNodes.map((node) => node.y)) +
-        NODE_HEIGHT +
+      : Math.max(...positionedNodes.map((node) => node.y + node.height)) +
         PADDING;
 
   return (
@@ -178,9 +191,9 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
           </CardTitle>
         </CardHeader>
         <CardContent className='p-0'>
-          <ScrollArea className='h-[560px] w-full'>
+          <div className='h-[560px] w-full overflow-x-auto overflow-y-auto'>
             <div
-              className='relative min-h-[560px] min-w-full bg-muted/15'
+              className='relative min-h-[560px] min-w-max bg-muted/15'
               style={{
                 width: Math.max(width, 820),
                 height: Math.max(height, 560),
@@ -213,9 +226,9 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
                     return null;
                   }
                   const x1 = source.x + NODE_WIDTH;
-                  const y1 = source.y + NODE_HEIGHT / 2;
+                  const y1 = source.y + source.height / 2;
                   const x2 = target.x;
-                  const y2 = target.y + NODE_HEIGHT / 2;
+                  const y2 = target.y + target.height / 2;
                   const midX = x1 + (x2 - x1) / 2;
                   const path = `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
                   return (
@@ -243,7 +256,7 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
                     left: node.x,
                     top: node.y,
                     width: NODE_WIDTH,
-                    minHeight: NODE_HEIGHT,
+                    minHeight: node.height,
                   }}
                 >
                   <div className='flex h-full flex-col gap-3 p-4'>
@@ -295,7 +308,7 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </CardContent>
       </Card>
 

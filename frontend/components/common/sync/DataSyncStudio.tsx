@@ -959,6 +959,8 @@ export function DataSyncStudio() {
     number | null
   >(null);
   const restoredWorkspaceTabsRef = useRef<PersistedWorkspaceTabs | null>(null);
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const tabButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
 
   if (
     restoredWorkspaceTabsRef.current === null &&
@@ -1222,6 +1224,30 @@ export function DataSyncStudio() {
       WORKSPACE_TABS_STORAGE_KEY,
       JSON.stringify(payload),
     );
+  }, [openTabs, selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      return;
+    }
+    const strip = tabStripRef.current;
+    const activeTab = tabButtonRefs.current[selectedNodeId];
+    if (!strip || !activeTab) {
+      return;
+    }
+    const stripRect = strip.getBoundingClientRect();
+    const tabRect = activeTab.getBoundingClientRect();
+    const isOutOfView =
+      tabRect.left < stripRect.left || tabRect.right > stripRect.right;
+    if (!isOutOfView) {
+      return;
+    }
+    const targetLeft =
+      activeTab.offsetLeft - strip.clientWidth / 2 + activeTab.clientWidth / 2;
+    strip.scrollTo({
+      left: Math.max(0, targetLeft),
+      behavior: 'smooth',
+    });
   }, [openTabs, selectedNodeId]);
 
   useEffect(() => {
@@ -2325,11 +2351,17 @@ export function DataSyncStudio() {
 
         <Card className='row-start-1 gap-0 overflow-hidden border-border/60 bg-background/75 py-0 shadow-sm'>
           <CardContent className='flex h-full min-h-0 flex-col p-0'>
-            <div className='flex min-h-9 items-end gap-0 overflow-x-auto border-b border-border/50 bg-background/80 px-1'>
+            <div
+              ref={tabStripRef}
+              className='flex min-h-9 items-end gap-0 overflow-x-auto border-b border-border/50 bg-background/80 px-1'
+            >
               {openTabs.length > 0 ? (
                 openTabs.map((tab) => (
                   <button
                     key={tab.id}
+                    ref={(node) => {
+                      tabButtonRefs.current[tab.id] = node;
+                    }}
                     type='button'
                     className={cn(
                       'group -mb-px flex h-8 items-center gap-1.5 border-b-2 px-3 text-xs transition-colors',
