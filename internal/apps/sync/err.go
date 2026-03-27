@@ -42,6 +42,7 @@ var (
 	ErrTaskNameInvalid            = errors.New("sync: task name contains unsupported characters")
 	ErrTaskParentCycle            = errors.New("sync: parent node cannot be current node or its descendant")
 	ErrRootFileNotAllowed         = errors.New("sync: files must be created inside a folder")
+	ErrTaskNameDuplicate          = errors.New("sync: task name already exists in the current folder")
 	ErrLocalExecutionUnavailable  = errors.New("sync: local execution is unavailable")
 	ErrLocalClusterRequired       = errors.New("sync: local execution requires a cluster context")
 	ErrLocalSavepointUnsupported  = errors.New("sync: local execution does not support savepoint")

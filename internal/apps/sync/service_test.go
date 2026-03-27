@@ -239,6 +239,86 @@ func TestCreateTaskRejectsRootFile(t *testing.T) {
 	}
 }
 
+func TestCreateTaskRejectsDuplicateNameInSameFolder(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+
+	folder, err := service.CreateTask(ctx, &CreateTaskRequest{
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "dup_root",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if err != nil {
+		t.Fatalf("create folder failed: %v", err)
+	}
+	if _, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "same_name",
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env {}",
+		Definition:    JSONMap{},
+	}, 1); err != nil {
+		t.Fatalf("create first file failed: %v", err)
+	}
+	_, err = service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "same_name",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if !errors.Is(err, ErrTaskNameDuplicate) {
+		t.Fatalf("expected ErrTaskNameDuplicate, got %v", err)
+	}
+}
+
+func TestUpdateTaskRejectsDuplicateSiblingName(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+
+	folder, err := service.CreateTask(ctx, &CreateTaskRequest{
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "rename_root",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if err != nil {
+		t.Fatalf("create folder failed: %v", err)
+	}
+	left, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "left_job",
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env {}",
+		Definition:    JSONMap{},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create left file failed: %v", err)
+	}
+	right, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "right_job",
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env {}",
+		Definition:    JSONMap{},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create right file failed: %v", err)
+	}
+	_, err = service.UpdateTask(ctx, right.ID, &UpdateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          left.Name,
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       right.Content,
+		Definition:    right.Definition,
+	})
+	if !errors.Is(err, ErrTaskNameDuplicate) {
+		t.Fatalf("expected ErrTaskNameDuplicate, got %v", err)
+	}
+}
+
 func TestDetectTemplateVariablesUsesPlatformSyntaxOnly(t *testing.T) {
 	vars := detectTemplateVariables("{{ current_env }} ${seatunnel.builtin} {{job.name}}")
 	if len(vars) != 2 {

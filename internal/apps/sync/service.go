@@ -156,6 +156,9 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest, create
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureSiblingTaskNameAvailable(ctx, parentID, name, nil); err != nil {
+		return nil, err
+	}
 	definition := cloneJSONMap(req.Definition)
 	content := strings.TrimSpace(req.Content)
 	jobName := strings.TrimSpace(req.JobName)
@@ -248,6 +251,9 @@ func (s *Service) UpdateTask(ctx context.Context, id uint, req *UpdateTaskReques
 	}
 	name, err := normalizeTaskName(req.Name)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureSiblingTaskNameAvailable(ctx, parentID, name, &task.ID); err != nil {
 		return nil, err
 	}
 	content := strings.TrimSpace(req.Content)
@@ -1541,4 +1547,15 @@ func defaultString(current string, fallback string) string {
 		return current
 	}
 	return fallback
+}
+
+func (s *Service) ensureSiblingTaskNameAvailable(ctx context.Context, parentID *uint, name string, excludeID *uint) error {
+	exists, err := s.repo.ExistsSiblingTaskName(ctx, parentID, name, excludeID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrTaskNameDuplicate
+	}
+	return nil
 }

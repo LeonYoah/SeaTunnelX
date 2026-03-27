@@ -18,6 +18,7 @@
 package org.apache.seatunnel.tools.proxy.service;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -100,5 +101,47 @@ class ConfigValidationServiceTest {
             return;
         }
         throw new AssertionError("expected ProxyException");
+    }
+
+    @Test
+    @Disabled("Manual stress scenario: requires local MySQL fixture on 127.0.0.1:3307")
+    void hundredJdbcTablesConnectionStressScenario() {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("content", buildHundredTableJdbcConfig());
+        request.put("contentFormat", "hocon");
+        request.put("testConnection", true);
+
+        Map<String, Object> result = service.validate(request);
+
+        assertTrue(result.containsKey("checks"));
+    }
+
+    private String buildHundredTableJdbcConfig() {
+        StringBuilder builder = new StringBuilder();
+        builder.append("env {\n  job.mode = \"batch\"\n}\n\n");
+        builder.append("source {\n  Jdbc {\n");
+        builder.append("    plugin_output = \"bulk_src\"\n");
+        builder.append("    url = \"jdbc:mysql://127.0.0.1:3307/seatunnel_demo\"\n");
+        builder.append("    username = \"root\"\n");
+        builder.append("    password = \"seatunnel\"\n");
+        builder.append("    driver = \"com.mysql.cj.jdbc.Driver\"\n");
+        builder.append("    table_list = [\n");
+        for (int i = 1; i <= 100; i++) {
+            builder.append(
+                    String.format("      { table_path = \"seatunnel_demo.table_%03d\" }", i));
+            builder.append(i == 100 ? "\n" : ",\n");
+        }
+        builder.append("    ]\n  }\n}\n\n");
+        builder.append("sink {\n  Jdbc {\n");
+        builder.append("    plugin_input = [\"bulk_src\"]\n");
+        builder.append("    url = \"jdbc:mysql://127.0.0.1:3307/demo2\"\n");
+        builder.append("    username = \"root\"\n");
+        builder.append("    password = \"seatunnel\"\n");
+        builder.append("    driver = \"com.mysql.cj.jdbc.Driver\"\n");
+        builder.append("    database = \"demo2\"\n");
+        builder.append("    table = \"archive_${table_name}\"\n");
+        builder.append("    generate_sink_sql = true\n");
+        builder.append("  }\n}\n");
+        return builder.toString();
     }
 }

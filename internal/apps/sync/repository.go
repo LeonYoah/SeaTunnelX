@@ -141,6 +141,25 @@ func (r *Repository) UpdateTask(ctx context.Context, task *Task) error {
 	return nil
 }
 
+// ExistsSiblingTaskName reports whether the same folder already contains a node with the provided name.
+// ExistsSiblingTaskName 返回同级目录下是否已存在同名节点。
+func (r *Repository) ExistsSiblingTaskName(ctx context.Context, parentID *uint, name string, excludeID *uint) (bool, error) {
+	query := r.db.WithContext(ctx).Model(&Task{}).Where("name = ?", strings.TrimSpace(name))
+	if parentID == nil || *parentID == 0 {
+		query = query.Where("parent_id IS NULL")
+	} else {
+		query = query.Where("parent_id = ?", *parentID)
+	}
+	if excludeID != nil && *excludeID > 0 {
+		query = query.Where("id <> ?", *excludeID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // CreateTaskVersion stores one immutable task snapshot.
 func (r *Repository) CreateTaskVersion(ctx context.Context, version *TaskVersion) error {
 	return r.db.WithContext(ctx).Create(version).Error

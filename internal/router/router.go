@@ -1639,6 +1639,84 @@ func (a *configPortMetadataUpdaterAdapter) UpdateSeatunnelAPIPortByHost(ctx cont
 	return nil
 }
 
+// UpdateHazelcastPortByHost updates hazelcast-related port metadata for nodes on a host.
+// UpdateHazelcastPortByHost 更新指定主机上节点的 Hazelcast 端口元数据。
+func (a *configPortMetadataUpdaterAdapter) UpdateHazelcastPortByHost(ctx context.Context, clusterID uint, hostID uint, configType appconfig.ConfigType, port int) error {
+	if a == nil || a.clusterRepo == nil {
+		return nil
+	}
+	nodes, err := a.clusterRepo.GetNodesByHostID(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	var clusterObj *cluster.Cluster
+	for _, node := range nodes {
+		if node == nil || node.ClusterID != clusterID {
+			continue
+		}
+		shouldUpdate := false
+		switch configType {
+		case appconfig.ConfigTypeHazelcast:
+			shouldUpdate = node.Role == cluster.NodeRoleMasterWorker || node.Role == cluster.NodeRoleMaster
+		case appconfig.ConfigTypeHazelcastMaster:
+			shouldUpdate = node.Role == cluster.NodeRoleMaster
+		case appconfig.ConfigTypeHazelcastWorker:
+			shouldUpdate = node.Role == cluster.NodeRoleWorker
+		}
+		if !shouldUpdate || node.HazelcastPort == port {
+			continue
+		}
+		node.HazelcastPort = port
+		if err := a.clusterRepo.UpdateNode(ctx, node); err != nil {
+			return err
+		}
+		if clusterObj == nil {
+			clusterObj, _ = a.clusterRepo.GetByID(ctx, clusterID, false)
+		}
+	}
+	if clusterObj != nil {
+		if clusterObj.Config == nil {
+			clusterObj.Config = cluster.ClusterConfig{}
+		}
+		switch configType {
+		case appconfig.ConfigTypeHazelcast, appconfig.ConfigTypeHazelcastMaster:
+			ensureClusterConfigPath(clusterObj.Config, "ports")["master_hazelcast_port"] = port
+		case appconfig.ConfigTypeHazelcastWorker:
+			ensureClusterConfigPath(clusterObj.Config, "ports")["worker_port"] = port
+		}
+		if err := a.clusterRepo.Update(ctx, clusterObj); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpdateClusterJobLogMode syncs runtime job log mode inferred from log4j2.properties.
+// UpdateClusterJobLogMode 同步由 log4j2.properties 反向解析出的作业日志模式。
+func (a *configPortMetadataUpdaterAdapter) UpdateClusterJobLogMode(ctx context.Context, clusterID uint, mode string) error {
+	if a == nil || a.clusterRepo == nil || strings.TrimSpace(mode) == "" {
+		return nil
+	}
+	clusterObj, err := a.clusterRepo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return err
+	}
+	if clusterObj.Config == nil {
+		clusterObj.Config = cluster.ClusterConfig{}
+	}
+	ensureClusterConfigPath(clusterObj.Config, "runtime")["job_log_mode"] = mode
+	return a.clusterRepo.Update(ctx, clusterObj)
+}
+
+func ensureClusterConfigPath(cfg cluster.ClusterConfig, key string) map[string]interface{} {
+	current, ok := cfg[key].(map[string]interface{})
+	if !ok || current == nil {
+		current = map[string]interface{}{}
+		cfg[key] = current
+	}
+	return current
+}
+
 // ==================== Discovery Service Adapters 发现服务适配器 ====================
 
 // discoveryHostProviderAdapter adapts host.Service to discovery.HostProvider interface.

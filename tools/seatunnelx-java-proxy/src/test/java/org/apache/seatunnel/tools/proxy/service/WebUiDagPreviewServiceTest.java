@@ -21,11 +21,14 @@ import org.apache.seatunnel.tools.proxy.model.WebUiDagPreviewResult;
 import org.apache.seatunnel.tools.proxy.model.WebUiDagVertexInfo;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -258,12 +261,59 @@ class WebUiDagPreviewServiceTest {
         assertEquals(4, result.getJobDag().getVertexInfoMap().size());
     }
 
+    @Test
+    @Disabled("Manual stress scenario: requires local MySQL fixture with 100 tables")
+    void previewHandlesHundredJdbcTables() {
+        WebUiDagPreviewResult result = preview(buildHundredTableJdbcConfig());
+
+        Set<String> sourcePaths =
+                new LinkedHashSet<>(vertexByConnector(result, "Source[0]-Jdbc").getTablePaths());
+        Set<String> sinkPaths =
+                new LinkedHashSet<>(vertexByConnector(result, "Sink[0]-Jdbc").getTablePaths());
+
+        assertEquals(100, sourcePaths.size());
+        assertEquals(100, sinkPaths.size());
+        assertTrue(sourcePaths.contains("seatunnel_demo.table_001"));
+        assertTrue(sourcePaths.contains("seatunnel_demo.table_100"));
+        assertTrue(sinkPaths.contains("demo2.archive_table_001"));
+        assertTrue(sinkPaths.contains("demo2.archive_table_100"));
+    }
+
     private WebUiDagPreviewResult preview(String content) {
         return service.preview(Map.of("content", content, "contentFormat", "hocon"));
     }
 
     private String conf(String... lines) {
         return String.join("\n", lines);
+    }
+
+    private String buildHundredTableJdbcConfig() {
+        StringBuilder builder = new StringBuilder();
+        builder.append("env {\n  job.mode = \"batch\"\n}\n\n");
+        builder.append("source {\n  Jdbc {\n");
+        builder.append("    plugin_output = \"bulk_src\"\n");
+        builder.append("    url = \"jdbc:mysql://127.0.0.1:3307/seatunnel_demo\"\n");
+        builder.append("    username = \"root\"\n");
+        builder.append("    password = \"seatunnel\"\n");
+        builder.append("    driver = \"com.mysql.cj.jdbc.Driver\"\n");
+        builder.append("    table_list = [\n");
+        for (int i = 1; i <= 100; i++) {
+            builder.append(
+                    String.format("      { table_path = \"seatunnel_demo.table_%03d\" }", i));
+            builder.append(i == 100 ? "\n" : ",\n");
+        }
+        builder.append("    ]\n  }\n}\n\n");
+        builder.append("sink {\n  Jdbc {\n");
+        builder.append("    plugin_input = [\"bulk_src\"]\n");
+        builder.append("    url = \"jdbc:mysql://127.0.0.1:3307/demo2\"\n");
+        builder.append("    username = \"root\"\n");
+        builder.append("    password = \"seatunnel\"\n");
+        builder.append("    driver = \"com.mysql.cj.jdbc.Driver\"\n");
+        builder.append("    database = \"demo2\"\n");
+        builder.append("    table = \"archive_${table_name}\"\n");
+        builder.append("    generate_sink_sql = true\n");
+        builder.append("  }\n}\n");
+        return builder.toString();
     }
 
     private WebUiDagVertexInfo vertex(WebUiDagPreviewResult result, int vertexId) {

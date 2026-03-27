@@ -50,6 +50,8 @@ type portUpdateCall struct {
 	clusterID uint
 	hostID    uint
 	port      int
+	configType ConfigType
+	mode      string
 }
 
 type testPortMetadataUpdater struct {
@@ -58,6 +60,16 @@ type testPortMetadataUpdater struct {
 
 func (u *testPortMetadataUpdater) UpdateSeatunnelAPIPortByHost(_ context.Context, clusterID uint, hostID uint, port int) error {
 	u.calls = append(u.calls, portUpdateCall{clusterID: clusterID, hostID: hostID, port: port})
+	return nil
+}
+
+func (u *testPortMetadataUpdater) UpdateHazelcastPortByHost(_ context.Context, clusterID uint, hostID uint, configType ConfigType, port int) error {
+	u.calls = append(u.calls, portUpdateCall{clusterID: clusterID, hostID: hostID, port: port, configType: configType})
+	return nil
+}
+
+func (u *testPortMetadataUpdater) UpdateClusterJobLogMode(_ context.Context, clusterID uint, mode string) error {
+	u.calls = append(u.calls, portUpdateCall{clusterID: clusterID, mode: mode})
 	return nil
 }
 
@@ -94,6 +106,32 @@ func TestExtractSeatunnelHTTPPort(t *testing.T) {
 	}
 	if port != 18081 {
 		t.Fatalf("expected port 18081, got %d", port)
+	}
+}
+
+func TestExtractHazelcastNetworkPort(t *testing.T) {
+	content := `hazelcast:
+  network:
+    port:
+      port: 5809
+`
+	port, ok, err := extractHazelcastNetworkPort(content)
+	if err != nil {
+		t.Fatalf("extractHazelcastNetworkPort returned error: %v", err)
+	}
+	if !ok || port != 5809 {
+		t.Fatalf("expected hazelcast port 5809, got ok=%v port=%d", ok, port)
+	}
+}
+
+func TestExtractJobLogMode(t *testing.T) {
+	mode, ok := extractJobLogMode("rootLogger.appenderRef.file.ref = routingAppender\n")
+	if !ok || mode != "per_job" {
+		t.Fatalf("expected per_job, got ok=%v mode=%q", ok, mode)
+	}
+	mode, ok = extractJobLogMode("rootLogger.appenderRef.file.ref = fileAppender\n")
+	if !ok || mode != "mixed" {
+		t.Fatalf("expected mixed, got ok=%v mode=%q", ok, mode)
 	}
 }
 
@@ -207,5 +245,70 @@ func TestSyncTemplateToAllNodesSyncsSeatunnelAPIPortMetadata(t *testing.T) {
 		if expected[call.hostID] != call.port {
 			t.Fatalf("unexpected call payload: %+v", call)
 		}
+	}
+}
+
+func TestUpdateNodeConfigSyncsHazelcastPortMetadata(t *testing.T) {
+	service, db, agent, updater := newConfigTestService(t)
+	ctx := context.Background()
+	hostID := uint(31)
+	config := &Config{
+		ClusterID:  12,
+		HostID:     &hostID,
+		ConfigType: ConfigTypeHazelcastMaster,
+		FilePath:   GetConfigFilePath(ConfigTypeHazelcastMaster),
+		Content: `hazelcast:
+  network:
+    port:
+      port: 5801
+`,
+		Version:   1,
+		UpdatedBy: 1,
+	}
+	if err := db.WithContext(ctx).Create(config).Error; err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+	if _, err := service.Update(ctx, config.ID, &UpdateConfigRequest{Content: `hazelcast:
+  network:
+    port:
+      port: 5901
+`}, 2); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if agent.pushCalls != 1 {
+		t.Fatalf("expected one push call, got %d", agent.pushCalls)
+	}
+	if len(updater.calls) != 1 {
+		t.Fatalf("expected one metadata update call, got %d", len(updater.calls))
+	}
+	if updater.calls[0].configType != ConfigTypeHazelcastMaster || updater.calls[0].port != 5901 {
+		t.Fatalf("unexpected hazelcast metadata sync: %+v", updater.calls[0])
+	}
+}
+
+func TestUpdateNodeConfigSyncsJobLogModeMetadata(t *testing.T) {
+	service, db, _, updater := newConfigTestService(t)
+	ctx := context.Background()
+	config := &Config{
+		ClusterID:  15,
+		ConfigType: ConfigTypeLog4j2,
+		FilePath:   GetConfigFilePath(ConfigTypeLog4j2),
+		Content:    "rootLogger.appenderRef.file.ref = fileAppender\n",
+		Version:    1,
+		UpdatedBy:  1,
+	}
+	if err := db.WithContext(ctx).Create(config).Error; err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+	if _, err := service.Update(ctx, config.ID, &UpdateConfigRequest{
+		Content: "rootLogger.appenderRef.file.ref = routingAppender\n",
+	}, 2); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if len(updater.calls) != 1 {
+		t.Fatalf("expected one metadata update call, got %d", len(updater.calls))
+	}
+	if updater.calls[0].clusterID != 15 || updater.calls[0].mode != "per_job" {
+		t.Fatalf("unexpected job log mode sync: %+v", updater.calls[0])
 	}
 }

@@ -482,7 +482,7 @@ export function ManagementBar() {
     items.push({
       title: tDock('workbench'),
       icon: StaticIcons.workbench,
-      href: '/sync',
+      href: '/workbench',
     });
 
     // 主机管理入口 / Host management entry

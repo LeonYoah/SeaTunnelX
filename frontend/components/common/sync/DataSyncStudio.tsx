@@ -18,6 +18,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import {useTranslations} from 'next-intl';
 import {
   useCallback,
   useEffect,
@@ -282,6 +283,7 @@ function isTreeDescendant(
 function listMoveTargets(
   nodes: SyncTaskTreeNode[],
   source: SyncTaskTreeNode | null,
+  rootLabel: string,
 ): Array<{label: string; value: number | null; depth: number}> {
   const buildPathLabel = (target: SyncTaskTreeNode): string => {
     const segments: string[] = [target.name];
@@ -300,7 +302,7 @@ function listMoveTargets(
   const options: Array<{label: string; value: number | null; depth: number}> =
     source?.node_type === 'file'
       ? []
-      : [{label: '/ 根目录', value: null, depth: 0}];
+      : [{label: rootLabel, value: null, depth: 0}];
   for (const folder of folders) {
     if (source) {
       if (folder.id === source.id) {
@@ -379,26 +381,57 @@ function detectVariables(content: string): string[] {
   ).sort();
 }
 
-function validateWorkspaceName(name: string): string | null {
+function validateWorkspaceName(
+  name: string,
+  t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
+): string | null {
   const trimmed = name.trim();
   if (!trimmed) {
-    return '请输入名称';
+    return t('nameRequired');
   }
   if (!WORKSPACE_NAME_PATTERN.test(trimmed)) {
-    return '仅支持字母、数字、点、下划线和短横线，不支持空格';
+    return t('workspaceNameInvalid');
   }
   return null;
+}
+
+function listSiblingNames(
+  tree: SyncTaskTreeNode[],
+  parentId: number | null,
+  excludeId?: number | null,
+): string[] {
+  const nodes =
+    parentId == null
+      ? tree
+      : findTreeNode(tree, parentId)?.children || [];
+  return nodes
+    .filter((node) => node.id !== excludeId)
+    .map((node) => node.name.trim().toLowerCase());
+}
+
+function hasDuplicateWorkspaceName(
+  tree: SyncTaskTreeNode[],
+  parentId: number | null,
+  name: string,
+  excludeId?: number | null,
+): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return listSiblingNames(tree, parentId, excludeId).includes(normalized);
 }
 
 function formatSyncUserFacingError(
   error: unknown,
   fallbackTitle: string,
+  t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
 ): UserFacingErrorState {
   const message =
-    error instanceof Error ? error.message : '发生未知错误，请稍后重试';
+    error instanceof Error ? error.message : t('unknownError');
   if (message.includes('sync: 配置解析失败')) {
     return {
-      title: '配置解析失败',
+      title: t('configParseFailedTitle'),
       description: message.replace(/^sync:\s*/, ''),
       raw: error instanceof Error ? error.message : message,
     };
@@ -799,7 +832,10 @@ function classifyMetricGroup(key: string): MetricGroupKey {
   return 'other';
 }
 
-function buildMetricGroups(metrics: unknown): Array<{
+function buildMetricGroups(
+  metrics: unknown,
+  t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
+): Array<{
   key: MetricGroupKey;
   title: string;
   items: Array<{key: string; value: unknown}>;
@@ -817,12 +853,12 @@ function buildMetricGroups(metrics: unknown): Array<{
     groups[classifyMetricGroup(key)].push({key, value});
   }
   const metadata: Array<{key: MetricGroupKey; title: string}> = [
-    {key: 'read', title: '读取指标'},
-    {key: 'write', title: '写入指标'},
-    {key: 'throughput', title: '速度指标'},
-    {key: 'latency', title: '时延指标'},
-    {key: 'status', title: '状态指标'},
-    {key: 'other', title: '其他指标'},
+    {key: 'read', title: t('metricGroupRead')},
+    {key: 'write', title: t('metricGroupWrite')},
+    {key: 'throughput', title: t('metricGroupThroughput')},
+    {key: 'latency', title: t('metricGroupLatency')},
+    {key: 'status', title: t('metricGroupStatus')},
+    {key: 'other', title: t('metricGroupOther')},
   ];
   return metadata
     .map((item) => ({
@@ -835,6 +871,7 @@ function buildMetricGroups(metrics: unknown): Array<{
 }
 
 export function DataSyncStudio() {
+  const t = useTranslations('workbenchStudio');
   const {resolvedTheme} = useTheme();
   const [clusters, setClusters] = useState<ClusterInfo[]>([]);
   const [tree, setTree] = useState<SyncTaskTreeNode[]>([]);
@@ -846,7 +883,7 @@ export function DataSyncStudio() {
   const [dagError, setDagError] = useState<UserFacingErrorState | null>(null);
   const [dagOpen, setDagOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
-  const [validationTitle, setValidationTitle] = useState('校验配置');
+  const [validationTitle, setValidationTitle] = useState('');
   const [validationResult, setValidationResult] =
     useState<SyncValidateResult | null>(null);
   const [versions, setVersions] = useState<SyncTaskVersion[]>([]);
@@ -1022,7 +1059,7 @@ export function DataSyncStudio() {
     [tree],
   );
   const moveTargetOptions = useMemo(
-    () => listMoveTargets(tree, treeDialog.targetNode),
+    () => listMoveTargets(tree, treeDialog.targetNode, t('rootFolder')),
     [tree, treeDialog.targetNode],
   );
 
@@ -1086,7 +1123,7 @@ export function DataSyncStudio() {
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : '加载数据同步 Studio 失败',
+          error instanceof Error ? error.message : t('loadStudioFailed'),
         );
       } finally {
         setLoading(false);
@@ -1118,7 +1155,7 @@ export function DataSyncStudio() {
         return items[0]?.id || null;
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '加载运行历史失败');
+      toast.error(error instanceof Error ? error.message : t('loadRunsFailed'));
     }
   }, []);
 
@@ -1138,7 +1175,7 @@ export function DataSyncStudio() {
         setVersionTotal(data.total || 0);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : '加载版本历史失败',
+          error instanceof Error ? error.message : t('loadVersionsFailed'),
         );
       }
     },
@@ -1154,7 +1191,7 @@ export function DataSyncStudio() {
       setGlobalVariables(data.items || []);
       setGlobalVariableTotal(data.total || 0);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '加载全局变量失败');
+      toast.error(error instanceof Error ? error.message : t('loadGlobalVariablesFailed'));
     }
   }, [globalVariablePage]);
 
@@ -1315,7 +1352,7 @@ export function DataSyncStudio() {
           jobLogChunkSizeRef.current = LOG_CHUNK_BASE_BYTES;
         }
         console.warn(
-          error instanceof Error ? error.message : '加载任务日志失败',
+          error instanceof Error ? error.message : t('loadJobLogsFailed'),
         );
       } finally {
         if (abortRef.current === controller) {
@@ -1466,11 +1503,11 @@ export function DataSyncStudio() {
   const persistCurrentFile = useCallback(
     async (publishAfterSave = false) => {
       if (!editor.name.trim()) {
-        toast.error('请先填写文件名称');
+        toast.error(t('fileNameRequired'));
         return null;
       }
       if (!editor.content.trim()) {
-        toast.error('请先填写任务内容');
+        toast.error(t('fileContentRequired'));
         return null;
       }
       setSaving(true);
@@ -1499,7 +1536,7 @@ export function DataSyncStudio() {
         }
         return task;
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : '保存文件失败');
+        toast.error(error instanceof Error ? error.message : t('saveFileFailed'));
         return null;
       } finally {
         setSaving(false);
@@ -1515,7 +1552,13 @@ export function DataSyncStudio() {
       initialName = '',
     ) => {
       const defaultParentId =
-        action === 'move' ? targetNode?.parent_id || null : null;
+        action === 'move'
+          ? targetNode?.parent_id || null
+          : action === 'create-folder' || action === 'create-file'
+            ? targetNode?.node_type === 'folder'
+              ? targetNode.id
+              : targetNode?.parent_id || null
+            : null;
       setTreeMenu((prev) => ({...prev, open: false}));
       setTreeDialog({
         open: true,
@@ -1550,35 +1593,35 @@ export function DataSyncStudio() {
   const handleTreeDialogSubmit = async () => {
     const name = treeDialog.name.trim();
     if (treeDialog.action !== 'move') {
-      const nameError = validateWorkspaceName(name);
-      if (nameError) {
+      const nameError = validateWorkspaceName(name, t);
+      if (treeDialog.action !== 'delete' && nameError) {
         toast.error(nameError);
         return;
       }
     }
     try {
       if (treeDialog.action === 'create-folder') {
-        const parentId =
-          treeDialog.targetNode?.node_type === 'folder'
-            ? treeDialog.targetNode.id
-            : treeDialog.targetNode?.parent_id ||
-              resolveFolderParent(selectedNodeId, tree);
+        const parentId = treeDialog.targetParentId || null;
+        if (hasDuplicateWorkspaceName(tree, parentId, name)) {
+          toast.error(t('duplicateWorkspaceName'));
+          return;
+        }
         await services.sync.createTask({
           parent_id: parentId || undefined,
           node_type: 'folder',
           name,
           content_format: 'hocon',
         });
-        toast.success('目录已创建');
+        toast.success(t('folderCreated'));
         await loadWorkspace(selectedNodeId);
       } else if (treeDialog.action === 'create-file') {
-        const parentId =
-          treeDialog.targetNode?.node_type === 'folder'
-            ? treeDialog.targetNode.id
-            : treeDialog.targetNode?.parent_id ||
-              resolveFolderParent(selectedNodeId, tree);
+        const parentId = treeDialog.targetParentId || null;
         if (!parentId) {
-          toast.error('请先在目录下创建文件，根目录不允许直接创建文件');
+          toast.error(t('rootFileCreationBlocked'));
+          return;
+        }
+        if (hasDuplicateWorkspaceName(tree, parentId, name)) {
+          toast.error(t('duplicateWorkspaceName'));
           return;
         }
         const task = await services.sync.createTask({
@@ -1590,10 +1633,23 @@ export function DataSyncStudio() {
           content: buildDefaultContent('hocon'),
           definition: {},
         });
-        toast.success('文件已创建');
+        toast.success(t('fileCreated'));
         syncOpenTabs(task);
         await loadWorkspace(task.id);
       } else if (treeDialog.action === 'rename' && treeDialog.targetNode) {
+        const siblingParentId =
+          treeDialog.targetNode.parent_id == null ? null : treeDialog.targetNode.parent_id;
+        if (
+          hasDuplicateWorkspaceName(
+            tree,
+            siblingParentId,
+            name,
+            treeDialog.targetNode.id,
+          )
+        ) {
+          toast.error(t('duplicateWorkspaceName'));
+          return;
+        }
         const current = await services.sync.getTask(treeDialog.targetNode.id);
         await services.sync.updateTask(treeDialog.targetNode.id, {
           parent_id: current.parent_id,
@@ -1605,7 +1661,7 @@ export function DataSyncStudio() {
           content: current.content,
           definition: current.definition,
         });
-        toast.success('名称已更新');
+        toast.success(t('nameUpdated'));
         await loadWorkspace(treeDialog.targetNode.id);
       } else if (treeDialog.action === 'move' && treeDialog.targetNode) {
         const current = await services.sync.getTask(treeDialog.targetNode.id);
@@ -1619,9 +1675,13 @@ export function DataSyncStudio() {
           content: current.content,
           definition: current.definition,
         });
-        toast.success('移动已完成');
+        toast.success(t('moveCompleted'));
         await loadWorkspace(treeDialog.targetNode.id);
       } else if (treeDialog.action === 'delete' && treeDialog.targetNode) {
+        if (name !== treeDialog.targetNode.name) {
+          toast.error(t('deleteNameMismatch'));
+          return;
+        }
         await services.sync.deleteTask(treeDialog.targetNode.id);
         setOpenTabs((current) =>
           current.filter((tab) => tab.id !== treeDialog.targetNode?.id),
@@ -1634,8 +1694,8 @@ export function DataSyncStudio() {
         }
         toast.success(
           treeDialog.targetNode.node_type === 'folder'
-            ? '目录已删除'
-            : '文件已删除',
+            ? t('folderDeleted')
+            : t('fileDeleted'),
         );
         await loadWorkspace();
       }
@@ -1647,7 +1707,7 @@ export function DataSyncStudio() {
         targetParentId: null,
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '操作失败');
+      toast.error(error instanceof Error ? error.message : t('operationFailed'));
     }
   };
 
@@ -1677,7 +1737,7 @@ export function DataSyncStudio() {
       syncOpenTabs(task);
       await loadJobs(node.id);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '加载文件失败');
+      toast.error(error instanceof Error ? error.message : t('loadFileFailed'));
     }
   };
 
@@ -1698,7 +1758,7 @@ export function DataSyncStudio() {
       setSelectedFolderId(task.parent_id || null);
       await loadJobs(taskId);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '加载文件失败');
+      toast.error(error instanceof Error ? error.message : t('loadFileFailed'));
     }
   };
 
@@ -1725,7 +1785,7 @@ export function DataSyncStudio() {
     const task = await persistCurrentFile(true);
     if (task) {
       await loadVersions(task.id);
-      toast.success('文件已保存并生成新版本');
+      toast.success(t('savedNewVersion'));
     }
   };
 
@@ -1735,10 +1795,10 @@ export function DataSyncStudio() {
   ) => {
     const result = await services.sync.validateTask(taskId);
     if (!result.valid) {
-      setValidationTitle('校验配置');
+      setValidationTitle(t('validateConfigTitle'));
       setValidationResult(result);
       setValidationOpen(true);
-      toast.error(`${actionLabel}前校验未通过，请先修复配置问题`);
+      toast.error(t('preflightValidationFailed', {action: actionLabel}));
       return false;
     }
     return true;
@@ -1750,7 +1810,7 @@ export function DataSyncStudio() {
       return;
     }
     try {
-      const passed = await runPreflightValidation(task.id, 'DAG 解析');
+      const passed = await runPreflightValidation(task.id, t('dagActionLabel'));
       if (!passed) {
         return;
       }
@@ -1758,13 +1818,13 @@ export function DataSyncStudio() {
       setDagResult(result);
       setDagError(null);
       setDagOpen(true);
-      toast.success('DAG 已生成');
+      toast.success(t('dagGenerated'));
     } catch (error) {
       setDagResult(null);
-      setDagError(formatSyncUserFacingError(error, 'DAG 解析失败'));
+      setDagError(formatSyncUserFacingError(error, t('dagParseFailedTitle'), t));
       setDagOpen(true);
       toast.error(
-        error instanceof Error ? error.message : '生成 DAG 失败',
+        error instanceof Error ? error.message : t('dagBuildFailed'),
       );
     }
   };
@@ -1776,12 +1836,12 @@ export function DataSyncStudio() {
     }
     try {
       const result = await services.sync.validateTask(task.id);
-      setValidationTitle('校验配置');
+      setValidationTitle(t('validateConfigTitle'));
       setValidationResult(result);
       setValidationOpen(true);
-      toast.success(result.valid ? '配置校验通过' : '配置校验完成');
+      toast.success(result.valid ? t('validatePassed') : t('validateCompleted'));
     } catch (error) {
-      const uiError = formatSyncUserFacingError(error, '配置校验失败');
+      const uiError = formatSyncUserFacingError(error, t('validateFailedTitle'), t);
       setValidationTitle(uiError.title);
       setValidationResult({
         valid: false,
@@ -1801,12 +1861,12 @@ export function DataSyncStudio() {
     }
     try {
       const result = await services.sync.testConnections(task.id);
-      setValidationTitle('测试连接');
+      setValidationTitle(t('testConnections'));
       setValidationResult(result);
       setValidationOpen(true);
-      toast.success(result.valid ? '连接测试通过' : '连接测试完成');
+      toast.success(result.valid ? t('connectionsPassed') : t('connectionsCompleted'));
     } catch (error) {
-      const uiError = formatSyncUserFacingError(error, '测试连接失败');
+      const uiError = formatSyncUserFacingError(error, t('testConnectionsFailedTitle'), t);
       setValidationTitle(uiError.title);
       setValidationResult({
         valid: false,
@@ -1821,7 +1881,7 @@ export function DataSyncStudio() {
 
   const handlePreview = async () => {
     if (hasActiveRun || hasActivePreview) {
-      toast.error('请先等待当前运行或预览结束，或先取消它');
+      toast.error(t('waitForActiveRun'));
       return;
     }
     const task = await persistCurrentFile(false);
@@ -1829,7 +1889,7 @@ export function DataSyncStudio() {
       return;
     }
     try {
-      const passed = await runPreflightValidation(task.id, '预览');
+      const passed = await runPreflightValidation(task.id, t('previewActionLabel'));
       if (!passed) {
         return;
       }
@@ -1837,15 +1897,15 @@ export function DataSyncStudio() {
       await loadJobs(task.id);
       setSelectedJobId(job.id);
       setBottomConsoleTab('preview');
-      toast.success('预览任务已提交');
+      toast.success(t('previewSubmitted'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '预览失败');
+      toast.error(error instanceof Error ? error.message : t('previewFailed'));
     }
   };
 
   const handleRun = async (mode: 'run' | 'recover') => {
     if (hasActiveRun || hasActivePreview) {
-      toast.error('请先等待当前运行或预览结束，或先取消它');
+      toast.error(t('waitForActiveRun'));
       return;
     }
     const task = await persistCurrentFile(true);
@@ -1855,13 +1915,13 @@ export function DataSyncStudio() {
     try {
       const passed = await runPreflightValidation(
         task.id,
-        mode === 'recover' ? '恢复' : '运行',
+        mode === 'recover' ? t('recoverActionLabel') : t('runActionLabel'),
       );
       if (!passed) {
         return;
       }
       if (mode === 'recover' && !recoverSourceId && !runJobs[0]?.id) {
-        throw new Error('当前没有可用于 Savepoint 恢复的历史运行实例');
+        throw new Error(t('noRecoverSource'));
       }
       const job =
         mode === 'recover'
@@ -1872,9 +1932,9 @@ export function DataSyncStudio() {
       await loadJobs(task.id);
       setSelectedJobId(job.id);
       setBottomConsoleTab('jobs');
-      toast.success(mode === 'recover' ? '恢复任务已提交' : '运行任务已提交');
+      toast.success(mode === 'recover' ? t('recoverSubmitted') : t('runSubmitted'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '运行失败');
+      toast.error(error instanceof Error ? error.message : t('runFailed'));
     }
   };
 
@@ -1885,10 +1945,10 @@ export function DataSyncStudio() {
       });
       await loadJobs(editor.id || null);
       toast.success(
-        stopWithSavepoint ? '任务已触发 Savepoint 停止' : '任务已停止',
+        stopWithSavepoint ? t('savepointStopTriggered') : t('taskStopped'),
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '取消任务失败');
+      toast.error(error instanceof Error ? error.message : t('cancelTaskFailed'));
     }
   };
 
@@ -1899,7 +1959,7 @@ export function DataSyncStudio() {
         ? selectedJob
         : activeJobs[0];
     if (!activeJob) {
-      toast.error('当前没有可停止的运行实例');
+      toast.error(t('noActiveJob'));
       return;
     }
     await handleCancelJob(activeJob.id, mode === 'savepoint');
@@ -1991,22 +2051,22 @@ export function DataSyncStudio() {
     try {
       if (item) {
         await services.sync.updateGlobalVariable(item.id, payload);
-        toast.success('全局变量已更新');
+        toast.success(t('globalVariableUpdated'));
       } else {
         await services.sync.createGlobalVariable(payload);
-        toast.success('全局变量已创建');
+        toast.success(t('globalVariableCreated'));
       }
       setEditingGlobalVariableId(null);
       await loadGlobalVariables();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '保存全局变量失败');
+      toast.error(error instanceof Error ? error.message : t('saveGlobalVariableFailed'));
     }
   };
 
   const handleDeleteGlobalVariable = async (id: number) => {
     try {
       await services.sync.deleteGlobalVariable(id);
-      toast.success('全局变量已删除');
+      toast.success(t('globalVariableDeleted'));
       if (editingGlobalVariableId === id) {
         setEditingGlobalVariableId(null);
       }
@@ -2016,7 +2076,7 @@ export function DataSyncStudio() {
       }
       await loadGlobalVariables();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '删除全局变量失败');
+      toast.error(error instanceof Error ? error.message : t('deleteGlobalVariableFailed'));
     }
   };
 
@@ -2025,7 +2085,7 @@ export function DataSyncStudio() {
       await navigator.clipboard.writeText(value);
       toast.success(successText);
     } catch {
-      toast.error('复制失败');
+      toast.error(t('copyFailed'));
     }
   };
 
@@ -2038,9 +2098,9 @@ export function DataSyncStudio() {
       setEditor(extractEditorState(task));
       setTree((current) => patchTreeNode(current, task));
       await loadVersions(task.id);
-      toast.success('已回滚到指定版本');
+      toast.success(t('rollbackVersionSuccess'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '回滚版本失败');
+      toast.error(error instanceof Error ? error.message : t('rollbackVersionFailed'));
     }
   };
 
@@ -2055,9 +2115,9 @@ export function DataSyncStudio() {
         return;
       }
       await loadVersions(editor.id);
-      toast.success('版本已删除');
+      toast.success(t('versionDeleted'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '删除版本失败');
+      toast.error(error instanceof Error ? error.message : t('deleteVersionFailed'));
     }
   };
 
@@ -2073,7 +2133,7 @@ export function DataSyncStudio() {
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
                 className='h-9 border-border/60 bg-background pl-9 text-sm'
-                placeholder='搜索文件或目录'
+                placeholder={t('searchWorkspace')}
               />
             </div>
           </div>
@@ -2090,7 +2150,7 @@ export function DataSyncStudio() {
               disabled={saving || !editor.name.trim()}
             >
               <Save className='mr-1.5 size-4' />
-              保存
+              {t('save')}
             </Button>
             <Button
               size='sm'
@@ -2100,7 +2160,7 @@ export function DataSyncStudio() {
               disabled={saving || !editor.name.trim()}
             >
               <Database className='mr-1.5 size-4' />
-              测试连接
+              {t('testConnections')}
             </Button>
             <Button
               size='sm'
@@ -2120,7 +2180,7 @@ export function DataSyncStudio() {
               disabled={saving || hasActiveRun || hasActivePreview}
             >
               <Bug className='mr-1.5 size-4' />
-              预览
+              {t('preview')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -2130,19 +2190,19 @@ export function DataSyncStudio() {
                   disabled={saving || hasActiveRun || hasActivePreview}
                 >
                   <Play className='mr-1.5 size-4' />
-                  运行
+                  {t('run')}
                   <ChevronDown className='ml-1.5 size-4' />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end'>
                 <DropdownMenuItem onClick={() => void handleRun('run')}>
-                  运行
+                  {t('run')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={executionMode === 'local'}
                   onClick={() => void handleRun('recover')}
                 >
-                  Savepoint 恢复
+                  {t('savepointRecover')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2155,7 +2215,7 @@ export function DataSyncStudio() {
                   disabled={activeJobs.length === 0}
                 >
                   <Square className='mr-1.5 size-4' />
-                  停止
+                  {t('stop')}
                   <ChevronDown className='ml-1.5 size-4' />
                 </Button>
               </DropdownMenuTrigger>
@@ -2163,13 +2223,13 @@ export function DataSyncStudio() {
                 <DropdownMenuItem
                   onClick={() => void handleStopActiveJob('normal')}
                 >
-                  正常停止
+                  {t('normalStop')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={executionMode === 'local'}
                   onClick={() => void handleStopActiveJob('savepoint')}
                 >
-                  Savepoint 停止
+                  {t('savepointStop')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -2183,7 +2243,7 @@ export function DataSyncStudio() {
             <div className='flex items-center justify-between border-b border-border/50 px-3 py-2'>
               <div className='flex items-center gap-2 text-sm font-medium'>
                 <Folder className='size-4 text-primary' />
-                资源
+                {t('resources')}
               </div>
               <div className='flex items-center gap-1'>
                 <Badge variant='outline' className='rounded-sm'>
@@ -2207,7 +2267,7 @@ export function DataSyncStudio() {
                       <FolderPlus className='size-4' />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>新建目录</TooltipContent>
+                  <TooltipContent>{t('newFolder')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -2220,7 +2280,7 @@ export function DataSyncStudio() {
                           ? findTreeNode(tree, selectedFolderId)
                           : null;
                         if (!folderNode) {
-                          toast.error('请先选中一个目录后再创建文件');
+                          toast.error(t('selectFolderBeforeCreateFile'));
                           return;
                         }
                         openTreeDialog('create-file', folderNode);
@@ -2229,7 +2289,7 @@ export function DataSyncStudio() {
                       <FilePlus2 className='size-4' />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>新建文件</TooltipContent>
+                  <TooltipContent>{t('newFile')}</TooltipContent>
                 </Tooltip>
               </div>
             </div>
@@ -2242,11 +2302,11 @@ export function DataSyncStudio() {
               <div className='px-2 py-2'>
                 {loading ? (
                   <div className='p-3 text-sm text-muted-foreground'>
-                    加载中...
+                    {t('loading')}
                   </div>
                 ) : filteredTree.length === 0 ? (
                   <div className='p-3 text-sm text-muted-foreground'>
-                    暂无工作区内容。
+                    {t('emptyWorkspace')}
                   </div>
                 ) : (
                   <TreeView
@@ -2294,7 +2354,7 @@ export function DataSyncStudio() {
                 ))
               ) : (
                 <div className='px-3 py-2 text-xs text-muted-foreground'>
-                  暂无打开文件
+                  {t('noOpenFiles')}
                 </div>
               )}
             </div>
@@ -2328,19 +2388,19 @@ export function DataSyncStudio() {
               <SidebarIconTab
                 active={rightSidebarTab === 'settings'}
                 icon={<Database className='size-4' />}
-                label='设置'
+                label={t('settings')}
                 onClick={() => setRightSidebarTab('settings')}
               />
               <SidebarIconTab
                 active={rightSidebarTab === 'versions'}
                 icon={<GitBranch className='size-4' />}
-                label='版本管理'
+                label={t('versionManagement')}
                 onClick={() => setRightSidebarTab('versions')}
               />
               <SidebarIconTab
                 active={rightSidebarTab === 'globals'}
                 icon={<Globe2 className='size-4' />}
-                label='全局变量'
+                label={t('globalVariables')}
                 onClick={() => setRightSidebarTab('globals')}
               />
             </>
@@ -2392,7 +2452,7 @@ export function DataSyncStudio() {
               onCancelEdit={() => setEditingGlobalVariableId(null)}
               onSave={handleSaveGlobalVariable}
               onDelete={(id) => void handleDeleteGlobalVariable(id)}
-              onCopy={(value) => void copyToClipboard(value, '已复制变量值')}
+              onCopy={(value) => void copyToClipboard(value, t('variableValueCopied'))}
             />
           )}
         </StudioSidebarShell>
@@ -2403,19 +2463,19 @@ export function DataSyncStudio() {
               <SidebarIconTab
                 active={bottomConsoleTab === 'logs'}
                 icon={<SquareTerminal className='size-4' />}
-                label='日志'
+                label={t('logs')}
                 onClick={() => setBottomConsoleTab('logs')}
               />
               <SidebarIconTab
                 active={bottomConsoleTab === 'jobs'}
                 icon={<ListTree className='size-4' />}
-                label='任务'
+                label={t('jobs')}
                 onClick={() => setBottomConsoleTab('jobs')}
               />
               <SidebarIconTab
                 active={bottomConsoleTab === 'preview'}
                 icon={<Bug className='size-4' />}
-                label='预览'
+                label={t('preview')}
                 onClick={() => setBottomConsoleTab('preview')}
               />
             </div>
@@ -2442,6 +2502,7 @@ export function DataSyncStudio() {
                     setMetricsDialogJob(job);
                     setJobMetricsDialogOpen(true);
                   }}
+                  disableRecover={hasActiveRun || hasActivePreview}
                 />
               ) : (
                 <PreviewWorkspacePanel
@@ -2466,7 +2527,7 @@ export function DataSyncStudio() {
           <DialogHeader>
             <DialogTitle>{validationTitle}</DialogTitle>
             <DialogDescription>
-              {validationResult?.summary || '当前结果展示配置语法、官方校验与连接测试结论。'}
+              {validationResult?.summary || t('validationSummaryFallback')}
             </DialogDescription>
           </DialogHeader>
           <ValidationResultPanel result={validationResult} />
@@ -2484,11 +2545,11 @@ export function DataSyncStudio() {
       >
         <DialogContent className='flex h-[88vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden gap-0 p-0 sm:max-w-[1400px]'>
           <DialogHeader className='px-6 pt-6'>
-            <DialogTitle>DAG 预览</DialogTitle>
+            <DialogTitle>{t('dagPreview')}</DialogTitle>
             <DialogDescription>
               {dagError
-                ? '当前文件的 DAG 解析失败，请先修复配置问题后再试。'
-                : `当前文件解析出的 DAG 结果，共 ${dagNodes.length} 个节点，${dagEdges.length} 条连线。`}
+                ? t('dagParseErrorDescription')
+                : t('dagSummary', {nodes: dagNodes.length, edges: dagEdges.length})}
             </DialogDescription>
           </DialogHeader>
           <div className='min-h-0 flex-1 overflow-auto px-6 pb-6'>
@@ -2524,7 +2585,7 @@ export function DataSyncStudio() {
               ) : !dagError ? (
                 <Card>
                   <CardHeader className='pb-3'>
-                    <CardTitle className='text-sm'>原始 DAG JSON</CardTitle>
+                    <CardTitle className='text-sm'>{t('rawDagJson')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <pre className='max-h-[560px] overflow-auto whitespace-pre-wrap break-all text-xs text-muted-foreground'>
@@ -2549,11 +2610,11 @@ export function DataSyncStudio() {
         <DialogContent className='max-w-5xl'>
           <DialogHeader>
             <DialogTitle>
-              版本预览 {versionPreview ? `v${versionPreview.version}` : ''}
+              {t('versionPreview')} {versionPreview ? `v${versionPreview.version}` : ''}
             </DialogTitle>
           </DialogHeader>
           <pre className='max-h-[70vh] overflow-auto rounded-lg border p-4 text-xs text-muted-foreground'>
-            {versionPreview ? versionPreview.content_snapshot : '暂无版本内容'}
+            {versionPreview ? versionPreview.content_snapshot : t('noVersionContent')}
           </pre>
         </DialogContent>
       </Dialog>
@@ -2569,14 +2630,14 @@ export function DataSyncStudio() {
         <DialogContent className='flex h-[88vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden p-0 gap-0 sm:max-w-[1320px]'>
           <DialogHeader>
             <DialogTitle className='px-6 pt-6'>
-              版本对比 {compareVersion ? `v${compareVersion.version}` : ''}
+              {t('versionCompare')} {compareVersion ? `v${compareVersion.version}` : ''}
             </DialogTitle>
           </DialogHeader>
           <div className='mx-6 flex flex-wrap items-center justify-between gap-3 rounded-t-lg border border-b-0 border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground'>
             <div className='flex items-center gap-2'>
               <GitCompareArrows className='size-4 text-primary' />
               <Badge variant='outline'>Diff</Badge>
-              <Badge variant='outline'>只读</Badge>
+              <Badge variant='outline'>{t('readOnly')}</Badge>
               <Badge variant='outline'>Side by Side</Badge>
             </div>
             <div className='flex flex-wrap items-center gap-2'>
@@ -2584,12 +2645,12 @@ export function DataSyncStudio() {
                 <LayoutPanelTop className='size-3.5' />
                 <span>
                   v{compareVersion?.version || '-'} /{' '}
-                  {compareVersion?.name_snapshot || '历史版本'}
+                  {compareVersion?.name_snapshot || t('historicalVersion')}
                 </span>
               </div>
               <div className='flex items-center gap-2 rounded-md border border-border/50 bg-background/70 px-2 py-1'>
                 <Columns2 className='size-3.5' />
-                <span>当前编辑 / {editor.name || '未命名文件'}</span>
+                <span>{t('currentEditing')} / {editor.name || t('unnamedFile')}</span>
               </div>
             </div>
           </div>
@@ -2625,7 +2686,7 @@ export function DataSyncStudio() {
         <DialogContent className='max-w-5xl'>
           <DialogHeader>
             <DialogTitle>
-              指标详情 {metricsDialogJob ? `#${metricsDialogJob.id}` : ''}
+              {t('metricsDetails')} {metricsDialogJob ? `#${metricsDialogJob.id}` : ''}
             </DialogTitle>
           </DialogHeader>
           <MetricsDialogContent job={metricsDialogJob} />
@@ -2635,9 +2696,9 @@ export function DataSyncStudio() {
       <Dialog open={logsDialogOpen} onOpenChange={setLogsDialogOpen}>
         <DialogContent className='flex h-[88vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden sm:max-w-[1400px]'>
           <DialogHeader>
-            <DialogTitle>日志查看</DialogTitle>
+            <DialogTitle>{t('logViewer')}</DialogTitle>
             <DialogDescription>
-              展示当前任务的全部日志；支持搜索、级别过滤与流式追踪。
+              {t('logViewerDesc')}
             </DialogDescription>
           </DialogHeader>
           <div className='flex flex-wrap items-center justify-between gap-2'>
@@ -2645,7 +2706,7 @@ export function DataSyncStudio() {
               <Input
                 value={logSearchTerm}
                 onChange={(event) => setLogSearchTerm(event.target.value)}
-                placeholder='搜索日志关键字'
+                placeholder={t('searchLogKeyword')}
                 className='h-8 w-[320px]'
               />
               <div className='flex items-center gap-1 rounded-md border border-border/50 bg-background px-1 py-1'>
@@ -2662,7 +2723,7 @@ export function DataSyncStudio() {
                     )}
                     onClick={() => setLogFilterMode(mode)}
                   >
-                    {mode === 'all' ? '全部' : mode.toUpperCase()}
+                    {mode === 'all' ? t('all') : mode.toUpperCase()}
                   </button>
                 ))}
               </div>
@@ -2670,15 +2731,15 @@ export function DataSyncStudio() {
             <div className='flex items-center gap-2 text-xs text-muted-foreground'>
               <span>
                 {expandedLogsLoading
-                  ? '加载全部日志中...'
-                  : `共 ${splitLogLines(expandedJobLogs?.logs || jobLogs?.logs || '').length} 行`}
+                  ? t('loadingAllLogs')
+                  : t('totalLines', {count: splitLogLines(expandedJobLogs?.logs || jobLogs?.logs || '').length})}
               </span>
             </div>
           </div>
           <VirtualizedLogViewer
             lines={splitLogLines(expandedJobLogs?.logs || jobLogs?.logs || '')}
             height={620}
-            emptyText='当前暂无日志输出。'
+            emptyText={t('noLogs')}
           />
         </DialogContent>
       </Dialog>
@@ -2691,33 +2752,51 @@ export function DataSyncStudio() {
           <DialogHeader>
             <DialogTitle>
               {treeDialog.action === 'create-folder'
-                ? '新建目录'
+                ? t('newFolder')
                 : treeDialog.action === 'create-file'
-                  ? '新建文件'
+                  ? t('newFile')
                   : treeDialog.action === 'move'
-                    ? '移动到'
+                    ? t('moveTo')
                     : treeDialog.action === 'delete'
-                      ? '删除确认'
-                      : '重命名'}
+                      ? t('deleteConfirm')
+                      : t('rename')}
             </DialogTitle>
           </DialogHeader>
           <div className='grid gap-3'>
             {treeDialog.action === 'delete' ? (
-              <div className='rounded-lg border border-border/40 bg-muted/10 p-3 text-sm'>
-                将删除
-                {treeDialog.targetNode?.node_type === 'folder'
-                  ? '目录'
-                  : '文件'}
-                <span className='mx-1 font-medium'>
-                  {treeDialog.targetNode?.name}
-                </span>
-                {treeDialog.targetNode?.node_type === 'folder'
-                  ? '及其全部子节点和运行历史。'
-                  : '。'}
+              <div className='grid gap-3'>
+                <div className='rounded-lg border border-border/40 bg-muted/10 p-3 text-sm'>
+                  {t('willDelete')}
+                  {treeDialog.targetNode?.node_type === 'folder'
+                    ? t('folder')
+                    : t('file')}
+                  <span className='mx-1 font-medium'>
+                    {treeDialog.targetNode?.name}
+                  </span>
+                  {treeDialog.targetNode?.node_type === 'folder'
+                    ? t('deleteFolderDesc')
+                    : t('deleteFileDesc')}
+                </div>
+                <div className='grid gap-2'>
+                  <Label htmlFor='tree-dialog-delete-name'>
+                    {t('typeNameToDelete')}
+                  </Label>
+                  <Input
+                    id='tree-dialog-delete-name'
+                    value={treeDialog.name}
+                    onChange={(event) =>
+                      setTreeDialog((prev) => ({
+                        ...prev,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder={treeDialog.targetNode?.name || t('inputName')}
+                  />
+                </div>
               </div>
             ) : treeDialog.action === 'move' ? (
               <div className='grid gap-2'>
-                <Label>目标目录</Label>
+                <Label>{t('targetFolder')}</Label>
                 <div className='max-h-[320px] overflow-auto rounded-md border border-border/60 bg-muted/10 p-2'>
                   <div className='space-y-1'>
                     {moveTargetOptions.map((option) => (
@@ -2747,7 +2826,7 @@ export function DataSyncStudio() {
               </div>
             ) : (
               <div className='grid gap-2'>
-                <Label htmlFor='tree-dialog-name'>名称</Label>
+                <Label htmlFor='tree-dialog-name'>{t('name')}</Label>
                 <Input
                   id='tree-dialog-name'
                   value={treeDialog.name}
@@ -2762,7 +2841,7 @@ export function DataSyncStudio() {
                       void handleTreeDialogSubmit();
                     }
                   }}
-                  placeholder='仅支持字母、数字、点、下划线和短横线'
+                  placeholder={t('workspaceNamePlaceholder')}
                 />
               </div>
             )}
@@ -2779,10 +2858,10 @@ export function DataSyncStudio() {
                   })
                 }
               >
-                取消
+                {t('cancel')}
               </Button>
               <Button onClick={() => void handleTreeDialogSubmit()}>
-                确认
+                {t('confirm')}
               </Button>
             </div>
           </div>
@@ -2801,7 +2880,7 @@ export function DataSyncStudio() {
                 className='flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent'
                 onClick={() => openTreeDialog('create-folder', treeMenu.node)}
               >
-                新建目录
+                {t('newFolder')}
               </button>
               {treeMenu.kind === 'folder' ? (
                 <button
@@ -2809,7 +2888,7 @@ export function DataSyncStudio() {
                   className='flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent'
                   onClick={() => openTreeDialog('create-file', treeMenu.node)}
                 >
-                  新建文件
+                  {t('newFile')}
                 </button>
               ) : null}
             </>
@@ -2826,7 +2905,7 @@ export function DataSyncStudio() {
                 )
               }
             >
-              重命名
+              {t('rename')}
             </button>
           ) : null}
           {treeMenu.kind !== 'root' ? (
@@ -2835,7 +2914,7 @@ export function DataSyncStudio() {
               className='flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent'
               onClick={() => openTreeDialog('move', treeMenu.node)}
             >
-              移动到
+              {t('moveTo')}
             </button>
           ) : null}
           {treeMenu.kind !== 'root' ? (
@@ -2845,7 +2924,7 @@ export function DataSyncStudio() {
               onClick={() => openTreeDialog('delete', treeMenu.node)}
             >
               <Trash2 className='mr-2 size-4' />
-              删除
+              {t('delete')}
             </button>
           ) : null}
           <button
@@ -2857,7 +2936,7 @@ export function DataSyncStudio() {
             }}
           >
             <RefreshCw className='mr-2 size-4' />
-            刷新
+            {t('refresh')}
           </button>
         </div>
       ) : null}
@@ -3050,14 +3129,15 @@ function SettingsSidebarPanel({
   onAddCustomVariableRow: () => void;
   onDeleteCustomVariableRow: (rowId: string) => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   return (
     <div className='mx-auto min-w-0 max-w-[236px] space-y-4'>
       <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
         <div className='mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground'>
-          设置
+          {t('settings')}
         </div>
         <div className='space-y-2'>
-          <Label className='text-xs'>执行模式</Label>
+          <Label className='text-xs'>{t('executionMode')}</Label>
           <Select
             value={executionMode}
             onValueChange={(value) =>
@@ -3068,8 +3148,8 @@ function SettingsSidebarPanel({
               <SelectValue />
             </SelectTrigger>
             <SelectContent className='w-[var(--radix-select-trigger-width)] min-w-0'>
-              <SelectItem value='cluster'>Cluster</SelectItem>
-              <SelectItem value='local'>Local</SelectItem>
+              <SelectItem value='cluster'>{t('clusterMode')}</SelectItem>
+              <SelectItem value='local'>{t('localMode')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -3077,16 +3157,16 @@ function SettingsSidebarPanel({
 
       {executionMode === 'cluster' ? (
         <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
-          <Label className='mb-2 block text-xs'>Zeta 集群</Label>
+          <Label className='mb-2 block text-xs'>{t('zetaCluster')}</Label>
           <Select
             value={clusterId || '__empty__'}
             onValueChange={onClusterChange}
           >
             <SelectTrigger className='w-full'>
-              <SelectValue placeholder='请选择集群' />
+              <SelectValue placeholder={t('selectCluster')} />
             </SelectTrigger>
             <SelectContent className='w-[var(--radix-select-trigger-width)] min-w-0'>
-              <SelectItem value='__empty__'>未选择</SelectItem>
+              <SelectItem value='__empty__'>{t('unselected')}</SelectItem>
               {clusters.map((cluster) => (
                 <SelectItem key={cluster.id} value={String(cluster.id)}>
                   {cluster.name}
@@ -3099,7 +3179,7 @@ function SettingsSidebarPanel({
 
       <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
         <div className='mb-2 flex items-center justify-between gap-2'>
-          <Label className='block text-xs'>自定义变量</Label>
+          <Label className='block text-xs'>{t('customVariables')}</Label>
           <Button
             type='button'
             size='sm'
@@ -3108,7 +3188,7 @@ function SettingsSidebarPanel({
             onClick={onAddCustomVariableRow}
           >
             <Plus className='mr-1 size-3.5' />
-            新增
+            {t('add')}
           </Button>
         </div>
         <div className='space-y-2'>
@@ -3122,25 +3202,29 @@ function SettingsSidebarPanel({
                 {isEditing ? (
                   <div className='space-y-3'>
                     <div className='space-y-1.5'>
-                      <Label className='text-[11px] text-muted-foreground'>key</Label>
+                      <Label className='text-[11px] text-muted-foreground'>
+                        {t('key')}
+                      </Label>
                       <Input
                         value={customVariableDraft.key}
                         onChange={(event) =>
                           onCustomVariableDraftChange('key', event.target.value)
                         }
                         className='h-8 text-xs'
-                        placeholder='key'
+                        placeholder={t('key')}
                       />
                     </div>
                     <div className='space-y-1.5'>
-                      <Label className='text-[11px] text-muted-foreground'>value</Label>
+                      <Label className='text-[11px] text-muted-foreground'>
+                        {t('value')}
+                      </Label>
                       <Input
                         value={customVariableDraft.value}
                         onChange={(event) =>
                           onCustomVariableDraftChange('value', event.target.value)
                         }
                         className='h-8 text-xs'
-                        placeholder='value'
+                        placeholder={t('value')}
                       />
                     </div>
                     <div className='grid grid-cols-2 gap-2'>
@@ -3151,7 +3235,7 @@ function SettingsSidebarPanel({
                         className='h-8 text-xs'
                         onClick={onCancelEditCustomVariableRow}
                       >
-                        取消
+                        {t('cancel')}
                       </Button>
                       <Button
                         type='button'
@@ -3159,7 +3243,7 @@ function SettingsSidebarPanel({
                         className='h-8 text-xs'
                         onClick={() => onSaveCustomVariableRow(row.id)}
                       >
-                        保存
+                        {t('save')}
                       </Button>
                     </div>
                   </div>
@@ -3168,7 +3252,7 @@ function SettingsSidebarPanel({
                     <div className='min-w-0 flex-1 space-y-2'>
                       <div className='flex min-w-0 items-center gap-2'>
                         <Badge variant='outline' className='shrink-0'>
-                          {row.key || '未命名'}
+                          {row.key || t('unnamed')}
                         </Badge>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3195,7 +3279,7 @@ function SettingsSidebarPanel({
                             <Pencil className='size-4' />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>编辑</TooltipContent>
+                        <TooltipContent>{t('edit')}</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -3209,7 +3293,7 @@ function SettingsSidebarPanel({
                             <Trash2 className='size-4' />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>删除</TooltipContent>
+                        <TooltipContent>{t('delete')}</TooltipContent>
                       </Tooltip>
                     </div>
                   </div>
@@ -3221,7 +3305,7 @@ function SettingsSidebarPanel({
       </div>
 
       <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
-        <Label className='mb-2 block text-xs'>脚本识别变量</Label>
+        <Label className='mb-2 block text-xs'>{t('detectedVariables')}</Label>
         <div className='flex flex-wrap gap-2'>
           {detectedVariables.length > 0 ? (
             detectedVariables.map((variable) => (
@@ -3231,7 +3315,7 @@ function SettingsSidebarPanel({
             ))
           ) : (
             <span className='text-xs text-muted-foreground'>
-              当前脚本未识别到变量占位符。
+              {t('noDetectedVariables')}
             </span>
           )}
         </div>
@@ -3268,6 +3352,7 @@ function GlobalVariablesSidebarPanel({
   onDelete: (id: number) => void;
   onCopy: (value: string) => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   const [draft, setDraft] = useState<{
     key: string;
     value: string;
@@ -3296,10 +3381,10 @@ function GlobalVariablesSidebarPanel({
         <div className='mb-3 flex min-w-0 flex-col gap-2'>
           <div className='min-w-0 space-y-1'>
             <div className='text-[11px] uppercase tracking-wide text-muted-foreground'>
-              全局变量
+              {t('globalVariables')}
             </div>
             <div className='text-xs text-muted-foreground'>
-              已声明的 {'{{var}}'} 会在运行前自动替换。
+              {t('globalVariablesDesc')}
             </div>
           </div>
           <Button
@@ -3309,7 +3394,7 @@ function GlobalVariablesSidebarPanel({
             onClick={() => onStartEdit(null)}
           >
             <Plus className='mr-1 size-3.5' />
-            新建
+            {t('newCreate')}
           </Button>
         </div>
         <div className='min-w-0 grid gap-2'>
@@ -3320,7 +3405,7 @@ function GlobalVariablesSidebarPanel({
                 setDraft((current) => ({...current, key: event.target.value}))
               }
               className='h-8 min-w-0 text-xs'
-              placeholder='key'
+              placeholder={t('key')}
             />
             <Input
               value={draft.value}
@@ -3328,7 +3413,7 @@ function GlobalVariablesSidebarPanel({
                 setDraft((current) => ({...current, value: event.target.value}))
               }
               className='h-8 min-w-0 text-xs'
-              placeholder='value'
+              placeholder={t('value')}
             />
           </div>
           <Input
@@ -3340,7 +3425,7 @@ function GlobalVariablesSidebarPanel({
               }))
             }
             className='h-8 text-xs'
-            placeholder='描述（可选）'
+            placeholder={t('optionalDescription')}
           />
           <div className='grid min-w-0 grid-cols-1 gap-2'>
             <Button
@@ -3349,7 +3434,7 @@ function GlobalVariablesSidebarPanel({
               className='h-8 min-w-0 text-xs'
               onClick={onCancelEdit}
             >
-              取消
+              {t('cancel')}
             </Button>
             <Button
               size='sm'
@@ -3363,7 +3448,7 @@ function GlobalVariablesSidebarPanel({
                 )
               }
             >
-              保存
+              {t('save')}
             </Button>
           </div>
         </div>
@@ -3371,7 +3456,7 @@ function GlobalVariablesSidebarPanel({
 
       <div className='space-y-2 pb-2'>
         {variables.length === 0 ? (
-          <div className='text-sm text-muted-foreground'>暂无全局变量。</div>
+          <div className='text-sm text-muted-foreground'>{t('noGlobalVariables')}</div>
         ) : (
           variables.map((item) => (
             <div
@@ -3397,7 +3482,7 @@ function GlobalVariablesSidebarPanel({
                     </Tooltip>
                   </div>
                   <div className='text-xs text-muted-foreground'>
-                    {item.description || '无描述'}
+                    {item.description || t('noDescription')}
                   </div>
                 </div>
                 <div className='flex items-center gap-1'>
@@ -3412,7 +3497,7 @@ function GlobalVariablesSidebarPanel({
                         <Copy className='size-4' />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>复制值</TooltipContent>
+                    <TooltipContent>{t('copyValue')}</TooltipContent>
                   </Tooltip>
                   <DropdownMenu>
                     <Tooltip>
@@ -3427,19 +3512,19 @@ function GlobalVariablesSidebarPanel({
                           </Button>
                         </DropdownMenuTrigger>
                       </TooltipTrigger>
-                      <TooltipContent>更多操作</TooltipContent>
+                      <TooltipContent>{t('moreActions')}</TooltipContent>
                     </Tooltip>
                     <DropdownMenuContent align='end'>
                       <DropdownMenuItem onClick={() => onStartEdit(item.id)}>
                         <Pencil className='mr-2 size-4' />
-                        编辑
+                        {t('edit')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className='text-destructive focus:text-destructive'
                         onClick={() => onDelete(item.id)}
                       >
                         <Trash2 className='mr-2 size-4' />
-                        删除
+                        {t('delete')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -3484,10 +3569,11 @@ function VersionSidebarPanel({
   onRollback: (versionId: number) => void;
   onDelete: (versionId: number) => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   if (!taskId) {
     return (
       <div className='text-sm text-muted-foreground'>
-        请选择文件后查看版本历史。
+        {t('selectFileToViewVersions')}
       </div>
     );
   }
@@ -3497,14 +3583,14 @@ function VersionSidebarPanel({
         <div className='flex items-center justify-between gap-2'>
           <div>
             <div className='text-[11px] uppercase tracking-wide text-muted-foreground'>
-              版本管理
+              {t('versionManagement')}
             </div>
             <div className='mt-1 text-lg font-semibold'>v{currentVersion}</div>
           </div>
-          <Badge variant='outline'>{versions.length} 条</Badge>
+          <Badge variant='outline'>{t('totalItems', {count: versions.length})}</Badge>
         </div>
         <p className='mt-2 text-xs leading-5 text-muted-foreground'>
-          每次点击保存都会生成一个新版本；预览、对比会使用弹窗展开，回滚与删除直接作用于该版本记录。
+          {t('versionManagementDesc')}
         </p>
       </div>
       <div className='space-y-2'>
@@ -3536,7 +3622,7 @@ function VersionSidebarPanel({
                   className='h-8 text-xs'
                   onClick={() => onPreview(version)}
                 >
-                  预览
+                  {t('preview')}
                 </Button>
                 <Button
                   size='sm'
@@ -3544,7 +3630,7 @@ function VersionSidebarPanel({
                   className='h-8 text-xs'
                   onClick={() => onCompare(version)}
                 >
-                  对比
+                  {t('compare')}
                 </Button>
                 <Button
                   size='sm'
@@ -3552,7 +3638,7 @@ function VersionSidebarPanel({
                   className='h-8 text-xs'
                   onClick={() => onRollback(version.id)}
                 >
-                  回滚
+                  {t('rollback')}
                 </Button>
                 <Button
                   size='sm'
@@ -3560,13 +3646,13 @@ function VersionSidebarPanel({
                   className='h-8 text-xs'
                   onClick={() => onDelete(version.id)}
                 >
-                  删除
+                  {t('delete')}
                 </Button>
               </div>
             </div>
           ))
         ) : (
-          <div className='text-sm text-muted-foreground'>暂无版本历史。</div>
+          <div className='text-sm text-muted-foreground'>{t('noVersionHistory')}</div>
         )}
       </div>
       <SimplePagination
@@ -3590,6 +3676,7 @@ function SimplePagination({
   pageSize: number;
   onPageChange: (page: number) => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   const totalPages = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
   if (total <= pageSize) {
     return null;
@@ -3597,7 +3684,7 @@ function SimplePagination({
   return (
     <div className='flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground'>
       <span>
-        第 {page} / {totalPages} 页，共 {total} 条
+        {t('paginationSummary', {page, totalPages, total})}
       </span>
       <div className='flex items-center gap-2'>
         <Button
@@ -3607,7 +3694,7 @@ function SimplePagination({
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
         >
-          上一页
+          {t('prevPage')}
         </Button>
         <Button
           size='sm'
@@ -3616,7 +3703,7 @@ function SimplePagination({
           disabled={page >= totalPages}
           onClick={() => onPageChange(page + 1)}
         >
-          下一页
+          {t('nextPage')}
         </Button>
       </div>
     </div>
@@ -3638,8 +3725,9 @@ function ConsolePanel({
   onFilterChange: (mode: LogFilterMode) => void;
   onExpand: () => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>暂无日志输出。</div>;
+    return <div className='text-sm text-muted-foreground'>{t('noLogs')}</div>;
   }
   const renderedLines = buildDisplayLogLines(logsResult?.logs || '', 800);
   return (
@@ -3668,7 +3756,7 @@ function ConsolePanel({
         </span>
         <span className='text-muted-foreground'>
           {loading
-            ? '加载中...'
+            ? t('loading')
             : logsResult?.updated_at
               ? new Date(logsResult.updated_at).toLocaleTimeString()
               : '-'}
@@ -3678,13 +3766,13 @@ function ConsolePanel({
         <div className='sticky top-0 z-10 shrink-0 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85'>
           <div className='grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-xs text-muted-foreground'>
             <div className='flex min-w-0 items-center gap-2 overflow-hidden'>
-              <span className='shrink-0'>实时日志</span>
+              <span className='shrink-0'>{t('liveLogs')}</span>
               {job.error_message ? (
                 <Badge
                   className='rounded-sm border-red-500/30 bg-red-500/10 text-[10px] text-red-600 dark:text-red-400'
                   variant='outline'
                 >
-                  存在错误
+                  {t('hasErrors')}
                 </Badge>
               ) : null}
             </div>
@@ -3702,7 +3790,7 @@ function ConsolePanel({
                     )}
                     onClick={() => onFilterChange(mode)}
                   >
-                    {mode === 'all' ? '全部' : mode.toUpperCase()}
+                    {mode === 'all' ? t('all') : mode.toUpperCase()}
                   </button>
                 ))}
               </div>
@@ -3713,21 +3801,25 @@ function ConsolePanel({
                 onClick={onExpand}
               >
                 <Maximize2 className='mr-1 size-3.5' />
-                展开
+                {t('expand')}
               </Button>
             </div>
           </div>
           <div className='grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground'>
             <div className='flex min-w-0 items-center gap-3 overflow-hidden'>
               <span className='truncate'>
-                Platform: {job.platform_job_id || '-'}
+                {t('jobId')}: {job.platform_job_id || job.engine_job_id || '-'}
               </span>
-              <span className='truncate'>
-                Engine: {job.engine_job_id || '-'}
-              </span>
+              {job.engine_job_id &&
+              job.platform_job_id &&
+              job.engine_job_id !== job.platform_job_id ? (
+                <span className='truncate'>
+                  {t('engineJobId')}: {job.engine_job_id}
+                </span>
+              ) : null}
             </div>
             <span className='justify-self-end whitespace-nowrap'>
-              主视图聚焦最近日志，展开后可查看完整结果
+              {t('logFocusHint')}
             </span>
           </div>
         </div>
@@ -3745,7 +3837,7 @@ function ConsolePanel({
               </div>
             ))
           ) : (
-            <div className='text-muted-foreground'>当前暂无日志输出。</div>
+            <div className='text-muted-foreground'>{t('noLogs')}</div>
           )}
         </div>
       </div>
@@ -3760,6 +3852,7 @@ function JobRunsPanel({
   onRecover,
   onCancel,
   onViewMetrics,
+  disableRecover,
 }: {
   jobs: SyncJobInstance[];
   selectedJobId: number | null;
@@ -3767,10 +3860,12 @@ function JobRunsPanel({
   onRecover: (jobId: number) => void;
   onCancel: (jobId: number) => void;
   onViewMetrics: (job: SyncJobInstance) => void;
+  disableRecover: boolean;
 }) {
+  const t = useTranslations('workbenchStudio');
   if (jobs.length === 0) {
     return (
-      <div className='text-sm text-muted-foreground'>暂无任务运行记录。</div>
+      <div className='text-sm text-muted-foreground'>{t('noJobRuns')}</div>
     );
   }
   return (
@@ -3778,11 +3873,11 @@ function JobRunsPanel({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>任务</TableHead>
-            <TableHead>状态</TableHead>
-            <TableHead>通道</TableHead>
-            <TableHead>指标</TableHead>
-            <TableHead className='text-right'>操作</TableHead>
+            <TableHead>{t('task')}</TableHead>
+            <TableHead>{t('status')}</TableHead>
+            <TableHead>{t('channel')}</TableHead>
+            <TableHead>{t('metrics')}</TableHead>
+            <TableHead className='text-right'>{t('actions')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -3822,10 +3917,10 @@ function JobRunsPanel({
                 </TableCell>
                 <TableCell>
                   <div className='space-y-0.5 text-xs'>
-                    <div>读 {formatMetricValue(summary.readCount)}</div>
-                    <div>写 {formatMetricValue(summary.writeCount)}</div>
+                    <div>{t('read')} {formatMetricValue(summary.readCount)}</div>
+                    <div>{t('write')} {formatMetricValue(summary.writeCount)}</div>
                     <div>
-                      均速 {formatMetricValue(summary.averageSpeed, 1)}/s
+                      {t('averageSpeed')} {formatMetricValue(summary.averageSpeed, 1)}/s
                     </div>
                   </div>
                 </TableCell>
@@ -3848,14 +3943,17 @@ function JobRunsPanel({
                         variant='outline'
                         className='h-8 text-xs'
                         disabled={
-                          submitSpecExecutionMode(job.submit_spec) === 'local'
+                          disableRecover ||
+                          submitSpecExecutionMode(job.submit_spec) === 'local' ||
+                          job.status === 'pending' ||
+                          job.status === 'running'
                         }
                         onClick={(event) => {
                           event.stopPropagation();
                           onRecover(job.id);
                         }}
                       >
-                        恢复
+                        {t('recover')}
                       </Button>
                     ) : null}
                     {job.status === 'pending' || job.status === 'running' ? (
@@ -3868,7 +3966,7 @@ function JobRunsPanel({
                           onCancel(job.id);
                         }}
                       >
-                        取消
+                        {t('cancel')}
                       </Button>
                     ) : null}
                   </div>
@@ -3897,8 +3995,9 @@ function PreviewWorkspacePanel({
   onSelectDataset: (name: string) => void;
   onChangePage: (page: number) => void;
 }) {
+  const t = useTranslations('workbenchStudio');
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>暂无预览任务。</div>;
+    return <div className='text-sm text-muted-foreground'>{t('noPreviewJobs')}</div>;
   }
   const activeDataset =
     datasets.find((dataset) => dataset.name === selectedDatasetName) ||
@@ -3917,7 +4016,7 @@ function PreviewWorkspacePanel({
   return (
     <div className='grid h-full min-h-0 gap-3 lg:grid-cols-[220px_minmax(0,1fr)]'>
       <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
-        <div className='mb-3 text-sm font-medium'>Catalog</div>
+        <div className='mb-3 text-sm font-medium'>{t('catalog')}</div>
         <div className='space-y-2'>
           {datasets.length > 0 ? (
             datasets.map((dataset) => (
@@ -3938,12 +4037,12 @@ function PreviewWorkspacePanel({
             ))
           ) : (
             <div className='rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm text-muted-foreground'>
-              暂无数据集
+              {t('noDatasets')}
             </div>
           )}
           <div className='rounded-md border border-border/50 bg-muted/20 p-3 text-xs text-muted-foreground'>
-            <div>Platform JobID: {job.platform_job_id || '-'}</div>
-            <div className='mt-2'>Columns: {columns.length}</div>
+            <div>{t('jobId')}: {job.platform_job_id || '-'}</div>
+            <div className='mt-2'>{t('columns')}: {columns.length}</div>
             <div className='mt-2 break-all whitespace-pre-wrap'>
               {JSON.stringify(activeDataset?.catalog || {}, null, 2)}
             </div>
@@ -3952,7 +4051,7 @@ function PreviewWorkspacePanel({
       </div>
       <div className='flex min-h-0 flex-col rounded-lg border border-border/50 bg-background/70'>
         <div className='flex items-center justify-between border-b border-border/50 px-3 py-2 text-sm font-medium'>
-          <span>数据表格</span>
+          <span>{t('dataTable')}</span>
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
             <Button
               size='sm'
@@ -3961,7 +4060,7 @@ function PreviewWorkspacePanel({
               onClick={() => onChangePage(Math.max(currentPage - 1, 1))}
               disabled={currentPage <= 1}
             >
-              上一页
+              {t('prevPage')}
             </Button>
             <span>
               {currentPage} / {totalPages}
@@ -3975,7 +4074,7 @@ function PreviewWorkspacePanel({
               }
               disabled={currentPage >= totalPages}
             >
-              下一页
+              {t('nextPage')}
             </Button>
           </div>
         </div>
@@ -4006,7 +4105,7 @@ function PreviewWorkspacePanel({
                       colSpan={columns.length}
                       className='text-center text-muted-foreground'
                     >
-                      当前没有回流数据，先展示表头结构。
+                      {t('noPreviewDataFallback')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -4024,8 +4123,9 @@ function PreviewWorkspacePanel({
 }
 
 function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
+  const t = useTranslations('workbenchStudio');
   if (!result) {
-    return <div className='text-sm text-muted-foreground'>暂无校验结果。</div>;
+    return <div className='text-sm text-muted-foreground'>{t('noValidationResults')}</div>;
   }
   const checks = result.checks || [];
   return (
@@ -4033,7 +4133,7 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
       <div className='space-y-4'>
         <div className='rounded-lg border border-border/60 bg-background/80 p-4'>
           <div className='flex items-center justify-between gap-3'>
-            <div className='text-sm font-medium'>结论</div>
+            <div className='text-sm font-medium'>{t('conclusion')}</div>
             <Badge
               variant='outline'
               className={cn(
@@ -4043,7 +4143,7 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
                   : 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
               )}
             >
-              {result.valid ? '通过' : '未通过'}
+              {result.valid ? t('passed') : t('notPassed')}
             </Badge>
           </div>
           <div className='mt-2 text-sm text-muted-foreground'>
@@ -4053,7 +4153,7 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
 
         <div className='grid gap-4 lg:grid-cols-2'>
           <div className='rounded-lg border border-border/60 bg-background/80 p-4'>
-            <div className='mb-3 text-sm font-medium'>错误</div>
+            <div className='mb-3 text-sm font-medium'>{t('errors')}</div>
             {result.errors.length > 0 ? (
               <div className='space-y-2'>
                 {result.errors.map((item, index) => (
@@ -4066,11 +4166,11 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
                 ))}
               </div>
             ) : (
-              <div className='text-sm text-muted-foreground'>暂无错误。</div>
+              <div className='text-sm text-muted-foreground'>{t('noErrors')}</div>
             )}
           </div>
           <div className='rounded-lg border border-border/60 bg-background/80 p-4'>
-            <div className='mb-3 text-sm font-medium'>警告</div>
+            <div className='mb-3 text-sm font-medium'>{t('warnings')}</div>
             {result.warnings.length > 0 ? (
               <div className='space-y-2'>
                 {result.warnings.map((item, index) => (
@@ -4083,14 +4183,14 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
                 ))}
               </div>
             ) : (
-              <div className='text-sm text-muted-foreground'>暂无警告。</div>
+              <div className='text-sm text-muted-foreground'>{t('noWarnings')}</div>
             )}
           </div>
         </div>
       </div>
 
       <div className='rounded-lg border border-border/60 bg-background/80 p-4'>
-        <div className='mb-3 text-sm font-medium'>连接检查</div>
+        <div className='mb-3 text-sm font-medium'>{t('connectionChecks')}</div>
         {checks.length > 0 ? (
           <div className='space-y-3'>
             {checks.map((check, index) => (
@@ -4134,7 +4234,7 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
           </div>
         ) : (
           <div className='text-sm text-muted-foreground'>
-            当前没有可展示的连接检查结果。
+            {t('noConnectionChecks')}
           </div>
         )}
       </div>
@@ -4143,14 +4243,15 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
 }
 
 function MetricsDialogContent({job}: {job: SyncJobInstance | null}) {
-  const metricGroups = buildMetricGroups(job?.result_preview?.metrics);
+  const t = useTranslations('workbenchStudio');
+  const metricGroups = buildMetricGroups(job?.result_preview?.metrics, t);
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>暂无指标数据。</div>;
+    return <div className='text-sm text-muted-foreground'>{t('noMetrics')}</div>;
   }
   if (metricGroups.length === 0) {
     return (
       <div className='text-sm text-muted-foreground'>
-        当前任务暂无指标输出。
+        {t('noMetricsOutput')}
       </div>
     );
   }
@@ -4167,8 +4268,8 @@ function MetricsDialogContent({job}: {job: SyncJobInstance | null}) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>指标</TableHead>
-                <TableHead>值</TableHead>
+                <TableHead>{t('metric')}</TableHead>
+                <TableHead>{t('value')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

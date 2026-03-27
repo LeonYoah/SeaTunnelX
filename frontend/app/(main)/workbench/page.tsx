@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-import {redirect} from 'next/navigation';
+import {DataSyncStudio} from '@/components/common/sync';
 
-export default function SyncStudioPage() {
-  redirect('/workbench');
+export default function WorkbenchPage() {
+  return <DataSyncStudio />;
 }
