@@ -41,6 +41,7 @@ import (
 	monitoringapp "github.com/seatunnel/seatunnelX/internal/apps/monitoring"
 	"github.com/seatunnel/seatunnelX/internal/apps/plugin"
 	"github.com/seatunnel/seatunnelX/internal/apps/stupgrade"
+	syncapp "github.com/seatunnel/seatunnelX/internal/apps/sync"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/db"
 	"gorm.io/gorm"
@@ -102,6 +103,10 @@ func Migrate() {
 		&stupgrade.UpgradeTaskStep{},            // SeaTunnel 升级步骤表 / SeaTunnel upgrade step table
 		&stupgrade.UpgradeNodeExecution{},       // SeaTunnel 升级节点执行表 / SeaTunnel upgrade node execution table
 		&stupgrade.UpgradeStepLog{},             // SeaTunnel 升级日志表 / SeaTunnel upgrade log table
+		&syncapp.Task{},                         // 数据同步任务表 / Sync task table
+		&syncapp.TaskVersion{},                  // 数据同步任务版本表 / Sync task version table
+		&syncapp.JobInstance{},                  // 数据同步作业实例表 / Sync job instance table
+		&syncapp.GlobalVariable{},               // 数据同步全局变量表 / Sync global variable table
 	); err != nil {
 		log.Fatalf("[Database] auto migrate failed: %v\n", err)
 	}

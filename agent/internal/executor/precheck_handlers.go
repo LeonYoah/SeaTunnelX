@@ -90,6 +90,21 @@ const (
 	// PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL inspects IMAP WAL files through seatunnelx-java-proxy.
 	PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL PrecheckSubCommand = "seatunnelx_java_proxy_inspect_imap_wal"
 
+	// PrecheckSubCommandSyncLocalRun executes one local sync job through seatunnel.sh.
+	PrecheckSubCommandSyncLocalRun PrecheckSubCommand = "sync_local_run"
+
+	// PrecheckSubCommandSyncLocalStatus inspects one local sync job status.
+	PrecheckSubCommandSyncLocalStatus PrecheckSubCommand = "sync_local_status"
+
+	// PrecheckSubCommandSyncLocalStop stops one local sync job.
+	PrecheckSubCommandSyncLocalStop PrecheckSubCommand = "sync_local_stop"
+
+	// PrecheckSubCommandSyncLocalLogs reads one local sync job stdout/stderr buffer.
+	PrecheckSubCommandSyncLocalLogs PrecheckSubCommand = "sync_local_logs"
+
+	// PrecheckSubCommandSyncJobLogs reads one job log file through the agent.
+	PrecheckSubCommandSyncJobLogs PrecheckSubCommand = "sync_job_logs"
+
 	// PrecheckSubCommandFull runs all precheck items
 	// PrecheckSubCommandFull 运行所有预检查项
 	PrecheckSubCommandFull PrecheckSubCommand = "full"
@@ -151,6 +166,16 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 		result, err = handleSeatunnelXJavaProxyInspectCheckpoint(ctx, cmd.Parameters)
 	case PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL:
 		result, err = handleSeatunnelXJavaProxyInspectIMAPWAL(ctx, cmd.Parameters)
+	case PrecheckSubCommandSyncLocalRun:
+		result, err = handleSyncLocalRun(ctx, cmd.Parameters)
+	case PrecheckSubCommandSyncLocalStatus:
+		result, err = handleSyncLocalStatus(ctx, cmd.Parameters)
+	case PrecheckSubCommandSyncLocalStop:
+		result, err = handleSyncLocalStop(ctx, cmd.Parameters)
+	case PrecheckSubCommandSyncLocalLogs:
+		result, err = handleSyncLocalLogs(ctx, cmd.Parameters)
+	case PrecheckSubCommandSyncJobLogs:
+		result, err = handleSyncJobLogs(ctx, cmd.Parameters)
 	case PrecheckSubCommandFull:
 		result, err = handleFullPrecheck(ctx, cmd.Parameters, reporter)
 	default:

@@ -272,6 +272,7 @@
   },
   "dock": {
     "dashboard": "控制台",
+    "workbench": "工作台",
     "realTimeData": "实时数据",
     "myProjects": "我的项目",
     "myReceived": "我的领取",
@@ -968,7 +969,12 @@
     "syncAllSuccess": "已同步到 {count} 个节点",
     "syncAllSuccessWithPushErrors": "已同步到 {count} 个节点，但以下节点推送失败: {nodes}",
     "syncAllNoChanges": "所有节点配置已与模板一致",
-    "syncAllFailed": "同步到所有节点失败"
+    "syncAllFailed": "同步到所有节点失败",
+    "portChangeConfirmTitle": "确认同步 REST API 端口变更？",
+    "portChangeConfirmDesc": "检测到 seatunnel.yaml 中的 seatunnel.engine.http.port 已变更。继续保存后，平台会同步处理相关元数据。",
+    "portChangeConfirmSyncConfig": "会把新的 seatunnel.yaml 下发到目标节点。",
+    "portChangeConfirmSyncMetadata": "会同步更新数据库中的 cluster_nodes.api_port。",
+    "portChangeConfirmImpact": "后续平台 API 调用、Web UI 访问和任务提交通道都会使用新端口。"
   },
   "plugin": {
     "marketplace": "插件市场",
@@ -2743,7 +2749,7 @@
       "createConfirm": "创建策略",
       "categories": {
         "javaError": "Java 错误",
-        "prometheus": "Prometheus 指标",
+        "prometheus": "指标信号",
         "errorRate": "错误频率",
         "nodeUnhealthy": "节点异常",
         "alertFiring": "告警触发",

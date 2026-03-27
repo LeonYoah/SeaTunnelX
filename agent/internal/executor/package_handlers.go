@@ -107,7 +107,7 @@ func (m *PackageTransferManager) SetDirectories(tempDir, packageDir string) {
 type TransferPackageRequest struct {
 	Version   string `json:"version"`
 	FileName  string `json:"file_name"`
-	Chunk     []byte `json:"chunk"`      // Base64 encoded in JSON
+	Chunk     []byte `json:"chunk"` // Base64 encoded in JSON
 	Offset    int64  `json:"offset"`
 	TotalSize int64  `json:"total_size"`
 	IsLast    bool   `json:"is_last"`

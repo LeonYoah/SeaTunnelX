@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
 
 public class SeatunnelXJavaProxyApplication {
 
@@ -46,10 +47,17 @@ public class SeatunnelXJavaProxyApplication {
                                 String.valueOf(
                                         Math.max(4, Runtime.getRuntime().availableProcessors()))));
         SeatunnelXJavaProxyServer server = new SeatunnelXJavaProxyServer(port, workers);
+        CountDownLatch keepAlive = new CountDownLatch(1);
         Runtime.getRuntime()
                 .addShutdownHook(
-                        new Thread(() -> server.stop(0), "seatunnelx-java-proxy-shutdown"));
+                        new Thread(
+                                () -> {
+                                    server.stop(0);
+                                    keepAlive.countDown();
+                                },
+                                "seatunnelx-java-proxy-shutdown"));
         server.start();
         LOG.info("SeaTunnel seatunnelx-java-proxy started on port {}", port);
+        keepAlive.await();
     }
 }

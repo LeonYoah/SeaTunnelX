@@ -25,13 +25,24 @@ import java.util.Map;
 public class ConfigResourceService {
 
     private final JobConfigSupportService jobConfigSupportService;
+    private final WebUiDagPreviewService webUiDagPreviewService;
 
     public ConfigResourceService() {
-        this(new JobConfigSupportService());
+        this(new JobConfigSupportService(), null);
     }
 
     ConfigResourceService(JobConfigSupportService jobConfigSupportService) {
+        this(jobConfigSupportService, null);
+    }
+
+    ConfigResourceService(
+            JobConfigSupportService jobConfigSupportService,
+            WebUiDagPreviewService webUiDagPreviewService) {
         this.jobConfigSupportService = jobConfigSupportService;
+        this.webUiDagPreviewService =
+                webUiDagPreviewService == null
+                        ? new WebUiDagPreviewService(jobConfigSupportService)
+                        : webUiDagPreviewService;
     }
 
     public DagParseResult inspectDag(Map<String, Object> request) {
@@ -44,5 +55,9 @@ public class ConfigResourceService {
                 context.getSinks().size(),
                 context.getWarnings(),
                 context.getGraph());
+    }
+
+    public Object inspectWebUiDag(Map<String, Object> request) {
+        return webUiDagPreviewService.preview(request);
     }
 }

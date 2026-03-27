@@ -73,3 +73,61 @@ export interface ApiError {
 - 基于会话的认证忘记 `withCredentials: true`；客户端与请求拦截器中已配置。
 - 在调用处定义包含 `error_msg` 的响应类型；应把成功视为 `T`，错误视为抛出的 `Error`。
 - 直接信任后端数组字段永远不是 `null`；尤其是 Go 的 nil slice 可能在 JSON 中变成 `null`，会让 UI 在 `.map()` / `.filter()` / `.length` 处崩溃。对这类字段要在边界统一 normalize。
+
+## Scenario: Sync 工作台 Config DAG 兼容 WebUI `jobDag`
+
+### 1. Scope / Trigger
+- Trigger：Data Sync Studio 需要展示配置预览 DAG，但不希望长期维护一套与 SeaTunnel Web 完全分叉的 DAG 数据模型。
+
+### 2. Signatures
+- 前端 service：
+  - `POST /api/v1/sync/tasks/:id/dag`
+- config tool（由后端调用，不直接暴露给浏览器）：
+  - `POST /api/v1/config/webui-dag`
+
+### 3. Contracts
+- `/api/v1/sync/tasks/:id/dag` 返回仍保持 `data` 包裹，但 `data` 至少包含：
+  - `nodes`
+  - `edges`
+  - `webui_job`
+  - `warnings`
+  - `simple_graph`
+- `webui_job` 必须是 **WebUI-compatible pseudo job detail**，最少包含：
+  - `jobId`
+  - `jobName`
+  - `jobStatus`
+  - `jobDag.pipelineEdges`
+  - `jobDag.vertexInfoMap`
+  - `metrics`
+  - `pluginJarsUrls`
+- `metrics` 即使没有 runtime 指标也不能省；必须提供空壳对象，避免前端 DAG 详情区再做特殊分支。
+
+### 4. Validation & Error Matrix
+- `config tool` 支持 `/api/v1/config/webui-dag`：
+  - 返回 `webui_job`，前端用兼容 DAG 视图渲染。
+- `config tool` 不支持 `/api/v1/config/webui-dag` 或返回非 2xx：
+  - `/sync` DAG 预览直接报错，提示后端/agent/proxy 版本不满足要求。
+- 只有在用户显式查看调试数据时，才允许展示原始 JSON；它不是主链路 fallback。
+
+### 5. Good/Base/Bad Cases
+- Good：
+  - `webui_job.jobDag.vertexInfoMap` 与 `pipelineEdges` 完整，前端直接渲染兼容 DAG。
+- Base：
+  - 返回 `webui_job`，但 `metrics` 是空壳对象；前端仍可稳定渲染。
+- Bad：
+  - 后端只返回旧 `nodes/edges` 而没有 `webui_job`，前端被迫长期维护两套 DAG 语义。
+
+### 6. Tests Required
+- Backend：
+  - java-proxy `webui-dag` 映射测试：断言 `vertexInfoMap`、`pipelineEdges`、`metrics` 空壳存在。
+  - Go service 测试：当 `InspectWebUIDAG` 可用时，`/sync` DAG 结果必须带 `webui_job`。
+  - Go service 测试：当 `InspectWebUIDAG` 失败时，错误应直接向上返回，不再偷偷回退旧接口。
+- Frontend：
+  - TypeScript 类型检查，确保 `SyncDagResult.webui_job` 与 DAG 视图组件契约一致。
+
+### 7. Wrong vs Correct
+#### Wrong
+- 直接把 config DAG 当成一份自定义节点列表，前端单独维护新的展示模型。
+
+#### Correct
+- 后端统一适配成 WebUI-compatible `jobDag`，前端只消费该兼容结构；旧 config DAG 不再作为 DAG 主链路 fallback 契约。

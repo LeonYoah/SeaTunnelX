@@ -24,6 +24,7 @@ import org.apache.seatunnel.tools.proxy.service.CatalogProbeService;
 import org.apache.seatunnel.tools.proxy.service.CheckpointDeserializeService;
 import org.apache.seatunnel.tools.proxy.service.CheckpointProbeService;
 import org.apache.seatunnel.tools.proxy.service.ConfigResourceService;
+import org.apache.seatunnel.tools.proxy.service.ConfigValidationService;
 import org.apache.seatunnel.tools.proxy.service.IMapProbeService;
 import org.apache.seatunnel.tools.proxy.service.IMapWalInspectService;
 import org.apache.seatunnel.tools.proxy.service.PreviewConfigService;
@@ -58,6 +59,7 @@ public class SeatunnelXJavaProxyServer {
     private final HttpServer httpServer;
     private final ExecutorService executorService;
     private final ConfigResourceService configResourceService;
+    private final ConfigValidationService configValidationService;
     private final CatalogProbeService catalogProbeService;
     private final CheckpointProbeService checkpointProbeService;
     private final IMapProbeService iMapProbeService;
@@ -73,6 +75,7 @@ public class SeatunnelXJavaProxyServer {
                 HttpServer.create(new InetSocketAddress(port), 0),
                 Executors.newFixedThreadPool(workerThreads),
                 new ConfigResourceService(),
+                new ConfigValidationService(),
                 new CatalogProbeService(),
                 new CheckpointProbeService(),
                 new IMapProbeService(),
@@ -88,6 +91,7 @@ public class SeatunnelXJavaProxyServer {
             HttpServer httpServer,
             ExecutorService executorService,
             ConfigResourceService configResourceService,
+            ConfigValidationService configValidationService,
             CatalogProbeService catalogProbeService,
             CheckpointProbeService checkpointProbeService,
             IMapProbeService iMapProbeService,
@@ -100,6 +104,7 @@ public class SeatunnelXJavaProxyServer {
         this.httpServer = httpServer;
         this.executorService = executorService;
         this.configResourceService = configResourceService;
+        this.configValidationService = configValidationService;
         this.catalogProbeService = catalogProbeService;
         this.checkpointProbeService = checkpointProbeService;
         this.iMapProbeService = iMapProbeService;
@@ -127,11 +132,27 @@ public class SeatunnelXJavaProxyServer {
                 "/healthz",
                 exchange -> writeJson(exchange, 200, Collections.singletonMap("ok", true)));
         httpServer.createContext(
+                "/api/v1/config/validate",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return configValidationService.validate(request);
+                    }
+                });
+        httpServer.createContext(
                 "/api/v1/config/dag",
                 new JsonPostHandler() {
                     @Override
                     protected Object handleRequest(Map<String, Object> request) {
                         return configResourceService.inspectDag(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/config/webui-dag",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return configResourceService.inspectWebUiDag(request);
                     }
                 });
         httpServer.createContext(

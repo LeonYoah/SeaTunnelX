@@ -42,6 +42,8 @@ SeaTunnelX 构建/重启脚本
   --no-frontend    兼容旧参数，跳过前端
   --no-backend     跳过后端
   --frontend-dev   前端用 pnpm run dev 启动（仅重启前端时生效）
+  --restart-java-proxy
+                   构建/重启后，重启本机 seatunnelx-java-proxy
   --stop-frontend  仅停止前端 PM2 进程并退出
   -h, --help       显示本帮助
 
@@ -49,6 +51,7 @@ SeaTunnelX 构建/重启脚本
   ./scripts/restart.sh                               # 默认：构建并重启前后端
   ./scripts/restart.sh --restart-only --frontend-only # 仅重启前端
   ./scripts/restart.sh --build-only --backend-only    # 仅构建后端
+  ./scripts/restart.sh --backend-only --restart-java-proxy
   ./scripts/restart.sh --build-only                   # 仅构建前后端，不重启
 
 环境变量:
@@ -58,6 +61,11 @@ SeaTunnelX 构建/重启脚本
   APP_EXTERNAL_URL               写入 config.yaml 的 app.external_url，默认 http://127.0.0.1:8000
   FRONTEND_PORT                  前端端口，默认 80
   NEXT_PUBLIC_BACKEND_BASE_URL   前端访问后端的基础地址，默认 http://127.0.0.1:8000
+  LOCAL_SEATUNNEL_HOME           本机 SeaTunnel 安装目录，默认 /opt/seatunnel-2.3.13-new
+  LOCAL_JAVA_PROXY_PORT          本机 seatunnelx-java-proxy 端口，默认 18080
+  CONTROL_PLANE_BASE_URL         控制面地址，默认 http://127.0.0.1:8000
+  CONTROL_PLANE_USERNAME         登录用户名，默认 admin
+  CONTROL_PLANE_PASSWORD         登录密码，默认 admin123
 EOF
 }
 
@@ -70,7 +78,9 @@ FRONTEND_ONLY=false
 BACKEND_ONLY=false
 STOP_FRONTEND=false
 FRONTEND_DEV=false
-for arg in "$@"; do
+RESTART_JAVA_PROXY=false
+while [[ $# -gt 0 ]]; do
+  arg="$1"
   case "$arg" in
     -h|--help)
       print_help
@@ -85,6 +95,7 @@ for arg in "$@"; do
     --no-frontend) NO_FRONTEND=true ;;
     --no-backend) NO_BACKEND=true ;;
     --stop-frontend) STOP_FRONTEND=true ;;
+    --restart-java-proxy) RESTART_JAVA_PROXY=true ;;
     *)
       echo "未知参数: $arg"
       echo
@@ -92,6 +103,7 @@ for arg in "$@"; do
       exit 1
       ;;
   esac
+  shift
 done
 
 if $BUILD_ONLY && $RESTART_ONLY; then
@@ -140,6 +152,13 @@ APP_EXTERNAL_URL="${APP_EXTERNAL_URL:-http://127.0.0.1:8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-http://127.0.0.1:8000}"
 CAPABILITY_PROXY_DEFAULT_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
+AGENT_HOME="${AGENT_HOME:-/usr/local/lib/seatunnelx-agent}"
+AGENT_PROXY_LIB_DIR="${AGENT_PROXY_LIB_DIR:-$AGENT_HOME/lib}"
+LOCAL_SEATUNNEL_HOME="${LOCAL_SEATUNNEL_HOME:-/opt/seatunnel-2.3.13-new}"
+LOCAL_JAVA_PROXY_PORT="${LOCAL_JAVA_PROXY_PORT:-18080}"
+CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL:-http://127.0.0.1:8000}"
+CONTROL_PLANE_USERNAME="${CONTROL_PLANE_USERNAME:-admin}"
+CONTROL_PLANE_PASSWORD="${CONTROL_PLANE_PASSWORD:-admin123}"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 FRONTEND_STANDALONE_DIR="$FRONTEND_DIR/dist-standalone"
 FRONTEND_ENTRY=""
@@ -151,6 +170,85 @@ require_cmd() {
     echo "缺少命令: $cmd"
     exit 1
   fi
+}
+
+restart_local_java_proxy() {
+  local install_dir="$LOCAL_SEATUNNEL_HOME"
+  local port="$LOCAL_JAVA_PROXY_PORT"
+  local script_path=""
+  local jar_path="$AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
+  local state_dir="$install_dir/.seatunnelx/seatunnelx-java-proxy"
+  local log_path="$state_dir/service.log"
+  local pid_path="$state_dir/service.pid"
+  local port_path="$state_dir/service.port"
+  local old_pid=""
+
+  for candidate in \
+    "$AGENT_HOME/scripts/seatunnelx-java-proxy.sh" \
+    "$PROJECT_ROOT/scripts/seatunnelx-java-proxy.sh" \
+    "$PROJECT_ROOT/tools/seatunnelx-java-proxy/bin/seatunnelx-java-proxy.sh"
+  do
+    if [[ -f "$candidate" ]]; then
+      script_path="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$script_path" ]]; then
+    echo "      未找到本机 seatunnelx-java-proxy 启动脚本，跳过重启."
+    return 1
+  fi
+  if [[ ! -f "$jar_path" ]]; then
+    echo "      未找到本机 seatunnelx-java-proxy jar: $jar_path"
+    return 1
+  fi
+  if [[ ! -f "$install_dir/starter/seatunnel-starter.jar" ]]; then
+    echo "      未找到本机 SeaTunnel 安装目录: $install_dir"
+    return 1
+  fi
+
+  mkdir -p "$state_dir"
+  touch "$log_path"
+
+  old_pid="$(ss -lntp 2>/dev/null | awk -v port=":$port" '$4 ~ port"$" {print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1 || true)"
+  if [[ -n "$old_pid" ]]; then
+    echo "[*] 停止本机 seatunnelx-java-proxy (pid=$old_pid, port=$port) ..."
+    kill -TERM "$old_pid" 2>/dev/null || true
+    for _ in {1..20}; do
+      if ss -lntp 2>/dev/null | rg -q ":$port"; then
+        sleep 1
+      else
+        break
+      fi
+    done
+    if ss -lntp 2>/dev/null | rg -q ":$port"; then
+      kill -KILL "$old_pid" 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+
+  echo "[*] 启动本机 seatunnelx-java-proxy ..."
+  local pid
+  pid="$(
+    SEATUNNEL_HOME="$install_dir" \
+    SEATUNNEL_PROXY_JAR="$jar_path" \
+    SEATUNNELX_JAVA_PROXY_VERSION="$CAPABILITY_PROXY_DEFAULT_VERSION" \
+    nohup bash "$script_path" -Dseatunnelx.java.proxy.port="$port" >>"$log_path" 2>&1 < /dev/null & echo $!
+  )"
+  echo "$pid" >"$pid_path"
+  echo "$port" >"$port_path"
+
+  local health_url="http://127.0.0.1:${port}/healthz"
+  for _ in {1..30}; do
+    if curl -fsS -o /dev/null "$health_url" 2>/dev/null; then
+      echo "      本机 seatunnelx-java-proxy 已就绪: http://127.0.0.1:${port}"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "      本机 seatunnelx-java-proxy 启动后未通过健康检查，请检查 $log_path"
+  return 1
 }
 
 pm2_name_count() {
@@ -352,6 +450,9 @@ start_frontend_dev() {
 }
 
 require_cmd pm2
+if $RESTART_JAVA_PROXY; then
+  require_cmd curl
+fi
 if $RUN_BACKEND && $DO_BUILD; then
   require_cmd go
 fi
@@ -423,6 +524,10 @@ if $DO_BUILD && $RUN_BACKEND; then
       mkdir -p lib
       cp -f "$proxy_jar" "lib/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
       echo "      已同步 seatunnelx-java-proxy jar 到 lib/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar."
+      if [[ -d "$AGENT_PROXY_LIB_DIR" ]]; then
+        cp -f "$proxy_jar" "$AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
+        echo "      已同步 seatunnelx-java-proxy jar 到 $AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar."
+      fi
     else
       echo "      未找到 seatunnelx-java-proxy 薄 jar，跳过同步."
     fi
@@ -485,6 +590,10 @@ if $DO_RESTART; then
   pm2 status
 else
   echo "[*] 构建完成（未执行重启）."
+fi
+
+if $RESTART_JAVA_PROXY; then
+  restart_local_java_proxy
 fi
 
 echo "完成."

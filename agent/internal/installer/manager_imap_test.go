@@ -53,8 +53,8 @@ func TestConfigureIMAPStorageKeepsHazelcastTopLevelSections(t *testing.T) {
 
 	manager := NewInstallerManager()
 	params := &InstallParams{
-		InstallDir:      installDir,
-		DeploymentMode:  DeploymentModeHybrid,
+		InstallDir:     installDir,
+		DeploymentMode: DeploymentModeHybrid,
 		IMAP: &IMAPConfig{
 			StorageType:      IMAPStorageS3,
 			Namespace:        "/seatunnel/imap/",
@@ -153,6 +153,67 @@ func TestConfigureIMAPStorageNormalizesMalformedHazelcastMapLayout(t *testing.T)
 	mapStore := mustMap(t, mustMap(t, mapNode["engine*"])["map-store"])
 	if mapStore["enabled"] != false {
 		t.Fatalf("expected map-store enabled=false, got %#v", mapStore["enabled"])
+	}
+}
+
+func TestConfigureIMAPStorageSeparatedOnlyUpdatesMasterConfig(t *testing.T) {
+	installDir := t.TempDir()
+	configDir := filepath.Join(installDir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	masterOriginal := `hazelcast:
+  cluster-name: seatunnel
+`
+	workerOriginal := `hazelcast:
+  cluster-name: worker-only
+`
+	if err := os.WriteFile(filepath.Join(configDir, "hazelcast-master.yaml"), []byte(masterOriginal), 0o644); err != nil {
+		t.Fatalf("failed to write hazelcast-master.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "hazelcast-worker.yaml"), []byte(workerOriginal), 0o644); err != nil {
+		t.Fatalf("failed to write hazelcast-worker.yaml: %v", err)
+	}
+
+	manager := NewInstallerManager()
+	params := &InstallParams{
+		InstallDir:     installDir,
+		DeploymentMode: DeploymentModeSeparated,
+		IMAP: &IMAPConfig{
+			StorageType:      IMAPStorageS3,
+			Namespace:        "/seatunnel/imap/",
+			StorageEndpoint:  "http://127.0.0.1:19000",
+			StorageBucket:    "s3a://seatunnel-imap",
+			StorageAccessKey: "minioadmin",
+			StorageSecretKey: "minioadmin",
+		},
+	}
+
+	if err := manager.configureIMAPStorage(params); err != nil {
+		t.Fatalf("configureIMAPStorage returned error: %v", err)
+	}
+
+	masterBytes, err := os.ReadFile(filepath.Join(configDir, "hazelcast-master.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read output hazelcast-master.yaml: %v", err)
+	}
+	masterParsed := map[string]any{}
+	if err := yaml.Unmarshal(masterBytes, &masterParsed); err != nil {
+		t.Fatalf("failed to parse output master yaml: %v", err)
+	}
+	masterHazelcast := mustMap(t, masterParsed["hazelcast"])
+	masterMapStore := mustMap(t, mustMap(t, mustMap(t, masterHazelcast["map"])["engine*"])["map-store"])
+	if masterMapStore["enabled"] != true {
+		t.Fatalf("expected master map-store enabled=true, got %#v", masterMapStore["enabled"])
+	}
+
+	workerBytes, err := os.ReadFile(filepath.Join(configDir, "hazelcast-worker.yaml"))
+	if err != nil {
+		t.Fatalf("failed to read output hazelcast-worker.yaml: %v", err)
+	}
+	if string(workerBytes) != workerOriginal {
+		t.Fatalf("expected worker hazelcast config to remain unchanged, got %s", string(workerBytes))
 	}
 }
 

@@ -30,6 +30,7 @@ import {MonitoringService} from './monitoring/index';
 import * as DiscoveryService from './discovery/index';
 import {StUpgradeService} from './st-upgrade/index';
 import {DiagnosticsService} from './diagnostics/index';
+import {SyncService} from './sync/index';
 
 /**
  * 服务层架构说明：
@@ -171,6 +172,12 @@ const services = {
    * Diagnostics center service
    */
   diagnostics: DiagnosticsService,
+
+  /**
+   * 数据同步 Studio 服务
+   * Data sync studio service
+   */
+  sync: SyncService,
 
   /**
    * 集群发现服务

@@ -272,6 +272,7 @@
   },
   "dock": {
     "dashboard": "Dashboard",
+    "workbench": "Workbench",
     "realTimeData": "Real-time Data",
     "myProjects": "My Projects",
     "myReceived": "My Received",
@@ -968,7 +969,12 @@
     "syncAllSuccess": "Synced to {count} nodes",
     "syncAllSuccessWithPushErrors": "Synced to {count} nodes, but failed to push to: {nodes}",
     "syncAllNoChanges": "All node configs already match template",
-    "syncAllFailed": "Failed to sync to all nodes"
+    "syncAllFailed": "Failed to sync to all nodes",
+    "portChangeConfirmTitle": "Confirm REST API port change sync?",
+    "portChangeConfirmDesc": "SeaTunnel YAML now contains a different seatunnel.engine.http.port value. If you continue, the platform will sync the related metadata as well.",
+    "portChangeConfirmSyncConfig": "The updated seatunnel.yaml will be pushed to the target nodes.",
+    "portChangeConfirmSyncMetadata": "The database field cluster_nodes.api_port will be updated to the new port.",
+    "portChangeConfirmImpact": "Subsequent platform API calls, Web UI access, and job submission will all use the new port."
   },
   "plugin": {
     "marketplace": "Plugin Marketplace",
@@ -2743,7 +2749,7 @@
       "createConfirm": "Create Policy",
       "categories": {
         "javaError": "Java Errors",
-        "prometheus": "Prometheus Metrics",
+        "prometheus": "Metric Signals",
         "errorRate": "Error Rate",
         "nodeUnhealthy": "Node Health",
         "alertFiring": "Alert Trigger",

@@ -18,6 +18,7 @@
 package org.apache.seatunnel.tools.proxy.service;
 
 import org.apache.seatunnel.shade.com.typesafe.config.Config;
+import org.apache.seatunnel.shade.com.typesafe.config.ConfigException;
 import org.apache.seatunnel.shade.com.typesafe.config.ConfigFactory;
 import org.apache.seatunnel.shade.com.typesafe.config.ConfigParseOptions;
 import org.apache.seatunnel.shade.com.typesafe.config.ConfigResolveOptions;
@@ -25,21 +26,44 @@ import org.apache.seatunnel.shade.com.typesafe.config.ConfigSyntax;
 import org.apache.seatunnel.shade.com.typesafe.config.impl.Parseable;
 import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
 
+import org.apache.seatunnel.api.common.PluginIdentifier;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
+import org.apache.seatunnel.api.sink.SeaTunnelSink;
+import org.apache.seatunnel.api.source.SeaTunnelSource;
+import org.apache.seatunnel.api.source.SourceSplit;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.api.table.catalog.TablePath;
+import org.apache.seatunnel.api.table.factory.FactoryUtil;
+import org.apache.seatunnel.api.transform.SeaTunnelTransform;
 import org.apache.seatunnel.core.starter.utils.ConfigBuilder;
 import org.apache.seatunnel.engine.core.parse.ConfigParserUtil;
+import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelSinkPluginDiscovery;
+import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelSourcePluginDiscovery;
 import org.apache.seatunnel.tools.proxy.model.DatasetDag;
 import org.apache.seatunnel.tools.proxy.model.JobConfigContext;
 import org.apache.seatunnel.tools.proxy.model.NodeKind;
 import org.apache.seatunnel.tools.proxy.model.ProxyEdge;
 import org.apache.seatunnel.tools.proxy.model.ProxyNode;
 
+import scala.Tuple2;
+
+import java.io.IOException;
+import java.io.Serializable;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_INPUT;
 import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_NAME;
@@ -47,7 +71,6 @@ import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_OUT
 import static org.apache.seatunnel.api.table.factory.FactoryUtil.DEFAULT_ID;
 
 public class JobConfigSupportService {
-
     public JobConfigContext parseJobContext(Map<String, Object> request) {
         try {
             Config jobConfig = loadJobConfig(request);
@@ -59,9 +82,12 @@ public class JobConfigSupportService {
 
             boolean simpleGraph = isSimpleGraph(sources, transforms, sinks);
             List<String> warnings = new ArrayList<>();
-            DatasetDag graph = buildGraph(sources, transforms, sinks, simpleGraph, warnings);
+            DatasetDag graph =
+                    buildGraph(jobConfig, sources, transforms, sinks, simpleGraph, warnings);
             return new JobConfigContext(
                     jobConfig, sources, transforms, sinks, simpleGraph, warnings, graph);
+        } catch (ConfigException e) {
+            throw new ProxyException(400, "Config parse failed: " + e.getMessage(), e);
         } catch (ProxyException e) {
             throw e;
         } catch (Exception e) {
@@ -82,6 +108,7 @@ public class JobConfigSupportService {
     }
 
     private DatasetDag buildGraph(
+            Config jobConfig,
             List<Config> sources,
             List<Config> transforms,
             List<Config> sinks,
@@ -90,6 +117,8 @@ public class JobConfigSupportService {
         List<ProxyNode> nodes = new ArrayList<>();
         List<ProxyEdge> edges = new ArrayList<>();
         Map<String, String> producers = new LinkedHashMap<>();
+        Map<String, List<String>> displayPaths =
+                resolveOfficialDisplayPaths(jobConfig, sources, transforms, sinks, warnings);
 
         for (int i = 0; i < sources.size(); i++) {
             ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sources.get(i));
@@ -102,7 +131,9 @@ public class JobConfigSupportService {
                             readonlyConfig.get(PLUGIN_NAME),
                             i,
                             Collections.emptyList(),
-                            output));
+                            output,
+                            getNodeDisplayPaths(
+                                    displayPaths, nodeId, Collections.singletonList(output))));
             producers.put(output, nodeId);
         }
 
@@ -118,7 +149,9 @@ public class JobConfigSupportService {
                             readonlyConfig.get(PLUGIN_NAME),
                             i,
                             inputs,
-                            output));
+                            output,
+                            getNodeDisplayPaths(
+                                    displayPaths, nodeId, buildTransformFallback(output, inputs))));
             producers.put(output, nodeId);
         }
 
@@ -133,7 +166,8 @@ public class JobConfigSupportService {
                             readonlyConfig.get(PLUGIN_NAME),
                             i,
                             inputs,
-                            null));
+                            null,
+                            getNodeDisplayPaths(displayPaths, nodeId, inputs)));
         }
 
         if (simpleGraph) {
@@ -311,5 +345,248 @@ public class JobConfigSupportService {
         return sources.size() == 1
                 && sinks.size() == 1
                 && (transforms.isEmpty() || transforms.size() == 1);
+    }
+
+    private Map<String, List<String>> resolveOfficialDisplayPaths(
+            Config jobConfig,
+            List<Config> sources,
+            List<Config> transforms,
+            List<Config> sinks,
+            List<String> warnings) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        Map<String, List<CatalogTable>> datasetCatalogTables = new LinkedHashMap<>();
+        ClassLoader originalClassLoader = Thread.currentThread().getContextClassLoader();
+        URLClassLoader seatunnelHomeClassLoader = null;
+        ClassLoader classLoader = originalClassLoader;
+        try {
+            seatunnelHomeClassLoader = createSeatunnelHomeClassLoader(originalClassLoader);
+            if (seatunnelHomeClassLoader != null) {
+                classLoader = seatunnelHomeClassLoader;
+                Thread.currentThread().setContextClassLoader(classLoader);
+            }
+
+            for (int i = 0; i < sources.size(); i++) {
+                Config sourceConfig = sources.get(i);
+                ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sourceConfig);
+                String nodeId = nodeId(NodeKind.SOURCE, i);
+                String output = getOutputDataset(readonlyConfig);
+                try {
+                    List<CatalogTable> catalogTables =
+                            resolveSourceCatalogTables(readonlyConfig, classLoader);
+                    datasetCatalogTables.put(output, catalogTables);
+                    result.put(nodeId, toTablePaths(catalogTables));
+                } catch (Exception e) {
+                    throw new ProxyException(
+                            400,
+                            String.format(
+                                    "Source[%d]-%s official tablePath resolution failed: %s",
+                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                            e);
+                }
+            }
+
+            for (int i = 0; i < transforms.size(); i++) {
+                Config transformConfig = transforms.get(i);
+                ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(transformConfig);
+                String nodeId = nodeId(NodeKind.TRANSFORM, i);
+                String output = getOutputDataset(readonlyConfig);
+                List<CatalogTable> inputCatalogTables =
+                        collectInputCatalogTables(readonlyConfig, datasetCatalogTables);
+                try {
+                    List<CatalogTable> catalogTables =
+                            resolveTransformCatalogTables(
+                                    readonlyConfig, inputCatalogTables, classLoader);
+                    datasetCatalogTables.put(output, catalogTables);
+                    result.put(nodeId, toTablePaths(catalogTables));
+                } catch (Exception e) {
+                    throw new ProxyException(
+                            400,
+                            String.format(
+                                    "Transform[%d]-%s official tablePath resolution failed: %s",
+                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                            e);
+                }
+            }
+
+            for (int i = 0; i < sinks.size(); i++) {
+                Config sinkConfig = sinks.get(i);
+                ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sinkConfig);
+                String nodeId = nodeId(NodeKind.SINK, i);
+                List<CatalogTable> inputCatalogTables =
+                        collectInputCatalogTables(readonlyConfig, datasetCatalogTables);
+                try {
+                    result.put(
+                            nodeId,
+                            resolveSinkTablePaths(readonlyConfig, inputCatalogTables, classLoader));
+                } catch (Exception e) {
+                    throw new ProxyException(
+                            400,
+                            String.format(
+                                    "Sink[%d]-%s official tablePath resolution failed: %s",
+                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                            e);
+                }
+            }
+
+            return result;
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalClassLoader);
+            PluginClassLoaderUtils.closeQuietly(seatunnelHomeClassLoader);
+        }
+    }
+
+    URLClassLoader createSeatunnelHomeClassLoader(ClassLoader parent) {
+        String seatunnelHome = System.getProperty("SEATUNNEL_HOME");
+        if (StringUtils.isBlank(seatunnelHome)) {
+            seatunnelHome = System.getenv("SEATUNNEL_HOME");
+        }
+        if (StringUtils.isBlank(seatunnelHome)) {
+            return null;
+        }
+        Path homePath = Paths.get(seatunnelHome);
+        List<String> pluginJars = new ArrayList<>();
+        collectJarPaths(homePath.resolve("connectors"), pluginJars);
+        collectJarPaths(homePath.resolve("plugins"), pluginJars);
+        if (pluginJars.isEmpty()) {
+            return null;
+        }
+        try {
+            return PluginClassLoaderUtils.createClassLoader(pluginJars, parent);
+        } catch (IOException e) {
+            throw new ProxyException(
+                    500, "Failed to build SEATUNNEL_HOME plugin classloader: " + e.getMessage(), e);
+        }
+    }
+
+    void collectJarPaths(Path root, List<String> pluginJars) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> pathStream = Files.walk(root)) {
+            pathStream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .map(Path::toAbsolutePath)
+                    .map(Path::toString)
+                    .sorted()
+                    .forEach(pluginJars::add);
+        } catch (IOException e) {
+            throw new ProxyException(
+                    500,
+                    "Failed to scan SEATUNNEL_HOME jars from " + root + ": " + e.getMessage(),
+                    e);
+        }
+    }
+
+    private List<CatalogTable> resolveSourceCatalogTables(
+            ReadonlyConfig readonlyConfig, ClassLoader classLoader) {
+        String factoryId = readonlyConfig.get(PLUGIN_NAME);
+        Function<PluginIdentifier, SeaTunnelSource> fallbackCreateSource =
+                pluginIdentifier ->
+                        new SeaTunnelSourcePluginDiscovery().createPluginInstance(pluginIdentifier);
+        Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>> tuple =
+                FactoryUtil.createAndPrepareSource(
+                        readonlyConfig, classLoader, factoryId, fallbackCreateSource, null);
+        return tuple._2();
+    }
+
+    private List<CatalogTable> resolveTransformCatalogTables(
+            ReadonlyConfig readonlyConfig,
+            List<CatalogTable> inputCatalogTables,
+            ClassLoader classLoader) {
+        SeaTunnelTransform<?> transform =
+                FactoryUtil.createAndPrepareMultiTableTransform(
+                        inputCatalogTables,
+                        readonlyConfig,
+                        classLoader,
+                        readonlyConfig.get(PLUGIN_NAME));
+        List<CatalogTable> producedCatalogTables = transform.getProducedCatalogTables();
+        if (producedCatalogTables != null && !producedCatalogTables.isEmpty()) {
+            return producedCatalogTables;
+        }
+        Optional<CatalogTable> singleCatalogTable =
+                Optional.ofNullable(transform.getProducedCatalogTable());
+        return singleCatalogTable.map(Collections::singletonList).orElse(Collections.emptyList());
+    }
+
+    private List<String> resolveSinkTablePaths(
+            ReadonlyConfig readonlyConfig,
+            List<CatalogTable> inputCatalogTables,
+            ClassLoader classLoader) {
+        if (inputCatalogTables.isEmpty()) {
+            return Collections.emptyList();
+        }
+        String factoryId = readonlyConfig.get(PLUGIN_NAME);
+        Function<PluginIdentifier, SeaTunnelSink> fallbackCreateSink =
+                pluginIdentifier ->
+                        new SeaTunnelSinkPluginDiscovery().createPluginInstance(pluginIdentifier);
+        Set<String> tablePaths = new LinkedHashSet<>();
+        for (CatalogTable catalogTable : inputCatalogTables) {
+            SeaTunnelSink<?, ?, ?, ?> sink =
+                    FactoryUtil.createAndPrepareSink(
+                            catalogTable,
+                            readonlyConfig,
+                            classLoader,
+                            factoryId,
+                            fallbackCreateSink,
+                            null);
+            sink.getWriteCatalogTable()
+                    .map(CatalogTable::getTablePath)
+                    .map(TablePath::getFullName)
+                    .filter(StringUtils::isNotBlank)
+                    .ifPresent(tablePaths::add);
+        }
+        return new ArrayList<>(tablePaths);
+    }
+
+    private List<CatalogTable> collectInputCatalogTables(
+            ReadonlyConfig readonlyConfig, Map<String, List<CatalogTable>> datasetCatalogTables) {
+        List<CatalogTable> inputCatalogTables = new ArrayList<>();
+        for (String inputDataset : getInputDatasets(readonlyConfig)) {
+            List<CatalogTable> catalogTables = datasetCatalogTables.get(inputDataset);
+            if (catalogTables != null) {
+                inputCatalogTables.addAll(catalogTables);
+            }
+        }
+        return inputCatalogTables;
+    }
+
+    private List<String> toTablePaths(List<CatalogTable> catalogTables) {
+        if (catalogTables == null || catalogTables.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<String> tablePaths = new LinkedHashSet<>();
+        for (CatalogTable catalogTable : catalogTables) {
+            if (catalogTable == null || catalogTable.getTablePath() == null) {
+                continue;
+            }
+            String fullName = catalogTable.getTablePath().getFullName();
+            if (StringUtils.isNotBlank(fullName)) {
+                tablePaths.add(fullName);
+            }
+        }
+        return new ArrayList<>(tablePaths);
+    }
+
+    private List<String> getNodeDisplayPaths(
+            Map<String, List<String>> officialPaths, String nodeId, List<String> fallbackPaths) {
+        List<String> tablePaths = officialPaths.get(nodeId);
+        if (tablePaths != null && !tablePaths.isEmpty()) {
+            return tablePaths;
+        }
+        Set<String> fallback = new LinkedHashSet<>();
+        for (String path : fallbackPaths) {
+            if (StringUtils.isNotBlank(path)) {
+                fallback.add(path);
+            }
+        }
+        return new ArrayList<>(fallback);
+    }
+
+    private List<String> buildTransformFallback(String output, List<String> inputs) {
+        if (StringUtils.isNotBlank(output)) {
+            return Collections.singletonList(output);
+        }
+        return inputs;
     }
 }

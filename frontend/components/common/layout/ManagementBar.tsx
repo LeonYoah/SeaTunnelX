@@ -37,6 +37,7 @@ import {
   Package,
   Puzzle,
   LayoutDashboard,
+  Briefcase,
 } from 'lucide-react';
 import {useThemeUtils} from '@/hooks/use-theme-utils';
 import {useAuth} from '@/hooks/use-auth';
@@ -72,6 +73,7 @@ const StaticIcons = {
   fileText: <FileText {...IconOptions} />,
   package: <Package {...IconOptions} />,
   puzzle: <Puzzle {...IconOptions} />,
+  workbench: <Briefcase {...IconOptions} />,
   dashboard: <LayoutDashboard {...IconOptions} />,
   monitoring: <Activity {...IconOptions} />,
   diagnostics: <Bug {...IconOptions} />,
@@ -475,6 +477,12 @@ export function ManagementBar() {
       title: tDock('dashboard'),
       icon: StaticIcons.dashboard,
       href: '/dashboard',
+    });
+
+    items.push({
+      title: tDock('workbench'),
+      icon: StaticIcons.workbench,
+      href: '/sync',
     });
 
     // 主机管理入口 / Host management entry

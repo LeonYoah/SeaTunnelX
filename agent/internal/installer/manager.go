@@ -1942,7 +1942,6 @@ func (m *InstallerManager) configureIMAPStorage(params *InstallParams) error {
 	if params.DeploymentMode == DeploymentModeSeparated {
 		configFiles = []string{
 			filepath.Join(configDir, "hazelcast-master.yaml"),
-			filepath.Join(configDir, "hazelcast-worker.yaml"),
 		}
 	} else {
 		configFiles = []string{

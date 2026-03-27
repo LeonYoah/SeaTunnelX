@@ -28,6 +28,7 @@ public class ProxyNode {
     private final int configIndex;
     private final List<String> inputDatasets;
     private final String outputDataset;
+    private final List<String> tablePaths;
 
     public ProxyNode(
             String nodeId,
@@ -35,7 +36,8 @@ public class ProxyNode {
             String pluginName,
             int configIndex,
             List<String> inputDatasets,
-            String outputDataset) {
+            String outputDataset,
+            List<String> tablePaths) {
         this.nodeId = nodeId;
         this.kind = kind;
         this.pluginName = pluginName;
@@ -45,6 +47,10 @@ public class ProxyNode {
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(inputDatasets);
         this.outputDataset = outputDataset;
+        this.tablePaths =
+                tablePaths == null
+                        ? Collections.emptyList()
+                        : Collections.unmodifiableList(tablePaths);
     }
 
     public String getNodeId() {
@@ -69,5 +75,9 @@ public class ProxyNode {
 
     public String getOutputDataset() {
         return outputDataset;
+    }
+
+    public List<String> getTablePaths() {
+        return tablePaths;
     }
 }

@@ -1,0 +1,574 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package sync
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Handler provides HTTP handlers for sync studio APIs.
+type Handler struct{ service *Service }
+
+// NewHandler creates a new sync handler.
+func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+
+type TaskResponse struct {
+	ErrorMsg string `json:"error_msg"`
+	Data     *Task  `json:"data"`
+}
+type TaskListResponse struct {
+	ErrorMsg string        `json:"error_msg"`
+	Data     *TaskListData `json:"data"`
+}
+type TaskTreeResponse struct {
+	ErrorMsg string        `json:"error_msg"`
+	Data     *TaskTreeData `json:"data"`
+}
+type TaskVersionResponse struct {
+	ErrorMsg string       `json:"error_msg"`
+	Data     *TaskVersion `json:"data"`
+}
+type TaskVersionListResponse struct {
+	ErrorMsg string               `json:"error_msg"`
+	Data     *TaskVersionListData `json:"data"`
+}
+type GlobalVariableResponse struct {
+	ErrorMsg string          `json:"error_msg"`
+	Data     *GlobalVariable `json:"data"`
+}
+type GlobalVariableListResponse struct {
+	ErrorMsg string                  `json:"error_msg"`
+	Data     *GlobalVariableListData `json:"data"`
+}
+type ValidateResponse struct {
+	ErrorMsg string          `json:"error_msg"`
+	Data     *ValidateResult `json:"data"`
+}
+type DAGResponse struct {
+	ErrorMsg string     `json:"error_msg"`
+	Data     *DAGResult `json:"data"`
+}
+type JobResponse struct {
+	ErrorMsg string       `json:"error_msg"`
+	Data     *JobInstance `json:"data"`
+}
+type JobListResponse struct {
+	ErrorMsg string       `json:"error_msg"`
+	Data     *JobListData `json:"data"`
+}
+type JobLogsResponse struct {
+	ErrorMsg string         `json:"error_msg"`
+	Data     *JobLogsResult `json:"data"`
+}
+type BasicResponse struct {
+	ErrorMsg string      `json:"error_msg"`
+	Data     interface{} `json:"data"`
+}
+
+// CreateTask handles POST /api/v1/sync/tasks.
+func (h *Handler) CreateTask(c *gin.Context) {
+	var req CreateTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	task, err := h.service.CreateTask(c.Request.Context(), &req, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskResponse{Data: task})
+}
+
+// ListTasks handles GET /api/v1/sync/tasks.
+func (h *Handler) ListTasks(c *gin.Context) {
+	filter := &TaskFilter{Name: c.Query("name"), Page: parsePositiveInt(c.Query("current"), 1), Size: parsePositiveInt(c.Query("size"), 200)}
+	if status := c.Query("status"); status != "" {
+		filter.Status = TaskStatus(status)
+	}
+	tasks, total, err := h.service.ListTasks(c.Request.Context(), filter)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskListResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskListResponse{Data: &TaskListData{Total: total, Items: tasks}})
+}
+
+// GetTaskTree handles GET /api/v1/sync/tree.
+func (h *Handler) GetTaskTree(c *gin.Context) {
+	items, err := h.service.GetTaskTree(c.Request.Context())
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskTreeResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskTreeResponse{Data: &TaskTreeData{Items: items}})
+}
+
+// GetTask handles GET /api/v1/sync/tasks/:id.
+func (h *Handler) GetTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	task, err := h.service.GetTask(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskResponse{Data: task})
+}
+
+// ListGlobalVariables handles GET /api/v1/sync/global-variables.
+func (h *Handler) ListGlobalVariables(c *gin.Context) {
+	page := parsePositiveInt(c.Query("current"), 1)
+	size := parsePositiveInt(c.Query("size"), 20)
+	items, total, err := h.service.ListGlobalVariablesPaginated(c.Request.Context(), page, size)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), GlobalVariableListResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GlobalVariableListResponse{Data: &GlobalVariableListData{Total: total, Items: items}})
+}
+
+// CreateGlobalVariable handles POST /api/v1/sync/global-variables.
+func (h *Handler) CreateGlobalVariable(c *gin.Context) {
+	var req CreateGlobalVariableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, GlobalVariableResponse{ErrorMsg: err.Error()})
+		return
+	}
+	item, err := h.service.CreateGlobalVariable(c.Request.Context(), &req, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), GlobalVariableResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GlobalVariableResponse{Data: item})
+}
+
+// UpdateGlobalVariable handles PUT /api/v1/sync/global-variables/:id.
+func (h *Handler) UpdateGlobalVariable(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, GlobalVariableResponse{ErrorMsg: "invalid global variable id"})
+		return
+	}
+	var req UpdateGlobalVariableRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, GlobalVariableResponse{ErrorMsg: err.Error()})
+		return
+	}
+	item, err := h.service.UpdateGlobalVariable(c.Request.Context(), id, &req)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), GlobalVariableResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, GlobalVariableResponse{Data: item})
+}
+
+// DeleteGlobalVariable handles DELETE /api/v1/sync/global-variables/:id.
+func (h *Handler) DeleteGlobalVariable(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: "invalid global variable id"})
+		return
+	}
+	if err := h.service.DeleteGlobalVariable(c.Request.Context(), id); err != nil {
+		c.JSON(h.getStatusCodeForError(err), BasicResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BasicResponse{Data: gin.H{"deleted": true}})
+}
+
+// UpdateTask handles PUT /api/v1/sync/tasks/:id.
+func (h *Handler) UpdateTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	var req UpdateTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	task, err := h.service.UpdateTask(c.Request.Context(), id, &req)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskResponse{Data: task})
+}
+
+// DeleteTask handles DELETE /api/v1/sync/tasks/:id.
+func (h *Handler) DeleteTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	if err := h.service.DeleteTask(c.Request.Context(), id); err != nil {
+		c.JSON(h.getStatusCodeForError(err), BasicResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BasicResponse{Data: gin.H{"deleted": true}})
+}
+
+// PublishTask handles POST /api/v1/sync/tasks/:id/publish.
+func (h *Handler) PublishTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskVersionResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	var req PublishTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, TaskVersionResponse{ErrorMsg: err.Error()})
+		return
+	}
+	_, version, err := h.service.PublishTask(c.Request.Context(), id, req.Comment, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskVersionResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskVersionResponse{Data: version})
+}
+
+// ListTaskVersions handles GET /api/v1/sync/tasks/:id/versions.
+func (h *Handler) ListTaskVersions(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskVersionListResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	page := parsePositiveInt(c.Query("current"), 1)
+	size := parsePositiveInt(c.Query("size"), 10)
+	versions, total, err := h.service.ListTaskVersionsPaginated(c.Request.Context(), id, page, size)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskVersionListResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskVersionListResponse{Data: &TaskVersionListData{Total: total, Items: versions}})
+}
+
+// RollbackTaskVersion handles POST /api/v1/sync/tasks/:id/versions/:versionId/rollback.
+func (h *Handler) RollbackTaskVersion(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	versionID, ok := parseUintParam(c, "versionId")
+	if !ok {
+		c.JSON(http.StatusBadRequest, TaskResponse{ErrorMsg: "invalid version id"})
+		return
+	}
+	task, err := h.service.RollbackTaskVersion(c.Request.Context(), id, versionID)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), TaskResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, TaskResponse{Data: task})
+}
+
+// DeleteTaskVersion handles DELETE /api/v1/sync/tasks/:id/versions/:versionId.
+func (h *Handler) DeleteTaskVersion(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	versionID, ok := parseUintParam(c, "versionId")
+	if !ok {
+		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: "invalid version id"})
+		return
+	}
+	if err := h.service.DeleteTaskVersion(c.Request.Context(), id, versionID); err != nil {
+		c.JSON(h.getStatusCodeForError(err), BasicResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BasicResponse{Data: gin.H{"deleted": true}})
+}
+
+// ValidateTask handles POST /api/v1/sync/tasks/:id/validate.
+func (h *Handler) ValidateTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, ValidateResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	result, err := h.service.ValidateTask(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), ValidateResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ValidateResponse{Data: result})
+}
+
+// TestTaskConnections handles POST /api/v1/sync/tasks/:id/test-connections.
+func (h *Handler) TestTaskConnections(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, ValidateResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	result, err := h.service.TestTaskConnections(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), ValidateResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ValidateResponse{Data: result})
+}
+
+// GetTaskDAG handles POST /api/v1/sync/tasks/:id/dag.
+func (h *Handler) GetTaskDAG(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, DAGResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	result, err := h.service.BuildTaskDAG(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), DAGResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, DAGResponse{Data: result})
+}
+
+// PreviewTask handles POST /api/v1/sync/tasks/:id/preview.
+func (h *Handler) PreviewTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	job, err := h.service.PreviewTask(c.Request.Context(), id, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobResponse{Data: job})
+}
+
+// SubmitTask handles POST /api/v1/sync/tasks/:id/submit.
+func (h *Handler) SubmitTask(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid task id"})
+		return
+	}
+	job, err := h.service.SubmitTask(c.Request.Context(), id, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobResponse{Data: job})
+}
+
+// ListJobs handles GET /api/v1/sync/jobs.
+func (h *Handler) ListJobs(c *gin.Context) {
+	filter := &JobFilter{Page: parsePositiveInt(c.Query("current"), 1), Size: parsePositiveInt(c.Query("size"), 50)}
+	if taskID := c.Query("task_id"); taskID != "" {
+		parsed, err := strconv.ParseUint(taskID, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, JobListResponse{ErrorMsg: "invalid task_id"})
+			return
+		}
+		filter.TaskID = uint(parsed)
+	}
+	if runType := c.Query("run_type"); runType != "" {
+		filter.RunType = RunType(runType)
+	}
+	jobs, total, err := h.service.ListJobs(c.Request.Context(), filter)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobListResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobListResponse{Data: &JobListData{Total: total, Items: jobs}})
+}
+
+// GetJob handles GET /api/v1/sync/jobs/:id.
+func (h *Handler) GetJob(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	job, err := h.service.GetJob(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobResponse{Data: job})
+}
+
+// GetJobLogs handles GET /api/v1/sync/jobs/:id/logs.
+func (h *Handler) GetJobLogs(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobLogsResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	if _, exists := c.GetQuery("lines"); exists {
+		c.JSON(http.StatusBadRequest, JobLogsResponse{ErrorMsg: "lines is no longer supported; use offset and limit_bytes"})
+		return
+	}
+	if _, exists := c.GetQuery("all"); exists {
+		c.JSON(http.StatusBadRequest, JobLogsResponse{ErrorMsg: "all is no longer supported; use offset and limit_bytes"})
+		return
+	}
+	result, err := h.service.GetJobLogs(
+		c.Request.Context(),
+		id,
+		c.Query("offset"),
+		parseNonNegativeInt(c.Query("limit_bytes"), 0),
+		c.Query("keyword"),
+		c.Query("level"),
+	)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobLogsResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobLogsResponse{Data: result})
+}
+
+// CollectPreview handles POST /api/v1/sync/preview/collect.
+func (h *Handler) CollectPreview(c *gin.Context) {
+	var req PreviewCollectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: err.Error()})
+		return
+	}
+	if err := h.service.CollectPreview(c.Request.Context(), &req); err != nil {
+		c.JSON(h.getStatusCodeForError(err), BasicResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, BasicResponse{Data: gin.H{"collected": true}})
+}
+
+// RecoverJob handles POST /api/v1/sync/jobs/:id/recover.
+func (h *Handler) RecoverJob(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	job, err := h.service.RecoverJob(c.Request.Context(), id, getCurrentUserID(c))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobResponse{Data: job})
+}
+
+// CancelJob handles POST /api/v1/sync/jobs/:id/cancel.
+func (h *Handler) CancelJob(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	var req CancelJobRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	job, err := h.service.CancelJob(c.Request.Context(), id, req.StopWithSavepoint)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, JobResponse{Data: job})
+}
+
+func (h *Handler) getStatusCodeForError(err error) int {
+	switch {
+	case errors.Is(err, ErrTaskNotFound), errors.Is(err, ErrTaskVersionNotFound), errors.Is(err, ErrJobInstanceNotFound), errors.Is(err, ErrGlobalVariableNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrTaskNameRequired), errors.Is(err, ErrTaskNameInvalid), errors.Is(err, ErrTaskParentCycle), errors.Is(err, ErrRootFileNotAllowed), errors.Is(err, ErrInvalidTaskMode), errors.Is(err, ErrInvalidTaskStatus), errors.Is(err, ErrInvalidRunType), errors.Is(err, ErrInvalidPreviewMode), errors.Is(err, ErrTaskDefinitionEmpty), errors.Is(err, ErrPreviewHTTPSinkEmpty), errors.Is(err, ErrTaskNotPublished), errors.Is(err, ErrInvalidNodeType), errors.Is(err, ErrParentTaskNotFolder), errors.Is(err, ErrFolderContentUnsupported), errors.Is(err, ErrTaskNotFile), errors.Is(err, ErrInvalidContentFormat), errors.Is(err, ErrRecoverSourceRequired), errors.Is(err, ErrLocalClusterRequired), errors.Is(err, ErrLocalSavepointUnsupported), errors.Is(err, ErrPreviewPayloadInvalid), errors.Is(err, ErrGlobalVariableKeyRequired), errors.Is(err, ErrGlobalVariableKeyInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrTaskArchived), errors.Is(err, ErrJobAlreadyFinished), errors.Is(err, ErrGlobalVariableKeyDuplicate):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func parseUintParam(c *gin.Context, name string) (uint, bool) {
+	value, err := strconv.ParseUint(c.Param(name), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return uint(value), true
+}
+
+func parsePositiveInt(raw string, defaultValue int) int {
+	if raw == "" {
+		return defaultValue
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return defaultValue
+	}
+	return value
+}
+
+func parseNonNegativeInt(raw string, defaultValue int) int {
+	if raw == "" {
+		return defaultValue
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return defaultValue
+	}
+	return value
+}
+
+func isTruthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func getCurrentUserID(c *gin.Context) uint {
+	if c == nil {
+		return 0
+	}
+	value, exists := c.Get("user_id")
+	if !exists {
+		return 0
+	}
+	switch v := value.(type) {
+	case uint:
+		return v
+	case int:
+		if v > 0 {
+			return uint(v)
+		}
+	}
+	return 0
+}

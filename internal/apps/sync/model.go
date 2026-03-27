@@ -1,0 +1,214 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package sync
+
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+// JSONMap represents JSON object payload stored in database.
+// JSONMap 表示存储在数据库中的 JSON 对象载荷。
+type JSONMap map[string]interface{}
+
+// Value implements the driver.Valuer interface.
+// Value 实现 driver.Valuer 接口。
+func (m JSONMap) Value() (driver.Value, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return json.Marshal(m)
+}
+
+// Scan implements the sql.Scanner interface.
+// Scan 实现 sql.Scanner 接口。
+func (m *JSONMap) Scan(value interface{}) error {
+	if value == nil {
+		*m = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, m)
+	case string:
+		return json.Unmarshal([]byte(v), m)
+	default:
+		return errors.New("sync: failed to scan JSONMap - expected []byte or string")
+	}
+}
+
+// TaskStatus represents sync task lifecycle status.
+// TaskStatus 表示同步任务生命周期状态。
+type TaskStatus string
+
+const (
+	TaskStatusDraft     TaskStatus = "draft"
+	TaskStatusPublished TaskStatus = "published"
+	TaskStatusArchived  TaskStatus = "archived"
+)
+
+// TaskMode represents sync task runtime mode.
+// TaskMode 表示同步任务运行模式。
+type TaskMode string
+
+const (
+	TaskModeStreaming TaskMode = "streaming"
+	TaskModeBatch     TaskMode = "batch"
+)
+
+// TaskNodeType represents sync workspace node type.
+// TaskNodeType 表示同步工作台节点类型。
+type TaskNodeType string
+
+const (
+	TaskNodeTypeFolder TaskNodeType = "folder"
+	TaskNodeTypeFile   TaskNodeType = "file"
+)
+
+// ContentFormat represents the editor content format.
+// ContentFormat 表示编辑器内容格式。
+type ContentFormat string
+
+const (
+	ContentFormatHOCON ContentFormat = "hocon"
+	ContentFormatJSON  ContentFormat = "json"
+)
+
+// RunType represents sync job instance run type.
+// RunType 表示同步作业实例运行类型。
+type RunType string
+
+const (
+	RunTypePreview RunType = "preview"
+	RunTypeRun     RunType = "run"
+	RunTypeRecover RunType = "recover"
+)
+
+// JobStatus represents sync job instance status.
+// JobStatus 表示同步作业实例状态。
+type JobStatus string
+
+const (
+	JobStatusPending  JobStatus = "pending"
+	JobStatusRunning  JobStatus = "running"
+	JobStatusSuccess  JobStatus = "success"
+	JobStatusFailed   JobStatus = "failed"
+	JobStatusCanceled JobStatus = "canceled"
+)
+
+// Task represents one sync studio workspace node.
+// Task 表示一个数据同步工作台节点。
+type Task struct {
+	ID             uint          `json:"id" gorm:"primaryKey;autoIncrement"`
+	ParentID       *uint         `json:"parent_id,omitempty" gorm:"index"`
+	NodeType       TaskNodeType  `json:"node_type" gorm:"size:20;not null;default:file;index"`
+	Name           string        `json:"name" gorm:"size:120;not null;index"`
+	Description    string        `json:"description" gorm:"type:text"`
+	ClusterID      uint          `json:"cluster_id" gorm:"index"`
+	EngineVersion  string        `json:"engine_version" gorm:"size:50"`
+	Mode           TaskMode      `json:"mode" gorm:"size:20;default:streaming"`
+	Status         TaskStatus    `json:"status" gorm:"size:20;default:draft;index"`
+	ContentFormat  ContentFormat `json:"content_format" gorm:"size:20;not null;default:hocon"`
+	Content        string        `json:"content" gorm:"type:longtext"`
+	JobName        string        `json:"job_name" gorm:"size:255"`
+	Definition     JSONMap       `json:"definition" gorm:"type:json"`
+	SortOrder      int           `json:"sort_order" gorm:"default:0;index"`
+	CurrentVersion int           `json:"current_version" gorm:"default:0"`
+	CreatedBy      uint          `json:"created_by"`
+	CreatedAt      time.Time     `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt      time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// TableName returns the sync task table name.
+// TableName 返回同步任务表名。
+func (Task) TableName() string {
+	return "sync_tasks"
+}
+
+// TaskVersion stores one immutable snapshot of a sync file task.
+// TaskVersion 存储同步文件任务的一次不可变快照。
+type TaskVersion struct {
+	ID                    uint          `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskID                uint          `json:"task_id" gorm:"index;not null"`
+	Version               int           `json:"version" gorm:"not null"`
+	NameSnapshot          string        `json:"name_snapshot" gorm:"size:120"`
+	DescriptionSnapshot   string        `json:"description_snapshot" gorm:"type:text"`
+	ClusterIDSnapshot     uint          `json:"cluster_id_snapshot"`
+	EngineVersionSnapshot string        `json:"engine_version_snapshot" gorm:"size:50"`
+	ModeSnapshot          TaskMode      `json:"mode_snapshot" gorm:"size:20"`
+	ContentFormatSnapshot ContentFormat `json:"content_format_snapshot" gorm:"size:20"`
+	ContentSnapshot       string        `json:"content_snapshot" gorm:"type:longtext"`
+	JobNameSnapshot       string        `json:"job_name_snapshot" gorm:"size:255"`
+	DefinitionSnapshot    JSONMap       `json:"definition_snapshot" gorm:"type:json"`
+	Comment               string        `json:"comment" gorm:"size:255"`
+	CreatedBy             uint          `json:"created_by"`
+	CreatedAt             time.Time     `json:"created_at" gorm:"autoCreateTime"`
+}
+
+// TableName returns the sync task version table name.
+// TableName 返回同步任务版本表名。
+func (TaskVersion) TableName() string {
+	return "sync_task_versions"
+}
+
+// JobInstance stores one preview/run/recover execution instance.
+// JobInstance 存储一次预览/运行/恢复执行实例。
+type JobInstance struct {
+	ID                      uint       `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskID                  uint       `json:"task_id" gorm:"index;not null"`
+	TaskVersion             int        `json:"task_version" gorm:"not null"`
+	RunType                 RunType    `json:"run_type" gorm:"size:20;not null;index"`
+	PlatformJobID           string     `json:"platform_job_id" gorm:"size:32;index"`
+	EngineJobID             string     `json:"engine_job_id" gorm:"size:255;index"`
+	RecoveredFromInstanceID *uint      `json:"recovered_from_instance_id,omitempty" gorm:"index"`
+	Status                  JobStatus  `json:"status" gorm:"size:20;default:pending;index"`
+	SubmitSpec              JSONMap    `json:"submit_spec" gorm:"type:json"`
+	ResultPreview           JSONMap    `json:"result_preview" gorm:"type:json"`
+	ErrorMessage            string     `json:"error_message" gorm:"type:text"`
+	StartedAt               *time.Time `json:"started_at"`
+	FinishedAt              *time.Time `json:"finished_at"`
+	CreatedBy               uint       `json:"created_by"`
+	CreatedAt               time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt               time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// TableName returns the sync job instance table name.
+// TableName 返回同步作业实例表名。
+func (JobInstance) TableName() string {
+	return "sync_job_instances"
+}
+
+// GlobalVariable represents one workspace-wide runtime variable.
+// GlobalVariable 表示一个工作台级别的全局运行时变量。
+type GlobalVariable struct {
+	ID          uint      `json:"id" gorm:"primaryKey;autoIncrement"`
+	Key         string    `json:"key" gorm:"size:120;not null;uniqueIndex"`
+	Value       string    `json:"value" gorm:"type:text"`
+	Description string    `json:"description" gorm:"type:text"`
+	CreatedBy   uint      `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// TableName returns the sync global variable table name.
+// TableName 返回同步全局变量表名。
+func (GlobalVariable) TableName() string {
+	return "sync_global_variables"
+}
