@@ -53,4 +53,5 @@ var (
 	ErrGlobalVariableKeyRequired  = errors.New("sync: global variable key is required")
 	ErrGlobalVariableKeyInvalid   = errors.New("sync: global variable key contains unsupported characters")
 	ErrGlobalVariableKeyDuplicate = errors.New("sync: global variable key already exists")
+	ErrPreviewSessionNotFound     = errors.New("sync: preview session not found")
 )

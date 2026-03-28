@@ -21,6 +21,7 @@ import type {ApiResponse} from '../core/types';
 import type {
   CreateSyncGlobalVariableRequest,
   CreateSyncTaskRequest,
+  PreviewSyncTaskRequest,
   PublishSyncTaskRequest,
   SyncDagResult,
   SyncGlobalVariable,
@@ -28,6 +29,8 @@ import type {
   SyncJobInstance,
   SyncJobListData,
   SyncJobLogsResult,
+  SyncCheckpointSnapshot,
+  SyncPreviewSnapshot,
   SyncTask,
   SyncTaskListData,
   SyncTaskTreeData,
@@ -107,25 +110,36 @@ export class SyncService extends BaseService {
     );
   }
 
-  static async listVersions(taskId: number, params?: {
-    current?: number;
-    size?: number;
-  }): Promise<SyncTaskVersionListData> {
-    return this.get<SyncTaskVersionListData>(`/tasks/${taskId}/versions`, params);
+  static async listVersions(
+    taskId: number,
+    params?: {
+      current?: number;
+      size?: number;
+    },
+  ): Promise<SyncTaskVersionListData> {
+    return this.get<SyncTaskVersionListData>(
+      `/tasks/${taskId}/versions`,
+      params,
+    );
   }
 
   static async rollbackVersion(
     taskId: number,
     versionId: number,
   ): Promise<SyncTask> {
-    return this.post<SyncTask>(`/tasks/${taskId}/versions/${versionId}/rollback`, {});
+    return this.post<SyncTask>(
+      `/tasks/${taskId}/versions/${versionId}/rollback`,
+      {},
+    );
   }
 
   static async deleteVersion(
     taskId: number,
     versionId: number,
   ): Promise<{deleted: boolean}> {
-    return this.delete<{deleted: boolean}>(`/tasks/${taskId}/versions/${versionId}`);
+    return this.delete<{deleted: boolean}>(
+      `/tasks/${taskId}/versions/${versionId}`,
+    );
   }
 
   static async validateTask(taskId: number): Promise<SyncValidateResult> {
@@ -133,15 +147,24 @@ export class SyncService extends BaseService {
   }
 
   static async testConnections(taskId: number): Promise<SyncValidateResult> {
-    return this.post<SyncValidateResult>(`/tasks/${taskId}/test-connections`, {});
+    return this.post<SyncValidateResult>(
+      `/tasks/${taskId}/test-connections`,
+      {},
+    );
   }
 
   static async buildDag(taskId: number): Promise<SyncDagResult> {
     return this.post<SyncDagResult>(`/tasks/${taskId}/dag`, {});
   }
 
-  static async previewTask(taskId: number): Promise<SyncJobInstance> {
-    return this.post<SyncJobInstance>(`/tasks/${taskId}/preview`, {});
+  static async previewTask(
+    taskId: number,
+    request?: PreviewSyncTaskRequest,
+  ): Promise<SyncJobInstance> {
+    return this.post<SyncJobInstance>(
+      `/tasks/${taskId}/preview`,
+      request || {},
+    );
   }
 
   static async submitTask(taskId: number): Promise<SyncJobInstance> {
@@ -161,13 +184,33 @@ export class SyncService extends BaseService {
     return this.get<SyncJobInstance>(`/jobs/${jobId}`);
   }
 
-  static async getJobLogs(jobId: number, params?: {
-    offset?: string;
-    limit_bytes?: number;
-    keyword?: string;
-    level?: 'warn' | 'error' | 'all';
-    signal?: AbortSignal;
-  }): Promise<SyncJobLogsResult> {
+  static async getPreviewSnapshot(
+    jobId: number,
+    params?: {table_path?: string},
+  ): Promise<SyncPreviewSnapshot> {
+    return this.get<SyncPreviewSnapshot>(`/jobs/${jobId}/preview`, params);
+  }
+
+  static async getJobCheckpoint(
+    jobId: number,
+    params?: {pipeline_id?: number; limit?: number; status?: string},
+  ): Promise<SyncCheckpointSnapshot> {
+    return this.get<SyncCheckpointSnapshot>(
+      `/jobs/${jobId}/checkpoint`,
+      params,
+    );
+  }
+
+  static async getJobLogs(
+    jobId: number,
+    params?: {
+      offset?: string;
+      limit_bytes?: number;
+      keyword?: string;
+      level?: 'warn' | 'error' | 'all';
+      signal?: AbortSignal;
+    },
+  ): Promise<SyncJobLogsResult> {
     const {signal, ...query} = params || {};
     const response = await apiClient.get<ApiResponse<SyncJobLogsResult>>(
       `${this.basePath}/jobs/${jobId}/logs`,

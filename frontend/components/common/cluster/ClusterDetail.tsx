@@ -30,6 +30,7 @@ import {useRouter} from 'next/navigation';
 import {useTranslations} from 'next-intl';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/badge';
+import {Input} from '@/components/ui/input';
 import {
   Card,
   CardContent,
@@ -63,6 +64,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  WorkbenchDialogContent,
 } from '@/components/ui/dialog';
 import {ScrollArea} from '@/components/ui/scroll-area';
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
@@ -88,6 +90,7 @@ import {
   Eye,
   ChevronUp,
   Database,
+  Search,
 } from 'lucide-react';
 import {Checkbox} from '@/components/ui/checkbox';
 import {motion} from 'motion/react';
@@ -106,6 +109,7 @@ import {
   RuntimeStoragePreviewResult,
   RuntimeStorageCheckpointInspectResult,
   RuntimeStorageIMAPInspectResult,
+  SeatunnelXJavaProxyLogPreviewResult,
   SeatunnelXJavaProxyStatus,
 } from '@/lib/services/cluster/types';
 import type {UpgradeTaskSummary} from '@/lib/services/st-upgrade';
@@ -254,7 +258,9 @@ interface ClusterRuntimeConfigView {
   jobLogMode?: string;
 }
 
-function extractClusterRuntimeConfig(config?: ClusterInfo['config'] | null): ClusterRuntimeConfigView {
+function extractClusterRuntimeConfig(
+  config?: ClusterInfo['config'] | null,
+): ClusterRuntimeConfigView {
   if (!config || typeof config !== 'object') {
     return {};
   }
@@ -267,9 +273,13 @@ function extractClusterRuntimeConfig(config?: ClusterInfo['config'] | null): Clu
   }
   return {
     enableHTTP:
-      typeof runtime.enable_http === 'boolean' ? runtime.enable_http : undefined,
+      typeof runtime.enable_http === 'boolean'
+        ? runtime.enable_http
+        : undefined,
     jobLogMode:
-      typeof runtime.job_log_mode === 'string' ? runtime.job_log_mode : undefined,
+      typeof runtime.job_log_mode === 'string'
+        ? runtime.job_log_mode
+        : undefined,
   };
 }
 
@@ -291,9 +301,7 @@ function pickWebUINode(
       (node.role === 'master' || node.role === 'master/worker'),
   );
   return (
-    candidates.find((node) => node.is_online !== false) ||
-    candidates[0] ||
-    null
+    candidates.find((node) => node.is_online !== false) || candidates[0] || null
   );
 }
 
@@ -316,42 +324,64 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [upgradeTasksTotal, setUpgradeTasksTotal] = useState(0);
   const [upgradeTasksPage, setUpgradeTasksPage] = useState(1);
   const [upgradeTasksPageSize] = useState(10);
-  const [diagnosticsGroups, setDiagnosticsGroups] = useState<DiagnosticsErrorGroup[]>([]);
+  const [diagnosticsGroups, setDiagnosticsGroups] = useState<
+    DiagnosticsErrorGroup[]
+  >([]);
   const [diagnosticsGroupTotal, setDiagnosticsGroupTotal] = useState(0);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
-  const [monitoringOverview, setMonitoringOverview] = useState<ClusterMonitoringOverviewData | null>(null);
-  const [runtimeStorage, setRuntimeStorage] = useState<RuntimeStorageDetails | null>(null);
-  const [seatunnelxJavaProxy, setSeatunnelXJavaProxy] = useState<SeatunnelXJavaProxyStatus | null>(null);
-  const [seatunnelxJavaProxyLoading, setSeatunnelXJavaProxyLoading] = useState(false);
-  const [seatunnelxJavaProxyOperating, setSeatunnelXJavaProxyOperating] = useState<
-    'start' | 'stop' | 'restart' | null
-  >(null);
+  const [monitoringOverview, setMonitoringOverview] =
+    useState<ClusterMonitoringOverviewData | null>(null);
+  const [runtimeStorage, setRuntimeStorage] =
+    useState<RuntimeStorageDetails | null>(null);
+  const [seatunnelxJavaProxy, setSeatunnelXJavaProxy] =
+    useState<SeatunnelXJavaProxyStatus | null>(null);
+  const [seatunnelxJavaProxyLoading, setSeatunnelXJavaProxyLoading] =
+    useState(false);
+  const [seatunnelxJavaProxyLogLoading, setSeatunnelXJavaProxyLogLoading] =
+    useState(false);
+  const [seatunnelxJavaProxyLogOpen, setSeatunnelXJavaProxyLogOpen] =
+    useState(false);
+  const [seatunnelxJavaProxyLogResult, setSeatunnelXJavaProxyLogResult] =
+    useState<SeatunnelXJavaProxyLogPreviewResult | null>(null);
+  const [seatunnelxJavaProxyOperating, setSeatunnelXJavaProxyOperating] =
+    useState<'start' | 'stop' | 'restart' | null>(null);
   const [runtimeStorageLoading, setRuntimeStorageLoading] = useState(false);
-  const [runtimeStorageValidationLoading, setRuntimeStorageValidationLoading] = useState<
-    'checkpoint' | 'imap' | null
-  >(null);
+  const [runtimeStorageValidationLoading, setRuntimeStorageValidationLoading] =
+    useState<'checkpoint' | 'imap' | null>(null);
   const [runtimeStorageValidation, setRuntimeStorageValidation] = useState<
     Partial<Record<'checkpoint' | 'imap', RuntimeStorageValidationResult>>
   >({});
-  const [runtimeStorageListingLoading, setRuntimeStorageListingLoading] = useState<
-    'checkpoint' | 'imap' | null
-  >(null);
+  const [runtimeStorageListingLoading, setRuntimeStorageListingLoading] =
+    useState<'checkpoint' | 'imap' | null>(null);
   const [runtimeStorageListing, setRuntimeStorageListing] = useState<
     Partial<Record<'checkpoint' | 'imap', RuntimeStorageListResult>>
   >({});
   const [runtimeStorageBrowsePath, setRuntimeStorageBrowsePath] = useState<
     Partial<Record<'checkpoint' | 'imap', string>>
   >({});
-  const [runtimeStoragePreviewLoading, setRuntimeStoragePreviewLoading] = useState<
+  const [runtimeStorageSearch, setRuntimeStorageSearch] = useState<
+    Partial<Record<'checkpoint' | 'imap', string>>
+  >({});
+  const [runtimeStoragePage, setRuntimeStoragePage] = useState<
+    Partial<Record<'checkpoint' | 'imap', number>>
+  >({});
+  const [runtimeStoragePreviewLoading, setRuntimeStoragePreviewLoading] =
+    useState<string | null>(null);
+  const [runtimeStoragePreview, setRuntimeStoragePreview] =
+    useState<RuntimeStoragePreviewResult | null>(null);
+  const [runtimeStoragePreviewOpen, setRuntimeStoragePreviewOpen] =
+    useState(false);
+  const [checkpointInspectLoading, setCheckpointInspectLoading] = useState<
     string | null
   >(null);
-  const [runtimeStoragePreview, setRuntimeStoragePreview] = useState<RuntimeStoragePreviewResult | null>(null);
-  const [runtimeStoragePreviewOpen, setRuntimeStoragePreviewOpen] = useState(false);
-  const [checkpointInspectLoading, setCheckpointInspectLoading] = useState<string | null>(null);
-  const [checkpointInspectResult, setCheckpointInspectResult] = useState<RuntimeStorageCheckpointInspectResult | null>(null);
+  const [checkpointInspectResult, setCheckpointInspectResult] =
+    useState<RuntimeStorageCheckpointInspectResult | null>(null);
   const [checkpointInspectOpen, setCheckpointInspectOpen] = useState(false);
-  const [imapInspectLoading, setImapInspectLoading] = useState<string | null>(null);
-  const [imapInspectResult, setImapInspectResult] = useState<RuntimeStorageIMAPInspectResult | null>(null);
+  const [imapInspectLoading, setImapInspectLoading] = useState<string | null>(
+    null,
+  );
+  const [imapInspectResult, setImapInspectResult] =
+    useState<RuntimeStorageIMAPInspectResult | null>(null);
   const [imapInspectOpen, setImapInspectOpen] = useState(false);
   const [imapCleanupOpen, setImapCleanupOpen] = useState(false);
   const [imapCleanupRunning, setImapCleanupRunning] = useState(false);
@@ -464,10 +494,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         if (path !== undefined) {
           setRuntimeStorageBrowsePath((prev) => ({...prev, [kind]: path}));
         }
-        const result = await services.cluster.listRuntimeStorageSafe(clusterId, kind, {
-          path,
-          limit: 200,
-        });
+        setRuntimeStoragePage((prev) => ({...prev, [kind]: 1}));
+        const result = await services.cluster.listRuntimeStorageSafe(
+          clusterId,
+          kind,
+          {
+            path,
+            limit: 200,
+          },
+        );
         if (!result.success || !result.data) {
           setRuntimeStorageListing((prev) => ({...prev, [kind]: undefined}));
           return;
@@ -494,7 +529,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         imap: result.data.imap?.namespace || '',
       });
       if (result.data.checkpoint?.enabled) {
-        void loadRuntimeStorageList('checkpoint', result.data.checkpoint.namespace);
+        void loadRuntimeStorageList(
+          'checkpoint',
+          result.data.checkpoint.namespace,
+        );
       }
       if (result.data.imap?.enabled) {
         void loadRuntimeStorageList('imap', result.data.imap.namespace);
@@ -508,12 +546,18 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     async (kind: 'checkpoint' | 'imap', path: string) => {
       setRuntimeStoragePreviewLoading(`${kind}:${path}`);
       try {
-        const result = await services.cluster.previewRuntimeStorageSafe(clusterId, kind, {
-          path,
-          max_bytes: 64 * 1024,
-        });
+        const result = await services.cluster.previewRuntimeStorageSafe(
+          clusterId,
+          kind,
+          {
+            path,
+            max_bytes: 64 * 1024,
+          },
+        );
         if (!result.success || !result.data) {
-          toast.error(result.error || t('cluster.runtimeStorage.previewFailed'));
+          toast.error(
+            result.error || t('cluster.runtimeStorage.previewFailed'),
+          );
           return;
         }
         setRuntimeStoragePreview(result.data);
@@ -529,9 +573,15 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     async (path: string) => {
       setCheckpointInspectLoading(path);
       try {
-        const result = await services.cluster.inspectCheckpointRuntimeStorageSafe(clusterId, path);
+        const result =
+          await services.cluster.inspectCheckpointRuntimeStorageSafe(
+            clusterId,
+            path,
+          );
         if (!result.success || !result.data) {
-          toast.error(result.error || t('cluster.runtimeStorage.inspectFailed'));
+          toast.error(
+            result.error || t('cluster.runtimeStorage.inspectFailed'),
+          );
           return;
         }
         setCheckpointInspectResult(result.data);
@@ -547,9 +597,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     async (path: string) => {
       setImapInspectLoading(path);
       try {
-        const result = await services.cluster.inspectIMAPRuntimeStorageSafe(clusterId, path);
+        const result = await services.cluster.inspectIMAPRuntimeStorageSafe(
+          clusterId,
+          path,
+        );
         if (!result.success || !result.data) {
-          toast.error(result.error || t('cluster.runtimeStorage.inspectWalFailed'));
+          toast.error(
+            result.error || t('cluster.runtimeStorage.inspectWalFailed'),
+          );
           return;
         }
         setImapInspectResult(result.data);
@@ -564,7 +619,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const loadSeatunnelXJavaProxyStatus = useCallback(async () => {
     setSeatunnelXJavaProxyLoading(true);
     try {
-      const result = await services.cluster.getSeatunnelXJavaProxyStatusSafe(clusterId);
+      const result =
+        await services.cluster.getSeatunnelXJavaProxyStatusSafe(clusterId);
       if (!result.success || !result.data) {
         setSeatunnelXJavaProxy(null);
         return;
@@ -584,14 +640,19 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             ? await services.cluster.startSeatunnelXJavaProxySafe(clusterId)
             : operation === 'stop'
               ? await services.cluster.stopSeatunnelXJavaProxySafe(clusterId)
-              : await services.cluster.restartSeatunnelXJavaProxySafe(clusterId);
+              : await services.cluster.restartSeatunnelXJavaProxySafe(
+                  clusterId,
+                );
         if (!result.success || !result.data) {
-          toast.error(result.error || t(`cluster.seatunnelxJavaProxy.${operation}Error`));
+          toast.error(
+            result.error || t(`cluster.seatunnelxJavaProxy.${operation}Error`),
+          );
           return;
         }
         setSeatunnelXJavaProxy(result.data);
         toast.success(
-          result.data.message || t(`cluster.seatunnelxJavaProxy.${operation}Success`),
+          result.data.message ||
+            t(`cluster.seatunnelxJavaProxy.${operation}Success`),
         );
       } finally {
         setSeatunnelXJavaProxyOperating(null);
@@ -599,6 +660,29 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     },
     [clusterId, t],
   );
+
+  const handlePreviewSeatunnelXJavaProxyLog = useCallback(async () => {
+    setSeatunnelXJavaProxyLogLoading(true);
+    try {
+      const result =
+        await services.cluster.previewSeatunnelXJavaProxyServiceLogSafe(
+          clusterId,
+          {
+            lines: 300,
+          },
+        );
+      if (!result.success || !result.data) {
+        toast.error(
+          result.error || t('cluster.seatunnelxJavaProxy.viewRuntimeLogError'),
+        );
+        return;
+      }
+      setSeatunnelXJavaProxyLogResult(result.data);
+      setSeatunnelXJavaProxyLogOpen(true);
+    } finally {
+      setSeatunnelXJavaProxyLogLoading(false);
+    }
+  }, [clusterId, t]);
 
   const handleStartInspection = useCallback(async () => {
     setInspectionStarting(true);
@@ -660,7 +744,13 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     void loadMonitoringOverview();
     void loadRuntimeStorage();
     void loadSeatunnelXJavaProxyStatus();
-  }, [loadClusterData, loadDiagnosticsSummary, loadMonitoringOverview, loadRuntimeStorage, loadSeatunnelXJavaProxyStatus]);
+  }, [
+    loadClusterData,
+    loadDiagnosticsSummary,
+    loadMonitoringOverview,
+    loadRuntimeStorage,
+    loadSeatunnelXJavaProxyStatus,
+  ]);
 
   useEffect(() => {
     void loadUpgradeTasks(upgradeTasksPage, upgradeTasksPageSize);
@@ -725,9 +815,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     async (kind: 'checkpoint' | 'imap') => {
       setRuntimeStorageValidationLoading(kind);
       try {
-        const result = await services.cluster.validateRuntimeStorageSafe(clusterId, kind);
+        const result = await services.cluster.validateRuntimeStorageSafe(
+          clusterId,
+          kind,
+        );
         if (!result.success || !result.data) {
-          toast.error(result.error || t('cluster.runtimeStorage.validateFailed'));
+          toast.error(
+            result.error || t('cluster.runtimeStorage.validateFailed'),
+          );
           return;
         }
         setRuntimeStorageValidation((prev) => ({...prev, [kind]: result.data}));
@@ -1133,10 +1228,12 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     cluster.status !== ClusterStatus.RUNNING &&
     cluster.status !== ClusterStatus.DEPLOYING;
   const runtimeConfig = extractClusterRuntimeConfig(cluster.config);
-  const webUINode = pickWebUINode(nodes, cluster.version, runtimeConfig.enableHTTP);
-  const webUIProxyURL = webUINode
-    ? `/api/v1/clusters/${clusterId}/webui/`
-    : '';
+  const webUINode = pickWebUINode(
+    nodes,
+    cluster.version,
+    runtimeConfig.enableHTTP,
+  );
+  const webUIProxyURL = webUINode ? `/api/v1/clusters/${clusterId}/webui/` : '';
   const upgradeTaskTotalPages = Math.max(
     1,
     Math.ceil(upgradeTasksTotal / upgradeTasksPageSize),
@@ -1155,7 +1252,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     visible: {opacity: 1, y: 0, transition: {duration: 0.6}},
   };
 
-  const renderRuntimeStorageSpec = (spec: RuntimeStorageSpec | undefined, label: string) => {
+  const renderRuntimeStorageSpec = (
+    spec: RuntimeStorageSpec | undefined,
+    label: string,
+  ) => {
     if (!spec) {
       return (
         <div className='rounded-lg border border-dashed p-4 text-sm text-muted-foreground'>
@@ -1163,13 +1263,35 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         </div>
       );
     }
+    const kind = spec.kind as 'checkpoint' | 'imap';
+    const listing = runtimeStorageListing[kind];
+    const searchKeyword = (runtimeStorageSearch[kind] || '')
+      .trim()
+      .toLowerCase();
+    const filteredItems = (listing?.items || []).filter((item) => {
+      if (!searchKeyword) {
+        return true;
+      }
+      const haystack = `${item.name || ''} ${item.path || ''}`.toLowerCase();
+      return haystack.includes(searchKeyword);
+    });
+    const pageSize = 20;
+    const currentPage = Math.max(1, runtimeStoragePage[kind] || 1);
+    const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+    const normalizedPage = Math.min(currentPage, totalPages);
+    const pagedItems = filteredItems.slice(
+      (normalizedPage - 1) * pageSize,
+      normalizedPage * pageSize,
+    );
     return (
       <Card>
         <CardHeader className='pb-3'>
           <CardTitle className='text-base'>{label}</CardTitle>
           <CardDescription>
             {spec.enabled
-              ? t('cluster.runtimeStorage.mode', {type: spec.storage_type || '-'})
+              ? t('cluster.runtimeStorage.mode', {
+                  type: spec.storage_type || '-',
+                })
               : t('cluster.runtimeStorage.disabled')}
           </CardDescription>
         </CardHeader>
@@ -1178,12 +1300,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <Button
               variant='outline'
               size='sm'
-              onClick={() => void handleValidateRuntimeStorage(spec.kind as 'checkpoint' | 'imap')}
-              disabled={
-                runtimeStorageValidationLoading === (spec.kind as 'checkpoint' | 'imap')
-              }
+              onClick={() => void handleValidateRuntimeStorage(kind)}
+              disabled={runtimeStorageValidationLoading === kind}
             >
-              {runtimeStorageValidationLoading === (spec.kind as 'checkpoint' | 'imap') ? (
+              {runtimeStorageValidationLoading === kind ? (
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
               ) : (
                 <Activity className='mr-2 h-4 w-4' />
@@ -1193,19 +1313,31 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </div>
           <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.path')}</div>
-              <div className='font-medium break-all'>{spec.namespace || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.path')}
+              </div>
+              <div className='font-medium break-all'>
+                {spec.namespace || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.endpoint')}</div>
-              <div className='font-medium break-all'>{spec.endpoint || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.endpoint')}
+              </div>
+              <div className='font-medium break-all'>
+                {spec.endpoint || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.bucket')}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.bucket')}
+              </div>
               <div className='font-medium break-all'>{spec.bucket || '-'}</div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.size')}
+              </div>
               <div className='font-medium'>
                 {spec.size_available
                   ? formatBytes(spec.total_size_bytes)
@@ -1218,7 +1350,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               {spec.warning}
             </div>
           )}
-          {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap'] && (
+          {runtimeStorageValidation[kind] && (
             <div className='space-y-2 rounded-md border p-3'>
               <div className='flex items-center justify-between gap-2'>
                 <div className='font-medium'>
@@ -1226,30 +1358,34 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                 </div>
                 <Badge
                   variant={
-                    runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.success
+                    runtimeStorageValidation[kind]?.success
                       ? 'default'
                       : 'destructive'
                   }
                 >
-                  {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.success
+                  {runtimeStorageValidation[kind]?.success
                     ? t('cluster.runtimeStorage.passed')
                     : t('cluster.runtimeStorage.failed')}
                 </Badge>
               </div>
-              {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.warning && (
+              {runtimeStorageValidation[kind]?.warning && (
                 <div className='text-xs text-muted-foreground'>
-                  {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.warning}
+                  {runtimeStorageValidation[kind]?.warning}
                 </div>
               )}
               <div className='space-y-2'>
-                {runtimeStorageValidation[spec.kind as 'checkpoint' | 'imap']?.hosts?.map((host) => (
+                {runtimeStorageValidation[kind]?.hosts?.map((host) => (
                   <div
                     key={`${spec.kind}-validate-${host.host_id}`}
                     className='flex items-start justify-between gap-3 rounded-md border px-3 py-2'
                   >
                     <div className='min-w-0'>
-                      <div className='font-medium'>{host.host_name || host.host_id}</div>
-                      <div className='text-xs text-muted-foreground break-all'>{host.message}</div>
+                      <div className='font-medium'>
+                        {host.host_name || host.host_id}
+                      </div>
+                      <div className='text-xs text-muted-foreground break-all'>
+                        {host.message}
+                      </div>
                     </div>
                     <Badge variant={host.success ? 'default' : 'destructive'}>
                       {host.success
@@ -1275,9 +1411,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                     </div>
                   </div>
                   <div className='text-right'>
-                    <div className='font-medium'>{formatBytes(node.size_bytes)}</div>
+                    <div className='font-medium'>
+                      {formatBytes(node.size_bytes)}
+                    </div>
                     <div className='text-xs text-muted-foreground'>
-                      {node.message || (node.exists ? t('cluster.runtimeStorage.pathExists') : t('cluster.runtimeStorage.pathMissing'))}
+                      {node.message ||
+                        (node.exists
+                          ? t('cluster.runtimeStorage.pathExists')
+                          : t('cluster.runtimeStorage.pathMissing'))}
                     </div>
                   </div>
                 </div>
@@ -1286,7 +1427,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           )}
           <div className='space-y-2 rounded-md border p-3'>
             <div className='flex items-center justify-between gap-2'>
-              <div className='font-medium'>{t('cluster.runtimeStorage.fileList')}</div>
+              <div className='font-medium'>
+                {t('cluster.runtimeStorage.fileList')}
+              </div>
               <div className='flex items-center gap-2'>
                 <Button
                   variant='outline'
@@ -1295,15 +1438,17 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                     void loadRuntimeStorageList(
                       spec.kind as 'checkpoint' | 'imap',
                       parentBrowsePath(
-                        runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'],
+                        runtimeStorageBrowsePath[
+                          spec.kind as 'checkpoint' | 'imap'
+                        ],
                         spec.namespace,
                       ),
                     )
                   }
                   disabled={
-                    runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap') ||
-                    trimTrailingSlashes(runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'])
-                      === trimTrailingSlashes(spec.namespace)
+                    runtimeStorageListingLoading === kind ||
+                    trimTrailingSlashes(runtimeStorageBrowsePath[kind]) ===
+                      trimTrailingSlashes(spec.namespace)
                   }
                 >
                   <ChevronUp className='mr-2 h-4 w-4' />
@@ -1314,13 +1459,13 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                   size='sm'
                   onClick={() =>
                     void loadRuntimeStorageList(
-                      spec.kind as 'checkpoint' | 'imap',
-                      runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'] || spec.namespace,
+                      kind,
+                      runtimeStorageBrowsePath[kind] || spec.namespace,
                     )
                   }
-                  disabled={runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap')}
+                  disabled={runtimeStorageListingLoading === kind}
                 >
-                  {runtimeStorageListingLoading === (spec.kind as 'checkpoint' | 'imap') ? (
+                  {runtimeStorageListingLoading === kind ? (
                     <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                   ) : (
                     <RefreshCw className='mr-2 h-4 w-4' />
@@ -1329,20 +1474,45 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                 </Button>
               </div>
             </div>
-            <div className='text-xs text-muted-foreground break-all'>
-              {runtimeStorageBrowsePath[spec.kind as 'checkpoint' | 'imap'] || spec.namespace || '-'}
+            <div className='flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
+              <div className='relative max-w-md flex-1'>
+                <Search className='pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
+                <Input
+                  value={runtimeStorageSearch[kind] || ''}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setRuntimeStorageSearch((prev) => ({
+                      ...prev,
+                      [kind]: value,
+                    }));
+                    setRuntimeStoragePage((prev) => ({...prev, [kind]: 1}));
+                  }}
+                  className='pl-9'
+                  placeholder={t('cluster.runtimeStorage.searchEntries')}
+                />
+              </div>
+              <div className='text-xs text-muted-foreground'>
+                {t('cluster.runtimeStorage.filteredEntryCount', {
+                  filtered: filteredItems.length,
+                  total: listing?.items?.length || 0,
+                })}
+              </div>
             </div>
-            {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.path && (
+            <div className='text-xs text-muted-foreground break-all'>
+              {runtimeStorageBrowsePath[kind] || spec.namespace || '-'}
+            </div>
+            {listing?.path && (
               <div className='text-xs text-muted-foreground break-all'>
-                {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.path}
+                {listing?.path}
               </div>
             )}
-            {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.items?.length ? (
+            {filteredItems.length ? (
               <div className='space-y-2'>
-                {runtimeStorageListing[spec.kind as 'checkpoint' | 'imap']?.items?.map((item) => {
+                {pagedItems.map((item) => {
                   const itemPath = item.path || item.name || '';
-                  const previewKey = `${spec.kind}:${itemPath}`;
-                  const isPreviewing = runtimeStoragePreviewLoading === previewKey;
+                  const previewKey = `${kind}:${itemPath}`;
+                  const isPreviewing =
+                    runtimeStoragePreviewLoading === previewKey;
                   const isInspecting = checkpointInspectLoading === itemPath;
                   const isInspectingWal = imapInspectLoading === itemPath;
                   return (
@@ -1352,7 +1522,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                     >
                       <div className='flex items-start justify-between gap-3'>
                         <div className='min-w-0'>
-                          <div className='font-medium break-all'>{item.name || item.path || '-'}</div>
+                          <div className='font-medium break-all'>
+                            {item.name || item.path || '-'}
+                          </div>
                           <div className='text-xs text-muted-foreground break-all'>
                             {item.path || '-'}
                           </div>
@@ -1374,10 +1546,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                             variant='outline'
                             size='sm'
                             onClick={() =>
-                              void loadRuntimeStorageList(
-                                spec.kind as 'checkpoint' | 'imap',
-                                itemPath,
-                              )
+                              void loadRuntimeStorageList(kind, itemPath)
                             }
                           >
                             <FolderOpen className='mr-2 h-4 w-4' />
@@ -1389,10 +1558,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                               variant='outline'
                               size='sm'
                               onClick={() =>
-                                void handlePreviewRuntimeStorage(
-                                  spec.kind as 'checkpoint' | 'imap',
-                                  itemPath,
-                                )
+                                void handlePreviewRuntimeStorage(kind, itemPath)
                               }
                               disabled={isPreviewing}
                             >
@@ -1403,46 +1569,94 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                               )}
                               {t('cluster.runtimeStorage.preview')}
                             </Button>
-                            {spec.kind === 'checkpoint' && itemPath.endsWith('.ser') && (
-                              <Button
-                                variant='outline'
-                                size='sm'
-                                onClick={() => void handleInspectCheckpoint(itemPath)}
-                                disabled={isInspecting}
-                              >
-                                {isInspecting ? (
-                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                ) : (
-                                  <Database className='mr-2 h-4 w-4' />
-                                )}
-                                {t('cluster.runtimeStorage.deserializeCheckpoint')}
-                              </Button>
-                            )}
-                            {spec.kind === 'imap' && itemPath.endsWith('_wal.txt') && (
-                              <Button
-                                variant='outline'
-                                size='sm'
-                                onClick={() => void handleInspectIMAPWAL(itemPath)}
-                                disabled={isInspectingWal}
-                              >
-                                {isInspectingWal ? (
-                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                ) : (
-                                  <Database className='mr-2 h-4 w-4' />
-                                )}
-                                {t('cluster.runtimeStorage.inspectWal')}
-                              </Button>
-                            )}
+                            {kind === 'checkpoint' &&
+                              itemPath.endsWith('.ser') && (
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() =>
+                                    void handleInspectCheckpoint(itemPath)
+                                  }
+                                  disabled={isInspecting}
+                                >
+                                  {isInspecting ? (
+                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                  ) : (
+                                    <Database className='mr-2 h-4 w-4' />
+                                  )}
+                                  {t(
+                                    'cluster.runtimeStorage.deserializeCheckpoint',
+                                  )}
+                                </Button>
+                              )}
+                            {kind === 'imap' &&
+                              itemPath.endsWith('_wal.txt') && (
+                                <Button
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={() =>
+                                    void handleInspectIMAPWAL(itemPath)
+                                  }
+                                  disabled={isInspectingWal}
+                                >
+                                  {isInspectingWal ? (
+                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                  ) : (
+                                    <Database className='mr-2 h-4 w-4' />
+                                  )}
+                                  {t('cluster.runtimeStorage.inspectWal')}
+                                </Button>
+                              )}
                           </>
                         )}
                       </div>
                     </div>
                   );
                 })}
+                {totalPages > 1 ? (
+                  <div className='flex items-center justify-between border-t pt-2'>
+                    <div className='text-xs text-muted-foreground'>
+                      {t('cluster.runtimeStorage.pageInfo', {
+                        current: normalizedPage,
+                        total: totalPages,
+                      })}
+                    </div>
+                    <div className='flex items-center gap-2'>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={normalizedPage <= 1}
+                        onClick={() =>
+                          setRuntimeStoragePage((prev) => ({
+                            ...prev,
+                            [kind]: Math.max(1, normalizedPage - 1),
+                          }))
+                        }
+                      >
+                        {t('cluster.runtimeStorage.previousPage')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={normalizedPage >= totalPages}
+                        onClick={() =>
+                          setRuntimeStoragePage((prev) => ({
+                            ...prev,
+                            [kind]: Math.min(totalPages, normalizedPage + 1),
+                          }))
+                        }
+                      >
+                        {t('cluster.runtimeStorage.nextPage')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className='text-xs text-muted-foreground'>
-                {t('cluster.runtimeStorage.noEntries')}
+                {searchKeyword
+                  ? t('cluster.runtimeStorage.noFilteredEntries')
+                  : t('cluster.runtimeStorage.noEntries')}
               </div>
             )}
           </div>
@@ -1541,38 +1755,37 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
 
       <Separator />
 
-      {monitoringOverview &&
-        monitoringOverview.stats.active_alerts_1h > 0 && (
-          <motion.div variants={itemVariants}>
-            <Card className='border-destructive/40 bg-destructive/5'>
-              <CardContent className='flex flex-col gap-4 py-4 md:flex-row md:items-center md:justify-between'>
-                <div className='space-y-1'>
-                  <div className='flex items-center gap-2 text-sm font-medium text-destructive'>
-                    <AlertTriangle className='h-4 w-4' />
-                    {t('cluster.activeAlertsBanner.title', {
-                      count: monitoringOverview.stats.active_alerts_1h,
-                    })}
-                  </div>
-                  <p className='text-sm text-muted-foreground'>
-                    {t('cluster.activeAlertsBanner.description', {
-                      restartFailed:
-                        monitoringOverview.stats.restart_failed_events_24h,
-                    })}
-                  </p>
+      {monitoringOverview && monitoringOverview.stats.active_alerts_1h > 0 && (
+        <motion.div variants={itemVariants}>
+          <Card className='border-destructive/40 bg-destructive/5'>
+            <CardContent className='flex flex-col gap-4 py-4 md:flex-row md:items-center md:justify-between'>
+              <div className='space-y-1'>
+                <div className='flex items-center gap-2 text-sm font-medium text-destructive'>
+                  <AlertTriangle className='h-4 w-4' />
+                  {t('cluster.activeAlertsBanner.title', {
+                    count: monitoringOverview.stats.active_alerts_1h,
+                  })}
                 </div>
-                <Button
-                  variant='outline'
-                  onClick={() =>
-                    router.push(`/monitoring?tab=alerts&cluster_id=${clusterId}`)
-                  }
-                >
-                  <AlertTriangle className='mr-2 h-4 w-4' />
-                  {t('cluster.activeAlertsBanner.action')}
-                </Button>
-              </CardContent>
-            </Card>
-          </motion.div>
-        )}
+                <p className='text-sm text-muted-foreground'>
+                  {t('cluster.activeAlertsBanner.description', {
+                    restartFailed:
+                      monitoringOverview.stats.restart_failed_events_24h,
+                  })}
+                </p>
+              </div>
+              <Button
+                variant='outline'
+                onClick={() =>
+                  router.push(`/monitoring?tab=alerts&cluster_id=${clusterId}`)
+                }
+              >
+                <AlertTriangle className='mr-2 h-4 w-4' />
+                {t('cluster.activeAlertsBanner.action')}
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       <motion.div variants={itemVariants}>
         <Tabs
@@ -1660,7 +1873,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                     <span className='text-sm text-muted-foreground'>
                       {t('cluster.installDir')}
                     </span>
-                    <p className='font-medium break-all'>{cluster.install_dir || '-'}</p>
+                    <p className='font-medium break-all'>
+                      {cluster.install_dir || '-'}
+                    </p>
                   </div>
                   <div>
                     <span className='text-sm text-muted-foreground'>
@@ -1673,7 +1888,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                       {t('cluster.hazelcastPort')}
                     </span>
                     <p className='font-medium'>
-                      {nodes.find((node) => node.hazelcast_port > 0)?.hazelcast_port || '-'}
+                      {nodes.find((node) => node.hazelcast_port > 0)
+                        ?.hazelcast_port || '-'}
                     </p>
                   </div>
                   <div>
@@ -1747,7 +1963,13 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                   </div>
                   <Button
                     variant='outline'
-                    onClick={() => window.open(webUIProxyURL, '_blank', 'noopener,noreferrer')}
+                    onClick={() =>
+                      window.open(
+                        webUIProxyURL,
+                        '_blank',
+                        'noopener,noreferrer',
+                      )
+                    }
                   >
                     <ExternalLink className='mr-2 h-4 w-4' />
                     {t('cluster.openWebUiInNewWindow')}
@@ -1838,7 +2060,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                             <Button
                               variant='outline'
                               size='sm'
-                              onClick={() => void loadSeatunnelXJavaProxyStatus()}
+                              onClick={() =>
+                                void loadSeatunnelXJavaProxyStatus()
+                              }
                               disabled={seatunnelxJavaProxyLoading}
                               data-testid='seatunnelx-java-proxy-refresh'
                             >
@@ -1877,25 +2101,52 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                             <div className='text-muted-foreground'>
                               {t('cluster.seatunnelxJavaProxy.pid')}
                             </div>
-                            <div className='font-medium'>{seatunnelxJavaProxy?.pid ?? '-'}</div>
+                            <div className='font-medium'>
+                              {seatunnelxJavaProxy?.pid ?? '-'}
+                            </div>
                           </div>
                           <div>
                             <div className='text-muted-foreground'>
                               {t('cluster.seatunnelxJavaProxy.logPath')}
                             </div>
                             <div className='font-medium break-all'>
-                              {seatunnelxJavaProxy?.log_path && seatunnelxJavaProxy.log_path.trim() !== '' ? seatunnelxJavaProxy.log_path : '-'}
+                              {seatunnelxJavaProxy?.log_path &&
+                              seatunnelxJavaProxy.log_path.trim() !== ''
+                                ? seatunnelxJavaProxy.log_path
+                                : '-'}
                             </div>
                           </div>
                         </div>
                         <div className='rounded-md border bg-muted/20 p-3 text-sm'>
-                          {seatunnelxJavaProxy?.message || t('cluster.seatunnelxJavaProxy.noStatus')}
+                          {seatunnelxJavaProxy?.message ||
+                            t('cluster.seatunnelxJavaProxy.noStatus')}
                         </div>
                         <div className='flex flex-wrap gap-2'>
                           <Button
                             variant='outline'
                             size='sm'
-                            onClick={() => void handleSeatunnelXJavaProxyOperation('start')}
+                            onClick={() =>
+                              void handlePreviewSeatunnelXJavaProxyLog()
+                            }
+                            disabled={
+                              seatunnelxJavaProxyLoading ||
+                              seatunnelxJavaProxyLogLoading
+                            }
+                            data-testid='seatunnelx-java-proxy-view-log'
+                          >
+                            {seatunnelxJavaProxyLogLoading ? (
+                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                            ) : (
+                              <FileText className='mr-2 h-4 w-4' />
+                            )}
+                            {t('cluster.seatunnelxJavaProxy.viewRuntimeLog')}
+                          </Button>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void handleSeatunnelXJavaProxyOperation('start')
+                            }
                             disabled={seatunnelxJavaProxyOperating !== null}
                             data-testid='seatunnelx-java-proxy-start'
                           >
@@ -1909,7 +2160,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <Button
                             variant='outline'
                             size='sm'
-                            onClick={() => void handleSeatunnelXJavaProxyOperation('restart')}
+                            onClick={() =>
+                              void handleSeatunnelXJavaProxyOperation('restart')
+                            }
                             disabled={seatunnelxJavaProxyOperating !== null}
                             data-testid='seatunnelx-java-proxy-restart'
                           >
@@ -1923,7 +2176,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <Button
                             variant='outline'
                             size='sm'
-                            onClick={() => void handleSeatunnelXJavaProxyOperation('stop')}
+                            onClick={() =>
+                              void handleSeatunnelXJavaProxyOperation('stop')
+                            }
                             disabled={seatunnelxJavaProxyOperating !== null}
                             data-testid='seatunnelx-java-proxy-stop'
                           >
@@ -1955,7 +2210,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
 
           <TabsContent value='monitoring' className='space-y-6'>
             {/* Monitor Config / 监控配置 */}
-            <MonitorConfigPanel clusterId={clusterId} clusterName={cluster.name} />
+            <MonitorConfigPanel
+              clusterId={clusterId}
+              clusterName={cluster.name}
+            />
           </TabsContent>
 
           <TabsContent value='nodes' className='space-y-6'>
@@ -1967,7 +2225,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                   {t('cluster.operations')}
                   {selectedNodeIds.size > 0 && (
                     <Badge variant='secondary' className='ml-2'>
-                      {t('cluster.selectedNodes', {count: selectedNodeIds.size})}
+                      {t('cluster.selectedNodes', {
+                        count: selectedNodeIds.size,
+                      })}
                     </Badge>
                   )}
                 </CardTitle>
@@ -2070,7 +2330,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                           <TableCell>
                             <Checkbox
                               checked={selectedNodeIds.has(node.id)}
-                              onCheckedChange={() => toggleNodeSelection(node.id)}
+                              onCheckedChange={() =>
+                                toggleNodeSelection(node.id)
+                              }
                             />
                           </TableCell>
                           <TableCell>{node.id}</TableCell>
@@ -2116,7 +2378,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                               <Button
                                 variant='ghost'
                                 size='icon'
-                                onClick={() => setConfirmNodeOp({op: 'stop', node})}
+                                onClick={() =>
+                                  setConfirmNodeOp({op: 'stop', node})
+                                }
                                 disabled={
                                   nodeOperating === node.id ||
                                   node.status !== NodeStatus.RUNNING
@@ -2197,7 +2461,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                 <div>
                   <CardTitle>{t('diagnosticsCenter.errors.title')}</CardTitle>
                   <CardDescription>
-                    {t('diagnosticsCenter.errors.clusterScopedHint', {name: cluster.name})}
+                    {t('diagnosticsCenter.errors.clusterScopedHint', {
+                      name: cluster.name,
+                    })}
                   </CardDescription>
                 </div>
                 <div className='flex flex-wrap items-center gap-2'>
@@ -2258,10 +2524,14 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                       >
                         <div className='min-w-0 space-y-1'>
                           <div className='truncate font-medium'>
-                            {group.title || group.sample_message || group.fingerprint}
+                            {group.title ||
+                              group.sample_message ||
+                              group.fingerprint}
                           </div>
                           <div className='truncate text-sm text-muted-foreground'>
-                            {group.exception_class || group.sample_message || '-'}
+                            {group.exception_class ||
+                              group.sample_message ||
+                              '-'}
                           </div>
                         </div>
                         <div className='ml-4 flex shrink-0 items-center gap-2'>
@@ -2362,7 +2632,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                               {upgradeTask.current_step || '-'}
                             </TableCell>
                             <TableCell className='text-muted-foreground'>
-                              {new Date(upgradeTask.created_at).toLocaleString()}
+                              {new Date(
+                                upgradeTask.created_at,
+                              ).toLocaleString()}
                             </TableCell>
                             <TableCell className='text-right'>
                               <Button
@@ -2434,7 +2706,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         open={isDeleteDialogOpen}
         onOpenChange={(open) => {
           setIsDeleteDialogOpen(open);
-          if (!open) {setForceDelete(false);}
+          if (!open) {
+            setForceDelete(false);
+          }
         }}
       >
         <AlertDialogContent>
@@ -2523,10 +2797,13 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={async () => {
-                if (confirmBatchOp === 'start') {await handleBatchStart();}
-                else if (confirmBatchOp === 'stop') {await handleBatchStop();}
-                else if (confirmBatchOp === 'restart')
-                  {await handleBatchRestart();}
+                if (confirmBatchOp === 'start') {
+                  await handleBatchStart();
+                } else if (confirmBatchOp === 'stop') {
+                  await handleBatchStop();
+                } else if (confirmBatchOp === 'restart') {
+                  await handleBatchRestart();
+                }
                 setConfirmBatchOp(null);
               }}
             >
@@ -2581,12 +2858,16 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={async () => {
-                if (!confirmNodeOp) {return;}
-                if (confirmNodeOp.op === 'start')
-                  {await handleNodeStart(confirmNodeOp.node);}
-                else if (confirmNodeOp.op === 'stop')
-                  {await handleNodeStop(confirmNodeOp.node);}
-                else {await handleNodeRestart(confirmNodeOp.node);}
+                if (!confirmNodeOp) {
+                  return;
+                }
+                if (confirmNodeOp.op === 'start') {
+                  await handleNodeStart(confirmNodeOp.node);
+                } else if (confirmNodeOp.op === 'stop') {
+                  await handleNodeStop(confirmNodeOp.node);
+                } else {
+                  await handleNodeRestart(confirmNodeOp.node);
+                }
                 setConfirmNodeOp(null);
               }}
             >
@@ -2601,7 +2882,9 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
       <AlertDialog open={imapCleanupOpen} onOpenChange={setImapCleanupOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('cluster.runtimeStorage.cleanupConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('cluster.runtimeStorage.cleanupConfirmTitle')}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {t('cluster.runtimeStorage.cleanupConfirmDesc')}
             </AlertDialogDescription>
@@ -2618,7 +2901,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={runtimeStoragePreviewOpen} onOpenChange={setRuntimeStoragePreviewOpen}>
+      <Dialog
+        open={runtimeStoragePreviewOpen}
+        onOpenChange={setRuntimeStoragePreviewOpen}
+      >
         <DialogContent className='max-w-4xl'>
           <DialogHeader>
             <DialogTitle>{t('cluster.runtimeStorage.preview')}</DialogTitle>
@@ -2628,19 +2914,33 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </DialogHeader>
           <div className='grid gap-3 text-sm md:grid-cols-4'>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
-              <div className='font-medium break-all'>{runtimeStoragePreview?.file_name || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.fileName')}
+              </div>
+              <div className='font-medium break-all'>
+                {runtimeStoragePreview?.file_name || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
-              <div className='font-medium'>{formatBytes(runtimeStoragePreview?.size_bytes)}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.size')}
+              </div>
+              <div className='font-medium'>
+                {formatBytes(runtimeStoragePreview?.size_bytes)}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
-              <div className='font-medium'>{runtimeStoragePreview?.encoding || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.encoding')}
+              </div>
+              <div className='font-medium'>
+                {runtimeStoragePreview?.encoding || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.truncated')}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.truncated')}
+              </div>
               <div className='font-medium'>
                 {runtimeStoragePreview?.truncated ? 'Yes' : 'No'}
               </div>
@@ -2656,30 +2956,74 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={checkpointInspectOpen} onOpenChange={setCheckpointInspectOpen}>
+      <Dialog
+        open={seatunnelxJavaProxyLogOpen}
+        onOpenChange={setSeatunnelXJavaProxyLogOpen}
+      >
+        <WorkbenchDialogContent className='sm:max-w-[1560px]'>
+          <DialogHeader>
+            <DialogTitle>
+              {t('cluster.seatunnelxJavaProxy.viewRuntimeLog')}
+            </DialogTitle>
+            <DialogDescription className='break-all'>
+              {seatunnelxJavaProxyLogResult?.log_path ||
+                seatunnelxJavaProxy?.log_path ||
+                '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className='min-h-0 flex-1 rounded-md border p-3'>
+            <pre className='text-xs whitespace-pre-wrap break-all'>
+              {seatunnelxJavaProxyLogResult?.logs || '-'}
+            </pre>
+          </ScrollArea>
+        </WorkbenchDialogContent>
+      </Dialog>
+
+      <Dialog
+        open={checkpointInspectOpen}
+        onOpenChange={setCheckpointInspectOpen}
+      >
         <DialogContent className='max-w-5xl'>
           <DialogHeader>
-            <DialogTitle>{t('cluster.runtimeStorage.deserializeCheckpoint')}</DialogTitle>
+            <DialogTitle>
+              {t('cluster.runtimeStorage.deserializeCheckpoint')}
+            </DialogTitle>
             <DialogDescription className='break-all'>
               {checkpointInspectResult?.path || '-'}
             </DialogDescription>
           </DialogHeader>
           <div className='grid gap-3 text-sm md:grid-cols-4'>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
-              <div className='font-medium break-all'>{checkpointInspectResult?.file_name || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.fileName')}
+              </div>
+              <div className='font-medium break-all'>
+                {checkpointInspectResult?.file_name || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
-              <div className='font-medium'>{formatBytes(checkpointInspectResult?.size_bytes)}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.size')}
+              </div>
+              <div className='font-medium'>
+                {formatBytes(checkpointInspectResult?.size_bytes)}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
-              <div className='font-medium'>{checkpointInspectResult?.encoding || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.encoding')}
+              </div>
+              <div className='font-medium'>
+                {checkpointInspectResult?.encoding || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.storageType')}</div>
-              <div className='font-medium'>{checkpointInspectResult?.storage_type || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.storageType')}
+              </div>
+              <div className='font-medium'>
+                {checkpointInspectResult?.storage_type || '-'}
+              </div>
             </div>
           </div>
           <ScrollArea className='h-[55vh] rounded-md border p-3'>
@@ -2687,7 +3031,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               {JSON.stringify(
                 {
                   pipeline_state: checkpointInspectResult?.pipeline_state,
-                  completed_checkpoint: checkpointInspectResult?.completed_checkpoint,
+                  completed_checkpoint:
+                    checkpointInspectResult?.completed_checkpoint,
                   action_states: checkpointInspectResult?.action_states,
                   task_statistics: checkpointInspectResult?.task_statistics,
                 },
@@ -2709,24 +3054,44 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </DialogHeader>
           <div className='grid gap-3 text-sm md:grid-cols-5'>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.fileName')}</div>
-              <div className='font-medium break-all'>{imapInspectResult?.file_name || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.fileName')}
+              </div>
+              <div className='font-medium break-all'>
+                {imapInspectResult?.file_name || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.size')}</div>
-              <div className='font-medium'>{formatBytes(imapInspectResult?.size_bytes)}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.size')}
+              </div>
+              <div className='font-medium'>
+                {formatBytes(imapInspectResult?.size_bytes)}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.encoding')}</div>
-              <div className='font-medium'>{imapInspectResult?.encoding || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.encoding')}
+              </div>
+              <div className='font-medium'>
+                {imapInspectResult?.encoding || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.storageType')}</div>
-              <div className='font-medium'>{imapInspectResult?.storage_type || '-'}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.storageType')}
+              </div>
+              <div className='font-medium'>
+                {imapInspectResult?.storage_type || '-'}
+              </div>
             </div>
             <div>
-              <div className='text-muted-foreground'>{t('cluster.runtimeStorage.entryCount')}</div>
-              <div className='font-medium'>{imapInspectResult?.entry_count ?? 0}</div>
+              <div className='text-muted-foreground'>
+                {t('cluster.runtimeStorage.entryCount')}
+              </div>
+              <div className='font-medium'>
+                {imapInspectResult?.entry_count ?? 0}
+              </div>
             </div>
           </div>
           <ScrollArea className='h-[55vh] rounded-md border p-3'>

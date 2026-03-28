@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -164,12 +165,13 @@ type precheckJSONEnvelope struct {
 }
 
 type JobLogsResult struct {
-	Mode       string `json:"mode"`
-	Source     string `json:"source"`
-	Logs       string `json:"logs"`
-	NextOffset string `json:"next_offset,omitempty"`
-	FileSize   int64  `json:"file_size,omitempty"`
-	UpdatedAt  string `json:"updated_at"`
+	Mode        string `json:"mode"`
+	Source      string `json:"source"`
+	Logs        string `json:"logs"`
+	EmptyReason string `json:"empty_reason,omitempty"`
+	NextOffset  string `json:"next_offset,omitempty"`
+	FileSize    int64  `json:"file_size,omitempty"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type clusterJobLogPayload struct {
@@ -186,6 +188,7 @@ type PreviewCollectRequest struct {
 	Catalog       map[string]interface{}   `json:"catalog"`
 	Columns       []interface{}            `json:"columns"`
 	Rows          []map[string]interface{} `json:"rows"`
+	RowLimit      int                      `json:"row_limit"`
 	Page          int                      `json:"page"`
 	PageSize      int                      `json:"page_size"`
 	Total         int                      `json:"total"`
@@ -260,17 +263,19 @@ func (s *Service) submitLocalTaskInstance(ctx context.Context, task *Task, creat
 		EngineJobID:   platformJobID,
 		Status:        JobStatusRunning,
 		SubmitSpec: JSONMap{
-			"execution_mode":  "local",
-			"cluster_id":      task.ClusterID,
-			"target_node_id":  target.NodeID,
-			"target_host_id":  target.HostID,
-			"target_agent_id": target.AgentID,
-			"install_dir":     target.InstallDir,
-			"format":          normalizeSubmitFormat(format),
-			"job_name":        jobName,
-			"platform_job_id": platformJobID,
-			"config_file":     localRun.ConfigFile,
-			"pid":             localRun.PID,
+			"execution_mode":    "local",
+			"cluster_id":        task.ClusterID,
+			"target_node_id":    target.NodeID,
+			"target_host_id":    target.HostID,
+			"target_agent_id":   target.AgentID,
+			"install_dir":       target.InstallDir,
+			"format":            normalizeSubmitFormat(format),
+			"submitted_content": string(body),
+			"submitted_format":  normalizeSubmitFormat(format),
+			"job_name":          jobName,
+			"platform_job_id":   platformJobID,
+			"config_file":       localRun.ConfigFile,
+			"pid":               localRun.PID,
 		},
 		ResultPreview: JSONMap{
 			"job_status":      "RUNNING",
@@ -378,10 +383,29 @@ func (s *Service) GetJobLogs(ctx context.Context, id uint, offset string, limitB
 	if limitBytes < 0 {
 		limitBytes = 0
 	}
-	if submitSpecExecutionMode(instance.SubmitSpec) == "local" {
-		return s.getLocalJobLogs(ctx, instance, offset, limitBytes, keyword, level)
+	emptyResult := &JobLogsResult{
+		Logs:        "",
+		NextOffset:  "",
+		FileSize:    0,
+		EmptyReason: "logs_not_ready",
+		UpdatedAt:   time.Now().Format(time.RFC3339),
 	}
-	return s.getClusterJobLogs(ctx, instance, offset, limitBytes, keyword, level)
+	if submitSpecExecutionMode(instance.SubmitSpec) == "local" {
+		result, err := s.getLocalJobLogs(ctx, instance, offset, limitBytes, keyword, level)
+		if errors.Is(err, ErrJobLogsUnavailable) {
+			emptyResult.Mode = "local"
+			emptyResult.Source = "agent-file"
+			return emptyResult, nil
+		}
+		return result, err
+	}
+	result, err := s.getClusterJobLogs(ctx, instance, offset, limitBytes, keyword, level)
+	if errors.Is(err, ErrJobLogsUnavailable) {
+		emptyResult.Mode = "cluster"
+		emptyResult.Source = "agent-file"
+		return emptyResult, nil
+	}
+	return result, err
 }
 
 func (s *Service) getLocalJobLogs(ctx context.Context, instance *JobInstance, offset string, limitBytes int, keyword string, level string) (*JobLogsResult, error) {
@@ -609,6 +633,26 @@ func (s *Service) CollectPreview(ctx context.Context, req *PreviewCollectRequest
 	if err != nil {
 		return err
 	}
+	session, err := s.repo.GetPreviewSessionByJobInstanceID(ctx, instance.ID)
+	if err != nil {
+		if !errors.Is(err, ErrJobInstanceNotFound) {
+			return err
+		}
+		now := time.Now()
+		session = &PreviewSession{
+			JobInstanceID:  instance.ID,
+			TaskID:         instance.TaskID,
+			PlatformJobID:  strings.TrimSpace(instance.PlatformJobID),
+			EngineJobID:    strings.TrimSpace(instance.EngineJobID),
+			RowLimit:       normalizePreviewRowLimit(req.RowLimit),
+			TimeoutMinutes: defaultPreviewTimeoutMinutes,
+			Status:         "collecting",
+			StartedAt:      &now,
+		}
+		if err := s.repo.CreatePreviewSession(ctx, session); err != nil {
+			return err
+		}
+	}
 	if instance.ResultPreview == nil {
 		instance.ResultPreview = JSONMap{}
 	}
@@ -616,15 +660,91 @@ func (s *Service) CollectPreview(ctx context.Context, req *PreviewCollectRequest
 	if datasetName == "" {
 		datasetName = "preview_dataset"
 	}
+	columns := interfaceSliceToStrings(req.Columns)
+	rowLimit := normalizePreviewRowLimit(req.RowLimit)
+	if session.RowLimit > 0 {
+		rowLimit = normalizePreviewRowLimit(session.RowLimit)
+	}
+	acceptedRows := req.Rows
+	if session.TotalRows >= rowLimit {
+		acceptedRows = []map[string]interface{}{}
+		session.Truncated = true
+	} else if remaining := rowLimit - session.TotalRows; remaining < len(req.Rows) {
+		acceptedRows = append([]map[string]interface{}{}, req.Rows[:remaining]...)
+		session.Truncated = true
+	}
+	table, tableErr := s.repo.GetPreviewTableByPath(ctx, session.ID, datasetName)
+	if tableErr != nil && !errors.Is(tableErr, ErrTaskNotFound) {
+		return tableErr
+	}
+	if table == nil {
+		table = &PreviewTable{
+			SessionID:   session.ID,
+			TablePath:   datasetName,
+			DisplayName: datasetName,
+			Columns:     append(JSONStringSlice{}, columns...),
+		}
+		if err := s.repo.CreatePreviewTable(ctx, table); err != nil {
+			return err
+		}
+		session.TableCount += 1
+	} else {
+		if len(columns) > 0 {
+			table.Columns = append(JSONStringSlice{}, columns...)
+		}
+		if req.Replace {
+			session.TotalRows -= table.RowCount
+			if session.TotalRows < 0 {
+				session.TotalRows = 0
+			}
+			table.RowCount = 0
+			if err := s.repo.DeletePreviewRowsByTableID(ctx, table.ID); err != nil {
+				return err
+			}
+		}
+	}
+	if len(acceptedRows) > 0 {
+		batch := make([]*PreviewRow, 0, len(acceptedRows))
+		for index, row := range acceptedRows {
+			batch = append(batch, &PreviewRow{
+				SessionID: session.ID,
+				TableID:   table.ID,
+				RowIndex:  table.RowCount + index,
+				RowData:   cloneJSONMap(row),
+			})
+		}
+		if err := s.repo.CreatePreviewRows(ctx, batch); err != nil {
+			return err
+		}
+		table.RowCount += len(acceptedRows)
+		session.TotalRows += len(acceptedRows)
+	}
+	if err := s.repo.UpdatePreviewTable(ctx, table); err != nil {
+		return err
+	}
+	if session.TotalRows >= rowLimit {
+		session.Truncated = true
+	}
+	session.RowLimit = rowLimit
+	if session.Truncated {
+		session.Status = "truncated"
+		finishedAt := time.Now()
+		session.FinishedAt = &finishedAt
+	} else {
+		session.Status = "collecting"
+	}
+	if err := s.repo.UpdatePreviewSession(ctx, session); err != nil {
+		return err
+	}
 	datasets := toDatasetSlice(instance.ResultPreview["datasets"])
 	dataset := JSONMap{
 		"name":       datasetName,
 		"catalog":    cloneAnyMap(req.Catalog),
-		"columns":    interfaceSliceToStrings(req.Columns),
-		"rows":       req.Rows,
+		"columns":    columns,
+		"rows":       acceptedRows,
 		"page":       normalizePositive(req.Page, 1),
-		"page_size":  normalizePositive(req.PageSize, len(req.Rows)),
-		"total":      normalizePositive(req.Total, len(req.Rows)),
+		"page_size":  normalizePositive(req.PageSize, len(acceptedRows)),
+		"total":      normalizePositive(req.Total, len(acceptedRows)),
 		"updated_at": time.Now().Format(time.RFC3339),
 	}
 	replaced := false
@@ -632,7 +752,8 @@ func (s *Service) CollectPreview(ctx context.Context, req *PreviewCollectRequest
 		if strings.EqualFold(strings.TrimSpace(stringValue(item, "name")), datasetName) {
 			if !req.Replace {
 				existingRows := mapRowsValue(item["rows"])
-				dataset["rows"] = append(existingRows, req.Rows...)
+				dataset["rows"] = append(existingRows, acceptedRows...)
+				dataset["rows"] = trimPreviewRows(dataset["rows"], rowLimit)
 				dataset["page"] = 1
 				dataset["page_size"] = len(mapRowsValue(dataset["rows"]))
 				dataset["total"] = len(mapRowsValue(dataset["rows"]))
@@ -643,15 +764,58 @@ func (s *Service) CollectPreview(ctx context.Context, req *PreviewCollectRequest
 		}
 	}
 	if !replaced {
+		dataset["rows"] = trimPreviewRows(dataset["rows"], rowLimit)
+		dataset["page_size"] = len(mapRowsValue(dataset["rows"]))
+		dataset["total"] = len(mapRowsValue(dataset["rows"]))
 		datasets = append(datasets, dataset)
 	}
 	instance.ResultPreview["datasets"] = datasets
-	instance.ResultPreview["columns"] = interfaceSliceToStrings(req.Columns)
-	instance.ResultPreview["rows"] = req.Rows
+	instance.ResultPreview["columns"] = columns
+	aggregatedRows := make([]map[string]interface{}, 0)
+	for _, item := range datasets {
+		aggregatedRows = append(aggregatedRows, mapRowsValue(item["rows"])...)
+	}
+	instance.ResultPreview["rows"] = aggregatedRows
+	instance.ResultPreview["preview_row_limit"] = rowLimit
+	instance.ResultPreview["preview_total_rows"] = session.TotalRows
+	instance.ResultPreview["preview_table_count"] = session.TableCount
+	instance.ResultPreview["preview_truncated"] = session.Truncated
 	if err := s.repo.UpdateJobInstance(ctx, instance); err != nil {
 		return err
 	}
+	if session.Truncated && (instance.Status == JobStatusPending || instance.Status == JobStatusRunning) {
+		_, _ = s.CancelJob(ctx, instance.ID, false)
+	}
 	return nil
+}
+
+func trimPreviewRows(value interface{}, rowLimit int) []map[string]interface{} {
+	rows := mapRowsValue(value)
+	limit := normalizePreviewRowLimit(rowLimit)
+	if limit <= 0 || len(rows) <= limit {
+		return rows
+	}
+	return rows[:limit]
+}
+
+func normalizePreviewRowLimit(value int) int {
+	if value <= 0 {
+		return defaultPreviewRowLimit
+	}
+	if value > maxPreviewRowLimit {
+		return maxPreviewRowLimit
+	}
+	return value
+}
+
+func normalizePreviewTimeoutMinutes(value int) int {
+	if value <= 0 {
+		return defaultPreviewTimeoutMinutes
+	}
+	if value > 24*60 {
+		return 24 * 60
+	}
+	return value
 }
 
 func toDatasetSlice(value interface{}) []JSONMap {
@@ -748,6 +912,9 @@ func mergePreviewDeriveMetadata(existing JSONMap, previewResult *ConfigToolPrevi
 	}
 	if previewResult == nil {
 		return existing
+	}
+	if strings.TrimSpace(previewResult.Content) != "" {
+		existing["preview_content"] = previewResult.Content
 	}
 	if previewResult.ContentFormat != "" {
 		existing["content_format"] = previewResult.ContentFormat

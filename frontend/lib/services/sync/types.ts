@@ -101,6 +101,7 @@ export interface SyncJobLogsResult {
   mode: string;
   source: string;
   logs: string;
+  empty_reason?: string;
   next_offset?: string;
   file_size?: number;
   updated_at: string;
@@ -115,6 +116,79 @@ export interface SyncPreviewDataset {
   page_size?: number;
   total?: number;
   updated_at?: string;
+}
+
+export interface SyncPreviewTableSnapshot {
+  id: number;
+  table_path: string;
+  columns: string[];
+  row_count: number;
+  rows?: SyncJSON[];
+}
+
+export interface SyncPreviewSnapshot {
+  session_id: number;
+  job_instance_id: number;
+  platform_job_id: string;
+  engine_job_id: string;
+  status: string;
+  empty_reason?: string;
+  row_limit: number;
+  total_rows: number;
+  table_count: number;
+  truncated: boolean;
+  injected_script?: string;
+  content_format?: string;
+  tables: SyncPreviewTableSnapshot[];
+  selected_table?: SyncPreviewTableSnapshot;
+  warnings?: string[];
+}
+
+export interface SyncCheckpointRecord {
+  pipelineId: number;
+  checkpoint?: {
+    checkpointId: number;
+    checkpointType?: string;
+    status?: string;
+    triggerTimestamp?: number;
+    completedTimestamp?: number;
+    durationMillis?: number;
+    stateSize?: number;
+    failureReason?: string;
+  };
+}
+
+export interface SyncCheckpointPipelineOverview {
+  pipelineId: number;
+  counts?: Record<string, number>;
+  latestCompleted?: SyncCheckpointRecord['checkpoint'];
+  latestFailed?: SyncCheckpointRecord['checkpoint'];
+  latestSavepoint?: SyncCheckpointRecord['checkpoint'] | null;
+  inProgress?: Array<{
+    checkpointId: number;
+    checkpointType?: string;
+    triggerTimestamp?: number;
+    acknowledged?: number;
+    total?: number;
+  }>;
+  history?: SyncCheckpointRecord[];
+}
+
+export interface SyncCheckpointOverview {
+  jobId: string;
+  updatedAt?: number;
+  pipelines: SyncCheckpointPipelineOverview[];
+}
+
+export interface SyncCheckpointSnapshot {
+  job_instance_id: number;
+  platform_job_id: string;
+  engine_job_id: string;
+  status: string;
+  empty_reason?: string;
+  message?: string;
+  overview?: SyncCheckpointOverview;
+  history?: SyncCheckpointRecord[];
 }
 
 export interface SyncJobInstance {
@@ -198,6 +272,7 @@ export interface SyncWebUIDagVertexInfo {
   type: string;
   connectorType: string;
   tablePaths?: string[];
+  tableColumns?: Record<string, string[]>;
 }
 
 export interface SyncWebUIJobDag {
@@ -249,3 +324,8 @@ export interface CreateSyncGlobalVariableRequest {
 }
 
 export interface UpdateSyncGlobalVariableRequest extends CreateSyncGlobalVariableRequest {}
+
+export interface PreviewSyncTaskRequest {
+  row_limit?: number;
+  timeout_minutes?: number;
+}

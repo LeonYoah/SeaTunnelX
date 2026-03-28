@@ -95,6 +95,28 @@ function DialogContent({
   );
 }
 
+function WorkbenchDialogContent({
+  className,
+  children,
+  showCloseButton = true,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  showCloseButton?: boolean;
+}) {
+  return (
+    <DialogContent
+      className={cn(
+        'flex h-[88vh] w-[94vw] max-w-[94vw] flex-col gap-4 overflow-hidden p-6 sm:max-w-[1400px]',
+        className,
+      )}
+      showCloseButton={showCloseButton}
+      {...props}
+    >
+      {children}
+    </DialogContent>
+  );
+}
+
 function DialogHeader({className, ...props}: React.ComponentProps<'div'>) {
   return (
     <div
@@ -155,4 +177,5 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
+  WorkbenchDialogContent,
 };

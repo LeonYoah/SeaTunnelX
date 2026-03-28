@@ -17,7 +17,7 @@
 
 'use client';
 
-import {useMemo} from 'react';
+import {useMemo, useState} from 'react';
 import {GitBranch} from 'lucide-react';
 import type {
   SyncWebUIDagEdge,
@@ -26,6 +26,12 @@ import type {
 } from '@/lib/services/sync';
 import {Badge} from '@/components/ui/badge';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {ScrollArea} from '@/components/ui/scroll-area';
 import {cn} from '@/lib/utils';
 
@@ -151,12 +157,34 @@ function normalizeTablePaths(paths?: string[]): string[] {
 }
 
 function estimateNodeHeight(node: SyncWebUIDagVertexInfo): number {
-  const connectorLines = Math.max(1, Math.ceil((node.connectorType?.length || 0) / 22));
-  const tablePathRows = Math.max(1, Math.ceil(normalizeTablePaths(node.tablePaths).length / 2));
-  return Math.max(NODE_MIN_HEIGHT, 72 + connectorLines * 18 + tablePathRows * 28);
+  const connectorLines = Math.max(
+    1,
+    Math.ceil((node.connectorType?.length || 0) / 22),
+  );
+  const tableCount = Math.max(1, normalizeTablePaths(node.tablePaths).length);
+  const headerHeight = 72;
+  const connectorHeight = connectorLines * 18;
+  const tableSectionLabelHeight = 20;
+  const tableButtonHeight = tableCount * 30;
+  const tableButtonGap = Math.max(0, tableCount - 1) * 6;
+  const bottomPadding = 22;
+  return Math.max(
+    NODE_MIN_HEIGHT,
+    headerHeight +
+      connectorHeight +
+      tableSectionLabelHeight +
+      tableButtonHeight +
+      tableButtonGap +
+      bottomPadding,
+  );
 }
 
 export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
+  const [selectedTableDetail, setSelectedTableDetail] = useState<{
+    nodeLabel: string;
+    tablePath: string;
+    columns: string[];
+  } | null>(null);
   const vertices = useMemo(() => normalizeVertices(job), [job]);
   const edges = useMemo(() => normalizeEdges(job), [job]);
   const positionedNodes = useMemo(
@@ -282,16 +310,24 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
                         <div className='text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
                           TablePaths
                         </div>
-                        <div className='flex flex-wrap gap-1.5'>
+                        <div className='space-y-1.5'>
                           {normalizeTablePaths(node.tablePaths).length > 0 ? (
                             normalizeTablePaths(node.tablePaths).map((path) => (
-                              <Badge
+                              <button
                                 key={`${node.vertexId}-${path}`}
-                                variant='secondary'
-                                className='max-w-full truncate rounded-md border border-border/50 bg-background/80 text-[11px]'
+                                type='button'
+                                title={path}
+                                className='flex w-full items-center rounded-md border border-border/50 bg-background/80 px-2 py-1 text-left text-[11px] hover:bg-background'
+                                onClick={() =>
+                                  setSelectedTableDetail({
+                                    nodeLabel: `#${node.vertexId} ${node.connectorType}`,
+                                    tablePath: path,
+                                    columns: node.tableColumns?.[path] || [],
+                                  })
+                                }
                               >
-                                {path}
-                              </Badge>
+                                <span className='block truncate'>{path}</span>
+                              </button>
                             ))
                           ) : (
                             <Badge
@@ -359,16 +395,24 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
                   <div className='text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
                     TablePaths
                   </div>
-                  <div className='flex flex-wrap gap-1.5'>
+                  <div className='space-y-1.5'>
                     {normalizeTablePaths(vertex.tablePaths).length > 0 ? (
                       normalizeTablePaths(vertex.tablePaths).map((path) => (
-                        <Badge
+                        <button
                           key={`${vertex.vertexId}-${path}`}
-                          variant='secondary'
-                          className='max-w-full truncate rounded-md border border-border/50 bg-background/80 text-[11px]'
+                          type='button'
+                          title={path}
+                          className='flex w-full items-center rounded-md border border-border/50 bg-background/80 px-2 py-1 text-left text-[11px] hover:bg-background'
+                          onClick={() =>
+                            setSelectedTableDetail({
+                              nodeLabel: `#${vertex.vertexId} ${vertex.connectorType}`,
+                              tablePath: path,
+                              columns: vertex.tableColumns?.[path] || [],
+                            })
+                          }
                         >
-                          {path}
-                        </Badge>
+                          <span className='block truncate'>{path}</span>
+                        </button>
                       ))
                     ) : (
                       <Badge
@@ -385,6 +429,47 @@ export function WebUiDagPreview({job}: {job: SyncWebUIDagPreviewJob}) {
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={Boolean(selectedTableDetail)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedTableDetail(null);
+          }
+        }}
+      >
+        <DialogContent className='sm:max-w-[720px]'>
+          <DialogHeader>
+            <DialogTitle>
+              {selectedTableDetail?.tablePath || 'Table Detail'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className='space-y-3'>
+            <div className='text-sm text-muted-foreground'>
+              {selectedTableDetail?.nodeLabel}
+            </div>
+            <div className='rounded-lg border border-border/60 bg-background/80 p-3'>
+              <div className='mb-2 text-sm font-medium'>Columns</div>
+              {selectedTableDetail?.columns?.length ? (
+                <div className='flex flex-wrap gap-2'>
+                  {selectedTableDetail.columns.map((column) => (
+                    <Badge
+                      key={column}
+                      variant='secondary'
+                      className='rounded-md'
+                    >
+                      {column}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <div className='text-sm text-muted-foreground'>
+                  No schema columns available
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

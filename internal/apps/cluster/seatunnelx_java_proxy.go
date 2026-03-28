@@ -46,6 +46,15 @@ type SeatunnelXJavaProxyStatus struct {
 	Message     string `json:"message,omitempty"`
 }
 
+// SeatunnelXJavaProxyLogPreviewResult represents a service.log preview result.
+// SeatunnelXJavaProxyLogPreviewResult 表示 service.log 预览结果。
+type SeatunnelXJavaProxyLogPreviewResult struct {
+	ClusterID uint   `json:"cluster_id"`
+	LogPath   string `json:"log_path,omitempty"`
+	Lines     int    `json:"lines,omitempty"`
+	Logs      string `json:"logs,omitempty"`
+}
+
 func (s *Service) GetSeatunnelXJavaProxyStatus(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
 	return s.executeSeatunnelXJavaProxyCommand(ctx, clusterID, "status")
 }
@@ -60,6 +69,57 @@ func (s *Service) StopSeatunnelXJavaProxy(ctx context.Context, clusterID uint) (
 
 func (s *Service) RestartSeatunnelXJavaProxy(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
 	return s.executeSeatunnelXJavaProxyCommand(ctx, clusterID, "restart")
+}
+
+func (s *Service) GetSeatunnelXJavaProxyServiceLog(
+	ctx context.Context,
+	clusterID uint,
+	lines int,
+) (*SeatunnelXJavaProxyLogPreviewResult, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	clusterInfo, err := s.repo.GetByID(ctx, clusterID, false)
+	if err != nil {
+		return nil, err
+	}
+	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	status, err := s.GetSeatunnelXJavaProxyStatus(ctx, clusterID)
+	if err != nil && status == nil {
+		return nil, err
+	}
+	logPath := strings.TrimSpace(status.LogPath)
+	if logPath == "" {
+		installDir := strings.TrimSpace(node.InstallDir)
+		if installDir == "" {
+			installDir = strings.TrimSpace(clusterInfo.InstallDir)
+		}
+		if installDir == "" {
+			installDir = "/opt/seatunnel"
+		}
+		logPath = fmt.Sprintf("%s/.seatunnelx/seatunnelx-java-proxy/service.log", installDir)
+	}
+	success, message, sendErr := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "get_logs", map[string]string{
+		"log_file": logPath,
+		"lines":    fmt.Sprintf("%d", lines),
+		"mode":     "tail",
+	})
+	result := &SeatunnelXJavaProxyLogPreviewResult{
+		ClusterID: clusterID,
+		LogPath:   logPath,
+		Lines:     lines,
+		Logs:      message,
+	}
+	if sendErr != nil {
+		return result, fmt.Errorf("failed to preview seatunnelx-java-proxy service log: %w", sendErr)
+	}
+	if !success {
+		return result, fmt.Errorf("%s", firstNonEmpty(message, "failed to preview seatunnelx-java-proxy service log"))
+	}
+	return result, nil
 }
 
 func (s *Service) executeSeatunnelXJavaProxyCommand(ctx context.Context, clusterID uint, commandType string) (*SeatunnelXJavaProxyStatus, error) {

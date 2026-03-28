@@ -258,6 +258,11 @@ type SeatunnelXJavaProxyResponse struct {
 	Data     *SeatunnelXJavaProxyStatus `json:"data"`
 }
 
+type SeatunnelXJavaProxyLogPreviewResponse struct {
+	ErrorMsg string                               `json:"error_msg"`
+	Data     *SeatunnelXJavaProxyLogPreviewResult `json:"data"`
+}
+
 // PrecheckNodeResponse represents the response for node precheck.
 // PrecheckNodeResponse 表示节点预检查的响应。
 type PrecheckNodeResponse struct {
@@ -329,6 +334,30 @@ func (h *Handler) RestartSeatunnelXJavaProxy(c *gin.Context) {
 	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
 		return h.service.RestartSeatunnelXJavaProxy(ctx, clusterID)
 	})
+}
+
+// PreviewSeatunnelXJavaProxyServiceLog handles GET /api/v1/clusters/:id/seatunnelx-java-proxy/logs.
+func (h *Handler) PreviewSeatunnelXJavaProxyServiceLog(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyLogPreviewResponse{ErrorMsg: "invalid cluster id"})
+		return
+	}
+	lines := 200
+	if linesValue := strings.TrimSpace(c.Query("lines")); linesValue != "" {
+		parsed, parseErr := strconv.Atoi(linesValue)
+		if parseErr != nil || parsed <= 0 {
+			c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyLogPreviewResponse{ErrorMsg: "invalid lines"})
+			return
+		}
+		lines = parsed
+	}
+	result, err := h.service.GetSeatunnelXJavaProxyServiceLog(c.Request.Context(), uint(clusterID), lines)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyLogPreviewResponse{ErrorMsg: err.Error(), Data: result})
+		return
+	}
+	c.JSON(http.StatusOK, SeatunnelXJavaProxyLogPreviewResponse{Data: result})
 }
 
 func (h *Handler) handleSeatunnelXJavaProxyOperation(c *gin.Context, fn func(context.Context, uint) (*SeatunnelXJavaProxyStatus, error)) {

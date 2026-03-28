@@ -60,12 +60,19 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Loader2,
+  Eye,
 } from 'lucide-react';
 import services from '@/lib/services';
 import {cn} from '@/lib/utils';
 import type {ClusterInfo} from '@/lib/services/cluster';
 import type {
+  RuntimeStorageCheckpointInspectResult,
+  RuntimeStorageListItem,
+} from '@/lib/services/cluster/types';
+import type {
   CreateSyncTaskRequest,
+  SyncCheckpointSnapshot,
   SyncDagResult,
   SyncFormat,
   SyncGlobalVariable,
@@ -73,6 +80,7 @@ import type {
   SyncJobLogsResult,
   SyncJSON,
   SyncPreviewDataset,
+  SyncPreviewSnapshot,
   SyncTask,
   SyncTaskTreeNode,
   SyncTaskVersion,
@@ -160,6 +168,14 @@ interface OpenFileTab {
   name: string;
 }
 
+interface EditorDraftState {
+  editor: EditorState;
+  customVariableRows: VariableRow[];
+  dirty: boolean;
+  baselineEditor: EditorState;
+  baselineCustomVariableRows: VariableRow[];
+}
+
 interface PersistedWorkspaceTabs {
   openTabIds: number[];
   activeTabId: number | null;
@@ -176,6 +192,12 @@ interface VariableDraft {
   value: string;
 }
 
+interface PreviewRunDialogState {
+  open: boolean;
+  rowLimit: string;
+  timeoutMinutes: string;
+}
+
 interface UserFacingErrorState {
   title: string;
   description: string;
@@ -183,15 +205,272 @@ interface UserFacingErrorState {
 }
 
 type RightSidebarTab = 'settings' | 'versions' | 'globals';
-type BottomConsoleTab = 'logs' | 'jobs' | 'preview';
+type BottomConsoleTab = 'jobs' | 'logs' | 'preview' | 'checkpoint';
 type ExecutionMode = 'cluster' | 'local';
 type LogFilterMode = 'all' | 'warn' | 'error';
+type PendingActionKind = 'dag' | 'preview' | 'test_connections' | 'recover';
 
 const LOG_CHUNK_BASE_BYTES = 64 * 1024;
 const LOG_CHUNK_MAX_BYTES = 1024 * 1024;
 const EXPANDED_LOG_CHUNK_BASE_BYTES = 256 * 1024;
 const EXPANDED_LOG_CHUNK_MAX_BYTES = 2 * 1024 * 1024;
 const WORKSPACE_TABS_STORAGE_KEY = 'data-sync-studio:workspace-tabs';
+
+function getSyncJobClusterId(job: SyncJobInstance | null): number | null {
+  const raw = job?.submit_spec?.cluster_id;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function formatSizeBytes(bytes?: number | null): string {
+  if (!bytes || bytes <= 0) {
+    return '-';
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function normalizeVariableRowsForCompare(rows: VariableRow[]): VariableDraft[] {
+  return rows.map((row) => ({
+    key: row.key.trim(),
+    value: row.value,
+  }));
+}
+
+function normalizeEditorForCompare(
+  editor: EditorState,
+): Record<string, unknown> {
+  return {
+    parentId: editor.parentId ?? null,
+    name: editor.name.trim(),
+    description: editor.description.trim(),
+    clusterId: editor.clusterId,
+    contentFormat: editor.contentFormat,
+    content: editor.content,
+    definition: editor.definition ?? {},
+  };
+}
+
+function isEditorDraftDirty(
+  editor: EditorState,
+  rows: VariableRow[],
+  baselineEditor: EditorState,
+  baselineRows: VariableRow[],
+): boolean {
+  return (
+    JSON.stringify(normalizeEditorForCompare(editor)) !==
+      JSON.stringify(normalizeEditorForCompare(baselineEditor)) ||
+    JSON.stringify(normalizeVariableRowsForCompare(rows)) !==
+      JSON.stringify(normalizeVariableRowsForCompare(baselineRows))
+  );
+}
+
+function getCheckpointStatusBadgeClass(status?: string): string {
+  switch ((status || '').toUpperCase()) {
+    case 'COMPLETED':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    case 'FAILED':
+      return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400';
+    case 'CANCELED':
+      return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400';
+    default:
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400';
+  }
+}
+
+function getCheckpointEnumBadgeClass(
+  value?: string | boolean | null,
+  kind: 'status' | 'checkpointType' | 'boolean' = 'status',
+): string {
+  if (kind === 'boolean') {
+    return value
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+      : 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400';
+  }
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase();
+  if (kind === 'checkpointType') {
+    switch (normalized) {
+      case 'CHECKPOINT_TYPE':
+        return 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400';
+      case 'SAVEPOINT_TYPE':
+        return 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400';
+      case 'COMPLETED_POINT_TYPE':
+        return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+      default:
+        return 'border-border/60 bg-muted/50 text-muted-foreground';
+    }
+  }
+  switch (normalized) {
+    case 'COMPLETED':
+    case 'FINISHED':
+    case 'SAVEPOINT_DONE':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    case 'RUNNING':
+    case 'DOING_SAVEPOINT':
+      return 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400';
+    case 'FAILED':
+      return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400';
+    case 'CANCELED':
+      return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400';
+    case 'CREATED':
+    case 'SCHEDULED':
+    case 'DEPLOYING':
+    case 'INITIALIZING':
+    case 'PENDING':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400';
+    default:
+      return 'border-border/60 bg-muted/50 text-muted-foreground';
+  }
+}
+
+function formatCheckpointFieldValue(
+  key: string,
+  value: unknown,
+): string | null {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (typeof value === 'number') {
+    if (/timestamp/i.test(key)) {
+      return value > 0 ? new Date(value).toLocaleString() : '-';
+    }
+    if (/state(size|bytes)/i.test(key)) {
+      return formatSizeBytes(value);
+    }
+    return String(value);
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function renderCheckpointFieldValue(key: string, value: unknown): ReactNode {
+  if (typeof value === 'string') {
+    if (/status/i.test(key)) {
+      return (
+        <Badge
+          variant='outline'
+          className={cn(
+            'rounded-sm border px-2 py-0.5 text-[11px]',
+            getCheckpointEnumBadgeClass(value, 'status'),
+          )}
+        >
+          {value}
+        </Badge>
+      );
+    }
+    if (/checkpointType/i.test(key)) {
+      return (
+        <Badge
+          variant='outline'
+          className={cn(
+            'rounded-sm border px-2 py-0.5 text-[11px]',
+            getCheckpointEnumBadgeClass(value, 'checkpointType'),
+          )}
+        >
+          {value}
+        </Badge>
+      );
+    }
+  }
+  if (typeof value === 'boolean') {
+    return (
+      <Badge
+        variant='outline'
+        className={cn(
+          'rounded-sm border px-2 py-0.5 text-[11px]',
+          getCheckpointEnumBadgeClass(value, 'boolean'),
+        )}
+      >
+        {value ? 'true' : 'false'}
+      </Badge>
+    );
+  }
+  return (
+    <span className='break-all'>{formatCheckpointFieldValue(key, value)}</span>
+  );
+}
+
+function buildCheckpointInspectSummary(
+  result: RuntimeStorageCheckpointInspectResult | null,
+): Array<{label: string; key: string; value: unknown}> {
+  const completed = result?.completed_checkpoint || {};
+  const pipeline = result?.pipeline_state || {};
+  return [
+    {
+      label: 'Checkpoint ID',
+      key: 'checkpointId',
+      value: completed.checkpointId,
+    },
+    {
+      label: 'Checkpoint Type',
+      key: 'checkpointType',
+      value: completed.checkpointType,
+    },
+    {
+      label: 'Pipeline',
+      key: 'pipelineId',
+      value: completed.pipelineId ?? pipeline.pipelineId,
+    },
+    {label: 'Job ID', key: 'jobId', value: completed.jobId ?? pipeline.jobId},
+    {
+      label: 'Triggered',
+      key: 'triggerTimestamp',
+      value: completed.triggerTimestamp,
+    },
+    {
+      label: 'Completed',
+      key: 'completedTimestamp',
+      value: completed.completedTimestamp,
+    },
+    {label: 'State Size', key: 'stateBytes', value: pipeline.stateBytes},
+    {
+      label: 'Task States',
+      key: 'taskStateCount',
+      value: completed.taskStateCount,
+    },
+  ];
+}
+
+function extractCheckpointFileIdentity(
+  name?: string,
+): {pipelineId: number; checkpointId: number} | null {
+  if (!name) {
+    return null;
+  }
+  const fileName = name.split('/').pop() || name;
+  const baseName = fileName.replace(/\.[^.]+$/, '');
+  const segments = baseName.split('-');
+  if (segments.length < 4) {
+    return null;
+  }
+  const pipelineId = Number(segments[segments.length - 2]);
+  const checkpointId = Number(segments[segments.length - 1]);
+  if (!Number.isInteger(pipelineId) || !Number.isInteger(checkpointId)) {
+    return null;
+  }
+  return {pipelineId, checkpointId};
+}
 
 function nextLogChunkSize(
   current: number,
@@ -211,6 +490,42 @@ function nextLogChunkSize(
     return Math.max(min, Math.floor(current / 2));
   }
   return current;
+}
+
+function buildCopiedWorkspaceName(
+  tree: SyncTaskTreeNode[],
+  parentId: number | null,
+  originalName: string,
+) {
+  const dotIndex = originalName.lastIndexOf('.');
+  const hasExtension = dotIndex > 0 && dotIndex < originalName.length - 1;
+  const base = hasExtension ? originalName.slice(0, dotIndex) : originalName;
+  const ext = hasExtension ? originalName.slice(dotIndex) : '';
+  let candidate = `${base}_copy${ext}`;
+  let counter = 2;
+  while (hasDuplicateWorkspaceName(tree, parentId, candidate)) {
+    candidate = `${base}_copy_${counter}${ext}`;
+    counter += 1;
+  }
+  return candidate;
+}
+
+function getPendingActionLabel(
+  t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
+  actionPending: PendingActionKind | null,
+) {
+  switch (actionPending) {
+    case 'dag':
+      return t('buildingDag');
+    case 'preview':
+      return t('preparingPreview');
+    case 'recover':
+      return t('recoveringJob');
+    case 'test_connections':
+      return t('testingConnections');
+    default:
+      return '';
+  }
 }
 type MetricGroupKey =
   | 'read'
@@ -401,9 +716,7 @@ function listSiblingNames(
   excludeId?: number | null,
 ): string[] {
   const nodes =
-    parentId == null
-      ? tree
-      : findTreeNode(tree, parentId)?.children || [];
+    parentId == null ? tree : findTreeNode(tree, parentId)?.children || [];
   return nodes
     .filter((node) => node.id !== excludeId)
     .map((node) => node.name.trim().toLowerCase());
@@ -427,8 +740,7 @@ function formatSyncUserFacingError(
   fallbackTitle: string,
   t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
 ): UserFacingErrorState {
-  const message =
-    error instanceof Error ? error.message : t('unknownError');
+  const message = error instanceof Error ? error.message : t('unknownError');
   if (message.includes('sync: 配置解析失败')) {
     return {
       title: t('configParseFailedTitle'),
@@ -609,34 +921,204 @@ function getEngineEndpointLabel(job: SyncJobInstance | null): string {
 }
 
 function getJobStatusBadgeClass(status: string): string {
-  switch (status) {
-    case 'success':
+  switch (
+    String(status || '')
+      .trim()
+      .toUpperCase()
+  ) {
+    case 'SUCCESS':
+    case 'FINISHED':
+    case 'SAVEPOINT_DONE':
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
-    case 'running':
+    case 'RUNNING':
       return 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400';
-    case 'failed':
+    case 'DOING_SAVEPOINT':
+      return 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400';
+    case 'FAILED':
       return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400';
-    case 'canceled':
-      return 'border-rose-500/30 bg-zinc-500/10 text-rose-600 dark:text-rose-400';
+    case 'FAILING':
+      return 'border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400';
+    case 'CANCELING':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400';
+    case 'CANCELED':
+    case 'CANCELLED':
+      return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400';
+    case 'PENDING':
+    case 'CREATED':
+    case 'SCHEDULED':
+    case 'STARTING':
+    case 'SUBMITTED':
+    case 'RECONCILING':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400';
     default:
       return 'border-border/60 bg-muted/50 text-muted-foreground';
   }
 }
 
 function getJobStatusLabel(status: string): string {
-  switch (status) {
-    case 'success':
+  switch (
+    String(status || '')
+      .trim()
+      .toUpperCase()
+  ) {
+    case 'SUCCESS':
+    case 'FINISHED':
       return 'Success';
-    case 'running':
+    case 'SAVEPOINT_DONE':
+      return 'Savepoint Done';
+    case 'RUNNING':
       return 'Running';
-    case 'failed':
+    case 'DOING_SAVEPOINT':
+      return 'Doing Savepoint';
+    case 'FAILED':
       return 'Failed';
-    case 'canceled':
+    case 'FAILING':
+      return 'Failing';
+    case 'CANCELING':
+      return 'Canceling';
+    case 'CANCELED':
+    case 'CANCELLED':
       return 'Canceled';
-    case 'pending':
+    case 'PENDING':
       return 'Pending';
+    case 'CREATED':
+      return 'Created';
+    case 'SCHEDULED':
+      return 'Scheduled';
+    case 'STARTING':
+      return 'Starting';
+    case 'SUBMITTED':
+      return 'Submitted';
+    case 'RECONCILING':
+      return 'Reconciling';
     default:
       return status || '-';
+  }
+}
+
+function getDisplayJobLifecycleStatus(job: SyncJobInstance | null): string {
+  if (!job) {
+    return '-';
+  }
+  const rawJobStatus = String(toObject(job.result_preview).job_status || '')
+    .trim()
+    .toUpperCase();
+  if (rawJobStatus) {
+    return rawJobStatus;
+  }
+  return String(job.status || '-');
+}
+
+function normalizeJobLifecycleStatus(status: string | null | undefined): string {
+  return String(status || '')
+    .trim()
+    .toUpperCase();
+}
+
+function isJobLifecycleActive(status: string | null | undefined): boolean {
+  switch (normalizeJobLifecycleStatus(status)) {
+    case 'PENDING':
+    case 'CREATED':
+    case 'SCHEDULED':
+    case 'STARTING':
+    case 'SUBMITTED':
+    case 'RECONCILING':
+    case 'RUNNING':
+    case 'DOING_SAVEPOINT':
+    case 'CANCELING':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isJobLifecycleTerminal(status: string | null | undefined): boolean {
+  switch (normalizeJobLifecycleStatus(status)) {
+    case 'SUCCESS':
+    case 'FINISHED':
+    case 'SAVEPOINT_DONE':
+    case 'FAILED':
+    case 'FAILING':
+    case 'CANCELED':
+    case 'CANCELLED':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function canRecoverFromJob(job: SyncJobInstance | null): boolean {
+  if (!job || job.run_type === 'preview') {
+    return false;
+  }
+  if (submitSpecExecutionMode(job.submit_spec) === 'local') {
+    return false;
+  }
+  if (!String(job.platform_job_id || '').trim()) {
+    return false;
+  }
+  return isJobLifecycleTerminal(getDisplayJobLifecycleStatus(job));
+}
+
+function getJobSubmittedScript(job: SyncJobInstance | null): {
+  content: string;
+  format: string;
+} | null {
+  if (!job) {
+    return null;
+  }
+  const submitSpec = toObject(job.submit_spec);
+  const submittedContent = normalizeStoredScriptContent(
+    submitSpec.submitted_content,
+  );
+  if (submittedContent) {
+    return {
+      content: submittedContent,
+      format: String(submitSpec.submitted_format || submitSpec.format || 'hocon'),
+    };
+  }
+  const previewContent = String(toObject(job.result_preview).preview_content || '').trim();
+  if (previewContent) {
+    return {
+      content: previewContent,
+      format: String(
+        toObject(job.result_preview).content_format || submitSpec.format || 'hocon',
+      ),
+    };
+  }
+  return null;
+}
+
+function normalizeStoredScriptContent(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  if (raw.includes('\n') || raw.includes('\r')) {
+    return raw;
+  }
+  if (!/^[A-Za-z0-9+/=]+$/.test(raw) || raw.length % 4 !== 0) {
+    return raw;
+  }
+  try {
+    if (typeof window === 'undefined') {
+      return raw;
+    }
+    const decoded = window.atob(raw);
+    if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(decoded)) {
+      return raw;
+    }
+    if (
+      decoded.includes('env {') ||
+      decoded.includes('source {') ||
+      decoded.includes('sink {') ||
+      decoded.includes('transform {')
+    ) {
+      return decoded;
+    }
+    return raw;
+  } catch {
+    return raw;
   }
 }
 
@@ -712,6 +1194,26 @@ function getLogLineClass(line: string): string {
   return 'text-muted-foreground';
 }
 
+function getPreviewRowKindBadgeClass(value: string): string {
+  const normalized = value.trim().toUpperCase();
+  switch (normalized) {
+    case 'INSERT':
+    case '+I':
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    case 'UPDATE':
+    case 'UPDATE_AFTER':
+    case '+U':
+      return 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400';
+    case 'DELETE':
+    case 'UPDATE_BEFORE':
+    case '-D':
+    case '-U':
+      return 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400';
+    default:
+      return 'border-border/60 bg-muted/50 text-muted-foreground';
+  }
+}
+
 function extractEditorState(task?: SyncTask | null): EditorState {
   if (!task) {
     return EMPTY_EDITOR;
@@ -750,6 +1252,13 @@ function extractEditorStateFromTreeNode(
   };
 }
 
+function extractVariableRowsFromDefinition(
+  definition: SyncJSON,
+): VariableRow[] {
+  const rows = toVariableRows(definition?.custom_variables);
+  return rows.length > 0 ? rows : [{id: 'custom-var-0', key: '', value: ''}];
+}
+
 function resolveFolderParent(
   selectedNodeId: number | null,
   tree: SyncTaskTreeNode[],
@@ -786,6 +1295,240 @@ function formatMetricDisplayValue(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function formatMetricCompactValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  const raw =
+    typeof value === 'string' || typeof value === 'number'
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(raw)) {
+    return formatMetricDisplayValue(value);
+  }
+  if (Math.abs(raw) >= 1000000) {
+    return `${(raw / 1000000).toFixed(2)}M`;
+  }
+  if (Math.abs(raw) >= 1000) {
+    return `${(raw / 1000).toFixed(2)}K`;
+  }
+  return Number.isInteger(raw) ? String(raw) : raw.toFixed(2);
+}
+
+function formatMetricWithUnit(
+  value: unknown,
+  unit: 'rows' | 'qps' | 'bps',
+): string {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  const raw =
+    typeof value === 'string' || typeof value === 'number'
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(raw)) {
+    return formatMetricDisplayValue(value);
+  }
+  const compact = formatMetricCompactValue(raw);
+  if (unit === 'rows') {
+    return `${compact} rows`;
+  }
+  if (unit === 'qps') {
+    return `${compact} QPS`;
+  }
+  return `${compact} B/s`;
+}
+
+function getMetricValue(
+  metrics: Record<string, unknown>,
+  key: string,
+): unknown {
+  return metrics[key];
+}
+
+function buildMetricHighlights(
+  metrics: Record<string, unknown>,
+  t: ReturnType<typeof useTranslations<'workbenchStudio'>>,
+): Array<{label: string; value: string; raw: string}> {
+  return [
+    {
+      label: t('metricHighlightSourceRows'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SourceReceivedCount'),
+        'rows',
+      ),
+      raw: formatMetricDisplayValue(
+        getMetricValue(metrics, 'SourceReceivedCount'),
+      ),
+    },
+    {
+      label: t('metricHighlightSinkRows'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SinkWriteCount'),
+        'rows',
+      ),
+      raw: formatMetricDisplayValue(getMetricValue(metrics, 'SinkWriteCount')),
+    },
+    {
+      label: t('metricHighlightCommittedRows'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SinkCommittedCount'),
+        'rows',
+      ),
+      raw: formatMetricDisplayValue(
+        getMetricValue(metrics, 'SinkCommittedCount'),
+      ),
+    },
+    {
+      label: t('metricHighlightReadSpeed'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SourceReceivedBytesPerSeconds'),
+        'bps',
+      ),
+      raw: formatMetricDisplayValue(
+        getMetricValue(metrics, 'SourceReceivedBytesPerSeconds'),
+      ),
+    },
+    {
+      label: t('metricHighlightWriteSpeed'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SinkWriteBytesPerSeconds'),
+        'bps',
+      ),
+      raw: formatMetricDisplayValue(
+        getMetricValue(metrics, 'SinkWriteBytesPerSeconds'),
+      ),
+    },
+    {
+      label: t('metricHighlightWriteQps'),
+      value: formatMetricWithUnit(
+        getMetricValue(metrics, 'SinkWriteQPS'),
+        'qps',
+      ),
+      raw: formatMetricDisplayValue(getMetricValue(metrics, 'SinkWriteQPS')),
+    },
+  ];
+}
+
+function toStringMetricMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      formatMetricDisplayValue(item),
+    ]),
+  );
+}
+
+function buildPerTableMetricRows(metrics: Record<string, unknown>) {
+  const sourceCount = toStringMetricMap(metrics.TableSourceReceivedCount);
+  const sourceBytes = toStringMetricMap(metrics.TableSourceReceivedBytes);
+  const sourceQps = toStringMetricMap(metrics.TableSourceReceivedQPS);
+  const sinkCount = toStringMetricMap(metrics.TableSinkWriteCount);
+  const sinkBytes = toStringMetricMap(metrics.TableSinkWriteBytes);
+  const sinkQps = toStringMetricMap(metrics.TableSinkWriteQPS);
+  const committedCount = toStringMetricMap(metrics.TableSinkCommittedCount);
+  const committedBytes = toStringMetricMap(metrics.TableSinkCommittedBytes);
+
+  const allTables = Array.from(
+    new Set([
+      ...Object.keys(sourceCount),
+      ...Object.keys(sourceBytes),
+      ...Object.keys(sourceQps),
+      ...Object.keys(sinkCount),
+      ...Object.keys(sinkBytes),
+      ...Object.keys(sinkQps),
+      ...Object.keys(committedCount),
+      ...Object.keys(committedBytes),
+    ]),
+  ).sort();
+
+  return allTables.map((table) => {
+    const match = table.match(/^(Source|Sink)\[(\d+)\]\.(.+)$/);
+    const nodeType = match?.[1] || 'Table';
+    const nodeIndex = match?.[2] ? Number(match[2]) + 1 : null;
+    const tablePath = match?.[3] || table;
+    return {
+      rawTable: table,
+      nodeLabel: nodeIndex !== null ? `${nodeType} #${nodeIndex}` : nodeType,
+      rowTone:
+        nodeType === 'Source'
+          ? 'source'
+          : nodeType === 'Sink'
+            ? 'sink'
+            : 'neutral',
+      tablePath,
+      sourceCount: sourceCount[table] || '-',
+      sourceBytes: sourceBytes[table] || '-',
+      sourceQps: sourceQps[table] || '-',
+      sinkCount: sinkCount[table] || '-',
+      sinkBytes: sinkBytes[table] || '-',
+      sinkQps: sinkQps[table] || '-',
+      committedCount: committedCount[table] || '-',
+      committedBytes: committedBytes[table] || '-',
+    };
+  });
+}
+
+function normalizePairingTableKey(tablePath: string): string {
+  const leaf =
+    tablePath.split('.').pop()?.trim().toLowerCase() ||
+    tablePath.trim().toLowerCase();
+  return leaf.replace(/^archive_/, '');
+}
+
+function buildPairedMetricRows(metrics: Record<string, unknown>) {
+  const perTableRows = buildPerTableMetricRows(metrics);
+  const sourceBuckets = new Map<string, typeof perTableRows>();
+  const sinkBuckets = new Map<string, typeof perTableRows>();
+  for (const row of perTableRows) {
+    const key = normalizePairingTableKey(row.tablePath);
+    if (row.rowTone === 'source') {
+      const current = sourceBuckets.get(key) || [];
+      current.push(row);
+      sourceBuckets.set(key, current);
+    } else if (row.rowTone === 'sink') {
+      const current = sinkBuckets.get(key) || [];
+      current.push(row);
+      sinkBuckets.set(key, current);
+    }
+  }
+  const keys = Array.from(
+    new Set([
+      ...Array.from(sourceBuckets.keys()),
+      ...Array.from(sinkBuckets.keys()),
+    ]),
+  ).sort();
+  return keys
+    .map((key) => {
+      const sourceRows = sourceBuckets.get(key) || [];
+      const sinkRows = sinkBuckets.get(key) || [];
+      if (sourceRows.length === 1 && sinkRows.length === 1) {
+        const source = sourceRows[0];
+        const sink = sinkRows[0];
+        return {
+          key,
+          sourceNode: source.nodeLabel,
+          sourceTable: source.tablePath,
+          sinkNode: sink.nodeLabel,
+          sinkTable: sink.tablePath,
+          sourceCount: source.sourceCount,
+          sourceBytes: source.sourceBytes,
+          sourceQps: source.sourceQps,
+          sinkCount: sink.sinkCount,
+          sinkBytes: sink.sinkBytes,
+          sinkQps: sink.sinkQps,
+          committedCount: sink.committedCount,
+          committedBytes: sink.committedBytes,
+        };
+      }
+      return null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
 }
 
 function classifyMetricGroup(key: string): MetricGroupKey {
@@ -897,7 +1640,7 @@ export function DataSyncStudio() {
   const [rightSidebarTab, setRightSidebarTab] =
     useState<RightSidebarTab>('settings');
   const [bottomConsoleTab, setBottomConsoleTab] =
-    useState<BottomConsoleTab>('logs');
+    useState<BottomConsoleTab>('jobs');
   const [versionPreview, setVersionPreview] = useState<SyncTaskVersion | null>(
     null,
   );
@@ -922,19 +1665,72 @@ export function DataSyncStudio() {
   const [expandedLogsLoading, setExpandedLogsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [actionPending, setActionPending] = useState<PendingActionKind | null>(
+    null,
+  );
+  const [jobScriptOpen, setJobScriptOpen] = useState(false);
+  const [jobScriptTarget, setJobScriptTarget] = useState<SyncJobInstance | null>(
+    null,
+  );
+  const [previewRunDialog, setPreviewRunDialog] =
+    useState<PreviewRunDialogState>({
+      open: false,
+      rowLimit: String(
+        Math.min(
+          Math.max(
+            Number(toObject(EMPTY_EDITOR.definition).preview_row_limit) || 100,
+            1,
+          ),
+          10000,
+        ),
+      ),
+      timeoutMinutes: String(
+        Math.min(
+          Math.max(
+            Number(toObject(EMPTY_EDITOR.definition).preview_timeout_minutes) ||
+              10,
+            1,
+          ),
+          24 * 60,
+        ),
+      ),
+    });
+  const [previewSnapshot, setPreviewSnapshot] =
+    useState<SyncPreviewSnapshot | null>(null);
+  const [previewSnapshotLoading, setPreviewSnapshotLoading] = useState(false);
+  const [checkpointSnapshot, setCheckpointSnapshot] =
+    useState<SyncCheckpointSnapshot | null>(null);
+  const [checkpointLoading, setCheckpointLoading] = useState(false);
+  const [checkpointFiles, setCheckpointFiles] = useState<
+    RuntimeStorageListItem[]
+  >([]);
+  const [checkpointFilesLoading, setCheckpointFilesLoading] = useState(false);
+  const [checkpointInspectDialogOpen, setCheckpointInspectDialogOpen] =
+    useState(false);
+  const [checkpointInspectDialogLoading, setCheckpointInspectDialogLoading] =
+    useState<string | null>(null);
+  const [checkpointInspectDialogResult, setCheckpointInspectDialogResult] =
+    useState<RuntimeStorageCheckpointInspectResult | null>(null);
   const [recoverSourceId, setRecoverSourceId] = useState<string>('');
   const [previewDatasetName, setPreviewDatasetName] = useState('');
   const [previewPage, setPreviewPage] = useState(1);
   const [openTabs, setOpenTabs] = useState<OpenFileTab[]>([]);
+  const [editorDrafts, setEditorDrafts] = useState<
+    Record<number, EditorDraftState>
+  >({});
   const [expandedFolderIds, setExpandedFolderIds] = useState<number[]>([]);
   const [customVariableRows, setCustomVariableRows] = useState<VariableRow[]>(
     [],
   );
-  const [editingCustomVariableId, setEditingCustomVariableId] = useState<string | null>(null);
-  const [customVariableDraft, setCustomVariableDraft] = useState<VariableDraft>({
-    key: '',
-    value: '',
-  });
+  const [editingCustomVariableId, setEditingCustomVariableId] = useState<
+    string | null
+  >(null);
+  const [customVariableDraft, setCustomVariableDraft] = useState<VariableDraft>(
+    {
+      key: '',
+      value: '',
+    },
+  );
   const [jobMetricsDialogOpen, setJobMetricsDialogOpen] = useState(false);
   const [metricsDialogJob, setMetricsDialogJob] =
     useState<SyncJobInstance | null>(null);
@@ -959,6 +1755,7 @@ export function DataSyncStudio() {
     number | null
   >(null);
   const restoredWorkspaceTabsRef = useRef<PersistedWorkspaceTabs | null>(null);
+  const customVariableRowsRef = useRef<VariableRow[]>([]);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
 
@@ -1010,13 +1807,40 @@ export function DataSyncStudio() {
       ),
     [jobs],
   );
+  const recoverableRunJobs = useMemo(
+    () => runJobs.filter((job) => canRecoverFromJob(job)),
+    [runJobs],
+  );
+  const preferredRecoverSourceId = useMemo(() => {
+    const selected = Number(recoverSourceId);
+    if (Number.isInteger(selected) && selected > 0) {
+      return selected;
+    }
+    return recoverableRunJobs[0]?.id ?? null;
+  }, [recoverSourceId, recoverableRunJobs]);
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) || jobs[0] || null,
     [jobs, selectedJobId],
   );
   const previewDatasets = useMemo(
-    () => extractPreviewDatasets(previewJob?.result_preview),
-    [previewJob],
+    () =>
+      previewSnapshot
+        ? previewSnapshot.tables.map((table) => ({
+            name: table.table_path,
+            columns: table.columns,
+            rows:
+              table.table_path === previewSnapshot.selected_table?.table_path
+                ? previewSnapshot.selected_table.rows || []
+                : [],
+            total: table.row_count,
+            page: 1,
+            page_size: Math.max(
+              previewSnapshot.selected_table?.rows?.length || 0,
+              1,
+            ),
+          }))
+        : extractPreviewDatasets(previewJob?.result_preview),
+    [previewJob, previewSnapshot],
   );
   const selectedPreviewDataset = useMemo(() => {
     if (previewDatasets.length === 0) {
@@ -1028,10 +1852,7 @@ export function DataSyncStudio() {
     );
   }, [previewDatasetName, previewDatasets]);
   const activeJobs = useMemo(
-    () =>
-      jobs.filter(
-        (job) => job.status === 'pending' || job.status === 'running',
-      ),
+    () => jobs.filter((job) => isJobLifecycleActive(getDisplayJobLifecycleStatus(job))),
     [jobs],
   );
   const hasActivePreview = activeJobs.some((job) => job.run_type === 'preview');
@@ -1063,6 +1884,67 @@ export function DataSyncStudio() {
   const moveTargetOptions = useMemo(
     () => listMoveTargets(tree, treeDialog.targetNode, t('rootFolder')),
     [tree, treeDialog.targetNode],
+  );
+
+  useEffect(() => {
+    customVariableRowsRef.current = customVariableRows;
+  }, [customVariableRows]);
+
+  const markEditorDraft = useCallback(
+    (
+      taskId: number,
+      nextEditor: EditorState,
+      nextRows: VariableRow[],
+      dirty: boolean,
+    ) => {
+      setEditorDrafts((current) => {
+        const existing = current[taskId];
+        const baselineEditor = dirty
+          ? existing?.baselineEditor || nextEditor
+          : nextEditor;
+        const baselineRows = dirty
+          ? existing?.baselineCustomVariableRows || nextRows
+          : nextRows;
+        const computedDirty = dirty
+          ? isEditorDraftDirty(
+              nextEditor,
+              nextRows,
+              baselineEditor,
+              baselineRows,
+            )
+          : false;
+        return {
+          ...current,
+          [taskId]: {
+            editor: nextEditor,
+            customVariableRows: nextRows,
+            dirty: computedDirty,
+            baselineEditor,
+            baselineCustomVariableRows: baselineRows,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const applyDraftOrLoadedState = useCallback(
+    (
+      taskId: number,
+      fallbackEditor: EditorState,
+      fallbackRows: VariableRow[],
+    ) => {
+      const draft = editorDrafts[taskId];
+      if (draft) {
+        setEditor(draft.editor);
+        setCustomVariableRows(draft.customVariableRows);
+        return true;
+      }
+      setEditor(fallbackEditor);
+      setCustomVariableRows(fallbackRows);
+      return false;
+    },
+    [editorDrafts],
   );
 
   const syncOpenTabs = useCallback((task: Pick<SyncTask, 'id' | 'name'>) => {
@@ -1102,26 +1984,43 @@ export function DataSyncStudio() {
             : restoredActiveId &&
                 allFiles.find((node) => node.id === restoredActiveId)?.id
               ? restoredActiveId
-            : null;
+              : null;
 
         setOpenTabs(restoredTabs);
         setSelectedNodeId(nextSelected);
         if (nextSelected) {
           const treeTask =
             allFiles.find((node) => node.id === nextSelected) || null;
-          setEditor(extractEditorStateFromTreeNode(treeTask));
+          applyDraftOrLoadedState(
+            nextSelected,
+            extractEditorStateFromTreeNode(treeTask),
+            extractVariableRowsFromDefinition(treeTask?.definition || {}),
+          );
           setJobs([]);
           setSelectedJobId(null);
           setJobLogs(null);
           setExpandedJobLogs(null);
+          setCheckpointSnapshot(null);
           if (treeTask) {
             syncOpenTabs(treeTask);
           }
           const task = await services.sync.getTask(nextSelected);
-          setEditor(extractEditorState(task));
+          const loadedEditor = extractEditorState(task);
+          const loadedRows = extractVariableRowsFromDefinition(
+            task.definition || {},
+          );
+          const usedDraft = applyDraftOrLoadedState(
+            nextSelected,
+            loadedEditor,
+            loadedRows,
+          );
+          if (!usedDraft) {
+            markEditorDraft(nextSelected, loadedEditor, loadedRows, false);
+          }
           syncOpenTabs(task);
         } else {
           setEditor(EMPTY_EDITOR);
+          setCustomVariableRows(extractVariableRowsFromDefinition({}));
         }
       } catch (error) {
         toast.error(
@@ -1161,6 +2060,153 @@ export function DataSyncStudio() {
     }
   }, []);
 
+  const loadPreviewSnapshot = useCallback(
+    async (jobId: number | null, tablePath?: string, silent = false) => {
+      if (!jobId) {
+        setPreviewSnapshot(null);
+        return;
+      }
+      if (!silent) {
+        setPreviewSnapshotLoading(true);
+      }
+      try {
+        const snapshot = await services.sync.getPreviewSnapshot(jobId, {
+          table_path: tablePath || undefined,
+        });
+        setPreviewSnapshot(snapshot);
+      } catch (error) {
+        if (!silent) {
+          console.warn(
+            error instanceof Error ? error.message : t('noPreviewDataFallback'),
+          );
+        }
+      } finally {
+        if (!silent) {
+          setPreviewSnapshotLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  const loadCheckpointSnapshot = useCallback(
+    async (jobId: number | null, silent = false) => {
+      if (!jobId) {
+        setCheckpointSnapshot(null);
+        return;
+      }
+      if (!silent) {
+        setCheckpointLoading(true);
+      }
+      try {
+        const snapshot = await services.sync.getJobCheckpoint(jobId, {
+          limit: 20,
+        });
+        setCheckpointSnapshot(snapshot);
+      } catch (error) {
+        if (!silent) {
+          toast.error(
+            error instanceof Error ? error.message : t('loadCheckpointFailed'),
+          );
+        }
+        setCheckpointSnapshot(null);
+      } finally {
+        if (!silent) {
+          setCheckpointLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  const loadCheckpointFiles = useCallback(
+    async (job: SyncJobInstance | null, silent = false) => {
+      const clusterId = getSyncJobClusterId(job);
+      const engineJobId = (
+        job?.engine_job_id ||
+        job?.platform_job_id ||
+        ''
+      ).trim();
+      if (
+        !job ||
+        submitSpecExecutionMode(job.submit_spec) === 'local' ||
+        !clusterId ||
+        !engineJobId
+      ) {
+        setCheckpointFiles([]);
+        return;
+      }
+      if (!silent) {
+        setCheckpointFilesLoading(true);
+      }
+      try {
+        const runtimeStorageResult =
+          await services.cluster.getRuntimeStorageSafe(clusterId);
+        const namespace = runtimeStorageResult.success
+          ? runtimeStorageResult.data?.checkpoint?.namespace?.trim() || ''
+          : '';
+        if (!namespace) {
+          setCheckpointFiles([]);
+          return;
+        }
+        const browsePath = `${namespace.replace(/\/+$/, '')}/${engineJobId}`;
+        const listResult = await services.cluster.listRuntimeStorageSafe(
+          clusterId,
+          'checkpoint',
+          {
+            path: browsePath,
+            recursive: true,
+            limit: 200,
+          },
+        );
+        if (!listResult.success || !listResult.data) {
+          setCheckpointFiles([]);
+          return;
+        }
+        const items = Array.isArray(listResult.data.items)
+          ? listResult.data.items
+              .filter((item) => !item.directory && !!item.path)
+              .sort((left, right) =>
+                (right.modified_at || '').localeCompare(left.modified_at || ''),
+              )
+          : [];
+        setCheckpointFiles(items);
+      } finally {
+        if (!silent) {
+          setCheckpointFilesLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
+  const handleInspectCheckpointFile = useCallback(
+    async (path: string) => {
+      const clusterId = getSyncJobClusterId(selectedJob);
+      if (!clusterId || !path) {
+        toast.error(t('checkpointInspectUnavailable'));
+        return;
+      }
+      setCheckpointInspectDialogLoading(path);
+      try {
+        const result =
+          await services.cluster.inspectCheckpointRuntimeStorageSafe(
+            clusterId,
+            path,
+          );
+        if (!result.success || !result.data) {
+          toast.error(result.error || t('checkpointInspectFailed'));
+          return;
+        }
+        setCheckpointInspectDialogResult(result.data);
+        setCheckpointInspectDialogOpen(true);
+      } finally {
+        setCheckpointInspectDialogLoading(null);
+      }
+    },
+    [selectedJob, t],
+  );
+
   const loadVersions = useCallback(
     async (taskId: number | null) => {
       if (!taskId) {
@@ -1193,7 +2239,9 @@ export function DataSyncStudio() {
       setGlobalVariables(data.items || []);
       setGlobalVariableTotal(data.total || 0);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('loadGlobalVariablesFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('loadGlobalVariablesFailed'),
+      );
     }
   }, [globalVariablePage]);
 
@@ -1225,6 +2273,19 @@ export function DataSyncStudio() {
       JSON.stringify(payload),
     );
   }, [openTabs, selectedNodeId]);
+
+  useEffect(() => {
+    if (!editor.id) {
+      return;
+    }
+    setOpenTabs((current) =>
+      current.map((tab) =>
+        tab.id === editor.id
+          ? {id: tab.id, name: editor.name || tab.name}
+          : tab,
+      ),
+    );
+  }, [editor.id, editor.name]);
 
   useEffect(() => {
     if (!selectedNodeId) {
@@ -1279,6 +2340,28 @@ export function DataSyncStudio() {
   }, [previewDatasetName, previewDatasets]);
 
   useEffect(() => {
+    if (!previewJob) {
+      setPreviewSnapshot(null);
+      return;
+    }
+    void loadPreviewSnapshot(previewJob.id, previewDatasetName || undefined);
+  }, [previewJob?.id, previewDatasetName, loadPreviewSnapshot]);
+
+  useEffect(() => {
+    if (bottomConsoleTab !== 'checkpoint') {
+      return;
+    }
+    void loadCheckpointSnapshot(selectedJobId);
+  }, [bottomConsoleTab, selectedJobId, loadCheckpointSnapshot]);
+
+  useEffect(() => {
+    if (bottomConsoleTab !== 'checkpoint') {
+      return;
+    }
+    void loadCheckpointFiles(selectedJob);
+  }, [bottomConsoleTab, loadCheckpointFiles, selectedJob]);
+
+  useEffect(() => {
     const rows = toVariableRows(editor.definition?.custom_variables);
     setCustomVariableRows(
       rows.length > 0 ? rows : [{id: 'custom-var-0', key: '', value: ''}],
@@ -1291,6 +2374,8 @@ export function DataSyncStudio() {
     jobLogsRequestVersionRef.current += 1;
     setJobLogs(null);
     setExpandedJobLogs(null);
+    setPreviewSnapshot(null);
+    setCheckpointSnapshot(null);
     setJobLogsOffset('');
     setExpandedJobLogsOffset('');
     jobLogsOffsetRef.current = '';
@@ -1454,6 +2539,28 @@ export function DataSyncStudio() {
   }, [activeJobs]);
 
   useEffect(() => {
+    if (
+      !previewJob ||
+      (previewJob.status !== 'pending' && previewJob.status !== 'running')
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadPreviewSnapshot(
+        previewJob.id,
+        previewDatasetName || undefined,
+        true,
+      );
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [
+    previewDatasetName,
+    previewJob?.id,
+    previewJob?.status,
+    loadPreviewSnapshot,
+  ]);
+
+  useEffect(() => {
     if (!selectedJobId || bottomConsoleTab !== 'logs') {
       return;
     }
@@ -1474,6 +2581,28 @@ export function DataSyncStudio() {
   }, [logsDialogOpen, loadSelectedJobLogs, selectedJobId]);
 
   useEffect(() => {
+    if (
+      bottomConsoleTab !== 'checkpoint' ||
+      !selectedJobId ||
+      !selectedJob ||
+      (selectedJob.status !== 'pending' && selectedJob.status !== 'running')
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadCheckpointSnapshot(selectedJobId, true);
+      void loadCheckpointFiles(selectedJob, true);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [
+    bottomConsoleTab,
+    loadCheckpointFiles,
+    loadCheckpointSnapshot,
+    selectedJob,
+    selectedJobId,
+  ]);
+
+  useEffect(() => {
     if (!treeMenu.open) {
       return;
     }
@@ -1492,7 +2621,13 @@ export function DataSyncStudio() {
     key: K,
     value: EditorState[K],
   ) => {
-    setEditor((prev) => ({...prev, [key]: value}));
+    setEditor((prev) => {
+      const next = {...prev, [key]: value};
+      if (next.id) {
+        markEditorDraft(next.id, next, customVariableRowsRef.current, true);
+      }
+      return next;
+    });
   };
 
   const buildTaskPayload = useCallback(
@@ -1510,7 +2645,21 @@ export function DataSyncStudio() {
         custom_variables: fromVariableRows(customVariableRows),
         execution_mode: getExecutionMode(editor.definition),
         preview_mode: 'source',
-        preview_output_format: 'json',
+        preview_output_format: 'hocon',
+        preview_row_limit:
+          Number(toObject(editor.definition).preview_row_limit) > 0
+            ? Math.min(
+                Number(toObject(editor.definition).preview_row_limit),
+                10000,
+              )
+            : 100,
+        preview_timeout_minutes:
+          Number(toObject(editor.definition).preview_timeout_minutes) > 0
+            ? Math.min(
+                Number(toObject(editor.definition).preview_timeout_minutes),
+                24 * 60,
+              )
+            : 10,
         preview_http_sink: {
           url:
             typeof toObject(toObject(editor.definition).preview_http_sink)
@@ -1552,7 +2701,13 @@ export function DataSyncStudio() {
           });
           task = await services.sync.getTask(task.id);
         }
-        setEditor(extractEditorState(task));
+        const savedEditor = extractEditorState(task);
+        const savedRows = extractVariableRowsFromDefinition(
+          task.definition || {},
+        );
+        setEditor(savedEditor);
+        setCustomVariableRows(savedRows);
+        markEditorDraft(task.id, savedEditor, savedRows, false);
         syncOpenTabs(task);
         setSelectedNodeId(task.id);
         if (isNewTask) {
@@ -1562,13 +2717,15 @@ export function DataSyncStudio() {
         }
         return task;
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : t('saveFileFailed'));
+        toast.error(
+          error instanceof Error ? error.message : t('saveFileFailed'),
+        );
         return null;
       } finally {
         setSaving(false);
       }
     },
-    [buildTaskPayload, editor, loadWorkspace, syncOpenTabs],
+    [buildTaskPayload, editor, loadWorkspace, markEditorDraft, syncOpenTabs],
   );
 
   const openTreeDialog = useCallback(
@@ -1664,7 +2821,9 @@ export function DataSyncStudio() {
         await loadWorkspace(task.id);
       } else if (treeDialog.action === 'rename' && treeDialog.targetNode) {
         const siblingParentId =
-          treeDialog.targetNode.parent_id == null ? null : treeDialog.targetNode.parent_id;
+          treeDialog.targetNode.parent_id == null
+            ? null
+            : treeDialog.targetNode.parent_id;
         if (
           hasDuplicateWorkspaceName(
             tree,
@@ -1709,6 +2868,11 @@ export function DataSyncStudio() {
           return;
         }
         await services.sync.deleteTask(treeDialog.targetNode.id);
+        setEditorDrafts((current) => {
+          const next = {...current};
+          delete next[treeDialog.targetNode!.id];
+          return next;
+        });
         setOpenTabs((current) =>
           current.filter((tab) => tab.id !== treeDialog.targetNode?.id),
         );
@@ -1733,7 +2897,39 @@ export function DataSyncStudio() {
         targetParentId: null,
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('operationFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('operationFailed'),
+      );
+    }
+  };
+
+  const handleCopyFile = async (node: SyncTaskTreeNode | null) => {
+    if (!node || node.node_type !== 'file') {
+      return;
+    }
+    try {
+      const current = await services.sync.getTask(node.id);
+      const parentId = current.parent_id || undefined;
+      const copiedName = buildCopiedWorkspaceName(
+        tree,
+        current.parent_id ?? null,
+        current.name,
+      );
+      const copiedTask = await services.sync.createTask({
+        parent_id: parentId,
+        node_type: 'file',
+        name: copiedName,
+        description: current.description,
+        cluster_id: current.cluster_id,
+        content_format: current.content_format,
+        content: current.content,
+        definition: current.definition,
+      });
+      toast.success(t('fileCopied'));
+      syncOpenTabs(copiedTask);
+      await loadWorkspace(copiedTask.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('copyFileFailed'));
     }
   };
 
@@ -1749,17 +2945,33 @@ export function DataSyncStudio() {
     }
     setSelectedNodeId(node.id);
     setSelectedFolderId(node.parent_id || null);
-    setEditor(extractEditorStateFromTreeNode(node));
+    applyDraftOrLoadedState(
+      node.id,
+      extractEditorStateFromTreeNode(node),
+      extractVariableRowsFromDefinition(node.definition || {}),
+    );
     syncOpenTabs(node);
     setDagResult(null);
     setJobs([]);
     setSelectedJobId(null);
     setJobLogs(null);
     setExpandedJobLogs(null);
+    setCheckpointSnapshot(null);
     setBottomConsoleTab('logs');
     try {
       const task = await services.sync.getTask(node.id);
-      setEditor(extractEditorState(task));
+      const loadedEditor = extractEditorState(task);
+      const loadedRows = extractVariableRowsFromDefinition(
+        task.definition || {},
+      );
+      const usedDraft = applyDraftOrLoadedState(
+        node.id,
+        loadedEditor,
+        loadedRows,
+      );
+      if (!usedDraft) {
+        markEditorDraft(node.id, loadedEditor, loadedRows, false);
+      }
       syncOpenTabs(task);
       await loadJobs(node.id);
     } catch (error) {
@@ -1771,16 +2983,32 @@ export function DataSyncStudio() {
     setSelectedNodeId(taskId);
     const treeTask = findTreeNode(tree, taskId);
     if (treeTask && treeTask.node_type === 'file') {
-      setEditor(extractEditorStateFromTreeNode(treeTask));
+      applyDraftOrLoadedState(
+        taskId,
+        extractEditorStateFromTreeNode(treeTask),
+        extractVariableRowsFromDefinition(treeTask.definition || {}),
+      );
       setSelectedFolderId(treeTask.parent_id || null);
       setJobs([]);
       setSelectedJobId(null);
       setJobLogs(null);
       setExpandedJobLogs(null);
+      setCheckpointSnapshot(null);
     }
     try {
       const task = await services.sync.getTask(taskId);
-      setEditor(extractEditorState(task));
+      const loadedEditor = extractEditorState(task);
+      const loadedRows = extractVariableRowsFromDefinition(
+        task.definition || {},
+      );
+      const usedDraft = applyDraftOrLoadedState(
+        taskId,
+        loadedEditor,
+        loadedRows,
+      );
+      if (!usedDraft) {
+        markEditorDraft(taskId, loadedEditor, loadedRows, false);
+      }
       setSelectedFolderId(task.parent_id || null);
       await loadJobs(taskId);
     } catch (error) {
@@ -1800,10 +3028,12 @@ export function DataSyncStudio() {
     } else {
       setSelectedNodeId(null);
       setEditor(EMPTY_EDITOR);
+      setCustomVariableRows(extractVariableRowsFromDefinition({}));
       setJobs([]);
       setSelectedJobId(null);
       setJobLogs(null);
       setExpandedJobLogs(null);
+      setCheckpointSnapshot(null);
     }
   };
 
@@ -1835,6 +3065,7 @@ export function DataSyncStudio() {
     if (!task) {
       return;
     }
+    setActionPending('dag');
     try {
       const passed = await runPreflightValidation(task.id, t('dagActionLabel'));
       if (!passed) {
@@ -1847,11 +3078,13 @@ export function DataSyncStudio() {
       toast.success(t('dagGenerated'));
     } catch (error) {
       setDagResult(null);
-      setDagError(formatSyncUserFacingError(error, t('dagParseFailedTitle'), t));
-      setDagOpen(true);
-      toast.error(
-        error instanceof Error ? error.message : t('dagBuildFailed'),
+      setDagError(
+        formatSyncUserFacingError(error, t('dagParseFailedTitle'), t),
       );
+      setDagOpen(true);
+      toast.error(error instanceof Error ? error.message : t('dagBuildFailed'));
+    } finally {
+      setActionPending((current) => (current === 'dag' ? null : current));
     }
   };
 
@@ -1865,9 +3098,15 @@ export function DataSyncStudio() {
       setValidationTitle(t('validateConfigTitle'));
       setValidationResult(result);
       setValidationOpen(true);
-      toast.success(result.valid ? t('validatePassed') : t('validateCompleted'));
+      toast.success(
+        result.valid ? t('validatePassed') : t('validateCompleted'),
+      );
     } catch (error) {
-      const uiError = formatSyncUserFacingError(error, t('validateFailedTitle'), t);
+      const uiError = formatSyncUserFacingError(
+        error,
+        t('validateFailedTitle'),
+        t,
+      );
       setValidationTitle(uiError.title);
       setValidationResult({
         valid: false,
@@ -1885,14 +3124,21 @@ export function DataSyncStudio() {
     if (!task) {
       return;
     }
+    setActionPending('test_connections');
     try {
       const result = await services.sync.testConnections(task.id);
       setValidationTitle(t('testConnections'));
       setValidationResult(result);
       setValidationOpen(true);
-      toast.success(result.valid ? t('connectionsPassed') : t('connectionsCompleted'));
+      toast.success(
+        result.valid ? t('connectionsPassed') : t('connectionsCompleted'),
+      );
     } catch (error) {
-      const uiError = formatSyncUserFacingError(error, t('testConnectionsFailedTitle'), t);
+      const uiError = formatSyncUserFacingError(
+        error,
+        t('testConnectionsFailedTitle'),
+        t,
+      );
       setValidationTitle(uiError.title);
       setValidationResult({
         valid: false,
@@ -1902,6 +3148,10 @@ export function DataSyncStudio() {
       });
       setValidationOpen(true);
       toast.error(uiError.description);
+    } finally {
+      setActionPending((current) =>
+        current === 'test_connections' ? null : current,
+      );
     }
   };
 
@@ -1910,26 +3160,71 @@ export function DataSyncStudio() {
       toast.error(t('waitForActiveRun'));
       return;
     }
+    const currentLimit = Number(toObject(editor.definition).preview_row_limit);
+    setPreviewRunDialog({
+      open: true,
+      rowLimit: String(currentLimit > 0 ? Math.min(currentLimit, 10000) : 100),
+      timeoutMinutes: String(
+        Number(toObject(editor.definition).preview_timeout_minutes) > 0
+          ? Math.min(
+              Number(toObject(editor.definition).preview_timeout_minutes),
+              24 * 60,
+            )
+          : 10,
+      ),
+    });
+  };
+
+  const handleConfirmPreview = async () => {
+    const parsedRowLimit = Number(previewRunDialog.rowLimit);
+    const normalizedRowLimit =
+      Number.isFinite(parsedRowLimit) && parsedRowLimit > 0
+        ? Math.min(Math.floor(parsedRowLimit), 10000)
+        : 100;
+    const parsedTimeoutMinutes = Number(previewRunDialog.timeoutMinutes);
+    const normalizedTimeoutMinutes =
+      Number.isFinite(parsedTimeoutMinutes) && parsedTimeoutMinutes > 0
+        ? Math.min(Math.floor(parsedTimeoutMinutes), 24 * 60)
+        : 10;
+    const nextDefinition = {
+      ...editor.definition,
+      preview_row_limit: normalizedRowLimit,
+      preview_timeout_minutes: normalizedTimeoutMinutes,
+    };
+    setEditor((prev) => ({...prev, definition: nextDefinition}));
+    setPreviewRunDialog((current) => ({...current, open: false}));
     const task = await persistCurrentFile(false);
     if (!task) {
       return;
     }
+    setActionPending('preview');
     try {
-      const passed = await runPreflightValidation(task.id, t('previewActionLabel'));
+      const passed = await runPreflightValidation(
+        task.id,
+        t('previewActionLabel'),
+      );
       if (!passed) {
         return;
       }
-      const job = await services.sync.previewTask(task.id);
+      const job = await services.sync.previewTask(task.id, {
+        row_limit: normalizedRowLimit,
+        timeout_minutes: normalizedTimeoutMinutes,
+      });
       await loadJobs(task.id);
       setSelectedJobId(job.id);
       setBottomConsoleTab('preview');
       toast.success(t('previewSubmitted'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('previewFailed'));
+    } finally {
+      setActionPending((current) => (current === 'preview' ? null : current));
     }
   };
 
-  const handleRun = async (mode: 'run' | 'recover') => {
+  const handleRun = async (
+    mode: 'run' | 'recover',
+    sourceJobId?: number | null,
+  ) => {
     if (hasActiveRun || hasActivePreview) {
       toast.error(t('waitForActiveRun'));
       return;
@@ -1946,21 +3241,33 @@ export function DataSyncStudio() {
       if (!passed) {
         return;
       }
-      if (mode === 'recover' && !recoverSourceId && !runJobs[0]?.id) {
+      const resolvedRecoverSourceId =
+        mode === 'recover'
+          ? sourceJobId ?? preferredRecoverSourceId ?? null
+          : null;
+      if (mode === 'recover' && !resolvedRecoverSourceId) {
         throw new Error(t('noRecoverSource'));
+      }
+      if (mode === 'recover') {
+        setActionPending('recover');
       }
       const job =
         mode === 'recover'
-          ? await services.sync.recoverJob(
-              Number(recoverSourceId || runJobs[0]?.id || 0),
-            )
+          ? await services.sync.recoverJob(Number(resolvedRecoverSourceId))
           : await services.sync.submitTask(task.id);
       await loadJobs(task.id);
       setSelectedJobId(job.id);
+      if (mode === 'recover') {
+        setRecoverSourceId('');
+      }
       setBottomConsoleTab('jobs');
-      toast.success(mode === 'recover' ? t('recoverSubmitted') : t('runSubmitted'));
+      toast.success(
+        mode === 'recover' ? t('recoverSubmitted') : t('runSubmitted'),
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('runFailed'));
+    } finally {
+      setActionPending((current) => (current === 'recover' ? null : current));
     }
   };
 
@@ -1974,14 +3281,15 @@ export function DataSyncStudio() {
         stopWithSavepoint ? t('savepointStopTriggered') : t('taskStopped'),
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('cancelTaskFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('cancelTaskFailed'),
+      );
     }
   };
 
   const handleStopActiveJob = async (mode: 'normal' | 'savepoint') => {
     const activeJob =
-      selectedJob &&
-      (selectedJob.status === 'pending' || selectedJob.status === 'running')
+      selectedJob && isJobLifecycleActive(getDisplayJobLifecycleStatus(selectedJob))
         ? selectedJob
         : activeJobs[0];
     if (!activeJob) {
@@ -1992,8 +3300,7 @@ export function DataSyncStudio() {
   };
 
   const handleRecoverFromHistory = (jobId: number) => {
-    setRecoverSourceId(String(jobId));
-    setBottomConsoleTab('jobs');
+    void handleRun('recover', jobId);
   };
 
   const handleExecutionModeChange = (value: ExecutionMode) => {
@@ -2006,14 +3313,20 @@ export function DataSyncStudio() {
   const syncCustomVariablesToEditor = useCallback(
     (rows: VariableRow[]) => {
       setCustomVariableRows(rows);
+      customVariableRowsRef.current = rows;
       setEditingCustomVariableId(null);
       setCustomVariableDraft({key: '', value: ''});
-      updateEditor('definition', {
+      const nextDefinition = {
         ...editor.definition,
         custom_variables: fromVariableRows(rows),
-      });
+      };
+      const nextEditor = {...editor, definition: nextDefinition};
+      setEditor(nextEditor);
+      if (nextEditor.id) {
+        markEditorDraft(nextEditor.id, nextEditor, rows, true);
+      }
     },
-    [editor.definition],
+    [editor, markEditorDraft],
   );
 
   const handleStartEditCustomVariableRow = (rowId: string) => {
@@ -2085,7 +3398,9 @@ export function DataSyncStudio() {
       setEditingGlobalVariableId(null);
       await loadGlobalVariables();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('saveGlobalVariableFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('saveGlobalVariableFailed'),
+      );
     }
   };
 
@@ -2102,7 +3417,11 @@ export function DataSyncStudio() {
       }
       await loadGlobalVariables();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('deleteGlobalVariableFailed'));
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('deleteGlobalVariableFailed'),
+      );
     }
   };
 
@@ -2121,12 +3440,20 @@ export function DataSyncStudio() {
     }
     try {
       const task = await services.sync.rollbackVersion(editor.id, versionId);
-      setEditor(extractEditorState(task));
+      const rolledEditor = extractEditorState(task);
+      const rolledRows = extractVariableRowsFromDefinition(
+        task.definition || {},
+      );
+      setEditor(rolledEditor);
+      setCustomVariableRows(rolledRows);
+      markEditorDraft(task.id, rolledEditor, rolledRows, false);
       setTree((current) => patchTreeNode(current, task));
       await loadVersions(task.id);
       toast.success(t('rollbackVersionSuccess'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('rollbackVersionFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('rollbackVersionFailed'),
+      );
     }
   };
 
@@ -2143,7 +3470,9 @@ export function DataSyncStudio() {
       await loadVersions(editor.id);
       toast.success(t('versionDeleted'));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('deleteVersionFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('deleteVersionFailed'),
+      );
     }
   };
 
@@ -2183,30 +3512,51 @@ export function DataSyncStudio() {
               className='h-9 px-3'
               variant='outline'
               onClick={handleTestConnections}
-              disabled={saving || !editor.name.trim()}
+              disabled={saving || !editor.name.trim() || actionPending !== null}
             >
-              <Database className='mr-1.5 size-4' />
-              {t('testConnections')}
+              {actionPending === 'test_connections' ? (
+                <Loader2 className='mr-1.5 size-4 animate-spin' />
+              ) : (
+                <Database className='mr-1.5 size-4' />
+              )}
+              {actionPending === 'test_connections'
+                ? t('testingConnections')
+                : t('testConnections')}
             </Button>
             <Button
               size='sm'
               className='h-9 px-3'
               variant='outline'
               onClick={handleBuildDag}
-              disabled={saving || !editor.name.trim()}
+              disabled={saving || !editor.name.trim() || actionPending !== null}
             >
-              <GitBranch className='mr-1.5 size-4' />
-              DAG
+              {actionPending === 'dag' ? (
+                <Loader2 className='mr-1.5 size-4 animate-spin' />
+              ) : (
+                <GitBranch className='mr-1.5 size-4' />
+              )}
+              {actionPending === 'dag' ? t('buildingDag') : 'DAG'}
             </Button>
             <Button
               size='sm'
               className='h-9 px-3'
               variant='outline'
               onClick={handlePreview}
-              disabled={saving || hasActiveRun || hasActivePreview}
+              disabled={
+                saving ||
+                hasActiveRun ||
+                hasActivePreview ||
+                actionPending !== null
+              }
             >
-              <Bug className='mr-1.5 size-4' />
-              {t('preview')}
+              {actionPending === 'preview' ? (
+                <Loader2 className='mr-1.5 size-4 animate-spin' />
+              ) : (
+                <Bug className='mr-1.5 size-4' />
+              )}
+              {actionPending === 'preview'
+                ? t('preparingPreview')
+                : t('preview')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -2225,7 +3575,13 @@ export function DataSyncStudio() {
                   {t('run')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={executionMode === 'local'}
+                  disabled={
+                    executionMode === 'local' ||
+                    hasActiveRun ||
+                    hasActivePreview ||
+                    actionPending !== null ||
+                    preferredRecoverSourceId === null
+                  }
                   onClick={() => void handleRun('recover')}
                 >
                   {t('savepointRecover')}
@@ -2262,6 +3618,16 @@ export function DataSyncStudio() {
           </div>
         </CardContent>
       </Card>
+
+      {actionPending ? (
+        <div className='flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary shadow-sm'>
+          <Loader2 className='size-4 animate-spin' />
+          <span>{getPendingActionLabel(t, actionPending)}</span>
+          <span className='text-muted-foreground'>
+            {t('actionPendingHint')}
+          </span>
+        </div>
+      ) : null}
 
       <div className='grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_304px] grid-rows-[minmax(0,1fr)_260px] gap-2'>
         <Card className='row-start-1 gap-0 overflow-hidden border-border/60 bg-background/75 py-0 shadow-sm'>
@@ -2372,6 +3738,12 @@ export function DataSyncStudio() {
                     onClick={() => void handleSelectTab(tab.id)}
                   >
                     <FileCode2 className='size-3.5' />
+                    {editorDrafts[tab.id]?.dirty ? (
+                      <span
+                        aria-label={t('unsavedDraft')}
+                        className='size-2 rounded-full bg-amber-500'
+                      />
+                    ) : null}
                     <span className='max-w-[180px] truncate'>{tab.name}</span>
                     <span
                       className='rounded px-1 text-[10px] opacity-60 transition hover:bg-muted hover:opacity-100'
@@ -2484,7 +3856,9 @@ export function DataSyncStudio() {
               onCancelEdit={() => setEditingGlobalVariableId(null)}
               onSave={handleSaveGlobalVariable}
               onDelete={(id) => void handleDeleteGlobalVariable(id)}
-              onCopy={(value) => void copyToClipboard(value, t('variableValueCopied'))}
+              onCopy={(value) =>
+                void copyToClipboard(value, t('variableValueCopied'))
+              }
             />
           )}
         </StudioSidebarShell>
@@ -2493,16 +3867,16 @@ export function DataSyncStudio() {
           <CardContent className='flex h-full min-h-0 p-0'>
             <div className='flex w-12 shrink-0 flex-col items-center gap-2 border-r border-border/50 bg-muted/10 py-3'>
               <SidebarIconTab
-                active={bottomConsoleTab === 'logs'}
-                icon={<SquareTerminal className='size-4' />}
-                label={t('logs')}
-                onClick={() => setBottomConsoleTab('logs')}
-              />
-              <SidebarIconTab
                 active={bottomConsoleTab === 'jobs'}
                 icon={<ListTree className='size-4' />}
                 label={t('jobs')}
                 onClick={() => setBottomConsoleTab('jobs')}
+              />
+              <SidebarIconTab
+                active={bottomConsoleTab === 'logs'}
+                icon={<SquareTerminal className='size-4' />}
+                label={t('logs')}
+                onClick={() => setBottomConsoleTab('logs')}
               />
               <SidebarIconTab
                 active={bottomConsoleTab === 'preview'}
@@ -2510,9 +3884,35 @@ export function DataSyncStudio() {
                 label={t('preview')}
                 onClick={() => setBottomConsoleTab('preview')}
               />
+              <SidebarIconTab
+                active={bottomConsoleTab === 'checkpoint'}
+                icon={<Columns2 className='size-4' />}
+                label={t('checkpoint')}
+                onClick={() => setBottomConsoleTab('checkpoint')}
+              />
             </div>
             <div className='min-h-0 flex-1 p-3'>
-              {bottomConsoleTab === 'logs' ? (
+              {bottomConsoleTab === 'jobs' ? (
+                <JobRunsPanel
+                  jobs={jobs}
+                  selectedJobId={selectedJobId}
+                  onSelectJob={setSelectedJobId}
+                  onRecover={handleRecoverFromHistory}
+                  onCancel={handleCancelJob}
+                  onSavepointStop={(jobId) =>
+                    void handleCancelJob(jobId, true)
+                  }
+                  onViewMetrics={(job) => {
+                    setMetricsDialogJob(job);
+                    setJobMetricsDialogOpen(true);
+                  }}
+                  onViewScript={(job) => {
+                    setJobScriptTarget(job);
+                    setJobScriptOpen(true);
+                  }}
+                  disableRecover={hasActiveRun || hasActivePreview}
+                />
+              ) : bottomConsoleTab === 'logs' ? (
                 <ConsolePanel
                   job={selectedJob}
                   logsResult={jobLogs}
@@ -2523,30 +3923,36 @@ export function DataSyncStudio() {
                     setLogsDialogOpen(true);
                   }}
                 />
-              ) : bottomConsoleTab === 'jobs' ? (
-                <JobRunsPanel
-                  jobs={jobs}
-                  selectedJobId={selectedJobId}
-                  onSelectJob={setSelectedJobId}
-                  onRecover={handleRecoverFromHistory}
-                  onCancel={handleCancelJob}
-                  onViewMetrics={(job) => {
-                    setMetricsDialogJob(job);
-                    setJobMetricsDialogOpen(true);
-                  }}
-                  disableRecover={hasActiveRun || hasActivePreview}
-                />
-              ) : (
+              ) : bottomConsoleTab === 'preview' ? (
                 <PreviewWorkspacePanel
                   job={previewJob}
+                  previewSnapshot={previewSnapshot}
                   datasets={previewDatasets}
                   selectedDatasetName={selectedPreviewDataset?.name || ''}
                   previewPage={previewPage}
+                  loading={
+                    actionPending === 'preview' || previewSnapshotLoading
+                  }
+                  monacoTheme={monacoTheme}
                   onSelectDataset={(name) => {
                     setPreviewDatasetName(name);
                     setPreviewPage(1);
                   }}
                   onChangePage={setPreviewPage}
+                />
+              ) : (
+                <CheckpointWorkspacePanel
+                  job={selectedJob}
+                  checkpointSnapshot={checkpointSnapshot}
+                  loading={checkpointLoading}
+                  checkpointFiles={checkpointFiles}
+                  checkpointFilesLoading={checkpointFilesLoading}
+                  onInspectCheckpointFile={handleInspectCheckpointFile}
+                  inspectLoadingPath={checkpointInspectDialogLoading}
+                  onRefresh={() => {
+                    void loadCheckpointSnapshot(selectedJobId);
+                    void loadCheckpointFiles(selectedJob);
+                  }}
                 />
               )}
             </div>
@@ -2567,6 +3973,75 @@ export function DataSyncStudio() {
       </Dialog>
 
       <Dialog
+        open={previewRunDialog.open}
+        onOpenChange={(open) =>
+          setPreviewRunDialog((current) => ({...current, open}))
+        }
+      >
+        <DialogContent className='max-w-md'>
+          <DialogHeader>
+            <DialogTitle>{t('previewSettings')}</DialogTitle>
+            <DialogDescription>{t('previewRowLimitDesc')}</DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3'>
+            <div className='grid gap-2'>
+              <Label htmlFor='preview-row-limit'>{t('previewRowLimit')}</Label>
+              <Input
+                id='preview-row-limit'
+                type='number'
+                min={1}
+                max={10000}
+                value={previewRunDialog.rowLimit}
+                onChange={(event) =>
+                  setPreviewRunDialog((current) => ({
+                    ...current,
+                    rowLimit: event.target.value,
+                  }))
+                }
+              />
+              <div className='text-xs text-muted-foreground'>
+                {t('previewRowLimitWarning')}
+              </div>
+            </div>
+            <div className='grid gap-2'>
+              <Label htmlFor='preview-timeout-minutes'>
+                {t('previewTimeoutMinutes')}
+              </Label>
+              <Input
+                id='preview-timeout-minutes'
+                type='number'
+                min={1}
+                max={1440}
+                value={previewRunDialog.timeoutMinutes}
+                onChange={(event) =>
+                  setPreviewRunDialog((current) => ({
+                    ...current,
+                    timeoutMinutes: event.target.value,
+                  }))
+                }
+              />
+              <div className='text-xs text-muted-foreground'>
+                {t('previewTimeoutMinutesDesc')}
+              </div>
+            </div>
+            <div className='flex justify-end gap-2'>
+              <Button
+                variant='outline'
+                onClick={() =>
+                  setPreviewRunDialog((current) => ({...current, open: false}))
+                }
+              >
+                {t('cancel')}
+              </Button>
+              <Button onClick={() => void handleConfirmPreview()}>
+                {t('startPreview')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={dagOpen}
         onOpenChange={(open) => {
           setDagOpen(open);
@@ -2581,7 +4056,10 @@ export function DataSyncStudio() {
             <DialogDescription>
               {dagError
                 ? t('dagParseErrorDescription')
-                : t('dagSummary', {nodes: dagNodes.length, edges: dagEdges.length})}
+                : t('dagSummary', {
+                    nodes: dagNodes.length,
+                    edges: dagEdges.length,
+                  })}
             </DialogDescription>
           </DialogHeader>
           <div className='min-h-0 flex-1 overflow-auto px-6 pb-6'>
@@ -2642,11 +4120,14 @@ export function DataSyncStudio() {
         <DialogContent className='max-w-5xl'>
           <DialogHeader>
             <DialogTitle>
-              {t('versionPreview')} {versionPreview ? `v${versionPreview.version}` : ''}
+              {t('versionPreview')}{' '}
+              {versionPreview ? `v${versionPreview.version}` : ''}
             </DialogTitle>
           </DialogHeader>
           <pre className='max-h-[70vh] overflow-auto rounded-lg border p-4 text-xs text-muted-foreground'>
-            {versionPreview ? versionPreview.content_snapshot : t('noVersionContent')}
+            {versionPreview
+              ? versionPreview.content_snapshot
+              : t('noVersionContent')}
           </pre>
         </DialogContent>
       </Dialog>
@@ -2662,7 +4143,8 @@ export function DataSyncStudio() {
         <DialogContent className='flex h-[88vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden p-0 gap-0 sm:max-w-[1320px]'>
           <DialogHeader>
             <DialogTitle className='px-6 pt-6'>
-              {t('versionCompare')} {compareVersion ? `v${compareVersion.version}` : ''}
+              {t('versionCompare')}{' '}
+              {compareVersion ? `v${compareVersion.version}` : ''}
             </DialogTitle>
           </DialogHeader>
           <div className='mx-6 flex flex-wrap items-center justify-between gap-3 rounded-t-lg border border-b-0 border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground'>
@@ -2682,7 +4164,9 @@ export function DataSyncStudio() {
               </div>
               <div className='flex items-center gap-2 rounded-md border border-border/50 bg-background/70 px-2 py-1'>
                 <Columns2 className='size-3.5' />
-                <span>{t('currentEditing')} / {editor.name || t('unnamedFile')}</span>
+                <span>
+                  {t('currentEditing')} / {editor.name || t('unnamedFile')}
+                </span>
               </div>
             </div>
           </div>
@@ -2715,13 +4199,37 @@ export function DataSyncStudio() {
         open={jobMetricsDialogOpen}
         onOpenChange={setJobMetricsDialogOpen}
       >
-        <DialogContent className='max-w-5xl'>
+        <DialogContent className='flex h-[86vh] w-[94vw] max-w-[94vw] flex-col overflow-hidden sm:max-w-[1380px]'>
           <DialogHeader>
             <DialogTitle>
-              {t('metricsDetails')} {metricsDialogJob ? `#${metricsDialogJob.id}` : ''}
+              {t('metricsDetails')}{' '}
+              {metricsDialogJob ? `#${metricsDialogJob.id}` : ''}
             </DialogTitle>
           </DialogHeader>
           <MetricsDialogContent job={metricsDialogJob} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={jobScriptOpen}
+        onOpenChange={(open) => {
+          setJobScriptOpen(open);
+          if (!open) {
+            setJobScriptTarget(null);
+          }
+        }}
+      >
+        <DialogContent className='flex h-[86vh] w-[92vw] max-w-[92vw] flex-col overflow-hidden sm:max-w-[1200px]'>
+          <DialogHeader>
+            <DialogTitle>
+              {t('actualExecutedScript')}{' '}
+              {jobScriptTarget ? `#${jobScriptTarget.id}` : ''}
+            </DialogTitle>
+          </DialogHeader>
+          <JobScriptDialogContent
+            job={jobScriptTarget}
+            monacoTheme={monacoTheme}
+          />
         </DialogContent>
       </Dialog>
 
@@ -2729,9 +4237,7 @@ export function DataSyncStudio() {
         <DialogContent className='flex h-[88vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden sm:max-w-[1400px]'>
           <DialogHeader>
             <DialogTitle>{t('logViewer')}</DialogTitle>
-            <DialogDescription>
-              {t('logViewerDesc')}
-            </DialogDescription>
+            <DialogDescription>{t('logViewerDesc')}</DialogDescription>
           </DialogHeader>
           <div className='flex flex-wrap items-center justify-between gap-2'>
             <div className='flex items-center gap-2'>
@@ -2764,7 +4270,11 @@ export function DataSyncStudio() {
               <span>
                 {expandedLogsLoading
                   ? t('loadingAllLogs')
-                  : t('totalLines', {count: splitLogLines(expandedJobLogs?.logs || jobLogs?.logs || '').length})}
+                  : t('totalLines', {
+                      count: splitLogLines(
+                        expandedJobLogs?.logs || jobLogs?.logs || '',
+                      ).length,
+                    })}
               </span>
             </div>
           </div>
@@ -2773,6 +4283,83 @@ export function DataSyncStudio() {
             height={620}
             emptyText={t('noLogs')}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={checkpointInspectDialogOpen}
+        onOpenChange={setCheckpointInspectDialogOpen}
+      >
+        <DialogContent className='flex h-[84vh] w-[88vw] max-w-[88vw] flex-col overflow-hidden sm:max-w-[1180px]'>
+          <DialogHeader>
+            <DialogTitle>{t('checkpointFileDetails')}</DialogTitle>
+            <DialogDescription className='break-all'>
+              {checkpointInspectDialogResult?.path || '-'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='grid gap-3 text-sm md:grid-cols-4'>
+            <div>
+              <div className='text-muted-foreground'>{t('fileName')}</div>
+              <div className='font-medium break-all'>
+                {checkpointInspectDialogResult?.file_name || '-'}
+              </div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('storageType')}</div>
+              <div className='font-medium'>
+                {checkpointInspectDialogResult?.storage_type || '-'}
+              </div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('size')}</div>
+              <div className='font-medium'>
+                {formatSizeBytes(checkpointInspectDialogResult?.size_bytes)}
+              </div>
+            </div>
+            <div>
+              <div className='text-muted-foreground'>{t('encoding')}</div>
+              <div className='font-medium'>
+                {checkpointInspectDialogResult?.encoding || '-'}
+              </div>
+            </div>
+          </div>
+          <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+            {buildCheckpointInspectSummary(checkpointInspectDialogResult).map(
+              (item) => (
+                <div
+                  key={item.label}
+                  className='rounded-lg border border-border/60 bg-muted/10 p-3'
+                >
+                  <div className='text-xs text-muted-foreground'>
+                    {item.label}
+                  </div>
+                  <div className='mt-1 text-sm font-medium'>
+                    {renderCheckpointFieldValue(item.key, item.value)}
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+          <ScrollArea className='min-h-0 flex-1 rounded-md border border-border/50 bg-muted/10 p-3'>
+            <div className='space-y-4'>
+              <CheckpointInspectObjectSection
+                title={t('completedCheckpoint')}
+                value={checkpointInspectDialogResult?.completed_checkpoint}
+              />
+              <CheckpointInspectObjectSection
+                title={t('pipelineState')}
+                value={checkpointInspectDialogResult?.pipeline_state}
+              />
+              <CheckpointInspectActionStatesSection
+                title={t('actionStates')}
+                value={checkpointInspectDialogResult?.action_states}
+              />
+              <CheckpointInspectTaskStatisticsSection
+                title={t('taskStatistics')}
+                value={checkpointInspectDialogResult?.task_statistics}
+              />
+            </div>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
 
@@ -2947,6 +4534,16 @@ export function DataSyncStudio() {
               onClick={() => openTreeDialog('move', treeMenu.node)}
             >
               {t('moveTo')}
+            </button>
+          ) : null}
+          {treeMenu.kind === 'file' ? (
+            <button
+              type='button'
+              className='flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent'
+              onClick={() => void handleCopyFile(treeMenu.node)}
+            >
+              <Copy className='mr-2 size-4' />
+              {t('copyFile')}
             </button>
           ) : null}
           {treeMenu.kind !== 'root' ? (
@@ -3155,7 +4752,10 @@ function SettingsSidebarPanel({
   onExecutionModeChange: (value: ExecutionMode) => void;
   onClusterChange: (value: string) => void;
   onStartEditCustomVariableRow: (rowId: string) => void;
-  onCustomVariableDraftChange: (field: keyof VariableDraft, value: string) => void;
+  onCustomVariableDraftChange: (
+    field: keyof VariableDraft,
+    value: string,
+  ) => void;
   onSaveCustomVariableRow: (rowId: string) => void;
   onCancelEditCustomVariableRow: () => void;
   onAddCustomVariableRow: () => void;
@@ -3253,7 +4853,10 @@ function SettingsSidebarPanel({
                       <Input
                         value={customVariableDraft.value}
                         onChange={(event) =>
-                          onCustomVariableDraftChange('value', event.target.value)
+                          onCustomVariableDraftChange(
+                            'value',
+                            event.target.value,
+                          )
                         }
                         className='h-8 text-xs'
                         placeholder={t('value')}
@@ -3488,7 +5091,9 @@ function GlobalVariablesSidebarPanel({
 
       <div className='space-y-2 pb-2'>
         {variables.length === 0 ? (
-          <div className='text-sm text-muted-foreground'>{t('noGlobalVariables')}</div>
+          <div className='text-sm text-muted-foreground'>
+            {t('noGlobalVariables')}
+          </div>
         ) : (
           variables.map((item) => (
             <div
@@ -3619,7 +5224,9 @@ function VersionSidebarPanel({
             </div>
             <div className='mt-1 text-lg font-semibold'>v{currentVersion}</div>
           </div>
-          <Badge variant='outline'>{t('totalItems', {count: versions.length})}</Badge>
+          <Badge variant='outline'>
+            {t('totalItems', {count: versions.length})}
+          </Badge>
         </div>
         <p className='mt-2 text-xs leading-5 text-muted-foreground'>
           {t('versionManagementDesc')}
@@ -3684,7 +5291,9 @@ function VersionSidebarPanel({
             </div>
           ))
         ) : (
-          <div className='text-sm text-muted-foreground'>{t('noVersionHistory')}</div>
+          <div className='text-sm text-muted-foreground'>
+            {t('noVersionHistory')}
+          </div>
         )}
       </div>
       <SimplePagination
@@ -3715,9 +5324,7 @@ function SimplePagination({
   }
   return (
     <div className='flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground'>
-      <span>
-        {t('paginationSummary', {page, totalPages, total})}
-      </span>
+      <span>{t('paginationSummary', {page, totalPages, total})}</span>
       <div className='flex items-center gap-2'>
         <Button
           size='sm'
@@ -3761,6 +5368,7 @@ function ConsolePanel({
   if (!job) {
     return <div className='text-sm text-muted-foreground'>{t('noLogs')}</div>;
   }
+  const displayStatus = getDisplayJobLifecycleStatus(job);
   const renderedLines = buildDisplayLogLines(logsResult?.logs || '', 800);
   return (
     <div className='flex h-full min-h-0 min-w-0 flex-col gap-2'>
@@ -3771,10 +5379,10 @@ function ConsolePanel({
           variant='outline'
           className={cn(
             'rounded-sm border px-2 py-0.5 text-[11px]',
-            getJobStatusBadgeClass(job.status),
+            getJobStatusBadgeClass(displayStatus),
           )}
         >
-          {getJobStatusLabel(job.status)}
+          {getJobStatusLabel(displayStatus)}
         </Badge>
         <Badge variant='outline'>
           {getEngineAPIMode(job) === 'v1'
@@ -3883,7 +5491,9 @@ function JobRunsPanel({
   onSelectJob,
   onRecover,
   onCancel,
+  onSavepointStop,
   onViewMetrics,
+  onViewScript,
   disableRecover,
 }: {
   jobs: SyncJobInstance[];
@@ -3891,7 +5501,9 @@ function JobRunsPanel({
   onSelectJob: (jobId: number) => void;
   onRecover: (jobId: number) => void;
   onCancel: (jobId: number) => void;
+  onSavepointStop: (jobId: number) => void;
   onViewMetrics: (job: SyncJobInstance) => void;
+  onViewScript: (job: SyncJobInstance) => void;
   disableRecover: boolean;
 }) {
   const t = useTranslations('workbenchStudio');
@@ -3915,6 +5527,7 @@ function JobRunsPanel({
         <TableBody>
           {jobs.map((job) => {
             const summary = extractJobMetricSummary(job);
+            const displayStatus = getDisplayJobLifecycleStatus(job);
             return (
               <TableRow
                 key={job.id}
@@ -3932,10 +5545,10 @@ function JobRunsPanel({
                     variant='outline'
                     className={cn(
                       'rounded-sm border px-2 py-0.5 text-[11px]',
-                      getJobStatusBadgeClass(job.status),
+                      getJobStatusBadgeClass(displayStatus),
                     )}
                   >
-                    {getJobStatusLabel(job.status)}
+                    {getJobStatusLabel(displayStatus)}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -3949,15 +5562,31 @@ function JobRunsPanel({
                 </TableCell>
                 <TableCell>
                   <div className='space-y-0.5 text-xs'>
-                    <div>{t('read')} {formatMetricValue(summary.readCount)}</div>
-                    <div>{t('write')} {formatMetricValue(summary.writeCount)}</div>
                     <div>
-                      {t('averageSpeed')} {formatMetricValue(summary.averageSpeed, 1)}/s
+                      {t('read')} {formatMetricValue(summary.readCount)}
+                    </div>
+                    <div>
+                      {t('write')} {formatMetricValue(summary.writeCount)}
+                    </div>
+                    <div>
+                      {t('averageSpeed')}{' '}
+                      {formatMetricValue(summary.averageSpeed, 1)}/s
                     </div>
                   </div>
                 </TableCell>
                 <TableCell className='text-right'>
                   <div className='flex justify-end gap-2'>
+                    <Button
+                      size='icon'
+                      variant='outline'
+                      className='size-8'
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onViewScript(job);
+                      }}
+                    >
+                      <FileCode2 className='size-4' />
+                    </Button>
                     <Button
                       size='icon'
                       variant='outline'
@@ -3976,9 +5605,7 @@ function JobRunsPanel({
                         className='h-8 text-xs'
                         disabled={
                           disableRecover ||
-                          submitSpecExecutionMode(job.submit_spec) === 'local' ||
-                          job.status === 'pending' ||
-                          job.status === 'running'
+                          !canRecoverFromJob(job)
                         }
                         onClick={(event) => {
                           event.stopPropagation();
@@ -3988,18 +5615,33 @@ function JobRunsPanel({
                         {t('recover')}
                       </Button>
                     ) : null}
-                    {job.status === 'pending' || job.status === 'running' ? (
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        className='h-8 text-xs'
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onCancel(job.id);
-                        }}
-                      >
-                        {t('cancel')}
-                      </Button>
+                    {isJobLifecycleActive(
+                      getDisplayJobLifecycleStatus(job),
+                    ) ? (
+                      <>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          className='h-8 text-xs'
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSavepointStop(job.id);
+                          }}
+                        >
+                          {t('savepointStop')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          className='h-8 text-xs'
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onCancel(job.id);
+                          }}
+                        >
+                          {t('stop')}
+                        </Button>
+                      </>
                     ) : null}
                   </div>
                 </TableCell>
@@ -4014,22 +5656,31 @@ function JobRunsPanel({
 
 function PreviewWorkspacePanel({
   job,
+  previewSnapshot,
   datasets,
   selectedDatasetName,
   previewPage,
+  loading,
+  monacoTheme,
   onSelectDataset,
   onChangePage,
 }: {
   job: SyncJobInstance | null;
+  previewSnapshot: SyncPreviewSnapshot | null;
   datasets: SyncPreviewDataset[];
   selectedDatasetName: string;
   previewPage: number;
+  loading?: boolean;
+  monacoTheme: string;
   onSelectDataset: (name: string) => void;
   onChangePage: (page: number) => void;
 }) {
   const t = useTranslations('workbenchStudio');
+  const [previewScriptOpen, setPreviewScriptOpen] = useState(false);
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>{t('noPreviewJobs')}</div>;
+    return (
+      <div className='text-sm text-muted-foreground'>{t('noPreviewJobs')}</div>
+    );
   }
   const activeDataset =
     datasets.find((dataset) => dataset.name === selectedDatasetName) ||
@@ -4037,6 +5688,24 @@ function PreviewWorkspacePanel({
     null;
   const columns = activeDataset?.columns || [];
   const rows = (activeDataset?.rows || []) as Array<Record<string, unknown>>;
+  const previewContent =
+    typeof previewSnapshot?.injected_script === 'string' &&
+    previewSnapshot.injected_script
+      ? previewSnapshot.injected_script
+      : typeof job.result_preview?.preview_content === 'string'
+        ? job.result_preview.preview_content
+        : '';
+  const previewContentFormat =
+    typeof previewSnapshot?.content_format === 'string' &&
+    previewSnapshot.content_format
+      ? previewSnapshot.content_format
+      : typeof job.result_preview?.content_format === 'string'
+        ? job.result_preview.content_format
+        : 'hocon';
+  const previewEmptyMessage =
+    previewSnapshot?.empty_reason === 'preview_not_ready'
+      ? t('preparingPreview')
+      : t('noPreviewDataFallback');
   const pageSize = Math.max(activeDataset?.page_size || 20, 1);
   const total = Math.max(activeDataset?.total || rows.length, rows.length);
   const totalPages = Math.max(Math.ceil(total / pageSize), 1);
@@ -4047,44 +5716,63 @@ function PreviewWorkspacePanel({
   );
   return (
     <div className='grid h-full min-h-0 gap-3 lg:grid-cols-[220px_minmax(0,1fr)]'>
-      <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
-        <div className='mb-3 text-sm font-medium'>{t('catalog')}</div>
-        <div className='space-y-2'>
-          {datasets.length > 0 ? (
-            datasets.map((dataset) => (
-              <button
-                key={dataset.name}
-                type='button'
-                className={cn(
-                  'flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm',
-                  dataset.name === activeDataset?.name
-                    ? 'border-primary/30 bg-primary/5'
-                    : 'border-border/50 bg-background/60',
-                )}
-                onClick={() => onSelectDataset(dataset.name)}
-              >
-                <span className='truncate'>{dataset.name}</span>
-                <Badge variant='outline'>{(dataset.rows || []).length}</Badge>
-              </button>
-            ))
-          ) : (
-            <div className='rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm text-muted-foreground'>
-              {t('noDatasets')}
-            </div>
-          )}
-          <div className='rounded-md border border-border/50 bg-muted/20 p-3 text-xs text-muted-foreground'>
-            <div>{t('jobId')}: {job.platform_job_id || '-'}</div>
-            <div className='mt-2'>{t('columns')}: {columns.length}</div>
-            <div className='mt-2 break-all whitespace-pre-wrap'>
-              {JSON.stringify(activeDataset?.catalog || {}, null, 2)}
-            </div>
-          </div>
+      <div className='flex min-h-0 flex-col rounded-lg border border-border/50 bg-muted/10 p-3'>
+        <div className='mb-3 shrink-0 text-sm font-medium'>
+          {t('tableTabs')}
         </div>
+        <ScrollArea className='min-h-0 flex-1'>
+          <div className='space-y-2 pr-2'>
+            {datasets.length > 0 ? (
+              datasets.map((dataset) => (
+                <Tooltip key={dataset.name}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type='button'
+                      title={dataset.name}
+                      className={cn(
+                        'flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm',
+                        dataset.name === activeDataset?.name
+                          ? 'border-primary/30 bg-primary/5'
+                          : 'border-border/50 bg-background/60',
+                      )}
+                      onClick={() => onSelectDataset(dataset.name)}
+                    >
+                      <span className='min-w-0 truncate'>{dataset.name}</span>
+                      <Badge variant='outline'>
+                        {dataset.total ?? (dataset.rows || []).length}
+                      </Badge>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side='right'
+                    className='max-w-[480px] break-all'
+                  >
+                    {dataset.name}
+                  </TooltipContent>
+                </Tooltip>
+              ))
+            ) : (
+              <div className='rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm text-muted-foreground'>
+                {t('noDatasets')}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
       </div>
       <div className='flex min-h-0 flex-col rounded-lg border border-border/50 bg-background/70'>
         <div className='flex items-center justify-between border-b border-border/50 px-3 py-2 text-sm font-medium'>
           <span>{t('dataTable')}</span>
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+            {previewContent ? (
+              <Button
+                size='sm'
+                variant='outline'
+                className='h-7 px-2 text-xs'
+                onClick={() => setPreviewScriptOpen(true)}
+              >
+                {t('injectedScript')}
+              </Button>
+            ) : null}
             <Button
               size='sm'
               variant='outline'
@@ -4110,7 +5798,14 @@ function PreviewWorkspacePanel({
             </Button>
           </div>
         </div>
-        {columns.length > 0 ? (
+        {loading ? (
+          <div className='flex min-h-0 flex-1 items-center justify-center'>
+            <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+              <Loader2 className='size-4 animate-spin' />
+              <span>{t('preparingPreview')}</span>
+            </div>
+          </div>
+        ) : columns.length > 0 ? (
           <div className='min-h-0 flex-1 overflow-auto'>
             <Table>
               <TableHeader>
@@ -4126,7 +5821,37 @@ function PreviewWorkspacePanel({
                     <TableRow key={index}>
                       {columns.map((column) => (
                         <TableCell key={`${index}-${column}`}>
-                          {formatCellValue(row[column])}
+                          {column === 'RowKind' ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  variant='outline'
+                                  className={cn(
+                                    'max-w-full truncate rounded-sm',
+                                    getPreviewRowKindBadgeClass(
+                                      formatCellValue(row[column]),
+                                    ),
+                                  )}
+                                >
+                                  {formatCellValue(row[column])}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {formatCellValue(row[column])}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className='block truncate'>
+                                  {formatCellValue(row[column])}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className='max-w-[480px] break-all'>
+                                {formatCellValue(row[column])}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -4145,19 +5870,584 @@ function PreviewWorkspacePanel({
             </Table>
           </div>
         ) : (
-          <pre className='min-h-0 flex-1 overflow-auto p-3 text-xs text-muted-foreground'>
-            {JSON.stringify(job.result_preview || {}, null, 2)}
-          </pre>
+          <div className='flex min-h-0 flex-1 items-center justify-center p-3 text-sm text-muted-foreground'>
+            {previewEmptyMessage}
+          </div>
         )}
       </div>
+      <Dialog open={previewScriptOpen} onOpenChange={setPreviewScriptOpen}>
+        <DialogContent className='flex h-[86vh] w-[94vw] max-w-[94vw] flex-col overflow-hidden sm:max-w-[1380px]'>
+          <DialogHeader>
+            <DialogTitle>{t('injectedScript')}</DialogTitle>
+            <DialogDescription>
+              {previewContentFormat.toUpperCase()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='min-h-0 flex-1 overflow-hidden rounded-md border border-border/50'>
+            <MonacoEditor
+              height='100%'
+              language={previewContentFormat === 'json' ? 'json' : 'ini'}
+              theme={monacoTheme}
+              value={previewContent}
+              options={{
+                readOnly: true,
+                minimap: {enabled: false},
+                automaticLayout: true,
+                wordWrap: 'on',
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+                renderLineHighlight: 'all',
+                padding: {top: 14, bottom: 14},
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function CheckpointWorkspacePanel({
+  job,
+  checkpointSnapshot,
+  loading,
+  checkpointFiles,
+  checkpointFilesLoading,
+  onInspectCheckpointFile,
+  inspectLoadingPath,
+  onRefresh,
+}: {
+  job: SyncJobInstance | null;
+  checkpointSnapshot: SyncCheckpointSnapshot | null;
+  loading?: boolean;
+  checkpointFiles: RuntimeStorageListItem[];
+  checkpointFilesLoading?: boolean;
+  onInspectCheckpointFile: (path: string) => void;
+  inspectLoadingPath?: string | null;
+  onRefresh: () => void;
+}) {
+  const t = useTranslations('workbenchStudio');
+  const checkpointFilesByID = useMemo(() => {
+    const mapping = new Map<string, RuntimeStorageListItem>();
+    checkpointFiles.forEach((item: RuntimeStorageListItem) => {
+      const identity = extractCheckpointFileIdentity(item.name || item.path);
+      if (!identity) {
+        return;
+      }
+      const key = `${identity.pipelineId}:${identity.checkpointId}`;
+      if (!mapping.has(key)) {
+        mapping.set(key, item);
+      }
+    });
+    return mapping;
+  }, [checkpointFiles]);
+  if (!job) {
+    return (
+      <div className='text-sm text-muted-foreground'>
+        {t('noCheckpointJob')}
+      </div>
+    );
+  }
+  const pipelines = checkpointSnapshot?.overview?.pipelines || [];
+  const history = checkpointSnapshot?.history || [];
+  return (
+    <div className='flex h-full min-h-0 flex-col gap-3'>
+      {loading ? (
+        <div className='flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground'>
+          <Loader2 className='mr-2 size-4 animate-spin' />
+          {t('loadingCheckpoint')}
+        </div>
+      ) : checkpointSnapshot?.empty_reason ? (
+        <div className='flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-sm text-muted-foreground'>
+          {checkpointSnapshot.message || t('checkpointEmpty')}
+        </div>
+      ) : (
+        <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'>
+          <div className='grid min-h-0 gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]'>
+            <div className='flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/50 bg-background/70'>
+              <div className='flex items-center justify-between border-b border-border/50 px-3 py-2 text-sm font-medium'>
+                <span>{t('checkpointOverview')}</span>
+                <Button
+                  size='icon'
+                  variant='ghost'
+                  className='size-7'
+                  onClick={onRefresh}
+                >
+                  <RefreshCw className='size-3.5' />
+                </Button>
+              </div>
+              <div className='min-h-0 flex-1 overflow-auto'>
+                <Table>
+                  <TableHeader className='sticky top-0 z-10 bg-background'>
+                    <TableRow>
+                      <TableHead>{t('pipeline')}</TableHead>
+                      <TableHead>{t('triggered')}</TableHead>
+                      <TableHead>{t('completed')}</TableHead>
+                      <TableHead>{t('failed')}</TableHead>
+                      <TableHead>{t('inProgress')}</TableHead>
+                      <TableHead>{t('restored')}</TableHead>
+                      <TableHead>{t('latestCompleted')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pipelines.length > 0 ? (
+                      pipelines.map((pipeline) => (
+                        <TableRow key={pipeline.pipelineId}>
+                          <TableCell>{pipeline.pipelineId}</TableCell>
+                          <TableCell>
+                            {pipeline.counts?.triggered ?? '-'}
+                          </TableCell>
+                          <TableCell>
+                            {pipeline.counts?.completed ?? '-'}
+                          </TableCell>
+                          <TableCell>
+                            {pipeline.counts?.failed ?? '-'}
+                          </TableCell>
+                          <TableCell>
+                            {pipeline.counts?.inProgress ?? '-'}
+                          </TableCell>
+                          <TableCell>
+                            {pipeline.counts?.restored ?? '-'}
+                          </TableCell>
+                          <TableCell>
+                            {pipeline.latestCompleted?.checkpointId
+                              ? `#${pipeline.latestCompleted.checkpointId}`
+                              : '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell
+                          colSpan={7}
+                          className='text-center text-muted-foreground'
+                        >
+                          {t('checkpointEmpty')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            <div className='flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/50 bg-background/70'>
+              <div className='border-b border-border/50 px-3 py-2 text-sm font-medium'>
+                {t('checkpointHistory')}
+              </div>
+              <div className='min-h-0 flex-1 overflow-auto'>
+                <Table>
+                  <TableHeader className='sticky top-0 z-10 bg-background'>
+                    <TableRow>
+                      <TableHead>{t('pipeline')}</TableHead>
+                      <TableHead>{t('checkpointId')}</TableHead>
+                      <TableHead>{t('checkpointStatus')}</TableHead>
+                      <TableHead>{t('durationMillis')}</TableHead>
+                      <TableHead>{t('stateSize')}</TableHead>
+                      <TableHead className='text-right'>
+                        {t('actions')}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.length > 0 ? (
+                      history.map((item, index) => {
+                        const checkpointId = item.checkpoint?.checkpointId;
+                        const checkpointKey =
+                          checkpointId !== undefined
+                            ? `${item.pipelineId}:${checkpointId}`
+                            : '';
+                        const matchedFile =
+                          checkpointKey !== ''
+                            ? checkpointFilesByID.get(checkpointKey)
+                            : undefined;
+                        return (
+                          <TableRow
+                            key={`${item.pipelineId}-${item.checkpoint?.checkpointId || index}`}
+                          >
+                            <TableCell>{item.pipelineId}</TableCell>
+                            <TableCell>
+                              {checkpointId ? `#${checkpointId}` : '-'}
+                            </TableCell>
+                            <TableCell>
+                              {item.checkpoint?.status ? (
+                                <Badge
+                                  variant='outline'
+                                  className={cn(
+                                    'rounded-sm border px-2 py-0.5 text-[11px]',
+                                    getCheckpointStatusBadgeClass(
+                                      item.checkpoint.status,
+                                    ),
+                                  )}
+                                >
+                                  {item.checkpoint.status}
+                                </Badge>
+                              ) : (
+                                '-'
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {item.checkpoint?.durationMillis ?? '-'}
+                            </TableCell>
+                            <TableCell>
+                              {item.checkpoint?.stateSize ?? '-'}
+                            </TableCell>
+                            <TableCell className='text-right'>
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                className='h-8 text-xs'
+                                disabled={
+                                  !matchedFile?.path ||
+                                  inspectLoadingPath === matchedFile.path
+                                }
+                                onClick={() =>
+                                  matchedFile?.path &&
+                                  onInspectCheckpointFile(matchedFile.path)
+                                }
+                              >
+                                {inspectLoadingPath === matchedFile?.path ? (
+                                  <Loader2 className='mr-2 size-3.5 animate-spin' />
+                                ) : (
+                                  <Eye className='mr-2 size-3.5' />
+                                )}
+                                {t('viewDetails')}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    ) : (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className='text-center text-muted-foreground'
+                        >
+                          {t('checkpointHistoryEmpty')}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckpointInspectSectionShell({
+  title,
+  children,
+  collapsible = false,
+  defaultOpen = true,
+}: {
+  title: string;
+  children: ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+}) {
+  if (collapsible) {
+    return (
+      <details
+        open={defaultOpen}
+        className='rounded-lg border border-border/50 bg-background/80'
+      >
+        <summary className='cursor-pointer list-none border-b border-border/50 px-3 py-2 text-sm font-medium marker:hidden'>
+          <div className='flex items-center justify-between gap-2'>
+            <span>{title}</span>
+            <span className='text-xs text-muted-foreground'>
+              Expand / Collapse
+            </span>
+          </div>
+        </summary>
+        <div className='p-3'>{children}</div>
+      </details>
+    );
+  }
+  return (
+    <div className='rounded-lg border border-border/50 bg-background/80'>
+      <div className='border-b border-border/50 px-3 py-2 text-sm font-medium'>
+        {title}
+      </div>
+      <div className='p-3'>{children}</div>
+    </div>
+  );
+}
+
+function CheckpointInspectObjectSection({
+  title,
+  value,
+}: {
+  title: string;
+  value?: Record<string, unknown> | null;
+}) {
+  const entries = value ? Object.entries(value) : [];
+  return (
+    <CheckpointInspectSectionShell
+      title={title}
+      collapsible
+      defaultOpen={false}
+    >
+      {entries.length > 0 ? (
+        <Table>
+          <TableBody>
+            {entries.map(([key, entryValue]) => (
+              <TableRow key={key}>
+                <TableCell className='w-[220px] font-medium'>{key}</TableCell>
+                <TableCell>
+                  {renderCheckpointFieldValue(key, entryValue)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <div className='text-sm text-muted-foreground'>-</div>
+      )}
+    </CheckpointInspectSectionShell>
+  );
+}
+
+function CheckpointInspectActionStatesSection({
+  title,
+  value,
+}: {
+  title: string;
+  value?: Record<string, unknown>[] | null;
+}) {
+  const rows = Array.isArray(value) ? value : [];
+  return (
+    <CheckpointInspectSectionShell
+      title={title}
+      collapsible
+      defaultOpen={false}
+    >
+      {rows.length > 0 ? (
+        <div className='space-y-4'>
+          {rows.map((row, index) => {
+            const subtasks = Array.isArray(row.subtasks)
+              ? (row.subtasks as Record<string, unknown>[])
+              : [];
+            return (
+              <div
+                key={`${row.name || index}`}
+                className='space-y-3 rounded-lg border border-border/60 bg-background/60 p-3'
+              >
+                <div className='flex flex-wrap items-start justify-between gap-3'>
+                  <div className='min-w-0'>
+                    <div className='text-xs text-muted-foreground'>Action</div>
+                    <div className='break-all text-sm font-medium'>
+                      {formatCellValue(row.name)}
+                    </div>
+                  </div>
+                  <div className='flex flex-wrap gap-2'>
+                    <Badge variant='outline'>
+                      P {formatCellValue(row.parallelism)}
+                    </Badge>
+                    <Badge variant='outline'>
+                      S {formatCellValue(row.subtaskCount)}
+                    </Badge>
+                    <Badge variant='outline'>
+                      Chunks {formatCellValue(row.coordinatorStateChunks)}
+                    </Badge>
+                  </div>
+                </div>
+                <div className='rounded-md border border-border/50'>
+                  <div className='border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground'>
+                    Subtasks
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Index</TableHead>
+                        <TableHead>Bytes</TableHead>
+                        <TableHead>Chunks</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {subtasks.length > 0 ? (
+                        subtasks.map((subtask, subtaskIndex) => (
+                          <TableRow key={subtaskIndex}>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'index',
+                                subtask.index,
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'stateBytes',
+                                subtask.bytes,
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'chunks',
+                                subtask.chunks,
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell
+                            colSpan={3}
+                            className='text-center text-muted-foreground'
+                          >
+                            -
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className='text-sm text-muted-foreground'>-</div>
+      )}
+    </CheckpointInspectSectionShell>
+  );
+}
+
+function CheckpointInspectTaskStatisticsSection({
+  title,
+  value,
+}: {
+  title: string;
+  value?: Record<string, unknown>[] | null;
+}) {
+  const rows = Array.isArray(value) ? value : [];
+  return (
+    <CheckpointInspectSectionShell title={title}>
+      {rows.length > 0 ? (
+        <div className='space-y-4'>
+          {rows.map((row, index) => {
+            const subtasks = Array.isArray(row.subtasks)
+              ? (row.subtasks as Record<string, unknown>[])
+              : [];
+            return (
+              <div
+                key={`${row.jobVertexId || index}`}
+                className='space-y-3 rounded-lg border border-border/60 bg-background/60 p-3'
+              >
+                <div className='flex flex-wrap items-start justify-between gap-3'>
+                  <div className='min-w-0'>
+                    <div className='text-xs text-muted-foreground'>
+                      Job Vertex ID
+                    </div>
+                    <div className='text-sm font-medium'>
+                      {formatCellValue(row.jobVertexId)}
+                    </div>
+                  </div>
+                  <div className='flex flex-wrap gap-2'>
+                    <Badge variant='outline'>
+                      Ack {formatCellValue(row.acknowledgedSubtasks)}
+                    </Badge>
+                    <Badge
+                      variant='outline'
+                      className={cn(
+                        'rounded-sm border px-2 py-0.5 text-[11px]',
+                        getCheckpointEnumBadgeClass(
+                          Boolean(row.completed),
+                          'boolean',
+                        ),
+                      )}
+                    >
+                      {row.completed ? 'Completed' : 'Pending'}
+                    </Badge>
+                    <Badge variant='outline'>
+                      P {formatCellValue(row.parallelism)}
+                    </Badge>
+                  </div>
+                </div>
+                <div className='text-xs text-muted-foreground'>
+                  Latest Ack:{' '}
+                  {formatCheckpointFieldValue(
+                    'latestAckTimestamp',
+                    row.latestAckTimestamp,
+                  )}
+                </div>
+                <div className='rounded-md border border-border/50'>
+                  <div className='border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground'>
+                    Subtasks
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Subtask</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>State Size</TableHead>
+                        <TableHead>Ack Timestamp</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {subtasks.length > 0 ? (
+                        subtasks.map((subtask, subtaskIndex) => (
+                          <TableRow key={subtaskIndex}>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'subtaskIndex',
+                                subtask.subtaskIndex,
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'status',
+                                subtask.status,
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'stateSize',
+                                subtask.stateSize,
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {renderCheckpointFieldValue(
+                                'ackTimestamp',
+                                subtask.ackTimestamp,
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell
+                            colSpan={4}
+                            className='text-center text-muted-foreground'
+                          >
+                            -
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className='text-sm text-muted-foreground'>-</div>
+      )}
+    </CheckpointInspectSectionShell>
   );
 }
 
 function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
   const t = useTranslations('workbenchStudio');
   if (!result) {
-    return <div className='text-sm text-muted-foreground'>{t('noValidationResults')}</div>;
+    return (
+      <div className='text-sm text-muted-foreground'>
+        {t('noValidationResults')}
+      </div>
+    );
   }
   const checks = result.checks || [];
   return (
@@ -4198,7 +6488,9 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
                 ))}
               </div>
             ) : (
-              <div className='text-sm text-muted-foreground'>{t('noErrors')}</div>
+              <div className='text-sm text-muted-foreground'>
+                {t('noErrors')}
+              </div>
             )}
           </div>
           <div className='rounded-lg border border-border/60 bg-background/80 p-4'>
@@ -4215,7 +6507,9 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
                 ))}
               </div>
             ) : (
-              <div className='text-sm text-muted-foreground'>{t('noWarnings')}</div>
+              <div className='text-sm text-muted-foreground'>
+                {t('noWarnings')}
+              </div>
             )}
           </div>
         </div>
@@ -4276,9 +6570,24 @@ function ValidationResultPanel({result}: {result: SyncValidateResult | null}) {
 
 function MetricsDialogContent({job}: {job: SyncJobInstance | null}) {
   const t = useTranslations('workbenchStudio');
-  const metricGroups = buildMetricGroups(job?.result_preview?.metrics, t);
+  const rawMetrics = toObject(job?.result_preview?.metrics);
+  const metricGroups = buildMetricGroups(rawMetrics, t).filter(
+    (group) => group.key !== 'read' && group.key !== 'write',
+  );
+  const metricHighlights = buildMetricHighlights(rawMetrics, t);
+  const perTableRows = buildPerTableMetricRows(rawMetrics);
+  const pairedMetricRows = buildPairedMetricRows(rawMetrics);
+  const shouldExpandPerTableByDefault = pairedMetricRows.length === 0;
+  const [perTableExpanded, setPerTableExpanded] = useState(
+    shouldExpandPerTableByDefault,
+  );
+  useEffect(() => {
+    setPerTableExpanded(shouldExpandPerTableByDefault);
+  }, [job?.id, shouldExpandPerTableByDefault]);
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>{t('noMetrics')}</div>;
+    return (
+      <div className='text-sm text-muted-foreground'>{t('noMetrics')}</div>
+    );
   }
   if (metricGroups.length === 0) {
     return (
@@ -4288,37 +6597,375 @@ function MetricsDialogContent({job}: {job: SyncJobInstance | null}) {
     );
   }
   return (
-    <div className='grid max-h-[70vh] gap-4 overflow-auto pr-1 lg:grid-cols-2'>
-      {metricGroups.map((group) => (
-        <div
-          key={group.key}
-          className='overflow-hidden rounded-lg border border-border/60 bg-background/80'
-        >
-          <div className='border-b border-border/50 bg-muted/20 px-3 py-2 text-sm font-medium'>
-            {group.title}
+    <div className='space-y-4 overflow-auto pr-1'>
+      <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
+        {metricHighlights.map((item) => (
+          <div
+            key={item.label}
+            className='rounded-lg border border-border/60 bg-background/80 p-4'
+          >
+            <div className='text-xs text-muted-foreground'>{item.label}</div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className='mt-2 text-2xl font-semibold tracking-tight'>
+                  {item.value}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>{item.raw}</TooltipContent>
+            </Tooltip>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('metric')}</TableHead>
-                <TableHead>{t('value')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {group.items.map((item) => (
-                <TableRow key={item.key}>
-                  <TableCell className='font-mono text-xs'>
-                    {item.key}
-                  </TableCell>
-                  <TableCell className='text-xs'>
-                    {formatMetricDisplayValue(item.value)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        ))}
+      </div>
+
+      {perTableRows.length > 0 ? (
+        <div className='overflow-hidden rounded-lg border border-border/60 bg-background/80'>
+          {pairedMetricRows.length > 0 ? (
+            <>
+              <div className='border-b border-border/50 bg-muted/20 px-3 py-2 text-sm font-medium'>
+                {t('metricMappedView')}
+              </div>
+              <div className='max-h-[240px] overflow-auto border-b border-border/50'>
+                <Table>
+                  <TableHeader className='sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90'>
+                    <TableRow>
+                      <TableHead>{t('metricPairSourceNode')}</TableHead>
+                      <TableHead>{t('metricPairSourceTable')}</TableHead>
+                      <TableHead>{t('metricPairSinkNode')}</TableHead>
+                      <TableHead>{t('metricPairSinkTable')}</TableHead>
+                      <TableHead>{t('metricSourceRows')}</TableHead>
+                      <TableHead>{t('metricSourceBytes')}</TableHead>
+                      <TableHead>{t('metricSourceQps')}</TableHead>
+                      <TableHead>{t('metricSinkRows')}</TableHead>
+                      <TableHead>{t('metricSinkBytes')}</TableHead>
+                      <TableHead>{t('metricSinkQps')}</TableHead>
+                      <TableHead>{t('metricCommittedRows')}</TableHead>
+                      <TableHead>{t('metricCommittedBytes')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pairedMetricRows.map((row) => (
+                      <TableRow key={row.key}>
+                        <TableCell className='text-xs font-medium'>
+                          {row.sourceNode}
+                        </TableCell>
+                        <TableCell className='font-mono text-xs'>
+                          {row.sourceTable}
+                        </TableCell>
+                        <TableCell className='text-xs font-medium'>
+                          {row.sinkNode}
+                        </TableCell>
+                        <TableCell className='font-mono text-xs'>
+                          {row.sinkTable}
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceCount}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceBytes}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceQps}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceQps}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkCount}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkBytes}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkQps}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkQps}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-amber-700 dark:text-amber-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.committedCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {row.committedCount}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-amber-700 dark:text-amber-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.committedBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {row.committedBytes}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          ) : null}
+          <div className='flex items-center justify-between gap-2 border-b border-border/50 bg-muted/20 px-3 py-2'>
+            <div className='text-sm font-medium'>{t('metricPerTable')}</div>
+            {pairedMetricRows.length > 0 ? (
+              <button
+                type='button'
+                className='inline-flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-muted-foreground hover:text-foreground'
+                onClick={() => setPerTableExpanded((value) => !value)}
+              >
+                {perTableExpanded ? (
+                  <ChevronDown className='size-3.5' />
+                ) : (
+                  <ChevronRight className='size-3.5' />
+                )}
+                <span>
+                  {perTableExpanded
+                    ? t('collapsePerTableMetrics')
+                    : t('expandPerTableMetrics')}
+                </span>
+              </button>
+            ) : null}
+          </div>
+          {perTableExpanded ? (
+            <>
+              <div className='flex flex-wrap gap-2 border-b border-border/50 bg-background px-3 py-2 text-xs'>
+                <div className='inline-flex items-center gap-2 rounded-md border border-border/50 px-2 py-1'>
+                  <span className='size-2 rounded-full bg-emerald-500' />
+                  <span>{t('metricLegendSource')}</span>
+                </div>
+                <div className='inline-flex items-center gap-2 rounded-md border border-border/50 px-2 py-1'>
+                  <span className='size-2 rounded-full bg-blue-500' />
+                  <span>{t('metricLegendWrite')}</span>
+                </div>
+                <div className='inline-flex items-center gap-2 rounded-md border border-border/50 px-2 py-1'>
+                  <span className='size-2 rounded-full bg-amber-500' />
+                  <span>{t('metricLegendCommitted')}</span>
+                </div>
+              </div>
+              <div className='max-h-[320px] overflow-auto'>
+                <Table>
+                  <TableHeader className='sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90'>
+                    <TableRow>
+                      <TableHead>{t('node')}</TableHead>
+                      <TableHead>{t('table')}</TableHead>
+                      <TableHead>{t('metricSourceRows')}</TableHead>
+                      <TableHead>{t('metricSourceBytes')}</TableHead>
+                      <TableHead>{t('metricSourceQps')}</TableHead>
+                      <TableHead>{t('metricSinkRows')}</TableHead>
+                      <TableHead>{t('metricSinkBytes')}</TableHead>
+                      <TableHead>{t('metricSinkQps')}</TableHead>
+                      <TableHead>{t('metricCommittedRows')}</TableHead>
+                      <TableHead>{t('metricCommittedBytes')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {perTableRows.map((row) => (
+                      <TableRow
+                        key={row.rawTable}
+                        className={cn(
+                          row.rowTone === 'source' &&
+                            'bg-emerald-50/50 dark:bg-emerald-500/5',
+                          row.rowTone === 'sink' &&
+                            'bg-blue-50/50 dark:bg-blue-500/5',
+                        )}
+                      >
+                        <TableCell className='text-xs font-medium'>
+                          {row.nodeLabel}
+                        </TableCell>
+                        <TableCell className='font-mono text-xs'>
+                          {row.tablePath}
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceCount}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceBytes}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-emerald-700 dark:text-emerald-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sourceQps}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sourceQps}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkCount}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkBytes}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-blue-700 dark:text-blue-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.sinkQps}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>{row.sinkQps}</TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-amber-700 dark:text-amber-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.committedCount}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {row.committedCount}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell className='text-xs text-amber-700 dark:text-amber-300'>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{row.committedBytes}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {row.committedBytes}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          ) : (
+            <div className='px-3 py-3 text-sm text-muted-foreground'>
+              {t('perTableMetricsCollapsed')}
+            </div>
+          )}
         </div>
-      ))}
+      ) : null}
+
+      <div className='grid gap-4 lg:grid-cols-2'>
+        {metricGroups.map((group) => (
+          <div
+            key={group.key}
+            className='overflow-hidden rounded-lg border border-border/60 bg-background/80'
+          >
+            <div className='border-b border-border/50 bg-muted/20 px-3 py-2 text-sm font-medium'>
+              {group.title}
+            </div>
+            <div className='max-h-[360px] overflow-auto'>
+              <Table>
+                <TableHeader className='sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/90'>
+                  <TableRow>
+                    <TableHead>{t('metric')}</TableHead>
+                    <TableHead>{t('value')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {group.items.map((item) => (
+                    <TableRow key={item.key}>
+                      <TableCell className='font-mono text-xs'>
+                        {item.key}
+                      </TableCell>
+                      <TableCell className='text-xs'>
+                        {formatMetricDisplayValue(item.value)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function JobScriptDialogContent({
+  job,
+  monacoTheme,
+}: {
+  job: SyncJobInstance | null;
+  monacoTheme: string;
+}) {
+  const t = useTranslations('workbenchStudio');
+  const script = getJobSubmittedScript(job);
+  if (!job) {
+    return <div className='text-sm text-muted-foreground'>{t('noJobRuns')}</div>;
+  }
+  if (!script) {
+    return (
+      <div className='rounded-md border border-dashed border-border/60 bg-muted/20 px-4 py-6 text-sm text-muted-foreground'>
+        {t('noActualExecutedScript')}
+      </div>
+    );
+  }
+  return (
+    <div className='flex min-h-0 flex-1 flex-col gap-3'>
+      <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+        <Badge variant='outline'>#{job.id}</Badge>
+        <Badge variant='outline'>{script.format || 'hocon'}</Badge>
+        <span className='truncate'>
+          {job.platform_job_id || job.engine_job_id || '-'}
+        </span>
+      </div>
+      <div className='min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60'>
+        <MonacoEditor
+          height='100%'
+          theme={monacoTheme}
+          language={script.format === 'json' ? 'json' : 'shell'}
+          value={script.content}
+          options={{
+            readOnly: true,
+            minimap: {enabled: false},
+            automaticLayout: true,
+            fontSize: 13,
+            scrollBeyondLastLine: false,
+            wordWrap: 'on',
+          }}
+        />
+      </div>
     </div>
   );
 }

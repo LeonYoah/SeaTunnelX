@@ -18,7 +18,9 @@
 package org.apache.seatunnel.tools.proxy.model;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class WebUiDagVertexInfo {
 
@@ -26,9 +28,14 @@ public class WebUiDagVertexInfo {
     private final String type;
     private final String connectorType;
     private final List<String> tablePaths;
+    private final Map<String, List<String>> tableColumns;
 
     public WebUiDagVertexInfo(
-            Integer vertexId, String type, String connectorType, List<String> tablePaths) {
+            Integer vertexId,
+            String type,
+            String connectorType,
+            List<String> tablePaths,
+            Map<String, List<String>> tableColumns) {
         this.vertexId = vertexId;
         this.type = type;
         this.connectorType = connectorType;
@@ -36,6 +43,10 @@ public class WebUiDagVertexInfo {
                 tablePaths == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(tablePaths);
+        this.tableColumns =
+                tableColumns == null
+                        ? Collections.emptyMap()
+                        : Collections.unmodifiableMap(new LinkedHashMap<>(tableColumns));
     }
 
     public Integer getVertexId() {
@@ -52,5 +63,9 @@ public class WebUiDagVertexInfo {
 
     public List<String> getTablePaths() {
         return tablePaths;
+    }
+
+    public Map<String, List<String>> getTableColumns() {
+        return tableColumns;
     }
 }

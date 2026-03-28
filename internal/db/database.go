@@ -103,8 +103,12 @@ func InitDatabase() error {
 		log.Printf("[Database] 初始化追踪插件失败: %v\n", err)
 	}
 
-	// 配置连接池（仅对 MySQL 和 PostgreSQL 有效）
-	if dbType != DatabaseTypeSQLite {
+	// 配置连接池 / Configure connection pool
+	if dbType == DatabaseTypeSQLite {
+		if err := configureSQLiteRuntime(); err != nil {
+			return fmt.Errorf("[Database] 配置 SQLite 运行时失败: %w", err)
+		}
+	} else {
 		if err := configureConnectionPool(dbConfig); err != nil {
 			return fmt.Errorf("[Database] 配置连接池失败: %w", err)
 		}
@@ -127,7 +131,14 @@ func initSQLiteDialector(sqlitePath string) (gorm.Dialector, error) {
 	}
 
 	log.Printf("[Database] 使用 SQLite 数据库: %s\n", sqlitePath)
-	return sqlite.Open(sqlitePath), nil
+	// 为 SQLite 启用 busy_timeout 和 WAL，缓解后台任务与前台保存并发时的锁竞争。
+	// Enable busy_timeout and WAL for SQLite to reduce lock contention between
+	// background preview maintenance and foreground saves.
+	dsn := fmt.Sprintf(
+		"file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)",
+		sqlitePath,
+	)
+	return sqlite.Open(dsn), nil
 }
 
 // initMySQLDialector 初始化 MySQL 驱动
@@ -176,6 +187,22 @@ func configureConnectionPool(dbConfig config.DatabaseConfig) error {
 		sqlDB.SetConnMaxLifetime(time.Duration(dbConfig.ConnMaxLifetime) * time.Second)
 	}
 
+	return nil
+}
+
+// configureSQLiteRuntime configures SQLite-specific runtime behavior.
+// configureSQLiteRuntime 配置 SQLite 运行时行为。
+func configureSQLiteRuntime() error {
+	sqlDB, err := globalDB.DB()
+	if err != nil {
+		return fmt.Errorf("获取底层 SQLite 连接失败: %w", err)
+	}
+	// SQLite 是单写者模型；限制为单连接能显著减少 database is locked。
+	// SQLite uses a single-writer model; forcing a single connection reduces
+	// "database is locked" during concurrent preview maintenance and saves.
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetConnMaxLifetime(0)
 	return nil
 }
 

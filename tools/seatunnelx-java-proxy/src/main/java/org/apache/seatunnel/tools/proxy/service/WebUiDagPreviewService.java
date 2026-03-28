@@ -85,7 +85,8 @@ public class WebUiDagPreviewService {
                             vertexId,
                             mapType(node.getKind()),
                             buildConnectorType(node),
-                            buildTablePaths(node)));
+                            buildTablePaths(node),
+                            node.getTableColumns()));
         }
 
         List<WebUiDagEdge> edges = new ArrayList<>();

@@ -420,6 +420,13 @@ export interface SeatunnelXJavaProxyStatus {
   message?: string;
 }
 
+export interface SeatunnelXJavaProxyLogPreviewResult {
+  cluster_id: number;
+  log_path?: string;
+  lines?: number;
+  logs?: string;
+}
+
 /**
  * Node operation result
  * 节点操作结果
@@ -649,7 +656,9 @@ export function getClusterPortConfig(
       ? (config.ports as Record<string, unknown>)
       : undefined;
   const fallbackRoot =
-    config && typeof config === 'object' ? (config as Record<string, unknown>) : undefined;
+    config && typeof config === 'object'
+      ? (config as Record<string, unknown>)
+      : undefined;
   const ports = nestedPorts ?? fallbackRoot;
 
   if (!ports) {
@@ -657,7 +666,9 @@ export function getClusterPortConfig(
   }
 
   const result: ClusterPortConfig = {
-    master_hazelcast_port: toPositivePortOrUndefined(ports.master_hazelcast_port),
+    master_hazelcast_port: toPositivePortOrUndefined(
+      ports.master_hazelcast_port,
+    ),
     master_api_port: toPositivePortOrUndefined(ports.master_api_port),
     worker_port: toPositivePortOrUndefined(ports.worker_port),
   };
@@ -836,17 +847,26 @@ export type GetClusterStatusResponse = BackendResponse<ClusterStatusInfo>;
 export type GetRuntimeStorageResponse = BackendResponse<RuntimeStorageDetails>;
 
 /** Runtime storage cleanup response type / 运行时存储清理响应类型 */
-export type CleanupRuntimeStorageResponse = BackendResponse<RuntimeStorageCleanupResult>;
+export type CleanupRuntimeStorageResponse =
+  BackendResponse<RuntimeStorageCleanupResult>;
 
 /** Runtime storage validate response type / 运行时存储连通性校验响应类型 */
-export type ValidateRuntimeStorageResponse = BackendResponse<RuntimeStorageValidationResult>;
-export type ListRuntimeStorageResponse = BackendResponse<RuntimeStorageListResult>;
-export type PreviewRuntimeStorageResponse = BackendResponse<RuntimeStoragePreviewResult>;
-export type InspectCheckpointRuntimeStorageResponse = BackendResponse<RuntimeStorageCheckpointInspectResult>;
-export type InspectIMAPRuntimeStorageResponse = BackendResponse<RuntimeStorageIMAPInspectResult>;
+export type ValidateRuntimeStorageResponse =
+  BackendResponse<RuntimeStorageValidationResult>;
+export type ListRuntimeStorageResponse =
+  BackendResponse<RuntimeStorageListResult>;
+export type PreviewRuntimeStorageResponse =
+  BackendResponse<RuntimeStoragePreviewResult>;
+export type InspectCheckpointRuntimeStorageResponse =
+  BackendResponse<RuntimeStorageCheckpointInspectResult>;
+export type InspectIMAPRuntimeStorageResponse =
+  BackendResponse<RuntimeStorageIMAPInspectResult>;
 
 /** Capability proxy response type / seatunnelx-java-proxy 响应类型 */
-export type SeatunnelXJavaProxyResponse = BackendResponse<SeatunnelXJavaProxyStatus>;
+export type SeatunnelXJavaProxyResponse =
+  BackendResponse<SeatunnelXJavaProxyStatus>;
+export type SeatunnelXJavaProxyLogPreviewResponse =
+  BackendResponse<SeatunnelXJavaProxyLogPreviewResult>;
 
 /**
  * Request to precheck a node before adding

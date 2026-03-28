@@ -250,6 +250,7 @@ func Serve() {
 				clusterRouter.POST("/:id/restart", clusterHandler.RestartCluster)
 				clusterRouter.GET("/:id/status", clusterHandler.GetClusterStatus)
 				clusterRouter.GET("/:id/seatunnelx-java-proxy/status", clusterHandler.GetSeatunnelXJavaProxyStatus)
+				clusterRouter.GET("/:id/seatunnelx-java-proxy/logs", clusterHandler.PreviewSeatunnelXJavaProxyServiceLog)
 				clusterRouter.POST("/:id/seatunnelx-java-proxy/start", clusterHandler.StartSeatunnelXJavaProxy)
 				clusterRouter.POST("/:id/seatunnelx-java-proxy/stop", clusterHandler.StopSeatunnelXJavaProxy)
 				clusterRouter.POST("/:id/seatunnelx-java-proxy/restart", clusterHandler.RestartSeatunnelXJavaProxy)
@@ -678,6 +679,7 @@ func Serve() {
 			if agentManager != nil {
 				syncService.SetAgentCommandSender(&agentCommandSenderAdapter{manager: agentManager})
 			}
+			syncService.StartPreviewRuntime(ctx)
 			syncHandler := syncapp.NewHandler(syncService)
 
 			apiV1Router.POST("/sync/preview/collect", syncHandler.CollectPreview)
@@ -717,6 +719,8 @@ func Serve() {
 				{
 					syncJobRouter.GET("", syncHandler.ListJobs)
 					syncJobRouter.GET("/:id", syncHandler.GetJob)
+					syncJobRouter.GET("/:id/preview", syncHandler.GetPreviewSnapshot)
+					syncJobRouter.GET("/:id/checkpoint", syncHandler.GetJobCheckpointSnapshot)
 					syncJobRouter.GET("/:id/logs", syncHandler.GetJobLogs)
 					syncJobRouter.POST("/:id/recover", syncHandler.RecoverJob)
 					syncJobRouter.POST("/:id/cancel", syncHandler.CancelJob)

@@ -21,16 +21,17 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
 type stubConfigToolClient struct {
-	webuiResp *ConfigToolWebUIDAGResponse
-	webuiErr  error
-	dagResp   *ConfigToolDAGResponse
-	dagErr    error
+	webuiResp    *ConfigToolWebUIDAGResponse
+	webuiErr     error
+	dagResp      *ConfigToolDAGResponse
+	dagErr       error
 	validateResp *ConfigToolValidateResponse
 	validateErr  error
 }
@@ -109,7 +110,7 @@ func newTestSyncService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
-	if err := database.AutoMigrate(&Task{}, &TaskVersion{}, &JobInstance{}, &GlobalVariable{}); err != nil {
+	if err := database.AutoMigrate(&Task{}, &TaskVersion{}, &JobInstance{}, &GlobalVariable{}, &PreviewSession{}, &PreviewTable{}, &PreviewRow{}); err != nil {
 		t.Fatalf("failed to migrate sync models: %v", err)
 	}
 
@@ -748,5 +749,191 @@ func TestGetJobLogsTreatsLegacyAgentPayloadWithoutPathAsAvailable(t *testing.T) 
 	}
 	if result.NextOffset == "" {
 		t.Fatalf("expected next offset to be present for legacy payload")
+	}
+}
+
+func TestCollectPreviewAppendsRowsIntoPreviewSession(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	now := time.Now()
+	instance := &JobInstance{
+		TaskID:        7,
+		TaskVersion:   1,
+		RunType:       RunTypePreview,
+		Status:        JobStatusRunning,
+		PlatformJobID: "preview-1",
+		EngineJobID:   "preview-1",
+		SubmitSpec:    JSONMap{},
+		ResultPreview: JSONMap{},
+		StartedAt:     &now,
+		CreatedBy:     1,
+	}
+	if err := service.repo.CreateJobInstance(ctx, instance); err != nil {
+		t.Fatalf("create job instance failed: %v", err)
+	}
+	if err := service.repo.CreatePreviewSession(ctx, &PreviewSession{
+		JobInstanceID: instance.ID,
+		TaskID:        instance.TaskID,
+		PlatformJobID: instance.PlatformJobID,
+		EngineJobID:   instance.EngineJobID,
+		RowLimit:      3,
+		Status:        "collecting",
+		StartedAt:     &now,
+	}); err != nil {
+		t.Fatalf("create preview session failed: %v", err)
+	}
+
+	if err := service.CollectPreview(ctx, &PreviewCollectRequest{
+		PlatformJobID: "preview-1",
+		Dataset:       "seatunnel_demo.users",
+		Columns:       []interface{}{"id", "name"},
+		Rows: []map[string]interface{}{
+			{"id": 1, "name": "a"},
+			{"id": 2, "name": "b"},
+		},
+		RowLimit: 3,
+	}); err != nil {
+		t.Fatalf("collect preview failed: %v", err)
+	}
+
+	snapshot, err := service.GetPreviewSnapshot(ctx, instance.ID, "seatunnel_demo.users")
+	if err != nil {
+		t.Fatalf("get preview snapshot failed: %v", err)
+	}
+	if snapshot.TotalRows != 2 {
+		t.Fatalf("expected total rows 2, got %d", snapshot.TotalRows)
+	}
+	if snapshot.SelectedTable == nil || len(snapshot.SelectedTable.Rows) != 2 {
+		t.Fatalf("expected two selected table rows, got %+v", snapshot.SelectedTable)
+	}
+}
+
+func TestCollectPreviewStopsAtRowLimit(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	now := time.Now()
+	instance := &JobInstance{
+		TaskID:        8,
+		TaskVersion:   1,
+		RunType:       RunTypePreview,
+		Status:        JobStatusRunning,
+		PlatformJobID: "preview-2",
+		EngineJobID:   "preview-2",
+		SubmitSpec:    JSONMap{},
+		ResultPreview: JSONMap{},
+		StartedAt:     &now,
+		CreatedBy:     1,
+	}
+	if err := service.repo.CreateJobInstance(ctx, instance); err != nil {
+		t.Fatalf("create job instance failed: %v", err)
+	}
+	if err := service.repo.CreatePreviewSession(ctx, &PreviewSession{
+		JobInstanceID: instance.ID,
+		TaskID:        instance.TaskID,
+		PlatformJobID: instance.PlatformJobID,
+		EngineJobID:   instance.EngineJobID,
+		RowLimit:      1,
+		Status:        "collecting",
+		StartedAt:     &now,
+	}); err != nil {
+		t.Fatalf("create preview session failed: %v", err)
+	}
+
+	if err := service.CollectPreview(ctx, &PreviewCollectRequest{
+		PlatformJobID: "preview-2",
+		Dataset:       "seatunnel_demo.users",
+		Columns:       []interface{}{"id"},
+		Rows: []map[string]interface{}{
+			{"id": 1},
+			{"id": 2},
+		},
+		RowLimit: 1,
+	}); err != nil {
+		t.Fatalf("collect preview failed: %v", err)
+	}
+
+	snapshot, err := service.GetPreviewSnapshot(ctx, instance.ID, "seatunnel_demo.users")
+	if err != nil {
+		t.Fatalf("get preview snapshot failed: %v", err)
+	}
+	if !snapshot.Truncated {
+		t.Fatalf("expected preview snapshot to be truncated")
+	}
+	if snapshot.TotalRows != 1 {
+		t.Fatalf("expected total rows 1, got %d", snapshot.TotalRows)
+	}
+	job, err := service.GetJob(ctx, instance.ID)
+	if err != nil {
+		t.Fatalf("get job failed: %v", err)
+	}
+	if job.Status != JobStatusCanceled {
+		t.Fatalf("expected preview job canceled after reaching row limit, got %s", job.Status)
+	}
+}
+
+func TestGetPreviewSnapshotReturnsEmptySnapshotWhenSessionNotReady(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	now := time.Now()
+	instance := &JobInstance{
+		TaskID:        9,
+		TaskVersion:   1,
+		RunType:       RunTypePreview,
+		Status:        JobStatusRunning,
+		PlatformJobID: "preview-empty",
+		EngineJobID:   "preview-empty",
+		SubmitSpec: JSONMap{
+			"row_limit":       100,
+			"timeout_minutes": 10,
+		},
+		ResultPreview: JSONMap{},
+		StartedAt:     &now,
+		CreatedBy:     1,
+	}
+	if err := service.repo.CreateJobInstance(ctx, instance); err != nil {
+		t.Fatalf("create job instance failed: %v", err)
+	}
+
+	snapshot, err := service.GetPreviewSnapshot(ctx, instance.ID, "")
+	if err != nil {
+		t.Fatalf("get preview snapshot failed: %v", err)
+	}
+	if snapshot.EmptyReason != "preview_not_ready" {
+		t.Fatalf("expected preview_not_ready, got %q", snapshot.EmptyReason)
+	}
+	if len(snapshot.Tables) != 0 {
+		t.Fatalf("expected no preview tables, got %d", len(snapshot.Tables))
+	}
+}
+
+func TestGetJobLogsReturnsEmptyResultWhenUnavailable(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	instance := &JobInstance{
+		TaskID:        10,
+		TaskVersion:   1,
+		RunType:       RunTypeRun,
+		Status:        JobStatusSuccess,
+		PlatformJobID: "run-no-logs",
+		EngineJobID:   "run-no-logs",
+		SubmitSpec: JSONMap{
+			"execution_mode": "cluster",
+		},
+		ResultPreview: JSONMap{},
+		CreatedBy:     1,
+	}
+	if err := service.repo.CreateJobInstance(ctx, instance); err != nil {
+		t.Fatalf("create job instance failed: %v", err)
+	}
+
+	result, err := service.GetJobLogs(ctx, instance.ID, "", 64*1024, "", "")
+	if err != nil {
+		t.Fatalf("get job logs failed: %v", err)
+	}
+	if result.EmptyReason != "logs_not_ready" {
+		t.Fatalf("expected logs_not_ready, got %q", result.EmptyReason)
+	}
+	if result.Logs != "" {
+		t.Fatalf("expected empty logs, got %q", result.Logs)
 	}
 }

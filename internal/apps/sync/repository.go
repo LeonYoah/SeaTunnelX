@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -44,6 +45,35 @@ func (r *Repository) DeleteJobInstancesByTaskIDs(ctx context.Context, taskIDs []
 		return nil
 	}
 	return r.db.WithContext(ctx).Where("task_id IN ?", taskIDs).Delete(&JobInstance{}).Error
+}
+
+// DeletePreviewRowsByTaskIDs deletes preview rows for the provided task ids.
+// DeletePreviewRowsByTaskIDs 删除指定任务的预览数据行。
+func (r *Repository) DeletePreviewRowsByTaskIDs(ctx context.Context, taskIDs []uint) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	subQuery := r.db.WithContext(ctx).Model(&PreviewSession{}).Select("id").Where("task_id IN ?", taskIDs)
+	return r.db.WithContext(ctx).Where("session_id IN (?)", subQuery).Delete(&PreviewRow{}).Error
+}
+
+// DeletePreviewTablesByTaskIDs deletes preview tables for the provided task ids.
+// DeletePreviewTablesByTaskIDs 删除指定任务的预览表分组。
+func (r *Repository) DeletePreviewTablesByTaskIDs(ctx context.Context, taskIDs []uint) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	subQuery := r.db.WithContext(ctx).Model(&PreviewSession{}).Select("id").Where("task_id IN ?", taskIDs)
+	return r.db.WithContext(ctx).Where("session_id IN (?)", subQuery).Delete(&PreviewTable{}).Error
+}
+
+// DeletePreviewSessionsByTaskIDs deletes preview sessions for the provided task ids.
+// DeletePreviewSessionsByTaskIDs 删除指定任务的预览会话。
+func (r *Repository) DeletePreviewSessionsByTaskIDs(ctx context.Context, taskIDs []uint) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("task_id IN ?", taskIDs).Delete(&PreviewSession{}).Error
 }
 
 // DeleteTasksByIDs deletes the provided workspace nodes.
@@ -299,6 +329,177 @@ func (r *Repository) UpdateJobInstance(ctx context.Context, instance *JobInstanc
 		return ErrJobInstanceNotFound
 	}
 	return nil
+}
+
+// CreatePreviewSession creates one preview session.
+// CreatePreviewSession 创建一条预览会话记录。
+func (r *Repository) CreatePreviewSession(ctx context.Context, session *PreviewSession) error {
+	return r.db.WithContext(ctx).Create(session).Error
+}
+
+// GetPreviewSessionByJobInstanceID returns the preview session for one job instance.
+// GetPreviewSessionByJobInstanceID 返回指定作业实例的预览会话。
+func (r *Repository) GetPreviewSessionByJobInstanceID(ctx context.Context, jobInstanceID uint) (*PreviewSession, error) {
+	var session PreviewSession
+	if err := r.db.WithContext(ctx).Where("job_instance_id = ?", jobInstanceID).First(&session).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPreviewSessionNotFound
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+// UpdatePreviewSession updates one preview session.
+// UpdatePreviewSession 更新一条预览会话。
+func (r *Repository) UpdatePreviewSession(ctx context.Context, session *PreviewSession) error {
+	result := r.db.WithContext(ctx).Save(session)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrJobInstanceNotFound
+	}
+	return nil
+}
+
+// GetPreviewTableByPath returns one preview table by session and table path.
+// GetPreviewTableByPath 按会话和表路径返回一条预览表记录。
+func (r *Repository) GetPreviewTableByPath(ctx context.Context, sessionID uint, tablePath string) (*PreviewTable, error) {
+	var table PreviewTable
+	if err := r.db.WithContext(ctx).Where("session_id = ? AND table_path = ?", sessionID, strings.TrimSpace(tablePath)).First(&table).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	return &table, nil
+}
+
+// CreatePreviewTable creates one preview table.
+// CreatePreviewTable 创建一条预览表记录。
+func (r *Repository) CreatePreviewTable(ctx context.Context, table *PreviewTable) error {
+	return r.db.WithContext(ctx).Create(table).Error
+}
+
+// UpdatePreviewTable updates one preview table.
+// UpdatePreviewTable 更新一条预览表记录。
+func (r *Repository) UpdatePreviewTable(ctx context.Context, table *PreviewTable) error {
+	result := r.db.WithContext(ctx).Save(table)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTaskNotFound
+	}
+	return nil
+}
+
+// CreatePreviewRows appends preview rows in batch.
+// CreatePreviewRows 批量追加预览数据行。
+func (r *Repository) CreatePreviewRows(ctx context.Context, rows []*PreviewRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(&rows).Error
+}
+
+// DeletePreviewRowsByTableID deletes preview rows by table.
+// DeletePreviewRowsByTableID 按表删除预览数据行。
+func (r *Repository) DeletePreviewRowsByTableID(ctx context.Context, tableID uint) error {
+	return r.db.WithContext(ctx).Where("table_id = ?", tableID).Delete(&PreviewRow{}).Error
+}
+
+// ListPreviewTablesBySessionID lists preview tables for one session.
+// ListPreviewTablesBySessionID 返回一个会话下的预览表列表。
+func (r *Repository) ListPreviewTablesBySessionID(ctx context.Context, sessionID uint) ([]*PreviewTable, error) {
+	var items []*PreviewTable
+	if err := r.db.WithContext(ctx).Where("session_id = ?", sessionID).Order("table_path ASC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// ListPreviewRowsByTableID lists preview rows for one table with pagination.
+// ListPreviewRowsByTableID 按表分页返回预览数据行。
+func (r *Repository) ListPreviewRowsByTableID(ctx context.Context, tableID uint, offset, limit int) ([]*PreviewRow, error) {
+	query := r.db.WithContext(ctx).Where("table_id = ?", tableID).Order("row_index ASC")
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var items []*PreviewRow
+	if err := query.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// ListExpiredPreviewSessions returns finished preview sessions older than cutoff.
+// ListExpiredPreviewSessions 返回超过截止时间的已完成预览会话。
+func (r *Repository) ListExpiredPreviewSessions(ctx context.Context, cutoff time.Time) ([]*PreviewSession, error) {
+	var items []*PreviewSession
+	if err := r.db.WithContext(ctx).
+		Where("finished_at IS NOT NULL AND finished_at < ?", cutoff).
+		Order("finished_at ASC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// ListTimedOutPreviewSessions returns collecting preview sessions that exceeded timeout.
+// ListTimedOutPreviewSessions 返回超过超时时间仍在收集中预览会话。
+func (r *Repository) ListTimedOutPreviewSessions(ctx context.Context, now time.Time) ([]*PreviewSession, error) {
+	var items []*PreviewSession
+	if err := r.db.WithContext(ctx).
+		Where("finished_at IS NULL AND status = ?", "collecting").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*PreviewSession, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.StartedAt == nil {
+			continue
+		}
+		timeoutMinutes := item.TimeoutMinutes
+		if timeoutMinutes <= 0 {
+			timeoutMinutes = 10
+		}
+		if item.StartedAt.Add(time.Duration(timeoutMinutes) * time.Minute).Before(now) {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+// DeletePreviewRowsBySessionIDs deletes preview rows for sessions.
+// DeletePreviewRowsBySessionIDs 删除指定会话的预览数据行。
+func (r *Repository) DeletePreviewRowsBySessionIDs(ctx context.Context, sessionIDs []uint) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("session_id IN ?", sessionIDs).Delete(&PreviewRow{}).Error
+}
+
+// DeletePreviewTablesBySessionIDs deletes preview tables for sessions.
+// DeletePreviewTablesBySessionIDs 删除指定会话的预览表。
+func (r *Repository) DeletePreviewTablesBySessionIDs(ctx context.Context, sessionIDs []uint) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("session_id IN ?", sessionIDs).Delete(&PreviewTable{}).Error
+}
+
+// DeletePreviewSessionsByIDs deletes preview sessions by ids.
+// DeletePreviewSessionsByIDs 删除指定预览会话。
+func (r *Repository) DeletePreviewSessionsByIDs(ctx context.Context, sessionIDs []uint) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("id IN ?", sessionIDs).Delete(&PreviewSession{}).Error
 }
 
 // ListGlobalVariables returns all global variables ordered by key.

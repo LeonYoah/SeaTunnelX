@@ -528,6 +528,11 @@ if $DO_BUILD && $RUN_BACKEND; then
         cp -f "$proxy_jar" "$AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
         echo "      已同步 seatunnelx-java-proxy jar 到 $AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar."
       fi
+      if [[ -d "$AGENT_HOME/scripts" && -f "$PROJECT_ROOT/scripts/seatunnelx-java-proxy.sh" ]]; then
+        cp -f "$PROJECT_ROOT/scripts/seatunnelx-java-proxy.sh" "$AGENT_HOME/scripts/seatunnelx-java-proxy.sh"
+        chmod +x "$AGENT_HOME/scripts/seatunnelx-java-proxy.sh"
+        echo "      已同步 seatunnelx-java-proxy 启动脚本到 $AGENT_HOME/scripts/seatunnelx-java-proxy.sh."
+      fi
     else
       echo "      未找到 seatunnelx-java-proxy 薄 jar，跳过同步."
     fi

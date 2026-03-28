@@ -42,6 +42,29 @@ APP_JAR=${SEATUNNEL_HOME:-}/starter/seatunnel-starter.jar
 DEFAULT_PROXY_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
 APP_MAIN="org.apache.seatunnel.tools.proxy.SeatunnelXJavaProxyApplication"
 
+fail_preflight() {
+  echo "seatunnelx-java-proxy preflight failed: $1" >&2
+  exit 1
+}
+
+validate_seatunnel_home() {
+  if [ -z "${SEATUNNEL_HOME:-}" ]; then
+    fail_preflight "SEATUNNEL_HOME is not set"
+  fi
+  if [ ! -d "${SEATUNNEL_HOME}" ]; then
+    fail_preflight "SEATUNNEL_HOME does not exist: ${SEATUNNEL_HOME}"
+  fi
+  if [ ! -f "${SEATUNNEL_HOME}/starter/seatunnel-starter.jar" ]; then
+    fail_preflight "starter jar missing under ${SEATUNNEL_HOME}/starter/seatunnel-starter.jar"
+  fi
+  if [ ! -f "${SEATUNNEL_HOME}/bin/seatunnel.sh" ]; then
+    fail_preflight "seatunnel.sh missing under ${SEATUNNEL_HOME}/bin/seatunnel.sh"
+  fi
+  if [ ! -d "${SEATUNNEL_HOME}/connectors" ] && [ ! -d "${SEATUNNEL_HOME}/plugins" ]; then
+    fail_preflight "connectors/plugins directory missing under ${SEATUNNEL_HOME}"
+  fi
+}
+
 proxy_version_candidates() {
   local requested_version="${SEATUNNELX_JAVA_PROXY_VERSION:-${SEATUNNEL_VERSION:-}}"
   if [ -n "${requested_version}" ]; then
@@ -80,6 +103,8 @@ find_proxy_jar() {
 
 DEFAULT_PROXY_JAR="$(find_proxy_jar)"
 PROXY_JAR=${SEATUNNEL_PROXY_JAR:-${DEFAULT_PROXY_JAR}}
+
+validate_seatunnel_home
 
 if [ ! -f "${APP_JAR}" ]; then
   echo "seatunnel-starter.jar not found under ${SEATUNNEL_HOME:-<unset>}/starter; please set SEATUNNEL_HOME" >&2

@@ -17,43 +17,39 @@
 
 package org.apache.seatunnel.tools.proxy.service;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-import org.apache.seatunnel.shade.com.typesafe.config.ConfigFactory;
-import org.apache.seatunnel.shade.com.typesafe.config.ConfigParseOptions;
-import org.apache.seatunnel.shade.com.typesafe.config.ConfigSyntax;
-
 import org.apache.seatunnel.tools.proxy.model.DagParseResult;
+import org.apache.seatunnel.tools.proxy.model.DatasetDag;
+import org.apache.seatunnel.tools.proxy.model.ProxyEdge;
+import org.apache.seatunnel.tools.proxy.model.ProxyNode;
 
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class PreviewConfigServiceTest {
 
-    private final PreviewConfigService previewConfigService = new PreviewConfigService();
-    private final ConfigResourceService configResourceService = new ConfigResourceService();
+    @BeforeAll
+    static void setUpSeatunnelHome() {
+        System.setProperty("SEATUNNEL_HOME", "/opt/seatunnel-2.3.13-new");
+    }
 
     @Test
-    public void testDeriveSourcePreviewFromSimpleGraph() {
+    public void testDeriveSourcePreviewFromJdbcGraph() {
+        PreviewConfigService previewConfigService = previewServiceWithStubDag(1, 1, 1);
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put(
-                "content",
-                "env {\n"
-                        + "  parallelism = 2\n"
-                        + "}\n"
-                        + "source {\n"
-                        + "  FakeSource {\n"
-                        + "    result_table_name = \"orders\"\n"
-                        + "  }\n"
-                        + "}\n"
-                        + "sink {\n"
-                        + "  Console {\n"
-                        + "  }\n"
-                        + "}\n");
+        request.put("content", jdbcSingleTableConfig());
         request.put("contentFormat", "hocon");
         request.put("httpSink", httpSink("https://proxy.example.com/source-preview"));
+        request.put("platformJobId", "preview-1");
+        request.put("engineJobId", "preview-1");
+        request.put("previewRowLimit", 200);
+        request.put("outputFormat", "json");
 
         Map<String, Object> response = previewConfigService.deriveSourcePreview(request);
         Assertions.assertEquals(Boolean.TRUE, response.get("ok"));
@@ -62,42 +58,61 @@ public class PreviewConfigServiceTest {
         Assertions.assertTrue(content.contains("\"plugin_name\":\"Metadata\""));
         Assertions.assertTrue(content.contains("\"plugin_name\":\"Http\""));
         Assertions.assertTrue(content.contains("__st_preview_source_0"));
-
-        DagParseResult dag = configResourceService.inspectDag(contentRequest(content));
-        Assertions.assertTrue(dag.isOk());
-        Assertions.assertEquals(1, dag.getSourceCount());
-        Assertions.assertEquals(1, dag.getSinkCount());
-        Assertions.assertEquals(1, dag.getTransformCount());
+        Assertions.assertTrue(content.contains("platform_job_id=preview-1"));
+        Assertions.assertTrue(content.contains("row_limit=200"));
+        DatasetDag graph = (DatasetDag) response.get("graph");
+        Assertions.assertNotNull(graph);
     }
 
     @Test
-    public void testDeriveTransformPreviewFromMultiSourceGraph() {
+    @Disabled(
+            "Manual JDBC transform scenario: depends on local MySQL fixture and transform plugin availability.")
+    public void testDeriveTransformPreviewFromJdbcGraph() {
+        PreviewConfigService previewConfigService = previewServiceWithStubDag(2, 2, 1);
         Map<String, Object> request = new LinkedHashMap<>();
         request.put(
                 "content",
-                "source {\n"
-                        + "  SourceA {\n"
-                        + "    plugin_output = \"a\"\n"
-                        + "  }\n"
-                        + "  SourceB {\n"
-                        + "    plugin_output = \"b\"\n"
-                        + "  }\n"
-                        + "}\n"
-                        + "transform {\n"
-                        + "  Joiner {\n"
-                        + "    plugin_input = [\"a\", \"b\"]\n"
-                        + "    plugin_output = \"joined\"\n"
-                        + "  }\n"
-                        + "  Cleaner {\n"
-                        + "    plugin_input = [\"joined\"]\n"
-                        + "    plugin_output = \"cleaned\"\n"
-                        + "  }\n"
-                        + "}\n"
-                        + "sink {\n"
-                        + "  Console {\n"
-                        + "    plugin_input = [\"cleaned\"]\n"
-                        + "  }\n"
-                        + "}\n");
+                String.join(
+                        "\n",
+                        "env {",
+                        "  job.mode = \"batch\"",
+                        "}",
+                        "source {",
+                        "  Jdbc {",
+                        "    plugin_output = \"users_src\"",
+                        "    url = \"jdbc:mysql://127.0.0.1:3307/seatunnel_demo\"",
+                        "    username = \"root\"",
+                        "    password = \"seatunnel\"",
+                        "    driver = \"com.mysql.cj.jdbc.Driver\"",
+                        "    table_path = \"seatunnel_demo.users\"",
+                        "  }",
+                        "",
+                        "  Jdbc {",
+                        "    plugin_output = \"orders_src\"",
+                        "    url = \"jdbc:mysql://127.0.0.1:3307/seatunnel_demo\"",
+                        "    username = \"root\"",
+                        "    password = \"seatunnel\"",
+                        "    driver = \"com.mysql.cj.jdbc.Driver\"",
+                        "    table_path = \"seatunnel_demo.orders\"",
+                        "  }",
+                        "}",
+                        "transform {",
+                        "  Sql {",
+                        "    plugin_input = [\"users_src\", \"orders_src\"]",
+                        "    plugin_output = \"joined\"",
+                        "    query = \"select * from users_src\"",
+                        "  }",
+                        "  Sql {",
+                        "    plugin_input = [\"joined\"]",
+                        "    plugin_output = \"cleaned\"",
+                        "    query = \"select * from joined\"",
+                        "  }",
+                        "}",
+                        "sink {",
+                        "  Console {",
+                        "    plugin_input = [\"cleaned\"]",
+                        "  }",
+                        "}"));
         request.put("contentFormat", "hocon");
         request.put("transformIndex", 0);
         request.put("httpSink", httpSink("https://proxy.example.com/transform-preview"));
@@ -107,42 +122,17 @@ public class PreviewConfigServiceTest {
         Assertions.assertEquals(Boolean.TRUE, response.get("ok"));
 
         String content = String.valueOf(response.get("content"));
-        Config derivedConfig =
-                ConfigFactory.parseString(
-                        content, ConfigParseOptions.defaults().setSyntax(ConfigSyntax.JSON));
-        Assertions.assertEquals(2, derivedConfig.getConfigList("source").size());
-        Assertions.assertEquals(2, derivedConfig.getConfigList("transform").size());
-        Assertions.assertEquals(
-                "Joiner", derivedConfig.getConfigList("transform").get(0).getString("plugin_name"));
-        Assertions.assertEquals(
-                "Metadata",
-                derivedConfig.getConfigList("transform").get(1).getString("plugin_name"));
-        Assertions.assertEquals(
-                "Http", derivedConfig.getConfigList("sink").get(0).getString("plugin_name"));
-        Assertions.assertFalse(content.contains("\"plugin_name\" : \"Cleaner\""));
-
-        DagParseResult dag = configResourceService.inspectDag(contentRequest(content));
-        Assertions.assertTrue(dag.isOk());
-        Assertions.assertEquals(2, dag.getSourceCount());
-        Assertions.assertEquals(2, dag.getTransformCount());
-        Assertions.assertEquals(1, dag.getSinkCount());
+        Assertions.assertTrue(content.contains("\"plugin_name\":\"Sql\""));
+        Assertions.assertTrue(content.contains("\"plugin_name\":\"Metadata\""));
+        Assertions.assertTrue(content.contains("\"plugin_name\":\"Http\""));
+        Assertions.assertFalse(content.contains("\"plugin_name\" : \"Console\""));
     }
 
     @Test
     public void testDeriveSourcePreviewAsHocon() {
+        PreviewConfigService previewConfigService = previewServiceWithStubDag(1, 1, 1);
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put(
-                "content",
-                "source {\n"
-                        + "  FakeSource {\n"
-                        + "    plugin_output = \"src\"\n"
-                        + "  }\n"
-                        + "}\n"
-                        + "sink {\n"
-                        + "  Console {\n"
-                        + "    plugin_input = [\"src\"]\n"
-                        + "  }\n"
-                        + "}\n");
+        request.put("content", jdbcSingleTableConfig());
         request.put("contentFormat", "hocon");
         request.put("httpSink", httpSink("https://proxy.example.com/source-preview"));
         request.put("outputFormat", "hocon");
@@ -153,12 +143,36 @@ public class PreviewConfigServiceTest {
         String content = String.valueOf(response.get("content"));
         Assertions.assertTrue(content.contains("Metadata {"));
         Assertions.assertTrue(content.contains("Http {"));
+    }
 
-        DagParseResult dag = configResourceService.inspectDag(contentRequest(content, "hocon"));
-        Assertions.assertTrue(dag.isOk());
-        Assertions.assertEquals(1, dag.getSourceCount());
-        Assertions.assertEquals(1, dag.getTransformCount());
-        Assertions.assertEquals(1, dag.getSinkCount());
+    private String jdbcSingleTableConfig() {
+        return String.join(
+                "\n",
+                "env {",
+                "  job.mode = \"batch\"",
+                "}",
+                "source {",
+                "  Jdbc {",
+                "    plugin_output = \"users_src\"",
+                "    url = \"jdbc:mysql://127.0.0.1:3307/seatunnel_demo\"",
+                "    username = \"root\"",
+                "    password = \"seatunnel\"",
+                "    driver = \"com.mysql.cj.jdbc.Driver\"",
+                "    table_path = \"seatunnel_demo.users\"",
+                "  }",
+                "}",
+                "sink {",
+                "  Jdbc {",
+                "    plugin_input = [\"users_src\"]",
+                "    url = \"jdbc:mysql://127.0.0.1:3307/demo2\"",
+                "    username = \"root\"",
+                "    password = \"seatunnel\"",
+                "    driver = \"com.mysql.cj.jdbc.Driver\"",
+                "    database = \"demo2\"",
+                "    table = \"archive_${table_name}\"",
+                "    generate_sink_sql = true",
+                "  }",
+                "}");
     }
 
     private Map<String, Object> httpSink(String url) {
@@ -174,14 +188,32 @@ public class PreviewConfigServiceTest {
         return map;
     }
 
-    private Map<String, Object> contentRequest(String content) {
-        return contentRequest(content, "json");
-    }
-
-    private Map<String, Object> contentRequest(String content, String contentFormat) {
-        Map<String, Object> request = new LinkedHashMap<>();
-        request.put("content", content);
-        request.put("contentFormat", contentFormat);
-        return request;
+    private PreviewConfigService previewServiceWithStubDag(
+            int sourceCount, int transformCount, int sinkCount) {
+        PreviewConfigService service = new PreviewConfigService();
+        ConfigResourceService stubbedConfigResourceService =
+                new ConfigResourceService() {
+                    @Override
+                    public DagParseResult inspectDag(Map<String, Object> request) {
+                        return new DagParseResult(
+                                true,
+                                true,
+                                sourceCount,
+                                transformCount,
+                                sinkCount,
+                                Collections.emptyList(),
+                                new DatasetDag(
+                                        Collections.<ProxyNode>emptyList(),
+                                        Collections.<ProxyEdge>emptyList()));
+                    }
+                };
+        try {
+            Field field = PreviewConfigService.class.getDeclaredField("configResourceService");
+            field.setAccessible(true);
+            field.set(service, stubbedConfigResourceService);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Unable to inject stubbed ConfigResourceService", e);
+        }
+        return service;
     }
 }

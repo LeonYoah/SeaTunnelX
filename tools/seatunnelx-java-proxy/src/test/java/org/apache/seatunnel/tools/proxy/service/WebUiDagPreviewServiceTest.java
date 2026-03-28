@@ -83,6 +83,9 @@ class WebUiDagPreviewServiceTest {
                 Collections.singletonList("seatunnel_demo.users"),
                 vertex(result, 1).getTablePaths());
         assertIterableEquals(
+                List.of("id", "name"),
+                vertex(result, 1).getTableColumns().get("seatunnel_demo.users"));
+        assertIterableEquals(
                 Collections.singletonList("seatunnel_demo.users"),
                 vertex(result, 2).getTablePaths());
         assertEquals(1, result.getJobDag().getPipelineEdges().get(0).size());
@@ -153,6 +156,9 @@ class WebUiDagPreviewServiceTest {
                 Collections.singletonList("seatunnel_demo.users"),
                 vertex(result, 1).getTablePaths());
         assertIterableEquals(
+                List.of("id", "name"),
+                vertex(result, 1).getTableColumns().get("seatunnel_demo.users"));
+        assertIterableEquals(
                 Collections.singletonList("demo2.users"), vertex(result, 2).getTablePaths());
     }
 
@@ -195,6 +201,12 @@ class WebUiDagPreviewServiceTest {
         assertIterableEquals(
                 List.of("seatunnel_demo.users", "seatunnel_demo.orders"),
                 vertex(result, 1).getTablePaths());
+        assertIterableEquals(
+                List.of("id", "name"),
+                vertex(result, 1).getTableColumns().get("seatunnel_demo.users"));
+        assertIterableEquals(
+                List.of("id", "amount"),
+                vertex(result, 1).getTableColumns().get("seatunnel_demo.orders"));
         assertIterableEquals(
                 List.of("demo2.archive_users", "demo2.archive_orders"),
                 vertex(result, 2).getTablePaths());

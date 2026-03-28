@@ -24,12 +24,15 @@ import (
 )
 
 type seatunnelxJavaProxyAgentSender struct {
-	lastAgentID string
-	lastCommand string
-	lastParams  map[string]string
-	response    string
-	success     bool
-	err         error
+	lastAgentID        string
+	lastCommand        string
+	lastParams         map[string]string
+	response           string
+	responses          []string
+	responsesByCommand map[string]string
+	success            bool
+	successes          []bool
+	err                error
 }
 
 func (m *seatunnelxJavaProxyAgentSender) SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
@@ -38,6 +41,28 @@ func (m *seatunnelxJavaProxyAgentSender) SendCommand(ctx context.Context, agentI
 	m.lastParams = map[string]string{}
 	for k, v := range params {
 		m.lastParams[k] = v
+	}
+	if len(m.responsesByCommand) > 0 {
+		response, ok := m.responsesByCommand[commandType]
+		if !ok {
+			response = ""
+		}
+		success := m.success
+		if len(m.successes) > 0 {
+			success = m.successes[0]
+			m.successes = m.successes[1:]
+		}
+		return success, response, m.err
+	}
+	if len(m.responses) > 0 {
+		response := m.responses[0]
+		m.responses = m.responses[1:]
+		success := m.success
+		if len(m.successes) > 0 {
+			success = m.successes[0]
+			m.successes = m.successes[1:]
+		}
+		return success, response, m.err
 	}
 	return m.success, m.response, m.err
 }
@@ -141,5 +166,66 @@ func TestStartSeatunnelXJavaProxyPropagatesAgentFailure(t *testing.T) {
 	}
 	if status == nil || status.Message != "start failed" {
 		t.Fatalf("expected decoded failure status, got %#v", status)
+	}
+}
+
+func TestGetSeatunnelXJavaProxyServiceLogUsesReportedLogPath(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	hostProvider := NewMockHostProvider()
+	service := NewService(repo, hostProvider, nil)
+	lastHeartbeat := time.Now()
+	hostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "master-1",
+		IPAddress:     "10.0.0.1",
+		AgentID:       "agent-master-1",
+		AgentStatus:   "installed",
+		LastHeartbeat: &lastHeartbeat,
+	})
+
+	agentSender := &seatunnelxJavaProxyAgentSender{
+		success: true,
+		responsesByCommand: map[string]string{
+			"status":   `{"service":"seatunnelx_java_proxy","managed":true,"running":true,"healthy":true,"endpoint":"http://127.0.0.1:18080","port":18080,"pid":4567,"log_path":"/opt/seatunnel/.seatunnelx/seatunnelx-java-proxy/service.log","message":"ok"}`,
+			"get_logs": "line-1\nline-2",
+		},
+	}
+	service.SetAgentCommandSender(agentSender)
+
+	clusterInfo, err := service.Create(context.Background(), &CreateClusterRequest{
+		Name:           "cluster-a",
+		Version:        "2.3.13",
+		InstallDir:     "/opt/seatunnel",
+		DeploymentMode: DeploymentModeHybrid,
+	})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	if _, err := service.AddNode(context.Background(), clusterInfo.ID, &AddNodeRequest{
+		HostID:     1,
+		Role:       NodeRoleMasterWorker,
+		InstallDir: "/opt/seatunnel",
+	}); err != nil {
+		t.Fatalf("add node: %v", err)
+	}
+
+	result, err := service.GetSeatunnelXJavaProxyServiceLog(context.Background(), clusterInfo.ID, 120)
+	if err != nil {
+		t.Fatalf("GetSeatunnelXJavaProxyServiceLog returned error: %v", err)
+	}
+	if result.LogPath != "/opt/seatunnel/.seatunnelx/seatunnelx-java-proxy/service.log" {
+		t.Fatalf("unexpected log path: %#v", result)
+	}
+	if result.Logs != "line-1\nline-2" {
+		t.Fatalf("unexpected log payload: %#v", result)
+	}
+	if agentSender.lastCommand != "get_logs" {
+		t.Fatalf("expected get_logs command, got %s", agentSender.lastCommand)
+	}
+	if agentSender.lastParams["log_file"] != result.LogPath {
+		t.Fatalf("expected get_logs to target reported log path, got %#v", agentSender.lastParams)
 	}
 }

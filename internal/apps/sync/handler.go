@@ -18,6 +18,10 @@
 package sync
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -25,6 +29,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/seatunnel/seatunnelX/internal/config"
 )
 
 // Handler provides HTTP handlers for sync studio APIs.
@@ -80,6 +86,14 @@ type JobListResponse struct {
 type JobLogsResponse struct {
 	ErrorMsg string         `json:"error_msg"`
 	Data     *JobLogsResult `json:"data"`
+}
+type PreviewSnapshotResponse struct {
+	ErrorMsg string           `json:"error_msg"`
+	Data     *PreviewSnapshot `json:"data"`
+}
+type CheckpointSnapshotResponse struct {
+	ErrorMsg string              `json:"error_msg"`
+	Data     *CheckpointSnapshot `json:"data"`
 }
 type BasicResponse struct {
 	ErrorMsg string      `json:"error_msg"`
@@ -363,7 +377,14 @@ func (h *Handler) PreviewTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: "invalid task id"})
 		return
 	}
-	job, err := h.service.PreviewTask(c.Request.Context(), id, getCurrentUserID(c))
+	var req PreviewTaskRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, JobResponse{ErrorMsg: err.Error()})
+			return
+		}
+	}
+	job, err := h.service.PreviewTask(c.Request.Context(), id, getCurrentUserID(c), &req)
 	if err != nil {
 		c.JSON(h.getStatusCodeForError(err), JobResponse{ErrorMsg: err.Error()})
 		return
@@ -453,18 +474,93 @@ func (h *Handler) GetJobLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, JobLogsResponse{Data: result})
 }
 
+// GetPreviewSnapshot handles GET /api/v1/sync/jobs/:id/preview.
+func (h *Handler) GetPreviewSnapshot(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, PreviewSnapshotResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	result, err := h.service.GetPreviewSnapshot(c.Request.Context(), id, c.Query("table_path"))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), PreviewSnapshotResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, PreviewSnapshotResponse{Data: result})
+}
+
+// GetJobCheckpointSnapshot handles GET /api/v1/sync/jobs/:id/checkpoint.
+func (h *Handler) GetJobCheckpointSnapshot(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, CheckpointSnapshotResponse{ErrorMsg: "invalid job id"})
+		return
+	}
+	var pipelineID *int
+	if raw := strings.TrimSpace(c.Query("pipeline_id")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, CheckpointSnapshotResponse{ErrorMsg: "invalid pipeline_id"})
+			return
+		}
+		pipelineID = &parsed
+	}
+	result, err := h.service.GetJobCheckpointSnapshot(
+		c.Request.Context(),
+		id,
+		pipelineID,
+		parsePositiveInt(c.Query("limit"), 20),
+		c.Query("status"),
+	)
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), CheckpointSnapshotResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, CheckpointSnapshotResponse{Data: result})
+}
+
 // CollectPreview handles POST /api/v1/sync/preview/collect.
 func (h *Handler) CollectPreview(c *gin.Context) {
+	rawBody, _ := c.GetRawData()
+	c.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
 	var req PreviewCollectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, BasicResponse{ErrorMsg: err.Error()})
 		return
 	}
+	if strings.TrimSpace(req.PlatformJobID) == "" {
+		req.PlatformJobID = strings.TrimSpace(c.Query("platform_job_id"))
+	}
+	if strings.TrimSpace(req.EngineJobID) == "" {
+		req.EngineJobID = strings.TrimSpace(c.Query("engine_job_id"))
+	}
+	if req.RowLimit <= 0 {
+		req.RowLimit = parseNonNegativeInt(c.Query("row_limit"), 0)
+	}
+	if !validatePreviewCollectAuthToken(strings.TrimSpace(req.PlatformJobID), strings.TrimSpace(c.GetHeader("X-Preview-Token"))) {
+		c.JSON(http.StatusUnauthorized, BasicResponse{ErrorMsg: "unauthorized preview collect request"})
+		return
+	}
+	normalizePreviewCollectRequest(&req, rawBody)
 	if err := h.service.CollectPreview(c.Request.Context(), &req); err != nil {
 		c.JSON(h.getStatusCodeForError(err), BasicResponse{ErrorMsg: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, BasicResponse{Data: gin.H{"collected": true}})
+}
+
+func validatePreviewCollectAuthToken(platformJobID, token string) bool {
+	platformJobID = strings.TrimSpace(platformJobID)
+	token = strings.TrimSpace(token)
+	secret := strings.TrimSpace(config.Config.App.SessionSecret)
+	if platformJobID == "" || token == "" || secret == "" {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("preview-collect:"))
+	_, _ = mac.Write([]byte(platformJobID))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(token))
 }
 
 // RecoverJob handles POST /api/v1/sync/jobs/:id/recover.

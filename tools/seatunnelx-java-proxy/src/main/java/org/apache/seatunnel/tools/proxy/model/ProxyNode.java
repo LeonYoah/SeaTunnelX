@@ -18,7 +18,9 @@
 package org.apache.seatunnel.tools.proxy.model;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ProxyNode {
 
@@ -29,6 +31,7 @@ public class ProxyNode {
     private final List<String> inputDatasets;
     private final String outputDataset;
     private final List<String> tablePaths;
+    private final Map<String, List<String>> tableColumns;
 
     public ProxyNode(
             String nodeId,
@@ -37,7 +40,8 @@ public class ProxyNode {
             int configIndex,
             List<String> inputDatasets,
             String outputDataset,
-            List<String> tablePaths) {
+            List<String> tablePaths,
+            Map<String, List<String>> tableColumns) {
         this.nodeId = nodeId;
         this.kind = kind;
         this.pluginName = pluginName;
@@ -51,6 +55,10 @@ public class ProxyNode {
                 tablePaths == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(tablePaths);
+        this.tableColumns =
+                tableColumns == null
+                        ? Collections.emptyMap()
+                        : Collections.unmodifiableMap(new LinkedHashMap<>(tableColumns));
     }
 
     public String getNodeId() {
@@ -79,5 +87,9 @@ public class ProxyNode {
 
     public List<String> getTablePaths() {
         return tablePaths;
+    }
+
+    public Map<String, List<String>> getTableColumns() {
+        return tableColumns;
     }
 }

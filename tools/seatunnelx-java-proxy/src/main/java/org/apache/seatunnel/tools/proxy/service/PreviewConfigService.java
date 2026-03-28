@@ -26,6 +26,9 @@ import org.apache.seatunnel.tools.proxy.model.NodeKind;
 import org.apache.seatunnel.tools.proxy.model.ProxyEdge;
 import org.apache.seatunnel.tools.proxy.model.ProxyNode;
 
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,6 +63,12 @@ public class PreviewConfigService {
 
     public Map<String, Object> deriveSourcePreview(Map<String, Object> request) {
         JobConfigContext context = jobConfigSupportService.parseJobContext(request);
+        boolean explicitSourceSelection =
+                ProxyRequestUtils.getOptionalString(request, "sourceNodeId") != null
+                        || request.get("sourceIndex") != null;
+        if (!explicitSourceSelection && context.getSources().size() > 1) {
+            return deriveWholeGraphPreview(request, context);
+        }
         int sourceIndex =
                 resolveNodeIndex(
                         request,
@@ -206,6 +215,58 @@ public class PreviewConfigService {
         response.put("graph", derivedDag.getGraph());
         response.put("simpleGraph", derivedDag.isSimpleGraph());
         return response;
+    }
+
+    private Map<String, Object> deriveWholeGraphPreview(
+            Map<String, Object> request, JobConfigContext context) {
+        List<Map<String, Object>> sources = new ArrayList<>();
+        for (Config source : context.getSources()) {
+            sources.add(configToMutableMap(source));
+        }
+        List<Map<String, Object>> transforms = new ArrayList<>();
+        for (Config transform : context.getTransforms()) {
+            transforms.add(configToMutableMap(transform));
+        }
+
+        LinkedHashSet<String> terminalDatasets = new LinkedHashSet<>();
+        for (ProxyNode node : context.getGraph().getNodes()) {
+            if (node.getKind() != NodeKind.SINK) {
+                continue;
+            }
+            terminalDatasets.addAll(node.getInputDatasets());
+        }
+        if (terminalDatasets.isEmpty()) {
+            for (ProxyNode node : context.getGraph().getNodes()) {
+                if (node.getKind() == NodeKind.TRANSFORM && node.getOutputDataset() != null) {
+                    terminalDatasets.add(node.getOutputDataset());
+                }
+            }
+        }
+        if (terminalDatasets.isEmpty()) {
+            for (ProxyNode node : context.getGraph().getNodes()) {
+                if (node.getKind() == NodeKind.SOURCE && node.getOutputDataset() != null) {
+                    terminalDatasets.add(node.getOutputDataset());
+                }
+            }
+        }
+        if (terminalDatasets.isEmpty()) {
+            throw new ProxyException(400, "Preview graph has no terminal dataset to collect");
+        }
+
+        List<Map<String, Object>> previewTransforms = new ArrayList<>(transforms);
+        List<Map<String, Object>> sinks = new ArrayList<>();
+        int metadataIndex = 0;
+        for (String dataset : terminalDatasets) {
+            String metadataOutput = PREVIEW_METADATA_OUTPUT + "_" + metadataIndex;
+            previewTransforms.add(
+                    buildMetadataTransform(
+                            dataset, metadataOutput, resolveMetadataFields(request)));
+            sinks.add(buildHttpSink(request, metadataOutput));
+            metadataIndex++;
+        }
+
+        return buildPreviewResponse(
+                "graph_preview", context, "all", -1, sources, previewTransforms, sinks, request);
     }
 
     private String renderPreviewConfig(Map<String, Object> derivedRoot, String outputFormat) {
@@ -403,7 +464,7 @@ public class PreviewConfigService {
     private String resolveOutputFormat(Map<String, Object> request) {
         String outputFormat = ProxyRequestUtils.getOptionalString(request, "outputFormat");
         if (outputFormat == null) {
-            return "json";
+            return "hocon";
         }
         if ("json".equalsIgnoreCase(outputFormat) || "hocon".equalsIgnoreCase(outputFormat)) {
             return outputFormat;
@@ -529,10 +590,90 @@ public class PreviewConfigService {
         if (url == null) {
             throw new ProxyException(400, "Preview derivation requires httpSink.url");
         }
+        Integer previewRowLimit = resolvePreviewRowLimit(request);
         Map<String, Object> sinkConfig = deepCopyMap(sinkRequest);
+        sinkConfig.put("url", injectPreviewQuery(url, request, previewRowLimit));
         sinkConfig.put("plugin_name", PREVIEW_HTTP_PLUGIN);
         sinkConfig.put("plugin_input", Collections.singletonList(inputDataset));
         return sinkConfig;
+    }
+
+    private String injectPreviewQuery(
+            String url, Map<String, Object> request, Integer previewRowLimit) {
+        String baseUrl = url;
+        String rawQuery = "";
+        int queryIndex = url.indexOf('?');
+        if (queryIndex >= 0) {
+            baseUrl = url.substring(0, queryIndex);
+            rawQuery = url.substring(queryIndex + 1);
+        }
+        Map<String, String> query = new LinkedHashMap<>();
+        if (!rawQuery.isEmpty()) {
+            for (String part : rawQuery.split("&")) {
+                if (part == null || part.trim().isEmpty()) {
+                    continue;
+                }
+                String[] pieces = part.split("=", 2);
+                String key = decodeQueryValue(pieces[0]);
+                String value = pieces.length > 1 ? decodeQueryValue(pieces[1]) : "";
+                query.put(key, value);
+            }
+        }
+        String platformJobId = ProxyRequestUtils.getOptionalString(request, "platformJobId");
+        String engineJobId = ProxyRequestUtils.getOptionalString(request, "engineJobId");
+        if (platformJobId != null && !platformJobId.trim().isEmpty()) {
+            query.put("platform_job_id", platformJobId.trim());
+        }
+        if (engineJobId != null && !engineJobId.trim().isEmpty()) {
+            query.put("engine_job_id", engineJobId.trim());
+        }
+        if (previewRowLimit != null) {
+            query.put("row_limit", String.valueOf(previewRowLimit));
+        }
+        StringBuilder builder = new StringBuilder(baseUrl);
+        if (!query.isEmpty()) {
+            builder.append('?');
+            boolean first = true;
+            for (Map.Entry<String, String> entry : query.entrySet()) {
+                if (!first) {
+                    builder.append('&');
+                }
+                builder.append(encodeQueryValue(entry.getKey()))
+                        .append('=')
+                        .append(encodeQueryValue(entry.getValue()));
+                first = false;
+            }
+        }
+        return builder.toString();
+    }
+
+    private String decodeQueryValue(String value) {
+        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    private String encodeQueryValue(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private Integer resolvePreviewRowLimit(Map<String, Object> request) {
+        Object raw = request.get("previewRowLimit");
+        if (raw == null) {
+            return 100;
+        }
+        int value;
+        if (raw instanceof Number) {
+            value = ((Number) raw).intValue();
+        } else {
+            try {
+                value = Integer.parseInt(String.valueOf(raw).trim());
+            } catch (NumberFormatException e) {
+                throw new ProxyException(400, "previewRowLimit must be an integer");
+            }
+        }
+        if (value <= 0) {
+            return 100;
+        }
+        return Math.min(value, 10000);
     }
 
     private Map<String, Object> resolveMetadataFields(Map<String, Object> request) {

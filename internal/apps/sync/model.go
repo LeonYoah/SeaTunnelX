@@ -54,6 +54,36 @@ func (m *JSONMap) Scan(value interface{}) error {
 	}
 }
 
+// JSONStringSlice represents one JSON-encoded string array.
+// JSONStringSlice 表示一个 JSON 编码的字符串数组。
+type JSONStringSlice []string
+
+// Value implements the driver.Valuer interface.
+// Value 实现 driver.Valuer 接口。
+func (s JSONStringSlice) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+// Scan implements the sql.Scanner interface.
+// Scan 实现 sql.Scanner 接口。
+func (s *JSONStringSlice) Scan(value interface{}) error {
+	if value == nil {
+		*s = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, s)
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	default:
+		return errors.New("sync: failed to scan JSONStringSlice - expected []byte or string")
+	}
+}
+
 // TaskStatus represents sync task lifecycle status.
 // TaskStatus 表示同步任务生命周期状态。
 type TaskStatus string
@@ -211,4 +241,67 @@ type GlobalVariable struct {
 // TableName 返回同步全局变量表名。
 func (GlobalVariable) TableName() string {
 	return "sync_global_variables"
+}
+
+// PreviewSession stores one incremental preview session snapshot.
+// PreviewSession 存储一次增量预览会话快照。
+type PreviewSession struct {
+	ID             uint       `json:"id" gorm:"primaryKey;autoIncrement"`
+	JobInstanceID  uint       `json:"job_instance_id" gorm:"uniqueIndex;not null"`
+	TaskID         uint       `json:"task_id" gorm:"index;not null"`
+	PlatformJobID  string     `json:"platform_job_id" gorm:"size:32;index"`
+	EngineJobID    string     `json:"engine_job_id" gorm:"size:255;index"`
+	RowLimit       int        `json:"row_limit" gorm:"not null;default:100"`
+	TimeoutMinutes int        `json:"timeout_minutes" gorm:"not null;default:10"`
+	Status         string     `json:"status" gorm:"size:32;not null;default:collecting;index"`
+	TotalRows      int        `json:"total_rows" gorm:"not null;default:0"`
+	TableCount     int        `json:"table_count" gorm:"not null;default:0"`
+	Truncated      bool       `json:"truncated" gorm:"not null;default:false"`
+	LastError      string     `json:"last_error" gorm:"type:text"`
+	StartedAt      *time.Time `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at"`
+	CreatedAt      time.Time  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt      time.Time  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// TableName returns the preview session table name.
+// TableName 返回预览会话表名。
+func (PreviewSession) TableName() string {
+	return "sync_preview_sessions"
+}
+
+// PreviewTable stores one preview table group under a session.
+// PreviewTable 存储预览会话中的一张表分组。
+type PreviewTable struct {
+	ID          uint            `json:"id" gorm:"primaryKey;autoIncrement"`
+	SessionID   uint            `json:"session_id" gorm:"index;not null"`
+	TablePath   string          `json:"table_path" gorm:"size:512;index;not null"`
+	DisplayName string          `json:"display_name" gorm:"size:512"`
+	Columns     JSONStringSlice `json:"columns" gorm:"type:json"`
+	RowCount    int             `json:"row_count" gorm:"not null;default:0"`
+	CreatedAt   time.Time       `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt   time.Time       `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// TableName returns the preview table table name.
+// TableName 返回预览表分组表名。
+func (PreviewTable) TableName() string {
+	return "sync_preview_tables"
+}
+
+// PreviewRow stores one preview data row.
+// PreviewRow 存储一条预览数据行。
+type PreviewRow struct {
+	ID        uint      `json:"id" gorm:"primaryKey;autoIncrement"`
+	SessionID uint      `json:"session_id" gorm:"index;not null"`
+	TableID   uint      `json:"table_id" gorm:"index;not null"`
+	RowIndex  int       `json:"row_index" gorm:"index;not null"`
+	RowData   JSONMap   `json:"row_data" gorm:"type:json"`
+	CreatedAt time.Time `json:"created_at" gorm:"autoCreateTime"`
+}
+
+// TableName returns the preview row table name.
+// TableName 返回预览数据行表名。
+func (PreviewRow) TableName() string {
+	return "sync_preview_rows"
 }

@@ -59,6 +59,9 @@ type ConfigToolPreviewRequest struct {
 	SourceIndex           *int                   `json:"sourceIndex,omitempty"`
 	TransformNodeID       string                 `json:"transformNodeId,omitempty"`
 	TransformIndex        *int                   `json:"transformIndex,omitempty"`
+	PlatformJobID         string                 `json:"platformJobId,omitempty"`
+	EngineJobID           string                 `json:"engineJobId,omitempty"`
+	PreviewRowLimit       *int                   `json:"previewRowLimit,omitempty"`
 	OutputFormat          string                 `json:"outputFormat,omitempty"`
 	MetadataOutputDataset string                 `json:"metadataOutputDataset,omitempty"`
 	MetadataFields        map[string]interface{} `json:"metadataFields,omitempty"`
@@ -111,6 +114,7 @@ type ConfigToolWebUIDAGVertexInfo struct {
 	Type          string   `json:"type"`
 	ConnectorType string   `json:"connectorType"`
 	TablePaths    []string `json:"tablePaths"`
+	TableColumns  map[string][]string `json:"tableColumns"`
 }
 
 // ConfigToolWebUIDAGEdge mirrors webui edge payload from java-proxy.

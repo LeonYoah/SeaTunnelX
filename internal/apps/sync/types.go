@@ -78,6 +78,17 @@ type CancelJobRequest struct {
 	StopWithSavepoint bool `json:"stop_with_savepoint"`
 }
 
+// PreviewTaskRequest represents optional preview execution parameters.
+type PreviewTaskRequest struct {
+	RowLimit        int    `json:"row_limit"`
+	TimeoutMinutes  int    `json:"timeout_minutes"`
+	SourceNodeID    string `json:"source_node_id,omitempty"`
+	SourceIndex     *int   `json:"source_index,omitempty"`
+	TransformNodeID string `json:"transform_node_id,omitempty"`
+	TransformIndex  *int   `json:"transform_index,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+}
+
 // TaskFilter represents task list query filters.
 type TaskFilter struct {
 	Name   string
@@ -123,6 +134,50 @@ type DAGResult struct {
 	WebUIJob    JSONMap   `json:"webui_job,omitempty"`
 	SimpleGraph bool      `json:"simple_graph,omitempty"`
 	Warnings    []string  `json:"warnings,omitempty"`
+}
+
+// PreviewSnapshot represents one incremental preview snapshot payload.
+// PreviewSnapshot 表示一次增量预览快照返回。
+type PreviewSnapshot struct {
+	SessionID      uint                `json:"session_id"`
+	JobInstanceID  uint                `json:"job_instance_id"`
+	PlatformJobID  string              `json:"platform_job_id"`
+	EngineJobID    string              `json:"engine_job_id"`
+	Status         string              `json:"status"`
+	EmptyReason    string              `json:"empty_reason,omitempty"`
+	RowLimit       int                 `json:"row_limit"`
+	TimeoutMinutes int                 `json:"timeout_minutes"`
+	TotalRows      int                 `json:"total_rows"`
+	TableCount     int                 `json:"table_count"`
+	Truncated      bool                `json:"truncated"`
+	InjectedScript string              `json:"injected_script,omitempty"`
+	ContentFormat  string              `json:"content_format,omitempty"`
+	Tables         []*PreviewTableData `json:"tables"`
+	SelectedTable  *PreviewTableData   `json:"selected_table,omitempty"`
+	Warnings       []string            `json:"warnings,omitempty"`
+}
+
+// PreviewTableData represents one table group inside a preview snapshot.
+// PreviewTableData 表示预览快照中的单张表数据。
+type PreviewTableData struct {
+	ID        uint                     `json:"id"`
+	TablePath string                   `json:"table_path"`
+	Columns   []string                 `json:"columns"`
+	RowCount  int                      `json:"row_count"`
+	Rows      []map[string]interface{} `json:"rows,omitempty"`
+}
+
+// CheckpointSnapshot represents checkpoint overview and history for one job.
+// CheckpointSnapshot 表示单个作业的 checkpoint 概览与历史。
+type CheckpointSnapshot struct {
+	JobInstanceID uint                      `json:"job_instance_id"`
+	PlatformJobID string                    `json:"platform_job_id"`
+	EngineJobID   string                    `json:"engine_job_id"`
+	Status        string                    `json:"status"`
+	EmptyReason   string                    `json:"empty_reason,omitempty"`
+	Message       string                    `json:"message,omitempty"`
+	Overview      *EngineCheckpointOverview `json:"overview,omitempty"`
+	History       []*EngineCheckpointRecord `json:"history,omitempty"`
 }
 
 // TaskListData represents task list response data.

@@ -66,6 +66,8 @@ import {
   RuntimeStoragePreviewResult,
   RuntimeStorageCheckpointInspectResult,
   RuntimeStorageIMAPInspectResult,
+  SeatunnelXJavaProxyLogPreviewResponse,
+  SeatunnelXJavaProxyLogPreviewResult,
   SeatunnelXJavaProxyResponse,
   SeatunnelXJavaProxyStatus,
 } from './types';
@@ -90,7 +92,9 @@ export class ClusterService extends BaseService {
    * @param params - Query parameters / 查询参数
    * @returns Cluster list data / 集群列表数据
    */
-  static async getClusters(params: ListClustersRequest): Promise<ClusterListData> {
+  static async getClusters(
+    params: ListClustersRequest,
+  ): Promise<ClusterListData> {
     const response = await apiClient.get<ListClustersResponse>(this.basePath, {
       params: {
         current: params.current,
@@ -180,15 +184,13 @@ export class ClusterService extends BaseService {
    */
   static async deleteCluster(
     clusterId: number,
-    options?: { forceDelete?: boolean },
+    options?: {forceDelete?: boolean},
   ): Promise<void> {
     const params =
-      options?.forceDelete === true
-        ? { force_delete: '1' }
-        : undefined;
+      options?.forceDelete === true ? {force_delete: '1'} : undefined;
     const response = await apiClient.delete<DeleteClusterResponse>(
       `${this.basePath}/${clusterId}`,
-      { params },
+      {params},
     );
 
     if (response.data.error_msg) {
@@ -225,7 +227,10 @@ export class ClusterService extends BaseService {
    * @param data - Add node request data / 添加节点请求数据
    * @returns Added node information / 添加的节点信息
    */
-  static async addNode(clusterId: number, data: AddNodeRequest): Promise<NodeInfo> {
+  static async addNode(
+    clusterId: number,
+    data: AddNodeRequest,
+  ): Promise<NodeInfo> {
     const response = await apiClient.post<AddNodeResponse>(
       `${this.basePath}/${clusterId}/nodes`,
       data,
@@ -242,7 +247,10 @@ export class ClusterService extends BaseService {
    * Add multiple logical nodes for the same host atomically
    * 为同一主机原子添加多个逻辑节点
    */
-  static async addNodes(clusterId: number, data: AddNodesRequest): Promise<NodeInfo[]> {
+  static async addNodes(
+    clusterId: number,
+    data: AddNodesRequest,
+  ): Promise<NodeInfo[]> {
     const response = await apiClient.post<AddNodesResponse>(
       `${this.basePath}/${clusterId}/nodes/batch`,
       data,
@@ -264,7 +272,11 @@ export class ClusterService extends BaseService {
    * @param data - Update node request data / 更新节点请求数据
    * @returns Updated node information / 更新后的节点信息
    */
-  static async updateNode(clusterId: number, nodeId: number, data: UpdateNodeRequest): Promise<NodeInfo> {
+  static async updateNode(
+    clusterId: number,
+    nodeId: number,
+    data: UpdateNodeRequest,
+  ): Promise<NodeInfo> {
     const response = await apiClient.put<AddNodeResponse>(
       `${this.basePath}/${clusterId}/nodes/${nodeId}`,
       data,
@@ -302,7 +314,10 @@ export class ClusterService extends BaseService {
    * @param data - Precheck request data / 预检查请求数据
    * @returns Precheck result / 预检查结果
    */
-  static async precheckNode(clusterId: number, data: PrecheckRequest): Promise<PrecheckResult> {
+  static async precheckNode(
+    clusterId: number,
+    data: PrecheckRequest,
+  ): Promise<PrecheckResult> {
     const response = await apiClient.post<PrecheckNodeResponse>(
       `${this.basePath}/${clusterId}/nodes/precheck`,
       data,
@@ -397,7 +412,9 @@ export class ClusterService extends BaseService {
    * Get runtime storage details
    * 获取运行时存储详情
    */
-  static async getRuntimeStorage(clusterId: number): Promise<RuntimeStorageDetails> {
+  static async getRuntimeStorage(
+    clusterId: number,
+  ): Promise<RuntimeStorageDetails> {
     const response = await apiClient.get<GetRuntimeStorageResponse>(
       `${this.basePath}/${clusterId}/runtime-storage`,
     );
@@ -438,7 +455,9 @@ export class ClusterService extends BaseService {
    * Cleanup local IMAP storage
    * 清理本地 IMAP 存储
    */
-  static async cleanupIMAPStorage(clusterId: number): Promise<RuntimeStorageCleanupResult> {
+  static async cleanupIMAPStorage(
+    clusterId: number,
+  ): Promise<RuntimeStorageCleanupResult> {
     const response = await apiClient.post<CleanupRuntimeStorageResponse>(
       `${this.basePath}/${clusterId}/runtime-storage/imap/cleanup`,
       {},
@@ -507,10 +526,11 @@ export class ClusterService extends BaseService {
     clusterId: number,
     path: string,
   ): Promise<RuntimeStorageCheckpointInspectResult> {
-    const response = await apiClient.post<InspectCheckpointRuntimeStorageResponse>(
-      `${this.basePath}/${clusterId}/runtime-storage/checkpoint/inspect`,
-      {path},
-    );
+    const response =
+      await apiClient.post<InspectCheckpointRuntimeStorageResponse>(
+        `${this.basePath}/${clusterId}/runtime-storage/checkpoint/inspect`,
+        {path},
+      );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
     }
@@ -555,7 +575,9 @@ export class ClusterService extends BaseService {
     };
   }
 
-  static async getSeatunnelXJavaProxyStatus(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+  static async getSeatunnelXJavaProxyStatus(
+    clusterId: number,
+  ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.get<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/status`,
     );
@@ -568,7 +590,9 @@ export class ClusterService extends BaseService {
     };
   }
 
-  static async startSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+  static async startSeatunnelXJavaProxy(
+    clusterId: number,
+  ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/start`,
       {},
@@ -582,7 +606,9 @@ export class ClusterService extends BaseService {
     };
   }
 
-  static async stopSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+  static async stopSeatunnelXJavaProxy(
+    clusterId: number,
+  ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/stop`,
       {},
@@ -596,7 +622,9 @@ export class ClusterService extends BaseService {
     };
   }
 
-  static async restartSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+  static async restartSeatunnelXJavaProxy(
+    clusterId: number,
+  ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/restart`,
       {},
@@ -608,6 +636,20 @@ export class ClusterService extends BaseService {
       ...response.data.data,
       message: localizeBackendText(response.data.data.message),
     };
+  }
+
+  static async previewSeatunnelXJavaProxyServiceLog(
+    clusterId: number,
+    params?: {lines?: number},
+  ): Promise<SeatunnelXJavaProxyLogPreviewResult> {
+    const response = await apiClient.get<SeatunnelXJavaProxyLogPreviewResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/logs`,
+      {params},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return response.data.data;
   }
 
   // ==================== Safe Methods (with error handling) 安全方法（带错误处理） ====================
@@ -701,7 +743,7 @@ export class ClusterService extends BaseService {
    */
   static async deleteClusterSafe(
     clusterId: number,
-    options?: { forceDelete?: boolean },
+    options?: {forceDelete?: boolean},
   ): Promise<{
     success: boolean;
     error?: string;
@@ -739,7 +781,10 @@ export class ClusterService extends BaseService {
    * Add node (with error handling)
    * 添加节点（带错误处理）
    */
-  static async addNodeSafe(clusterId: number, data: AddNodeRequest): Promise<{
+  static async addNodeSafe(
+    clusterId: number,
+    data: AddNodeRequest,
+  ): Promise<{
     success: boolean;
     data?: NodeInfo;
     error?: string;
@@ -758,7 +803,10 @@ export class ClusterService extends BaseService {
    * Add multiple logical nodes (with error handling)
    * 批量添加逻辑节点（带错误处理）
    */
-  static async addNodesSafe(clusterId: number, data: AddNodesRequest): Promise<{
+  static async addNodesSafe(
+    clusterId: number,
+    data: AddNodesRequest,
+  ): Promise<{
     success: boolean;
     data?: NodeInfo[];
     error?: string;
@@ -777,7 +825,11 @@ export class ClusterService extends BaseService {
    * Update node (with error handling)
    * 更新节点（带错误处理）
    */
-  static async updateNodeSafe(clusterId: number, nodeId: number, data: UpdateNodeRequest): Promise<{
+  static async updateNodeSafe(
+    clusterId: number,
+    nodeId: number,
+    data: UpdateNodeRequest,
+  ): Promise<{
     success: boolean;
     data?: NodeInfo;
     error?: string;
@@ -796,7 +848,10 @@ export class ClusterService extends BaseService {
    * Remove node (with error handling)
    * 移除节点（带错误处理）
    */
-  static async removeNodeSafe(clusterId: number, nodeId: number): Promise<{
+  static async removeNodeSafe(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<{
     success: boolean;
     error?: string;
   }> {
@@ -814,7 +869,10 @@ export class ClusterService extends BaseService {
    * Precheck node (with error handling)
    * 节点预检查（带错误处理）
    */
-  static async precheckNodeSafe(clusterId: number, data: PrecheckRequest): Promise<{
+  static async precheckNodeSafe(
+    clusterId: number,
+    data: PrecheckRequest,
+  ): Promise<{
     success: boolean;
     data?: PrecheckResult;
     error?: string;
@@ -1049,7 +1107,9 @@ export class ClusterService extends BaseService {
       return {success: true, data};
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : '获取 seatunnelx-java-proxy 状态失败';
+        error instanceof Error
+          ? error.message
+          : '获取 seatunnelx-java-proxy 状态失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1064,7 +1124,9 @@ export class ClusterService extends BaseService {
       return {success: true, data};
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : '启动 seatunnelx-java-proxy 失败';
+        error instanceof Error
+          ? error.message
+          : '启动 seatunnelx-java-proxy 失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1079,7 +1141,9 @@ export class ClusterService extends BaseService {
       return {success: true, data};
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : '停止 seatunnelx-java-proxy 失败';
+        error instanceof Error
+          ? error.message
+          : '停止 seatunnelx-java-proxy 失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1094,7 +1158,32 @@ export class ClusterService extends BaseService {
       return {success: true, data};
     } catch (error) {
       const errorMessage =
-        error instanceof Error ? error.message : '重启 seatunnelx-java-proxy 失败';
+        error instanceof Error
+          ? error.message
+          : '重启 seatunnelx-java-proxy 失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async previewSeatunnelXJavaProxyServiceLogSafe(
+    clusterId: number,
+    params?: {lines?: number},
+  ): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyLogPreviewResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.previewSeatunnelXJavaProxyServiceLog(
+        clusterId,
+        params,
+      );
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : '查看 seatunnelx-java-proxy 日志失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1105,7 +1194,10 @@ export class ClusterService extends BaseService {
    * Start a node
    * 启动节点
    */
-  static async startNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+  static async startNode(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<OperationResult> {
     const response = await apiClient.post<ClusterOperationResponse>(
       `${this.basePath}/${clusterId}/nodes/${nodeId}/start`,
     );
@@ -1119,7 +1211,10 @@ export class ClusterService extends BaseService {
    * Stop a node
    * 停止节点
    */
-  static async stopNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+  static async stopNode(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<OperationResult> {
     const response = await apiClient.post<ClusterOperationResponse>(
       `${this.basePath}/${clusterId}/nodes/${nodeId}/stop`,
     );
@@ -1133,7 +1228,10 @@ export class ClusterService extends BaseService {
    * Restart a node
    * 重启节点
    */
-  static async restartNode(clusterId: number, nodeId: number): Promise<OperationResult> {
+  static async restartNode(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<OperationResult> {
     const response = await apiClient.post<ClusterOperationResponse>(
       `${this.basePath}/${clusterId}/nodes/${nodeId}/restart`,
     );
@@ -1160,10 +1258,10 @@ export class ClusterService extends BaseService {
     nodeId: number,
     params?: {lines?: number; mode?: string; filter?: string; date?: string},
   ): Promise<{logs: string}> {
-    const response = await apiClient.get<{error_msg: string; data: {logs: string}}>(
-      `${this.basePath}/${clusterId}/nodes/${nodeId}/logs`,
-      {params},
-    );
+    const response = await apiClient.get<{
+      error_msg: string;
+      data: {logs: string};
+    }>(`${this.basePath}/${clusterId}/nodes/${nodeId}/logs`, {params});
     if (response.data.error_msg) {
       throw new Error(response.data.error_msg);
     }
@@ -1174,7 +1272,10 @@ export class ClusterService extends BaseService {
    * Start node (with error handling)
    * 启动节点（带错误处理）
    */
-  static async startNodeSafe(clusterId: number, nodeId: number): Promise<{
+  static async startNodeSafe(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<{
     success: boolean;
     data?: OperationResult;
     error?: string;
@@ -1187,7 +1288,8 @@ export class ClusterService extends BaseService {
       }
       return {success: true, data};
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '启动节点失败';
+      const errorMessage =
+        error instanceof Error ? error.message : '启动节点失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1196,7 +1298,10 @@ export class ClusterService extends BaseService {
    * Stop node (with error handling)
    * 停止节点（带错误处理）
    */
-  static async stopNodeSafe(clusterId: number, nodeId: number): Promise<{
+  static async stopNodeSafe(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<{
     success: boolean;
     data?: OperationResult;
     error?: string;
@@ -1209,7 +1314,8 @@ export class ClusterService extends BaseService {
       }
       return {success: true, data};
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '停止节点失败';
+      const errorMessage =
+        error instanceof Error ? error.message : '停止节点失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1218,7 +1324,10 @@ export class ClusterService extends BaseService {
    * Restart node (with error handling)
    * 重启节点（带错误处理）
    */
-  static async restartNodeSafe(clusterId: number, nodeId: number): Promise<{
+  static async restartNodeSafe(
+    clusterId: number,
+    nodeId: number,
+  ): Promise<{
     success: boolean;
     data?: OperationResult;
     error?: string;
@@ -1231,7 +1340,8 @@ export class ClusterService extends BaseService {
       }
       return {success: true, data};
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '重启节点失败';
+      const errorMessage =
+        error instanceof Error ? error.message : '重启节点失败';
       return {success: false, error: errorMessage};
     }
   }
@@ -1253,7 +1363,8 @@ export class ClusterService extends BaseService {
       const data = await this.getNodeLogs(clusterId, nodeId, params);
       return {success: true, data};
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '获取节点日志失败';
+      const errorMessage =
+        error instanceof Error ? error.message : '获取节点日志失败';
       return {success: false, error: errorMessage};
     }
   }

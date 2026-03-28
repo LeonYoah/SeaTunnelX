@@ -19,13 +19,20 @@ package sync
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/config"
 )
 
 var safeTaskNamePattern = regexp.MustCompile(`^[\p{L}\p{N}._-]+$`)
@@ -42,6 +49,13 @@ type Service struct {
 	executionTargetResolver ExecutionTargetResolver
 	clusterLogProvider      ClusterLogProvider
 }
+
+const (
+	defaultPreviewRowLimit       = 100
+	maxPreviewRowLimit           = 10000
+	defaultPreviewTimeoutMinutes = 10
+	maxPreviewTTL                = 24 * time.Hour
+)
 
 // NewService creates a new sync service.
 func NewService(repo *Repository) *Service {
@@ -62,6 +76,27 @@ func (s *Service) SetConfigToolResolver(resolver ConfigToolResolver) { s.configT
 
 // SetJobIDGenerator sets the platform job id generator.
 func (s *Service) SetJobIDGenerator(generator *JobIDGenerator) { s.jobIDGenerator = generator }
+
+// StartPreviewRuntime starts background maintenance for preview sessions.
+// StartPreviewRuntime 启动预览会话后台维护任务。
+func (s *Service) StartPreviewRuntime(ctx context.Context) {
+	if s == nil || s.repo == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = s.cleanupExpiredPreviewSessions(ctx, maxPreviewTTL)
+				_ = s.stopTimedOutPreviewSessions(ctx)
+			}
+		}
+	}()
+}
 
 // ListGlobalVariables returns all workspace-wide variables.
 func (s *Service) ListGlobalVariables(ctx context.Context) ([]*GlobalVariable, error) {
@@ -304,6 +339,15 @@ func (s *Service) DeleteTask(ctx context.Context, id uint) error {
 	}
 
 	return s.repo.Transaction(ctx, func(tx *Repository) error {
+		if err := tx.DeletePreviewRowsByTaskIDs(ctx, targetIDs); err != nil {
+			return err
+		}
+		if err := tx.DeletePreviewTablesByTaskIDs(ctx, targetIDs); err != nil {
+			return err
+		}
+		if err := tx.DeletePreviewSessionsByTaskIDs(ctx, targetIDs); err != nil {
+			return err
+		}
 		if err := tx.DeleteTaskVersionsByTaskIDs(ctx, targetIDs); err != nil {
 			return err
 		}
@@ -541,26 +585,29 @@ func (s *Service) BuildTaskDAG(ctx context.Context, id uint) (*DAGResult, error)
 	}
 	if s.configToolClient != nil && s.configToolResolver != nil {
 		endpoint, err := s.configToolResolver.ResolveConfigToolEndpoint(ctx, task.ClusterID, task.Definition)
-		if err == nil {
-			req, buildErr := s.buildConfigToolContentRequest(ctx, task)
-			if buildErr == nil {
-				webuiResp, dagErr := s.configToolClient.InspectWebUIDAG(ctx, endpoint, req)
-				if dagErr == nil && webuiResp != nil {
-					rawWebUIJob, marshalErr := structToJSONMap(webuiResp)
-					if marshalErr == nil {
-						return &DAGResult{
-							Nodes:       extractWebUIDAGNodes(webuiResp.JobDag.VertexInfoMap),
-							Edges:       extractWebUIDAGEdges(webuiResp.JobDag.PipelineEdges),
-							WebUIJob:    rawWebUIJob,
-							SimpleGraph: webuiResp.SimpleGraph,
-							Warnings:    append([]string{}, webuiResp.Warnings...),
-						}, nil
-					}
-				}
-				if dagErr != nil {
-					return nil, dagErr
-				}
+		if err != nil {
+			return nil, err
+		}
+		req, buildErr := s.buildConfigToolContentRequest(ctx, task)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		webuiResp, dagErr := s.configToolClient.InspectWebUIDAG(ctx, endpoint, req)
+		if dagErr != nil {
+			return nil, dagErr
+		}
+		if webuiResp != nil {
+			rawWebUIJob, marshalErr := structToJSONMap(webuiResp)
+			if marshalErr != nil {
+				return nil, marshalErr
 			}
+			return &DAGResult{
+				Nodes:       extractWebUIDAGNodes(webuiResp.JobDag.VertexInfoMap),
+				Edges:       extractWebUIDAGEdges(webuiResp.JobDag.PipelineEdges),
+				WebUIJob:    rawWebUIJob,
+				SimpleGraph: webuiResp.SimpleGraph,
+				Warnings:    append([]string{}, webuiResp.Warnings...),
+			}, nil
 		}
 	}
 	if dag, ok := task.Definition["dag"].(map[string]interface{}); ok {
@@ -608,7 +655,7 @@ func dedupeStrings(values []string) []string {
 }
 
 // PreviewTask derives preview config then submits a debug run if possible.
-func (s *Service) PreviewTask(ctx context.Context, id uint, createdBy uint) (*JobInstance, error) {
+func (s *Service) PreviewTask(ctx context.Context, id uint, createdBy uint, opts *PreviewTaskRequest) (*JobInstance, error) {
 	task, err := s.repo.GetTaskByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -618,25 +665,27 @@ func (s *Service) PreviewTask(ctx context.Context, id uint, createdBy uint) (*Jo
 		return nil, ErrTaskNotFile
 	}
 	now := time.Now()
-	previewPayload, previewFormat, previewResult, err := s.derivePreviewPayload(ctx, task)
-	if err != nil {
-		return nil, err
-	}
+	previewPlatformJobID := s.nextJobID()
 	instance := &JobInstance{
 		TaskID:        task.ID,
 		TaskVersion:   task.CurrentVersion,
 		RunType:       RunTypePreview,
 		Status:        JobStatusSuccess,
-		SubmitSpec:    JSONMap{"mode": task.Mode, "preview": true, "preview_format": previewFormat},
+		SubmitSpec:    JSONMap{"mode": task.Mode, "preview": true},
 		ResultPreview: JSONMap{"rows": []map[string]interface{}{}},
 		StartedAt:     &now,
 		CreatedBy:     createdBy,
 	}
+	previewPayload, previewFormat, previewResult, err := s.derivePreviewPayload(ctx, task, previewPlatformJobID, opts)
+	if err != nil {
+		return nil, err
+	}
+	instance.SubmitSpec["preview_format"] = previewFormat
 	if taskExecutionMode(task) == "local" {
 		if len(previewPayload) == 0 {
 			return nil, ErrPreviewHTTPSinkEmpty
 		}
-		instance, err := s.submitLocalTaskInstance(ctx, task, createdBy, RunTypePreview, s.nextJobID(), previewPayload, previewFormat, s.previewJobName(task))
+		instance, err := s.submitLocalTaskInstance(ctx, task, createdBy, RunTypePreview, previewPlatformJobID, previewPayload, previewFormat, s.previewJobName(task))
 		if err != nil {
 			return nil, err
 		}
@@ -644,18 +693,24 @@ func (s *Service) PreviewTask(ctx context.Context, id uint, createdBy uint) (*Jo
 			instance.ResultPreview = mergePreviewDeriveMetadata(instance.ResultPreview, previewResult)
 			_ = s.repo.UpdateJobInstance(ctx, instance)
 		}
+		if err := s.ensurePreviewSession(ctx, task, instance, opts); err != nil {
+			return nil, err
+		}
 		return instance, nil
 	}
 	if len(previewPayload) == 0 {
 		instance.ResultPreview["note"] = "preview placeholder created; configure preview_http_sink to enable engine-backed debug preview"
 		instance.FinishedAt = &now
 	} else {
-		instance.PlatformJobID = s.nextJobID()
+		instance.PlatformJobID = previewPlatformJobID
 		instance.Status = JobStatusRunning
 		instance.ResultPreview["note"] = "preview config derived and submitted to engine"
 		instance.ResultPreview["payload_bytes"] = len(previewPayload)
 		instance.ResultPreview["detected_vars"] = detectTemplateVariables(task.Content)
 		if previewResult != nil {
+			if strings.TrimSpace(previewResult.Content) != "" {
+				instance.ResultPreview["preview_content"] = previewResult.Content
+			}
 			if previewResult.ContentFormat != "" {
 				instance.ResultPreview["content_format"] = previewResult.ContentFormat
 			}
@@ -691,7 +746,258 @@ func (s *Service) PreviewTask(ctx context.Context, id uint, createdBy uint) (*Jo
 	if err := s.repo.CreateJobInstance(ctx, instance); err != nil {
 		return nil, err
 	}
+	if err := s.ensurePreviewSession(ctx, task, instance, opts); err != nil {
+		return nil, err
+	}
 	return instance, nil
+}
+
+func (s *Service) ensurePreviewSession(ctx context.Context, task *Task, instance *JobInstance, opts *PreviewTaskRequest) error {
+	if task == nil || instance == nil || instance.ID == 0 {
+		return nil
+	}
+	rowLimit := normalizePreviewRowLimit(intValueOrZero(task.Definition, "preview_row_limit"))
+	if opts != nil && opts.RowLimit > 0 {
+		rowLimit = normalizePreviewRowLimit(opts.RowLimit)
+	}
+	timeoutMinutes := normalizePreviewTimeoutMinutes(intValueOrZero(task.Definition, "preview_timeout_minutes"))
+	if opts != nil && opts.TimeoutMinutes > 0 {
+		timeoutMinutes = normalizePreviewTimeoutMinutes(opts.TimeoutMinutes)
+	}
+	now := time.Now()
+	session := &PreviewSession{
+		JobInstanceID:  instance.ID,
+		TaskID:         task.ID,
+		PlatformJobID:  strings.TrimSpace(instance.PlatformJobID),
+		EngineJobID:    strings.TrimSpace(instance.EngineJobID),
+		RowLimit:       rowLimit,
+		TimeoutMinutes: timeoutMinutes,
+		Status:         "collecting",
+		StartedAt:      &now,
+	}
+	if instance.Status == JobStatusSuccess || instance.Status == JobStatusFailed || instance.Status == JobStatusCanceled {
+		session.Status = string(instance.Status)
+		session.FinishedAt = instance.FinishedAt
+	}
+	return s.repo.CreatePreviewSession(ctx, session)
+}
+
+// GetPreviewSnapshot returns one incremental preview snapshot for a job instance.
+// GetPreviewSnapshot 返回一个作业实例的增量预览快照。
+func (s *Service) GetPreviewSnapshot(ctx context.Context, jobID uint, tablePath string) (*PreviewSnapshot, error) {
+	instance, err := s.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	session, err := s.repo.GetPreviewSessionByJobInstanceID(ctx, jobID)
+	if err != nil {
+		if errors.Is(err, ErrPreviewSessionNotFound) {
+			return &PreviewSnapshot{
+				JobInstanceID:  jobID,
+				PlatformJobID:  strings.TrimSpace(instance.PlatformJobID),
+				EngineJobID:    strings.TrimSpace(instance.EngineJobID),
+				Status:         string(instance.Status),
+				EmptyReason:    "preview_not_ready",
+				RowLimit:       normalizePreviewRowLimit(intValueOrZero(instance.SubmitSpec, "row_limit")),
+				TimeoutMinutes: normalizePreviewTimeoutMinutes(intValueOrZero(instance.SubmitSpec, "timeout_minutes")),
+				Tables:         []*PreviewTableData{},
+				Warnings:       stringSliceValue(instance.ResultPreview, "warnings"),
+			}, nil
+		}
+		return nil, err
+	}
+	tables, err := s.repo.ListPreviewTablesBySessionID(ctx, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	tableData := make([]*PreviewTableData, 0, len(tables))
+	var selected *PreviewTable
+	for _, table := range tables {
+		tableData = append(tableData, &PreviewTableData{
+			ID:        table.ID,
+			TablePath: table.TablePath,
+			Columns:   append([]string(nil), table.Columns...),
+			RowCount:  table.RowCount,
+		})
+		if selected == nil {
+			selected = table
+		}
+		if strings.TrimSpace(tablePath) != "" && strings.EqualFold(strings.TrimSpace(tablePath), strings.TrimSpace(table.TablePath)) {
+			selected = table
+		}
+	}
+	var selectedData *PreviewTableData
+	if selected != nil {
+		rows, err := s.repo.ListPreviewRowsByTableID(ctx, selected.ID, 0, 10000)
+		if err != nil {
+			return nil, err
+		}
+		selectedRows := make([]map[string]interface{}, 0, len(rows))
+		for _, row := range rows {
+			selectedRows = append(selectedRows, cloneJSONMap(row.RowData))
+		}
+		selectedData = &PreviewTableData{
+			ID:        selected.ID,
+			TablePath: selected.TablePath,
+			Columns:   append([]string(nil), selected.Columns...),
+			RowCount:  selected.RowCount,
+			Rows:      selectedRows,
+		}
+	}
+	snapshot := &PreviewSnapshot{
+		SessionID:      session.ID,
+		JobInstanceID:  jobID,
+		PlatformJobID:  session.PlatformJobID,
+		EngineJobID:    session.EngineJobID,
+		Status:         session.Status,
+		RowLimit:       session.RowLimit,
+		TimeoutMinutes: session.TimeoutMinutes,
+		TotalRows:      session.TotalRows,
+		TableCount:     session.TableCount,
+		Truncated:      session.Truncated,
+		Tables:         tableData,
+		SelectedTable:  selectedData,
+	}
+	if len(tableData) == 0 {
+		snapshot.EmptyReason = "no_preview_rows"
+	}
+	if instance != nil && instance.ResultPreview != nil {
+		if script := strings.TrimSpace(stringValue(instance.ResultPreview, "preview_content")); script != "" {
+			snapshot.InjectedScript = script
+		}
+		if format := strings.TrimSpace(stringValue(instance.ResultPreview, "content_format")); format != "" {
+			snapshot.ContentFormat = format
+		}
+		snapshot.Warnings = stringSliceValue(instance.ResultPreview, "warnings")
+	}
+	return snapshot, nil
+}
+
+// GetJobCheckpointSnapshot returns checkpoint overview/history for one job.
+// GetJobCheckpointSnapshot 返回单个作业的 checkpoint 概览与历史。
+func (s *Service) GetJobCheckpointSnapshot(
+	ctx context.Context,
+	jobID uint,
+	pipelineID *int,
+	limit int,
+	status string,
+) (*CheckpointSnapshot, error) {
+	instance, err := s.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := &CheckpointSnapshot{
+		JobInstanceID: jobID,
+		PlatformJobID: strings.TrimSpace(instance.PlatformJobID),
+		EngineJobID:   strings.TrimSpace(instance.EngineJobID),
+		Status:        string(instance.Status),
+		History:       []*EngineCheckpointRecord{},
+	}
+	if submitSpecExecutionMode(instance.SubmitSpec) == "local" {
+		snapshot.EmptyReason = "checkpoint_not_supported_local"
+		snapshot.Message = "Checkpoint overview is unavailable for local execution mode."
+		return snapshot, nil
+	}
+	if s.engineClient == nil || strings.TrimSpace(instance.EngineJobID) == "" {
+		snapshot.EmptyReason = "checkpoint_not_ready"
+		snapshot.Message = "Checkpoint overview is not ready yet."
+		return snapshot, nil
+	}
+	endpoint := endpointFromSubmitSpec(instance.SubmitSpec)
+	if endpoint == nil {
+		snapshot.EmptyReason = "checkpoint_not_ready"
+		snapshot.Message = "Checkpoint endpoint is unavailable."
+		return snapshot, nil
+	}
+	overview, overviewErr := s.engineClient.GetJobCheckpointOverview(ctx, endpoint, instance.EngineJobID)
+	if overviewErr != nil {
+		if isCheckpointFeatureUnsupported(overviewErr) {
+			snapshot.EmptyReason = "checkpoint_unsupported"
+			snapshot.Message = "Checkpoint overview is only supported on SeaTunnel >= 2.3.13. Please upgrade the cluster version."
+			return snapshot, nil
+		}
+		return nil, overviewErr
+	}
+	history, historyErr := s.engineClient.GetJobCheckpointHistory(ctx, endpoint, instance.EngineJobID, pipelineID, limit, status)
+	if historyErr != nil {
+		if isCheckpointFeatureUnsupported(historyErr) {
+			snapshot.EmptyReason = "checkpoint_unsupported"
+			snapshot.Message = "Checkpoint history is only supported on SeaTunnel >= 2.3.13. Please upgrade the cluster version."
+			snapshot.Overview = overview
+			return snapshot, nil
+		}
+		return nil, historyErr
+	}
+	snapshot.Overview = overview
+	snapshot.History = history
+	if overview == nil || len(overview.Pipelines) == 0 {
+		snapshot.EmptyReason = "checkpoint_not_ready"
+		snapshot.Message = "No checkpoint records have been reported for this job yet."
+	}
+	return snapshot, nil
+}
+
+func isCheckpointFeatureUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "status=404") ||
+		strings.Contains(message, "no context found") ||
+		strings.Contains(message, "not supported by legacy engine api")
+}
+
+func (s *Service) cleanupExpiredPreviewSessions(ctx context.Context, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = maxPreviewTTL
+	}
+	expired, err := s.repo.ListExpiredPreviewSessions(ctx, time.Now().Add(-ttl))
+	if err != nil {
+		return err
+	}
+	if len(expired) == 0 {
+		return nil
+	}
+	sessionIDs := make([]uint, 0, len(expired))
+	for _, item := range expired {
+		if item != nil {
+			sessionIDs = append(sessionIDs, item.ID)
+		}
+	}
+	return s.repo.Transaction(ctx, func(tx *Repository) error {
+		if err := tx.DeletePreviewRowsBySessionIDs(ctx, sessionIDs); err != nil {
+			return err
+		}
+		if err := tx.DeletePreviewTablesBySessionIDs(ctx, sessionIDs); err != nil {
+			return err
+		}
+		return tx.DeletePreviewSessionsByIDs(ctx, sessionIDs)
+	})
+}
+
+func (s *Service) stopTimedOutPreviewSessions(ctx context.Context) error {
+	sessions, err := s.repo.ListTimedOutPreviewSessions(ctx, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		instance, getErr := s.repo.GetJobInstanceByID(ctx, session.JobInstanceID)
+		if getErr != nil {
+			continue
+		}
+		if instance.Status == JobStatusPending || instance.Status == JobStatusRunning {
+			_, _ = s.CancelJob(ctx, instance.ID, false)
+		}
+		session.Status = "timeout"
+		now := time.Now()
+		session.FinishedAt = &now
+		session.LastError = "preview timed out before reaching completion"
+		_ = s.repo.UpdatePreviewSession(ctx, session)
+	}
+	return nil
 }
 
 // SubmitTask creates one formal run instance with platform-managed job id.
@@ -761,6 +1067,8 @@ func (s *Service) submitTaskInstance(ctx context.Context, task *Task, createdBy 
 			"engine_version":       task.EngineVersion,
 			"cluster_id":           task.ClusterID,
 			"format":               submitFormat,
+			"submitted_content":    string(submitBody),
+			"submitted_format":     submitFormat,
 			"job_name":             jobName,
 			"platform_job_id":      platformJobID,
 			"start_with_savepoint": startWithSavepoint,
@@ -804,7 +1112,17 @@ func (s *Service) submitTaskInstance(ctx context.Context, task *Task, createdBy 
 
 // ListJobs returns paginated job instances.
 func (s *Service) ListJobs(ctx context.Context, filter *JobFilter) ([]*JobInstance, int64, error) {
-	return s.repo.ListJobInstances(ctx, filter)
+	items, total, err := s.repo.ListJobInstances(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i, item := range items {
+		refreshed, refreshErr := s.refreshJobInstance(ctx, item)
+		if refreshErr == nil && refreshed != nil {
+			items[i] = refreshed
+		}
+	}
+	return items, total, nil
 }
 
 // GetJob returns one job instance and refreshes live runtime state when possible.
@@ -813,36 +1131,7 @@ func (s *Service) GetJob(ctx context.Context, id uint) (*JobInstance, error) {
 	if err != nil {
 		return nil, err
 	}
-	if submitSpecExecutionMode(instance.SubmitSpec) == "local" {
-		return s.refreshLocalJob(ctx, instance)
-	}
-	if s.engineClient == nil || strings.TrimSpace(instance.EngineJobID) == "" {
-		return instance, nil
-	}
-	if instance.Status == JobStatusSuccess || instance.Status == JobStatusFailed || instance.Status == JobStatusCanceled {
-		return instance, nil
-	}
-	endpoint := endpointFromSubmitSpec(instance.SubmitSpec)
-	if endpoint == nil {
-		return instance, nil
-	}
-	info, err := s.engineClient.GetJobInfo(ctx, endpoint, instance.EngineJobID)
-	if err != nil {
-		return instance, nil
-	}
-	instance.Status = normalizeJobStatus(info.JobStatus)
-	instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, info)
-	if instance.Status == JobStatusSuccess || instance.Status == JobStatusFailed || instance.Status == JobStatusCanceled {
-		now := time.Now()
-		instance.FinishedAt = &now
-		if info.ErrorMsg != nil {
-			instance.ErrorMessage = strings.TrimSpace(fmt.Sprintf("%v", info.ErrorMsg))
-		}
-	}
-	if err := s.repo.UpdateJobInstance(ctx, instance); err != nil {
-		return nil, err
-	}
-	return instance, nil
+	return s.refreshJobInstance(ctx, instance)
 }
 
 // CancelJob marks one running/pending job instance as canceled.
@@ -866,14 +1155,24 @@ func (s *Service) CancelJob(ctx context.Context, id uint, stopWithSavepoint bool
 		}
 	}
 	now := time.Now()
-	instance.Status = JobStatusCanceled
-	instance.FinishedAt = &now
-	instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, &EngineJobInfo{
-		JobID:        instance.EngineJobID,
-		JobName:      strings.TrimSpace(stringValue(instance.SubmitSpec, "job_name")),
-		JobStatus:    "CANCELED",
-		FinishedTime: now.Format(time.DateTime),
-	})
+	if stopWithSavepoint {
+		instance.Status = JobStatusRunning
+		instance.FinishedAt = nil
+		instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, &EngineJobInfo{
+			JobID:     instance.EngineJobID,
+			JobName:   strings.TrimSpace(stringValue(instance.SubmitSpec, "job_name")),
+			JobStatus: "DOING_SAVEPOINT",
+		})
+	} else {
+		instance.Status = JobStatusCanceled
+		instance.FinishedAt = &now
+		instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, &EngineJobInfo{
+			JobID:        instance.EngineJobID,
+			JobName:      strings.TrimSpace(stringValue(instance.SubmitSpec, "job_name")),
+			JobStatus:    "CANCELED",
+			FinishedTime: now.Format(time.DateTime),
+		})
+	}
 	if err := s.repo.UpdateJobInstance(ctx, instance); err != nil {
 		return nil, err
 	}
@@ -1136,6 +1435,7 @@ func extractWebUIDAGNodes(vertexInfoMap map[string]ConfigToolWebUIDAGVertexInfo)
 			"type":          item.value.Type,
 			"connectorType": item.value.ConnectorType,
 			"tablePaths":    append([]string{}, item.value.TablePaths...),
+			"tableColumns":  item.value.TableColumns,
 		})
 	}
 	return nodes
@@ -1218,7 +1518,7 @@ func (s *Service) buildConfigToolContentRequest(ctx context.Context, task *Task)
 	return nil, ErrTaskDefinitionEmpty
 }
 
-func (s *Service) derivePreviewPayload(ctx context.Context, task *Task) ([]byte, string, *ConfigToolPreviewResponse, error) {
+func (s *Service) derivePreviewPayload(ctx context.Context, task *Task, platformJobID string, opts *PreviewTaskRequest) ([]byte, string, *ConfigToolPreviewResponse, error) {
 	if payload, format := buildPreviewPayload(task.Definition); len(payload) > 0 {
 		return payload, format, nil, nil
 	}
@@ -1229,11 +1529,14 @@ func (s *Service) derivePreviewPayload(ctx context.Context, task *Task) ([]byte,
 	if err != nil {
 		return nil, "", nil, nil
 	}
-	req, err := s.buildConfigToolPreviewRequest(ctx, task)
+	req, err := s.buildConfigToolPreviewRequest(ctx, task, platformJobID, opts)
 	if err != nil {
 		return nil, "", nil, err
 	}
 	mode := strings.ToLower(strings.TrimSpace(stringValue(task.Definition, "preview_mode")))
+	if opts != nil && strings.TrimSpace(opts.Mode) != "" {
+		mode = strings.ToLower(strings.TrimSpace(opts.Mode))
+	}
 	var resp *ConfigToolPreviewResponse
 	switch mode {
 	case "", "source":
@@ -1252,7 +1555,7 @@ func (s *Service) derivePreviewPayload(ctx context.Context, task *Task) ([]byte,
 	return []byte(resp.Content), normalizeSubmitFormat(resp.ContentFormat), resp, nil
 }
 
-func (s *Service) buildConfigToolPreviewRequest(ctx context.Context, task *Task) (*ConfigToolPreviewRequest, error) {
+func (s *Service) buildConfigToolPreviewRequest(ctx context.Context, task *Task, platformJobID string, opts *PreviewTaskRequest) (*ConfigToolPreviewRequest, error) {
 	contentReq, err := s.buildConfigToolContentRequest(ctx, task)
 	if err != nil {
 		return nil, err
@@ -1261,7 +1564,27 @@ func (s *Service) buildConfigToolPreviewRequest(ctx context.Context, task *Task)
 	if len(httpSink) == 0 {
 		return nil, ErrPreviewHTTPSinkEmpty
 	}
-	req := &ConfigToolPreviewRequest{ConfigToolContentRequest: *contentReq, OutputFormat: normalizePreviewOutputFormat(stringValue(task.Definition, "preview_output_format")), HttpSink: httpSink, EnvOverrides: mapValue(task.Definition, "preview_env_overrides", "env_overrides"), MetadataFields: mapValue(task.Definition, "preview_metadata_fields", "metadata_fields"), MetadataOutputDataset: strings.TrimSpace(stringValue(task.Definition, "preview_metadata_output_dataset")), SourceNodeID: strings.TrimSpace(stringValue(task.Definition, "preview_source_node_id", "source_node_id")), TransformNodeID: strings.TrimSpace(stringValue(task.Definition, "preview_transform_node_id", "transform_node_id"))}
+	rowLimit := normalizePreviewRowLimit(intValueOrZero(task.Definition, "preview_row_limit"))
+	if opts != nil && opts.RowLimit > 0 {
+		rowLimit = normalizePreviewRowLimit(opts.RowLimit)
+	}
+	httpSink = injectPreviewCollectIdentifiers(httpSink, strings.TrimSpace(platformJobID), rowLimit)
+	httpSink = injectPreviewCollectAuth(httpSink, strings.TrimSpace(platformJobID))
+	req := &ConfigToolPreviewRequest{ConfigToolContentRequest: *contentReq, PlatformJobID: strings.TrimSpace(platformJobID), EngineJobID: strings.TrimSpace(platformJobID), PreviewRowLimit: &rowLimit, OutputFormat: normalizePreviewOutputFormat(stringValue(task.Definition, "preview_output_format")), HttpSink: httpSink, EnvOverrides: mapValue(task.Definition, "preview_env_overrides", "env_overrides"), MetadataFields: mapValue(task.Definition, "preview_metadata_fields", "metadata_fields"), MetadataOutputDataset: strings.TrimSpace(stringValue(task.Definition, "preview_metadata_output_dataset")), SourceNodeID: strings.TrimSpace(stringValue(task.Definition, "preview_source_node_id", "source_node_id")), TransformNodeID: strings.TrimSpace(stringValue(task.Definition, "preview_transform_node_id", "transform_node_id"))}
+	if opts != nil {
+		if strings.TrimSpace(opts.SourceNodeID) != "" {
+			req.SourceNodeID = strings.TrimSpace(opts.SourceNodeID)
+		}
+		if opts.SourceIndex != nil {
+			req.SourceIndex = opts.SourceIndex
+		}
+		if strings.TrimSpace(opts.TransformNodeID) != "" {
+			req.TransformNodeID = strings.TrimSpace(opts.TransformNodeID)
+		}
+		if opts.TransformIndex != nil {
+			req.TransformIndex = opts.TransformIndex
+		}
+	}
 	if index, ok := intValue(task.Definition, "preview_source_index", "source_index"); ok {
 		req.SourceIndex = &index
 	}
@@ -1269,6 +1592,158 @@ func (s *Service) buildConfigToolPreviewRequest(ctx context.Context, task *Task)
 		req.TransformIndex = &index
 	}
 	return req, nil
+}
+
+func buildPreviewCollectToken(platformJobID string) string {
+	secret := strings.TrimSpace(config.Config.App.SessionSecret)
+	if secret == "" || strings.TrimSpace(platformJobID) == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("preview-collect:"))
+	_, _ = mac.Write([]byte(strings.TrimSpace(platformJobID)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func injectPreviewCollectAuth(httpSink map[string]interface{}, platformJobID string) map[string]interface{} {
+	if len(httpSink) == 0 {
+		return httpSink
+	}
+	token := buildPreviewCollectToken(platformJobID)
+	if token == "" {
+		return httpSink
+	}
+	cloned := cloneAnyMap(httpSink)
+	headers := map[string]interface{}{}
+	if existing := cloneAnyMap(mapValue(cloned, "headers")); len(existing) > 0 {
+		headers = existing
+	}
+	headers["X-Preview-Token"] = token
+	cloned["headers"] = headers
+	return cloned
+}
+
+func injectPreviewCollectIdentifiers(httpSink map[string]interface{}, platformJobID string, rowLimit int) map[string]interface{} {
+	if len(httpSink) == 0 {
+		return httpSink
+	}
+	cloned := cloneAnyMap(httpSink)
+	if platformJobID == "" {
+		return cloned
+	}
+	urlValue, ok := cloned["url"].(string)
+	if !ok || strings.TrimSpace(urlValue) == "" {
+		return cloned
+	}
+	urlValue = strings.TrimSpace(urlValue)
+	parsed, err := url.Parse(urlValue)
+	if err != nil {
+		return cloned
+	}
+	query := parsed.Query()
+	query.Set("platform_job_id", platformJobID)
+	query.Set("engine_job_id", platformJobID)
+	query.Set("row_limit", strconv.Itoa(normalizePreviewRowLimit(rowLimit)))
+	parsed.RawQuery = query.Encode()
+	cloned["url"] = parsed.String()
+	return cloned
+}
+
+func normalizePreviewCollectRequest(req *PreviewCollectRequest, rawBody []byte) {
+	if req == nil {
+		return
+	}
+	if strings.TrimSpace(req.PlatformJobID) == "" && strings.TrimSpace(req.EngineJobID) == "" && len(rawBody) == 0 {
+		return
+	}
+	if len(req.Rows) == 0 && len(req.Columns) == 0 && strings.TrimSpace(req.Dataset) == "" {
+		body := strings.TrimSpace(string(rawBody))
+		if body != "" && body != "null" {
+			var payload interface{}
+			if err := json.Unmarshal(rawBody, &payload); err == nil {
+				switch typed := payload.(type) {
+				case map[string]interface{}:
+					req.Rows = []map[string]interface{}{typed}
+				case []interface{}:
+					rows := make([]map[string]interface{}, 0, len(typed))
+					for _, item := range typed {
+						if mapped, ok := item.(map[string]interface{}); ok {
+							rows = append(rows, mapped)
+						}
+					}
+					req.Rows = rows
+				}
+			}
+		}
+	}
+	normalizePreviewRowsAndDataset(req)
+}
+
+func normalizePreviewRowsAndDataset(req *PreviewCollectRequest) {
+	if req == nil || len(req.Rows) == 0 {
+		return
+	}
+	columnsSeen := map[string]struct{}{}
+	columns := make([]string, 0)
+	for rowIndex := range req.Rows {
+		row := req.Rows[rowIndex]
+		if row == nil {
+			continue
+		}
+		if rowKind, ok := row["__st_debug_rowkind"].(string); ok && strings.TrimSpace(rowKind) != "" {
+			row["RowKind"] = strings.TrimSpace(rowKind)
+		}
+		dbName, _ := row["__st_debug_db"].(string)
+		tableName, _ := row["__st_debug_table"].(string)
+		if strings.TrimSpace(req.Dataset) == "" {
+			switch {
+			case strings.TrimSpace(dbName) != "" && strings.TrimSpace(tableName) != "":
+				req.Dataset = strings.TrimSpace(dbName) + "." + strings.TrimSpace(tableName)
+			case strings.TrimSpace(tableName) != "":
+				req.Dataset = strings.TrimSpace(tableName)
+			}
+		}
+		if req.Catalog == nil && (strings.TrimSpace(dbName) != "" || strings.TrimSpace(tableName) != "") {
+			req.Catalog = map[string]interface{}{}
+			if strings.TrimSpace(dbName) != "" {
+				req.Catalog["database"] = strings.TrimSpace(dbName)
+			}
+			if strings.TrimSpace(tableName) != "" {
+				req.Catalog["table"] = strings.TrimSpace(tableName)
+			}
+		}
+		delete(row, "__st_debug_db")
+		delete(row, "__st_debug_table")
+		delete(row, "__st_debug_rowkind")
+		for key := range row {
+			trimmed := strings.TrimSpace(key)
+			if trimmed == "" {
+				continue
+			}
+			if _, exists := columnsSeen[trimmed]; exists {
+				continue
+			}
+			columnsSeen[trimmed] = struct{}{}
+			columns = append(columns, trimmed)
+		}
+	}
+	if _, exists := columnsSeen["RowKind"]; exists {
+		reordered := make([]string, 0, len(columns))
+		reordered = append(reordered, "RowKind")
+		for _, column := range columns {
+			if column == "RowKind" {
+				continue
+			}
+			reordered = append(reordered, column)
+		}
+		columns = reordered
+	}
+	if len(req.Columns) == 0 && len(columns) > 0 {
+		req.Columns = make([]interface{}, 0, len(columns))
+		for _, column := range columns {
+			req.Columns = append(req.Columns, column)
+		}
+	}
 }
 
 func endpointFromSubmitSpec(spec JSONMap) *EngineEndpoint {
@@ -1322,6 +1797,60 @@ func mergeJobRuntimeInfo(existing JSONMap, info *EngineJobInfo) JSONMap {
 		existing["job_name"] = strings.TrimSpace(info.JobName)
 	}
 	return existing
+}
+
+func (s *Service) refreshJobInstance(ctx context.Context, instance *JobInstance) (*JobInstance, error) {
+	if instance == nil {
+		return nil, nil
+	}
+	if submitSpecExecutionMode(instance.SubmitSpec) == "local" {
+		return s.refreshLocalJob(ctx, instance)
+	}
+	if s.engineClient == nil || strings.TrimSpace(instance.EngineJobID) == "" {
+		return instance, nil
+	}
+	if instance.Status == JobStatusSuccess || instance.Status == JobStatusFailed || instance.Status == JobStatusCanceled {
+		jobStatus := strings.ToUpper(strings.TrimSpace(stringValue(instance.ResultPreview, "job_status")))
+		if jobStatus == "" || isFinalEngineJobStatus(jobStatus) {
+			return instance, nil
+		}
+	}
+	endpoint := endpointFromSubmitSpec(instance.SubmitSpec)
+	if endpoint == nil {
+		return instance, nil
+	}
+	info, err := s.engineClient.GetJobInfo(ctx, endpoint, instance.EngineJobID)
+	if err != nil {
+		return instance, nil
+	}
+	instance.Status = normalizeJobStatus(info.JobStatus)
+	instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, info)
+	if isFinalNormalizedJobStatus(instance.Status) {
+		now := time.Now()
+		instance.FinishedAt = &now
+		if info.ErrorMsg != nil {
+			instance.ErrorMessage = strings.TrimSpace(fmt.Sprintf("%v", info.ErrorMsg))
+		}
+	} else {
+		instance.FinishedAt = nil
+	}
+	if err := s.repo.UpdateJobInstance(ctx, instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
+func isFinalNormalizedJobStatus(status JobStatus) bool {
+	return status == JobStatusSuccess || status == JobStatusFailed || status == JobStatusCanceled
+}
+
+func isFinalEngineJobStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FINISHED", "SUCCESS", "FAILED", "FAILING", "CANCELED", "CANCELLED", "SAVEPOINT_DONE":
+		return true
+	default:
+		return false
+	}
 }
 
 func stringValue(m map[string]interface{}, keys ...string) string {
@@ -1386,10 +1915,12 @@ func normalizePreviewOutputFormat(format string) string {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "hocon":
 		return "hocon"
-	case "json", "":
+	case "json":
 		return "json"
+	case "":
+		return "hocon"
 	default:
-		return "json"
+		return "hocon"
 	}
 }
 

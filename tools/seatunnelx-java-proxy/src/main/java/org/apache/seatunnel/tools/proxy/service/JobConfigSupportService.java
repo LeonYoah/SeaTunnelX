@@ -32,7 +32,7 @@ import org.apache.seatunnel.api.sink.SeaTunnelSink;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
-import org.apache.seatunnel.api.table.catalog.TablePath;
+import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.factory.FactoryUtil;
 import org.apache.seatunnel.api.transform.SeaTunnelTransform;
 import org.apache.seatunnel.core.starter.utils.ConfigBuilder;
@@ -117,7 +117,7 @@ public class JobConfigSupportService {
         List<ProxyNode> nodes = new ArrayList<>();
         List<ProxyEdge> edges = new ArrayList<>();
         Map<String, String> producers = new LinkedHashMap<>();
-        Map<String, List<String>> displayPaths =
+        Map<String, OfficialNodeDisplayInfo> displayPaths =
                 resolveOfficialDisplayPaths(jobConfig, sources, transforms, sinks, warnings);
 
         for (int i = 0; i < sources.size(); i++) {
@@ -133,7 +133,8 @@ public class JobConfigSupportService {
                             Collections.emptyList(),
                             output,
                             getNodeDisplayPaths(
-                                    displayPaths, nodeId, Collections.singletonList(output))));
+                                    displayPaths, nodeId, Collections.singletonList(output)),
+                            getNodeDisplayColumns(displayPaths, nodeId)));
             producers.put(output, nodeId);
         }
 
@@ -151,7 +152,8 @@ public class JobConfigSupportService {
                             inputs,
                             output,
                             getNodeDisplayPaths(
-                                    displayPaths, nodeId, buildTransformFallback(output, inputs))));
+                                    displayPaths, nodeId, buildTransformFallback(output, inputs)),
+                            getNodeDisplayColumns(displayPaths, nodeId)));
             producers.put(output, nodeId);
         }
 
@@ -167,7 +169,8 @@ public class JobConfigSupportService {
                             i,
                             inputs,
                             null,
-                            getNodeDisplayPaths(displayPaths, nodeId, inputs)));
+                            getNodeDisplayPaths(displayPaths, nodeId, inputs),
+                            getNodeDisplayColumns(displayPaths, nodeId)));
         }
 
         if (simpleGraph) {
@@ -347,13 +350,13 @@ public class JobConfigSupportService {
                 && (transforms.isEmpty() || transforms.size() == 1);
     }
 
-    private Map<String, List<String>> resolveOfficialDisplayPaths(
+    private Map<String, OfficialNodeDisplayInfo> resolveOfficialDisplayPaths(
             Config jobConfig,
             List<Config> sources,
             List<Config> transforms,
             List<Config> sinks,
             List<String> warnings) {
-        Map<String, List<String>> result = new LinkedHashMap<>();
+        Map<String, OfficialNodeDisplayInfo> result = new LinkedHashMap<>();
         Map<String, List<CatalogTable>> datasetCatalogTables = new LinkedHashMap<>();
         ClassLoader originalClassLoader = Thread.currentThread().getContextClassLoader();
         URLClassLoader seatunnelHomeClassLoader = null;
@@ -374,7 +377,7 @@ public class JobConfigSupportService {
                     List<CatalogTable> catalogTables =
                             resolveSourceCatalogTables(readonlyConfig, classLoader);
                     datasetCatalogTables.put(output, catalogTables);
-                    result.put(nodeId, toTablePaths(catalogTables));
+                    result.put(nodeId, toDisplayInfo(catalogTables));
                 } catch (Exception e) {
                     throw new ProxyException(
                             400,
@@ -397,7 +400,7 @@ public class JobConfigSupportService {
                             resolveTransformCatalogTables(
                                     readonlyConfig, inputCatalogTables, classLoader);
                     datasetCatalogTables.put(output, catalogTables);
-                    result.put(nodeId, toTablePaths(catalogTables));
+                    result.put(nodeId, toDisplayInfo(catalogTables));
                 } catch (Exception e) {
                     throw new ProxyException(
                             400,
@@ -417,7 +420,8 @@ public class JobConfigSupportService {
                 try {
                     result.put(
                             nodeId,
-                            resolveSinkTablePaths(readonlyConfig, inputCatalogTables, classLoader));
+                            resolveSinkDisplayInfo(
+                                    readonlyConfig, inputCatalogTables, classLoader));
                 } catch (Exception e) {
                     throw new ProxyException(
                             400,
@@ -509,18 +513,18 @@ public class JobConfigSupportService {
         return singleCatalogTable.map(Collections::singletonList).orElse(Collections.emptyList());
     }
 
-    private List<String> resolveSinkTablePaths(
+    private OfficialNodeDisplayInfo resolveSinkDisplayInfo(
             ReadonlyConfig readonlyConfig,
             List<CatalogTable> inputCatalogTables,
             ClassLoader classLoader) {
         if (inputCatalogTables.isEmpty()) {
-            return Collections.emptyList();
+            return OfficialNodeDisplayInfo.empty();
         }
         String factoryId = readonlyConfig.get(PLUGIN_NAME);
         Function<PluginIdentifier, SeaTunnelSink> fallbackCreateSink =
                 pluginIdentifier ->
                         new SeaTunnelSinkPluginDiscovery().createPluginInstance(pluginIdentifier);
-        Set<String> tablePaths = new LinkedHashSet<>();
+        List<CatalogTable> sinkTables = new ArrayList<>();
         for (CatalogTable catalogTable : inputCatalogTables) {
             SeaTunnelSink<?, ?, ?, ?> sink =
                     FactoryUtil.createAndPrepareSink(
@@ -530,13 +534,9 @@ public class JobConfigSupportService {
                             factoryId,
                             fallbackCreateSink,
                             null);
-            sink.getWriteCatalogTable()
-                    .map(CatalogTable::getTablePath)
-                    .map(TablePath::getFullName)
-                    .filter(StringUtils::isNotBlank)
-                    .ifPresent(tablePaths::add);
+            sink.getWriteCatalogTable().ifPresent(sinkTables::add);
         }
-        return new ArrayList<>(tablePaths);
+        return toDisplayInfo(sinkTables);
     }
 
     private List<CatalogTable> collectInputCatalogTables(
@@ -551,28 +551,33 @@ public class JobConfigSupportService {
         return inputCatalogTables;
     }
 
-    private List<String> toTablePaths(List<CatalogTable> catalogTables) {
+    private OfficialNodeDisplayInfo toDisplayInfo(List<CatalogTable> catalogTables) {
         if (catalogTables == null || catalogTables.isEmpty()) {
-            return Collections.emptyList();
+            return OfficialNodeDisplayInfo.empty();
         }
         Set<String> tablePaths = new LinkedHashSet<>();
+        Map<String, List<String>> columns = new LinkedHashMap<>();
         for (CatalogTable catalogTable : catalogTables) {
             if (catalogTable == null || catalogTable.getTablePath() == null) {
                 continue;
             }
             String fullName = catalogTable.getTablePath().getFullName();
-            if (StringUtils.isNotBlank(fullName)) {
-                tablePaths.add(fullName);
+            if (StringUtils.isBlank(fullName)) {
+                continue;
             }
+            tablePaths.add(fullName);
+            columns.put(fullName, extractColumnNames(catalogTable));
         }
-        return new ArrayList<>(tablePaths);
+        return new OfficialNodeDisplayInfo(new ArrayList<>(tablePaths), columns);
     }
 
     private List<String> getNodeDisplayPaths(
-            Map<String, List<String>> officialPaths, String nodeId, List<String> fallbackPaths) {
-        List<String> tablePaths = officialPaths.get(nodeId);
-        if (tablePaths != null && !tablePaths.isEmpty()) {
-            return tablePaths;
+            Map<String, OfficialNodeDisplayInfo> officialPaths,
+            String nodeId,
+            List<String> fallbackPaths) {
+        OfficialNodeDisplayInfo info = officialPaths.get(nodeId);
+        if (info != null && !info.getTablePaths().isEmpty()) {
+            return info.getTablePaths();
         }
         Set<String> fallback = new LinkedHashSet<>();
         for (String path : fallbackPaths) {
@@ -583,10 +588,59 @@ public class JobConfigSupportService {
         return new ArrayList<>(fallback);
     }
 
+    private Map<String, List<String>> getNodeDisplayColumns(
+            Map<String, OfficialNodeDisplayInfo> officialPaths, String nodeId) {
+        OfficialNodeDisplayInfo info = officialPaths.get(nodeId);
+        if (info == null) {
+            return Collections.emptyMap();
+        }
+        return info.getTableColumns();
+    }
+
+    private List<String> extractColumnNames(CatalogTable catalogTable) {
+        if (catalogTable == null || catalogTable.getTableSchema() == null) {
+            return Collections.emptyList();
+        }
+        List<Column> columns = catalogTable.getTableSchema().getColumns();
+        if (columns == null || columns.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> names = new ArrayList<>();
+        for (Column column : columns) {
+            if (column != null && StringUtils.isNotBlank(column.getName())) {
+                names.add(column.getName());
+            }
+        }
+        return names;
+    }
+
     private List<String> buildTransformFallback(String output, List<String> inputs) {
         if (StringUtils.isNotBlank(output)) {
             return Collections.singletonList(output);
         }
         return inputs;
+    }
+
+    private static final class OfficialNodeDisplayInfo {
+        private final List<String> tablePaths;
+        private final Map<String, List<String>> tableColumns;
+
+        private OfficialNodeDisplayInfo(
+                List<String> tablePaths, Map<String, List<String>> tableColumns) {
+            this.tablePaths = tablePaths == null ? Collections.emptyList() : tablePaths;
+            this.tableColumns = tableColumns == null ? Collections.emptyMap() : tableColumns;
+        }
+
+        static OfficialNodeDisplayInfo empty() {
+            return new OfficialNodeDisplayInfo(Collections.emptyList(), Collections.emptyMap());
+        }
+
+        List<String> getTablePaths() {
+            return tablePaths;
+        }
+
+        Map<String, List<String>> getTableColumns() {
+            return tableColumns;
+        }
     }
 }

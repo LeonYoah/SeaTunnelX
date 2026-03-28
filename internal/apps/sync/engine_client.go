@@ -38,6 +38,8 @@ import (
 type EngineClient interface {
 	Submit(ctx context.Context, req *EngineSubmitRequest) (*EngineSubmitResponse, error)
 	GetJobInfo(ctx context.Context, endpoint *EngineEndpoint, jobID string) (*EngineJobInfo, error)
+	GetJobCheckpointOverview(ctx context.Context, endpoint *EngineEndpoint, jobID string) (*EngineCheckpointOverview, error)
+	GetJobCheckpointHistory(ctx context.Context, endpoint *EngineEndpoint, jobID string, pipelineID *int, limit int, status string) ([]*EngineCheckpointRecord, error)
 	StopJob(ctx context.Context, endpoint *EngineEndpoint, jobID string, stopWithSavepoint bool) error
 	GetJobLogs(ctx context.Context, endpoint *EngineEndpoint, jobID string) (string, error)
 }
@@ -78,6 +80,51 @@ type EngineJobInfo struct {
 	ErrorMsg     interface{}            `json:"errorMsg"`
 	JobDag       map[string]interface{} `json:"jobDag"`
 	Metrics      map[string]interface{} `json:"metrics"`
+}
+
+// EngineCheckpointOverview describes one checkpoint overview payload from the engine.
+type EngineCheckpointOverview struct {
+	JobID     string                      `json:"jobId"`
+	UpdatedAt int64                       `json:"updatedAt"`
+	Pipelines []*EngineCheckpointPipeline `json:"pipelines"`
+}
+
+// EngineCheckpointPipeline describes one pipeline checkpoint summary.
+type EngineCheckpointPipeline struct {
+	PipelineID      int                           `json:"pipelineId"`
+	Counts          map[string]int64              `json:"counts"`
+	LatestCompleted *EngineCheckpoint             `json:"latestCompleted,omitempty"`
+	LatestFailed    *EngineCheckpoint             `json:"latestFailed,omitempty"`
+	LatestSavepoint *EngineCheckpoint             `json:"latestSavepoint,omitempty"`
+	InProgress      []*EngineCheckpointInProgress `json:"inProgress,omitempty"`
+	History         []*EngineCheckpointRecord     `json:"history,omitempty"`
+}
+
+// EngineCheckpoint describes one checkpoint metadata record.
+type EngineCheckpoint struct {
+	CheckpointID       int64  `json:"checkpointId"`
+	CheckpointType     string `json:"checkpointType"`
+	Status             string `json:"status"`
+	TriggerTimestamp   int64  `json:"triggerTimestamp"`
+	CompletedTimestamp int64  `json:"completedTimestamp,omitempty"`
+	DurationMillis     int64  `json:"durationMillis,omitempty"`
+	StateSize          int64  `json:"stateSize,omitempty"`
+	FailureReason      string `json:"failureReason,omitempty"`
+}
+
+// EngineCheckpointInProgress describes one running checkpoint progress row.
+type EngineCheckpointInProgress struct {
+	CheckpointID     int64  `json:"checkpointId"`
+	CheckpointType   string `json:"checkpointType"`
+	TriggerTimestamp int64  `json:"triggerTimestamp"`
+	Acknowledged     int64  `json:"acknowledged"`
+	Total            int64  `json:"total"`
+}
+
+// EngineCheckpointRecord describes one checkpoint history row.
+type EngineCheckpointRecord struct {
+	PipelineID int               `json:"pipelineId"`
+	Checkpoint *EngineCheckpoint `json:"checkpoint"`
 }
 
 // ClusterRuntimeResolver resolves SeaTunnel engine API endpoints from cluster metadata.
@@ -201,6 +248,80 @@ func (c *SeaTunnelEngineClient) GetJobInfo(ctx context.Context, endpoint *Engine
 		return nil, err
 	}
 	return &result, nil
+}
+
+// GetJobCheckpointOverview fetches one job checkpoint overview from REST V2.
+func (c *SeaTunnelEngineClient) GetJobCheckpointOverview(ctx context.Context, endpoint *EngineEndpoint, jobID string) (*EngineCheckpointOverview, error) {
+	if endpoint != nil && strings.EqualFold(strings.TrimSpace(endpoint.APIMode), "v1") {
+		return nil, fmt.Errorf("sync: checkpoint overview is not supported by legacy engine api")
+	}
+	targetURL, err := buildEngineURL(endpoint, "/jobs/checkpoints/"+neturl.PathEscape(strings.TrimSpace(jobID)), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("sync: get checkpoint overview failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var result EngineCheckpointOverview
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetJobCheckpointHistory fetches job checkpoint history from REST V2.
+func (c *SeaTunnelEngineClient) GetJobCheckpointHistory(ctx context.Context, endpoint *EngineEndpoint, jobID string, pipelineID *int, limit int, status string) ([]*EngineCheckpointRecord, error) {
+	if endpoint != nil && strings.EqualFold(strings.TrimSpace(endpoint.APIMode), "v1") {
+		return nil, fmt.Errorf("sync: checkpoint history is not supported by legacy engine api")
+	}
+	params := map[string]string{}
+	if pipelineID != nil && *pipelineID > 0 {
+		params["pipelineId"] = strconv.Itoa(*pipelineID)
+	}
+	if limit > 0 {
+		params["limit"] = strconv.Itoa(limit)
+	}
+	if trimmed := strings.ToUpper(strings.TrimSpace(status)); trimmed != "" {
+		params["status"] = trimmed
+	}
+	targetURL, err := buildEngineURL(endpoint, "/jobs/checkpoints/history/"+neturl.PathEscape(strings.TrimSpace(jobID)), params)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("sync: get checkpoint history failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	records := make([]*EngineCheckpointRecord, 0)
+	if err := json.Unmarshal(body, &records); err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 // StopJob cancels one running job.
@@ -636,6 +757,10 @@ func normalizeJobStatus(status string) JobStatus {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "RUNNING":
 		return JobStatusRunning
+	case "DOING_SAVEPOINT":
+		return JobStatusRunning
+	case "SAVEPOINT_DONE":
+		return JobStatusSuccess
 	case "FINISHED", "SUCCESS":
 		return JobStatusSuccess
 	case "FAILING", "FAILED":
