@@ -76,7 +76,7 @@ type EngineJobInfo struct {
 	JobName      string                 `json:"jobName"`
 	JobStatus    string                 `json:"jobStatus"`
 	CreateTime   string                 `json:"createTime"`
-	FinishedTime string                 `json:"finishedTime"`
+	FinishedTime string                 `json:"finishTime"`
 	ErrorMsg     interface{}            `json:"errorMsg"`
 	JobDag       map[string]interface{} `json:"jobDag"`
 	Metrics      map[string]interface{} `json:"metrics"`

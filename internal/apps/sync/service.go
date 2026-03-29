@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/config"
+	"github.com/seatunnel/seatunnelX/internal/pkg/schedulex"
 	"github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
@@ -61,7 +62,7 @@ const (
 	defaultPreviewRowLimit       = 100
 	maxPreviewRowLimit           = 10000
 	defaultPreviewTimeoutMinutes = 10
-	maxPreviewTTL                = 24 * time.Hour
+	defaultPreviewTTLHours       = 24
 )
 
 // NewService creates a new sync service.
@@ -98,11 +99,19 @@ func (s *Service) StartPreviewRuntime(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = s.cleanupExpiredPreviewSessions(ctx, maxPreviewTTL)
+				_ = s.cleanupExpiredPreviewSessions(ctx, s.previewDataTTL())
 				_ = s.stopTimedOutPreviewSessions(ctx)
 			}
 		}
 	}()
+}
+
+func (s *Service) previewDataTTL() time.Duration {
+	hours := defaultPreviewTTLHours
+	if config.Config != nil && config.Config.Sync.PreviewDataTTLHours > 0 {
+		hours = config.Config.Sync.PreviewDataTTLHours
+	}
+	return time.Duration(hours) * time.Hour
 }
 
 // ListGlobalVariables returns all workspace-wide variables.
@@ -208,7 +217,7 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest, create
 		return nil, err
 	}
 	definition := cloneJSONMap(req.Definition)
-	if err := validateVariableKeyConflicts(extractDefinitionVariables(definition, "custom_variables")); err != nil {
+	if err := validateTaskDefinition(definition); err != nil {
 		return nil, err
 	}
 	content := strings.TrimSpace(req.Content)
@@ -244,7 +253,17 @@ func (s *Service) CreateTask(ctx context.Context, req *CreateTaskRequest, create
 
 // ListTasks returns paginated workspace nodes.
 func (s *Service) ListTasks(ctx context.Context, filter *TaskFilter) ([]*Task, int64, error) {
-	return s.repo.ListTasks(ctx, filter)
+	tasks, total, err := s.repo.ListTasks(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, task := range tasks {
+		s.applyTaskDefaults(task)
+	}
+	if err := s.decorateTaskScheduleMetadata(ctx, tasks); err != nil {
+		return nil, 0, err
+	}
+	return tasks, total, nil
 }
 
 // GetTask returns one workspace node.
@@ -254,6 +273,9 @@ func (s *Service) GetTask(ctx context.Context, id uint) (*Task, error) {
 		return nil, err
 	}
 	s.applyTaskDefaults(task)
+	if err := s.decorateTaskScheduleMetadata(ctx, []*Task{task}); err != nil {
+		return nil, err
+	}
 	return task, nil
 }
 
@@ -268,6 +290,9 @@ func (s *Service) GetTaskTree(ctx context.Context) ([]*TaskTreeNode, error) {
 	}
 	for _, task := range tasks {
 		s.applyTaskDefaults(task)
+	}
+	if err := s.decorateTaskScheduleMetadata(ctx, tasks); err != nil {
+		return nil, err
 	}
 	return buildTaskTree(tasks), nil
 }
@@ -331,7 +356,7 @@ func (s *Service) UpdateTask(ctx context.Context, id uint, req *UpdateTaskReques
 	} else {
 		task.Definition = cloneJSONMap(req.Definition)
 	}
-	if err := validateVariableKeyConflicts(extractDefinitionVariables(task.Definition, "custom_variables")); err != nil {
+	if err := validateTaskDefinition(task.Definition); err != nil {
 		return nil, err
 	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
@@ -399,7 +424,7 @@ func (s *Service) getTaskForExecution(ctx context.Context, id uint, draft *TaskD
 		return nil, err
 	}
 	definition := cloneJSONMap(draft.Definition)
-	if err := validateVariableKeyConflicts(extractDefinitionVariables(definition, "custom_variables")); err != nil {
+	if err := validateTaskDefinition(definition); err != nil {
 		return nil, err
 	}
 	task.Name = name
@@ -1005,7 +1030,7 @@ func isCheckpointFeatureUnsupported(err error) bool {
 
 func (s *Service) cleanupExpiredPreviewSessions(ctx context.Context, ttl time.Duration) error {
 	if ttl <= 0 {
-		ttl = maxPreviewTTL
+		ttl = s.previewDataTTL()
 	}
 	expired, err := s.repo.ListExpiredPreviewSessions(ctx, time.Now().Add(-ttl))
 	if err != nil {
@@ -1164,6 +1189,7 @@ func (s *Service) submitTaskInstanceWithPayload(ctx context.Context, task *Task,
 			"submitted_content":    string(submitBody),
 			"submitted_format":     submitFormat,
 			"job_name":             jobName,
+			"trigger_source":       triggerSourceForRunType(runType),
 			"platform_job_id":      platformJobID,
 			"start_with_savepoint": startWithSavepoint,
 		},
@@ -1407,11 +1433,57 @@ func cloneJSONMap(src JSONMap) JSONMap {
 	return cloned
 }
 
+func (s *Service) decorateTaskScheduleMetadata(ctx context.Context, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	taskIDs := make([]uint, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		taskIDs = append(taskIDs, task.ID)
+		cfg, err := parseTaskSchedule(task.Definition)
+		if err != nil || cfg == nil {
+			continue
+		}
+		task.ScheduleEnabled = cfg.Enabled
+		task.ScheduleCronExpr = cfg.CronExpr
+		task.ScheduleTimezone = cfg.Timezone
+		if cfg.Enabled && strings.TrimSpace(cfg.CronExpr) != "" {
+			nextRun, nextErr := schedulex.NextRun(cfg.CronExpr, time.Now(), cfg.Timezone)
+			if nextErr == nil {
+				task.ScheduleNextTriggeredAt = nextRun
+			}
+		}
+	}
+	latestScheduled, err := s.repo.GetLatestScheduledJobInstancesByTaskIDs(ctx, taskIDs)
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		job := latestScheduled[task.ID]
+		if job == nil {
+			continue
+		}
+		if job.StartedAt != nil {
+			task.ScheduleLastTriggeredAt = job.StartedAt
+			continue
+		}
+		createdAt := job.CreatedAt
+		task.ScheduleLastTriggeredAt = &createdAt
+	}
+	return nil
+}
+
 func buildTaskTree(tasks []*Task) []*TaskTreeNode {
 	nodes := make(map[uint]*TaskTreeNode, len(tasks))
 	roots := make([]*TaskTreeNode, 0)
 	for _, task := range tasks {
-		nodes[task.ID] = &TaskTreeNode{ID: task.ID, ParentID: task.ParentID, NodeType: task.NodeType, Name: task.Name, Description: task.Description, ClusterID: task.ClusterID, EngineVersion: task.EngineVersion, Mode: task.Mode, Status: task.Status, ContentFormat: task.ContentFormat, Content: task.Content, JobName: task.JobName, Definition: cloneJSONMap(task.Definition), SortOrder: task.SortOrder, CurrentVersion: task.CurrentVersion, Children: []*TaskTreeNode{}}
+		nodes[task.ID] = &TaskTreeNode{ID: task.ID, ParentID: task.ParentID, NodeType: task.NodeType, Name: task.Name, Description: task.Description, ClusterID: task.ClusterID, EngineVersion: task.EngineVersion, Mode: task.Mode, Status: task.Status, ContentFormat: task.ContentFormat, Content: task.Content, JobName: task.JobName, Definition: cloneJSONMap(task.Definition), SortOrder: task.SortOrder, CurrentVersion: task.CurrentVersion, ScheduleEnabled: task.ScheduleEnabled, ScheduleCronExpr: task.ScheduleCronExpr, ScheduleTimezone: task.ScheduleTimezone, ScheduleLastTriggeredAt: task.ScheduleLastTriggeredAt, ScheduleNextTriggeredAt: task.ScheduleNextTriggeredAt, Children: []*TaskTreeNode{}}
 	}
 	for _, task := range tasks {
 		node := nodes[task.ID]
@@ -1921,6 +1993,31 @@ func mergeJobRuntimeInfo(existing JSONMap, info *EngineJobInfo) JSONMap {
 	return existing
 }
 
+func parseEngineJobTime(value string) *time.Time {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	layouts := []string{
+		time.DateTime,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006/01/02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.ParseInLocation(layout, trimmed, time.Local); err == nil {
+			return &parsed
+		}
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, trimmed); err == nil {
+			resolved := parsed.In(time.Local)
+			return &resolved
+		}
+	}
+	return nil
+}
+
 func (s *Service) refreshJobInstance(ctx context.Context, instance *JobInstance) (*JobInstance, error) {
 	if instance == nil {
 		return nil, nil
@@ -1948,8 +2045,12 @@ func (s *Service) refreshJobInstance(ctx context.Context, instance *JobInstance)
 	instance.Status = normalizeJobStatus(info.JobStatus)
 	instance.ResultPreview = mergeJobRuntimeInfo(instance.ResultPreview, info)
 	if isFinalNormalizedJobStatus(instance.Status) {
-		now := time.Now()
-		instance.FinishedAt = &now
+		if parsedFinishedAt := parseEngineJobTime(info.FinishedTime); parsedFinishedAt != nil {
+			instance.FinishedAt = parsedFinishedAt
+		} else if instance.FinishedAt == nil {
+			now := time.Now()
+			instance.FinishedAt = &now
+		}
 		if info.ErrorMsg != nil {
 			instance.ErrorMessage = strings.TrimSpace(fmt.Sprintf("%v", info.ErrorMsg))
 		}

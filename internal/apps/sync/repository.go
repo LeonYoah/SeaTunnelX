@@ -236,6 +236,59 @@ func (r *Repository) GetTaskVersionByID(ctx context.Context, taskID uint, versio
 	return &version, nil
 }
 
+// GetTaskVersionByVersion returns one immutable task snapshot by version number.
+func (r *Repository) GetTaskVersionByVersion(ctx context.Context, taskID uint, version int) (*TaskVersion, error) {
+	var item TaskVersion
+	if err := r.db.WithContext(ctx).Where("task_id = ? AND version = ?", taskID, version).First(&item).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTaskVersionNotFound
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+// HasScheduledJobInstanceInWindow reports whether a scheduled job already exists in the target trigger window.
+func (r *Repository) HasScheduledJobInstanceInWindow(ctx context.Context, taskID uint, startedAt time.Time, finishedAt time.Time) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&JobInstance{}).
+		Where("task_id = ?", taskID).
+		Where("run_type = ?", RunTypeSchedule).
+		Where("created_at >= ? AND created_at < ?", startedAt, finishedAt).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetLatestScheduledJobInstancesByTaskIDs returns the latest scheduled job instance keyed by task id.
+func (r *Repository) GetLatestScheduledJobInstancesByTaskIDs(ctx context.Context, taskIDs []uint) (map[uint]*JobInstance, error) {
+	result := make(map[uint]*JobInstance)
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+	var instances []*JobInstance
+	if err := r.db.WithContext(ctx).
+		Where("task_id IN ?", taskIDs).
+		Where("run_type = ?", RunTypeSchedule).
+		Order("task_id ASC").
+		Order("created_at DESC").
+		Find(&instances).Error; err != nil {
+		return nil, err
+	}
+	for _, item := range instances {
+		if item == nil {
+			continue
+		}
+		if _, ok := result[item.TaskID]; ok {
+			continue
+		}
+		result[item.TaskID] = item
+	}
+	return result, nil
+}
+
 // DeleteTaskVersion removes one immutable task snapshot.
 func (r *Repository) DeleteTaskVersion(ctx context.Context, taskID uint, versionID uint) error {
 	result := r.db.WithContext(ctx).

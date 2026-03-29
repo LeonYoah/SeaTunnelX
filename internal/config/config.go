@@ -91,6 +91,10 @@ func setDefaults(c *configModel) {
 		c.Database.SQLitePath = "./data/seatunnel.db"
 	}
 
+	if c.Sync.PreviewDataTTLHours <= 0 {
+		c.Sync.PreviewDataTTLHours = 24
+	}
+
 	// 认证默认配置
 	if c.Auth.DefaultAdminUsername == "" {
 		c.Auth.DefaultAdminUsername = "admin"

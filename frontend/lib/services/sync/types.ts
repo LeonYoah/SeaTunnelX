@@ -20,7 +20,7 @@ export type SyncJSON = Record<string, unknown>;
 export type SyncTaskStatus = 'draft' | 'published' | 'archived';
 export type SyncTaskMode = 'streaming' | 'batch';
 export type SyncNodeType = 'folder' | 'file';
-export type SyncRunType = 'preview' | 'run' | 'recover';
+export type SyncRunType = 'preview' | 'run' | 'recover' | 'schedule';
 export type SyncJobStatus =
   | 'pending'
   | 'running'
@@ -45,6 +45,11 @@ export interface SyncTask {
   definition: SyncJSON;
   sort_order: number;
   current_version: number;
+  schedule_enabled?: boolean;
+  schedule_cron_expr?: string;
+  schedule_timezone?: string;
+  schedule_last_triggered_at?: string;
+  schedule_next_triggered_at?: string;
   created_by: number;
   created_at: string;
   updated_at: string;
@@ -66,6 +71,11 @@ export interface SyncTaskTreeNode {
   definition: SyncJSON;
   sort_order: number;
   current_version: number;
+  schedule_enabled?: boolean;
+  schedule_cron_expr?: string;
+  schedule_timezone?: string;
+  schedule_last_triggered_at?: string;
+  schedule_next_triggered_at?: string;
   children?: SyncTaskTreeNode[];
 }
 

@@ -3389,7 +3389,6 @@
     "sourceTarget": "Target",
     "sourceProgress": "Progress",
     "rawDetails": "Raw Details",
-    "warnings": "Warnings",
     "unsupportedSources": "Unsupported Sources",
     "fileName": "File Name",
     "storageType": "Storage Type",
@@ -3433,6 +3432,10 @@
     "cronEveryNMinutesDuringHour": "Every {count} minutes during hour {hour}:00",
     "cronFiveField": "5-field",
     "cronTimezonePlaceholder": "e.g. Asia/Shanghai",
-    "cronExpressionPlaceholder": "e.g. 0 9 * * *"
+    "cronExpressionPlaceholder": "e.g. 0 9 * * *",
+    "scheduleLastTriggeredAt": "Last triggered",
+    "scheduleNextTriggeredAt": "Next trigger",
+    "scheduleNoTriggerYet": "No trigger history yet",
+    "scheduleDisabled": "Disabled"
   }
 }

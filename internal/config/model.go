@@ -19,6 +19,7 @@ package config
 
 type configModel struct {
 	App            AppConfig            `mapstructure:"app"`
+	Sync           SyncConfig           `mapstructure:"sync"`
 	Auth           authConfig           `mapstructure:"auth"`
 	OAuth2         OAuth2Config         `mapstructure:"oauth2"`
 	OAuthProviders OAuthProvidersConfig `mapstructure:"oauth_providers"`
@@ -75,6 +76,14 @@ type AppConfig struct {
 	// Example: "http://192.168.1.100:8000" or "https://seatunnel.example.com"
 	// 示例: "http://192.168.1.100:8000" 或 "https://seatunnel.example.com"
 	ExternalURL string `mapstructure:"external_url"`
+}
+
+// SyncConfig 同步工作台相关配置。
+// SyncConfig holds sync studio related settings.
+type SyncConfig struct {
+	// PreviewDataTTLHours controls how long preview session data is retained.
+	// PreviewDataTTLHours 控制预览会话数据的保留时长（小时）。
+	PreviewDataTTLHours int `mapstructure:"preview_data_ttl_hours"`
 }
 
 // authConfig 认证配置

@@ -19,6 +19,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -1186,5 +1187,265 @@ func TestGetJobLogsReturnsEmptyResultWhenUnavailable(t *testing.T) {
 	}
 	if result.Logs != "" {
 		t.Fatalf("expected empty logs, got %q", result.Logs)
+	}
+}
+
+func TestUpdateTaskRejectsInvalidSchedule(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	folder, err := service.CreateTask(ctx, &CreateTaskRequest{
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "workspace",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if err != nil {
+		t.Fatalf("create folder failed: %v", err)
+	}
+	_, err = service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "job_schedule_invalid",
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env {}",
+		Definition: JSONMap{
+			"schedule": JSONMap{
+				"enabled":   true,
+				"cron_expr": "bad cron",
+				"timezone":  "Asia/Shanghai",
+			},
+		},
+	}, 1)
+	if !errors.Is(err, ErrInvalidTaskSchedule) {
+		t.Fatalf("expected ErrInvalidTaskSchedule, got %v", err)
+	}
+}
+
+func TestListTasksDecoratesScheduleMetadata(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	folder, err := service.CreateTask(ctx, &CreateTaskRequest{
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "workspace",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if err != nil {
+		t.Fatalf("create folder failed: %v", err)
+	}
+	file, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "scheduled_meta_job",
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env {}",
+		Definition: JSONMap{
+			"schedule": JSONMap{
+				"enabled":   true,
+				"cron_expr": "0 9 * * *",
+				"timezone":  "Asia/Shanghai",
+			},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create file failed: %v", err)
+	}
+	startedAt := time.Date(2026, 3, 29, 9, 0, 0, 0, time.UTC)
+	if err := service.repo.CreateJobInstance(ctx, &JobInstance{
+		TaskID:        file.ID,
+		TaskVersion:   1,
+		RunType:       RunTypeSchedule,
+		PlatformJobID: "scheduled-1",
+		Status:        JobStatusSuccess,
+		StartedAt:     &startedAt,
+		CreatedBy:     1,
+	}); err != nil {
+		t.Fatalf("create scheduled job failed: %v", err)
+	}
+	items, total, err := service.ListTasks(ctx, &TaskFilter{Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("list tasks failed: %v", err)
+	}
+	if total == 0 || len(items) == 0 {
+		t.Fatalf("expected listed tasks, got total=%d len=%d", total, len(items))
+	}
+	var got *Task
+	for _, item := range items {
+		if item != nil && item.ID == file.ID {
+			got = item
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected scheduled task in list")
+	}
+	if !got.ScheduleEnabled {
+		t.Fatalf("expected schedule enabled")
+	}
+	if got.ScheduleCronExpr != "0 9 * * *" {
+		t.Fatalf("unexpected cron expr %q", got.ScheduleCronExpr)
+	}
+	if got.ScheduleTimezone != "Asia/Shanghai" {
+		t.Fatalf("unexpected timezone %q", got.ScheduleTimezone)
+	}
+	if got.ScheduleLastTriggeredAt == nil || !got.ScheduleLastTriggeredAt.Equal(startedAt) {
+		t.Fatalf("unexpected last triggered at %#v", got.ScheduleLastTriggeredAt)
+	}
+	if got.ScheduleNextTriggeredAt == nil {
+		t.Fatalf("expected next triggered at")
+	}
+}
+
+func TestSubmitScheduledTaskUsesPublishedVersionSnapshot(t *testing.T) {
+	service := newTestSyncService(t)
+	ctx := context.Background()
+	folder, err := service.CreateTask(ctx, &CreateTaskRequest{
+		NodeType:      string(TaskNodeTypeFolder),
+		Name:          "workspace",
+		ContentFormat: string(ContentFormatHOCON),
+	}, 1)
+	if err != nil {
+		t.Fatalf("create folder failed: %v", err)
+	}
+	file, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ParentID:      uintPtr(folder.ID),
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          "scheduled_job",
+		ClusterID:     11,
+		ContentFormat: string(ContentFormatHOCON),
+		Content:       "env { job.mode = \"batch\" } source { FakeSource { plugin_output = \"fake\" row.num = 1 schema = { fields { name = \"string\" } } } } sink { Console {} }",
+		Definition: JSONMap{
+			"schedule": JSONMap{
+				"enabled":   true,
+				"cron_expr": "0 9 * * *",
+				"timezone":  "Asia/Shanghai",
+			},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create file failed: %v", err)
+	}
+	_, version, err := service.PublishTask(ctx, file.ID, "initial", 1)
+	if err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+	_, err = service.UpdateTask(ctx, file.ID, &UpdateTaskRequest{
+		ParentID:      file.ParentID,
+		NodeType:      string(TaskNodeTypeFile),
+		Name:          file.Name,
+		Description:   file.Description,
+		ClusterID:     file.ClusterID,
+		EngineVersion: file.EngineVersion,
+		Mode:          string(file.Mode),
+		ContentFormat: string(file.ContentFormat),
+		Content:       "env { job.mode = \"batch\" } source { FakeSource { plugin_output = \"fake\" row.num = 999 schema = { fields { changed = \"string\" } } } } sink { Console {} }",
+		JobName:       file.JobName,
+		Definition:    file.Definition,
+		SortOrder:     file.SortOrder,
+	})
+	if err != nil {
+		t.Fatalf("update task failed: %v", err)
+	}
+	freshTask, err := service.repo.GetTaskByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("reload task failed: %v", err)
+	}
+	if err := service.submitScheduledTask(ctx, freshTask); err != nil {
+		t.Fatalf("submitScheduledTask failed: %v", err)
+	}
+	jobs, total, err := service.repo.ListJobInstances(ctx, &JobFilter{TaskID: file.ID, Page: 1, Size: 10})
+	if err != nil {
+		t.Fatalf("list jobs failed: %v", err)
+	}
+	if total != 1 || len(jobs) != 1 {
+		t.Fatalf("expected one scheduled job, got total=%d len=%d", total, len(jobs))
+	}
+	job := jobs[0]
+	if job.RunType != RunTypeSchedule {
+		t.Fatalf("expected run type schedule, got %s", job.RunType)
+	}
+	if got := stringValue(job.SubmitSpec, "trigger_source"); got != scheduleTriggerSource {
+		t.Fatalf("expected trigger_source schedule, got %q", got)
+	}
+	if job.TaskVersion != version.Version {
+		t.Fatalf("expected task version %d, got %d", version.Version, job.TaskVersion)
+	}
+	submitted := stringValue(job.SubmitSpec, "submitted_content")
+	if !strings.Contains(submitted, "row.num = 1") {
+		t.Fatalf("expected published snapshot content, got %s", submitted)
+	}
+	if strings.Contains(submitted, "row.num = 999") {
+		t.Fatalf("unexpected draft content used for schedule: %s", submitted)
+	}
+}
+
+type stubEngineClient struct {
+	info *EngineJobInfo
+}
+
+func (s *stubEngineClient) Submit(ctx context.Context, req *EngineSubmitRequest) (*EngineSubmitResponse, error) {
+	return nil, nil
+}
+func (s *stubEngineClient) GetJobInfo(ctx context.Context, endpoint *EngineEndpoint, jobID string) (*EngineJobInfo, error) {
+	return s.info, nil
+}
+func (s *stubEngineClient) GetJobCheckpointOverview(ctx context.Context, endpoint *EngineEndpoint, jobID string) (*EngineCheckpointOverview, error) {
+	return nil, nil
+}
+func (s *stubEngineClient) GetJobCheckpointHistory(ctx context.Context, endpoint *EngineEndpoint, jobID string, pipelineID *int, limit int, status string) ([]*EngineCheckpointRecord, error) {
+	return nil, nil
+}
+func (s *stubEngineClient) StopJob(ctx context.Context, endpoint *EngineEndpoint, jobID string, stopWithSavepoint bool) error {
+	return nil
+}
+func (s *stubEngineClient) GetJobLogs(ctx context.Context, endpoint *EngineEndpoint, jobID string) (string, error) {
+	return "", nil
+}
+
+func TestRefreshJobInstanceUsesEngineFinishedTime(t *testing.T) {
+	service := newTestSyncService(t)
+	service.engineClient = &stubEngineClient{info: &EngineJobInfo{
+		JobID:        "engine-job-1",
+		JobStatus:    "FINISHED",
+		FinishedTime: "2026-03-29 15:50:44",
+	}}
+	ctx := context.Background()
+	job := &JobInstance{
+		TaskID:        1,
+		TaskVersion:   1,
+		RunType:       RunTypeSchedule,
+		Status:        JobStatusRunning,
+		PlatformJobID: "platform-1",
+		EngineJobID:   "engine-job-1",
+		SubmitSpec: JSONMap{
+			"engine_base_url": "http://127.0.0.1:8080",
+		},
+		ResultPreview: JSONMap{},
+		CreatedBy:     1,
+	}
+	if err := service.repo.CreateJobInstance(ctx, job); err != nil {
+		t.Fatalf("create job instance failed: %v", err)
+	}
+	refreshed, err := service.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("refresh job failed: %v", err)
+	}
+	if refreshed.Status != JobStatusSuccess {
+		t.Fatalf("expected success status, got %s", refreshed.Status)
+	}
+	if refreshed.FinishedAt == nil {
+		t.Fatalf("expected finished_at to be populated")
+	}
+	if got := refreshed.FinishedAt.Format(time.DateTime); got != "2026-03-29 15:50:44" {
+		t.Fatalf("expected engine finished time, got %s", got)
+	}
+}
+
+func TestEngineJobInfoUsesFinishTimeField(t *testing.T) {
+	var info EngineJobInfo
+	payload := []byte(`{"jobId":"1","jobStatus":"FINISHED","finishTime":"2026-03-29 16:18:59"}`)
+	if err := json.Unmarshal(payload, &info); err != nil {
+		t.Fatalf("unmarshal engine job info failed: %v", err)
+	}
+	if info.FinishedTime != "2026-03-29 16:18:59" {
+		t.Fatalf("expected finishTime to populate FinishedTime, got %q", info.FinishedTime)
 	}
 }

@@ -25,15 +25,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	monitoringapp "github.com/seatunnel/seatunnelX/internal/apps/monitoring"
+	"github.com/seatunnel/seatunnelX/internal/pkg/schedulex"
 )
 
 const autoPolicyRequestedByPrefix = "auto-policy:"
-
-var autoPolicyCronParser = cron.NewParser(
-	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
-)
 
 // AutoPolicyChecker evaluates auto-inspection policies against incoming signals.
 // AutoPolicyChecker 根据传入信号评估自动巡检策略。
@@ -222,13 +218,11 @@ func (c *AutoPolicyChecker) matchScheduledCondition(policy *InspectionAutoPolicy
 	if err != nil {
 		return false, "", err
 	}
-	schedule, err := autoPolicyCronParser.Parse(expr)
+	matched, _, _, err := schedulex.MatchMinuteWindow(expr, now.UTC(), schedulex.DefaultTimezone)
 	if err != nil {
 		return false, "", err
 	}
-
-	previousMinute := now.Add(-time.Minute)
-	if !schedule.Next(previousMinute).Equal(now) {
+	if !matched {
 		return false, "", nil
 	}
 

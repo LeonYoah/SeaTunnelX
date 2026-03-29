@@ -2670,6 +2670,11 @@ export function DataSyncStudio() {
   const [validationTitle, setValidationTitle] = useState('');
   const [validationResult, setValidationResult] =
     useState<SyncValidateResult | null>(null);
+  const selectedScheduleNode = useMemo(
+    () => (editor.id ? findTreeNode(tree, editor.id) : null),
+    [editor.id, tree],
+  );
+
   const [versions, setVersions] = useState<SyncTaskVersion[]>([]);
   const [globalVariables, setGlobalVariables] = useState<SyncGlobalVariable[]>(
     [],
@@ -5616,6 +5621,8 @@ export function DataSyncStudio() {
           ) : rightSidebarTab === 'schedule' ? (
             <TaskScheduleSidebarPanel
               value={extractTaskScheduleValue(editor.definition || {})}
+              lastTriggeredAt={selectedScheduleNode?.schedule_last_triggered_at}
+              nextTriggeredAt={selectedScheduleNode?.schedule_next_triggered_at}
               onChange={handleScheduleChange}
             />
           ) : rightSidebarTab === 'versions' ? (

@@ -3389,7 +3389,6 @@
     "sourceTarget": "目标对象",
     "sourceProgress": "进度摘要",
     "rawDetails": "原始详情",
-    "warnings": "警告",
     "unsupportedSources": "不支持的 Source",
     "fileName": "文件名",
     "storageType": "存储类型",
@@ -3433,6 +3432,10 @@
     "cronEveryNMinutesDuringHour": "在 {hour}:00 这一小时内每 {count} 分钟执行一次",
     "cronFiveField": "5 段",
     "cronTimezonePlaceholder": "例如 Asia/Shanghai",
-    "cronExpressionPlaceholder": "例如 0 9 * * *"
+    "cronExpressionPlaceholder": "例如 0 9 * * *",
+    "scheduleLastTriggeredAt": "最近一次触发",
+    "scheduleNextTriggeredAt": "下一次触发",
+    "scheduleNoTriggerYet": "暂无触发记录",
+    "scheduleDisabled": "未启用"
   }
 }

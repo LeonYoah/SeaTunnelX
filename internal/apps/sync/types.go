@@ -17,6 +17,8 @@
 
 package sync
 
+import "time"
+
 // CreateTaskRequest represents the payload for creating a sync workspace node.
 type CreateTaskRequest struct {
 	ParentID      *uint   `json:"parent_id"`
@@ -230,22 +232,27 @@ type GlobalVariableListData struct {
 
 // TaskTreeNode represents one node in the sync workspace tree.
 type TaskTreeNode struct {
-	ID             uint            `json:"id"`
-	ParentID       *uint           `json:"parent_id,omitempty"`
-	NodeType       TaskNodeType    `json:"node_type"`
-	Name           string          `json:"name"`
-	Description    string          `json:"description"`
-	ClusterID      uint            `json:"cluster_id"`
-	EngineVersion  string          `json:"engine_version"`
-	Mode           TaskMode        `json:"mode"`
-	Status         TaskStatus      `json:"status"`
-	ContentFormat  ContentFormat   `json:"content_format"`
-	Content        string          `json:"content"`
-	JobName        string          `json:"job_name"`
-	Definition     JSONMap         `json:"definition"`
-	SortOrder      int             `json:"sort_order"`
-	CurrentVersion int             `json:"current_version"`
-	Children       []*TaskTreeNode `json:"children,omitempty"`
+	ID                      uint            `json:"id"`
+	ParentID                *uint           `json:"parent_id,omitempty"`
+	NodeType                TaskNodeType    `json:"node_type"`
+	Name                    string          `json:"name"`
+	Description             string          `json:"description"`
+	ClusterID               uint            `json:"cluster_id"`
+	EngineVersion           string          `json:"engine_version"`
+	Mode                    TaskMode        `json:"mode"`
+	Status                  TaskStatus      `json:"status"`
+	ContentFormat           ContentFormat   `json:"content_format"`
+	Content                 string          `json:"content"`
+	JobName                 string          `json:"job_name"`
+	Definition              JSONMap         `json:"definition"`
+	SortOrder               int             `json:"sort_order"`
+	CurrentVersion          int             `json:"current_version"`
+	ScheduleEnabled         bool            `json:"schedule_enabled,omitempty"`
+	ScheduleCronExpr        string          `json:"schedule_cron_expr,omitempty"`
+	ScheduleTimezone        string          `json:"schedule_timezone,omitempty"`
+	ScheduleLastTriggeredAt *time.Time      `json:"schedule_last_triggered_at,omitempty"`
+	ScheduleNextTriggeredAt *time.Time      `json:"schedule_next_triggered_at,omitempty"`
+	Children                []*TaskTreeNode `json:"children,omitempty"`
 }
 
 // TaskTreeData represents tree response payload.

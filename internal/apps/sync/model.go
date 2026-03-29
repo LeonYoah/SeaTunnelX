@@ -126,9 +126,10 @@ const (
 type RunType string
 
 const (
-	RunTypePreview RunType = "preview"
-	RunTypeRun     RunType = "run"
-	RunTypeRecover RunType = "recover"
+	RunTypePreview  RunType = "preview"
+	RunTypeRun      RunType = "run"
+	RunTypeRecover  RunType = "recover"
+	RunTypeSchedule RunType = "schedule"
 )
 
 // JobStatus represents sync job instance status.
@@ -146,24 +147,29 @@ const (
 // Task represents one sync studio workspace node.
 // Task 表示一个数据同步工作台节点。
 type Task struct {
-	ID             uint          `json:"id" gorm:"primaryKey;autoIncrement"`
-	ParentID       *uint         `json:"parent_id,omitempty" gorm:"index"`
-	NodeType       TaskNodeType  `json:"node_type" gorm:"size:20;not null;default:file;index"`
-	Name           string        `json:"name" gorm:"size:120;not null;index"`
-	Description    string        `json:"description" gorm:"type:text"`
-	ClusterID      uint          `json:"cluster_id" gorm:"index"`
-	EngineVersion  string        `json:"engine_version" gorm:"size:50"`
-	Mode           TaskMode      `json:"mode" gorm:"size:20;default:streaming"`
-	Status         TaskStatus    `json:"status" gorm:"size:20;default:draft;index"`
-	ContentFormat  ContentFormat `json:"content_format" gorm:"size:20;not null;default:hocon"`
-	Content        string        `json:"content" gorm:"type:longtext"`
-	JobName        string        `json:"job_name" gorm:"size:255"`
-	Definition     JSONMap       `json:"definition" gorm:"type:json"`
-	SortOrder      int           `json:"sort_order" gorm:"default:0;index"`
-	CurrentVersion int           `json:"current_version" gorm:"default:0"`
-	CreatedBy      uint          `json:"created_by"`
-	CreatedAt      time.Time     `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt      time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+	ID                      uint          `json:"id" gorm:"primaryKey;autoIncrement"`
+	ParentID                *uint         `json:"parent_id,omitempty" gorm:"index"`
+	NodeType                TaskNodeType  `json:"node_type" gorm:"size:20;not null;default:file;index"`
+	Name                    string        `json:"name" gorm:"size:120;not null;index"`
+	Description             string        `json:"description" gorm:"type:text"`
+	ClusterID               uint          `json:"cluster_id" gorm:"index"`
+	EngineVersion           string        `json:"engine_version" gorm:"size:50"`
+	Mode                    TaskMode      `json:"mode" gorm:"size:20;default:streaming"`
+	Status                  TaskStatus    `json:"status" gorm:"size:20;default:draft;index"`
+	ContentFormat           ContentFormat `json:"content_format" gorm:"size:20;not null;default:hocon"`
+	Content                 string        `json:"content" gorm:"type:longtext"`
+	JobName                 string        `json:"job_name" gorm:"size:255"`
+	Definition              JSONMap       `json:"definition" gorm:"type:json"`
+	SortOrder               int           `json:"sort_order" gorm:"default:0;index"`
+	CurrentVersion          int           `json:"current_version" gorm:"default:0"`
+	ScheduleEnabled         bool          `json:"schedule_enabled" gorm:"-"`
+	ScheduleCronExpr        string        `json:"schedule_cron_expr,omitempty" gorm:"-"`
+	ScheduleTimezone        string        `json:"schedule_timezone,omitempty" gorm:"-"`
+	ScheduleLastTriggeredAt *time.Time    `json:"schedule_last_triggered_at,omitempty" gorm:"-"`
+	ScheduleNextTriggeredAt *time.Time    `json:"schedule_next_triggered_at,omitempty" gorm:"-"`
+	CreatedBy               uint          `json:"created_by"`
+	CreatedAt               time.Time     `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt               time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 // TableName returns the sync task table name.

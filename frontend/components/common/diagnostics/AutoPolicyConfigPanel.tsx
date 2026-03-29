@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {Input} from '@/components/ui/input';
+import {CronExpressionEditor, type CronPresetOption} from '@/components/common/schedule/CronExpressionEditor';
 import {Label} from '@/components/ui/label';
 import {Switch} from '@/components/ui/switch';
 import {
@@ -96,6 +97,7 @@ export function AutoPolicyConfigPanel({
 }: AutoPolicyConfigPanelProps) {
   const t = useTranslations('diagnosticsCenter.autoPolicies');
   const commonT = useTranslations('common');
+  const scheduleT = useTranslations('workbenchStudio');
   const [policies, setPolicies] = useState<InspectionAutoPolicy[]>([]);
   const [templates, setTemplates] = useState<InspectionConditionTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -115,6 +117,14 @@ export function AutoPolicyConfigPanel({
   >([]);
   const [formAutoCreateTask, setFormAutoCreateTask] = useState(false);
   const [formAutoStartTask, setFormAutoStartTask] = useState(true);
+
+  const cronPresets = useState<CronPresetOption[]>([
+    {key: 'cronPresetEveryDayMidnight', expr: '0 0 * * *'},
+    {key: 'cronPresetEveryHour', expr: '0 * * * *'},
+    {key: 'cronPresetWeekdaysNine', expr: '0 9 * * MON-FRI'},
+    {key: 'cronPresetEveryFifteenMinutes', expr: '*/15 * * * *'},
+    {key: 'cronPresetEveryThirtyMinutes', expr: '*/30 * * * *'},
+  ])[0];
   const [formTaskOptions, setFormTaskOptions] =
     useState<DiagnosticsTaskOptions>({
       include_thread_dump: true,
@@ -678,28 +688,47 @@ export function AutoPolicyConfigPanel({
                           {isChecked && !tpl.immediate_on_match ? (
                             <div className='ml-6 grid grid-cols-2 gap-2'>
                               {shouldRenderCronExprInput(tpl) ? (
-                                <div className='space-y-1 col-span-2'>
-                                  <Label className='text-xs'>
-                                    {t('cronExprLabel')}
-                                  </Label>
-                                  <Input
-                                    type='text'
-                                    className='h-8 text-xs font-mono'
-                                    placeholder={tpl.default_cron_expr}
-                                    value={condition?.cron_expr_override ?? ''}
-                                    onChange={(e) =>
+                                <div className='space-y-2 col-span-2'>
+                                  <CronExpressionEditor
+                                    expression={condition?.cron_expr_override ?? tpl.default_cron_expr ?? ''}
+                                    onExpressionChange={(nextExpr) =>
                                       handleConditionTextOverride(
                                         tpl.code,
                                         'cron_expr_override',
-                                        e.target.value,
+                                        nextExpr,
                                       )
                                     }
+                                    translator={(key, values) => scheduleT(key as never, values as never)}
+                                    labels={{
+                                      cronExpression: t('cronExprLabel'),
+                                      timezone: commonT('timezone'),
+                                      cronFiveField: scheduleT('cronFiveField'),
+                                      cronTimezonePlaceholder: scheduleT('cronTimezonePlaceholder'),
+                                      cronExpressionPlaceholder: tpl.default_cron_expr ?? '',
+                                      cronMinute: scheduleT('cronMinute'),
+                                      cronHour: scheduleT('cronHour'),
+                                      cronDayOfMonth: scheduleT('cronDayOfMonth'),
+                                      cronMonth: scheduleT('cronMonth'),
+                                      cronDayOfWeek: scheduleT('cronDayOfWeek'),
+                                      schedulePreview: scheduleT('schedulePreview'),
+                                      nextRuns: scheduleT('nextRuns'),
+                                      invalidCronExpression: scheduleT('invalidCronExpression'),
+                                    }}
+                                    presets={cronPresets}
+                                    renderPresetLabel={(key) => scheduleT(key as never)}
+                                    helper={t('cronExprHint', { defaultExpr: tpl.default_cron_expr })}
+                                    footer={
+                                      <Button
+                                        type='button'
+                                        variant='outline'
+                                        size='sm'
+                                        className='h-7 px-2 text-[10px]'
+                                        onClick={() => handleConditionTextOverride(tpl.code, 'cron_expr_override', '')}
+                                      >
+                                        {t('cronUseDefault')}
+                                      </Button>
+                                    }
                                   />
-                                  <div className='text-xs text-muted-foreground'>
-                                    {t('cronExprHint', {
-                                      defaultExpr: tpl.default_cron_expr,
-                                    })}
-                                  </div>
                                 </div>
                               ) : null}
                               {tpl.default_threshold > 0 ? (
