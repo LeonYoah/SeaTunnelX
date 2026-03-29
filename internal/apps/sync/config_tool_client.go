@@ -37,6 +37,10 @@ type ConfigToolClient interface {
 	ValidateConfig(ctx context.Context, endpoint string, req *ConfigToolValidateRequest) (*ConfigToolValidateResponse, error)
 	DeriveSourcePreview(ctx context.Context, endpoint string, req *ConfigToolPreviewRequest) (*ConfigToolPreviewResponse, error)
 	DeriveTransformPreview(ctx context.Context, endpoint string, req *ConfigToolPreviewRequest) (*ConfigToolPreviewResponse, error)
+	ListPlugins(ctx context.Context, endpoint string, req *ConfigToolPluginListRequest) (*ConfigToolPluginListResponse, error)
+	GetPluginOptions(ctx context.Context, endpoint string, req *ConfigToolPluginOptionsRequest) (*ConfigToolPluginOptionsResponse, error)
+	RenderPluginTemplate(ctx context.Context, endpoint string, req *ConfigToolPluginTemplateRequest) (*ConfigToolPluginTemplateResponse, error)
+	ListPluginEnumValues(ctx context.Context, endpoint string, req *ConfigToolPluginEnumValuesRequest) (*ConfigToolPluginEnumValuesResponse, error)
 }
 
 // ConfigToolResolver resolves java-proxy endpoint for a sync task.
@@ -73,6 +77,101 @@ type ConfigToolPreviewRequest struct {
 type ConfigToolValidateRequest struct {
 	ConfigToolContentRequest
 	TestConnection bool `json:"testConnection"`
+}
+
+// ConfigToolPluginListRequest represents plugin discovery input.
+type ConfigToolPluginListRequest struct {
+	PluginType string   `json:"pluginType"`
+	PluginJars []string `json:"pluginJars,omitempty"`
+}
+
+// ConfigToolPluginFactoryInfo mirrors java-proxy plugin list entry.
+type ConfigToolPluginFactoryInfo struct {
+	FactoryIdentifier string `json:"factoryIdentifier"`
+	ClassName         string `json:"className,omitempty"`
+	Origin            string `json:"origin,omitempty"`
+}
+
+// ConfigToolPluginListResponse mirrors java-proxy plugin list response.
+type ConfigToolPluginListResponse struct {
+	OK         bool                          `json:"ok"`
+	PluginType string                        `json:"pluginType"`
+	Plugins    []ConfigToolPluginFactoryInfo `json:"plugins"`
+	Warnings   []string                      `json:"warnings"`
+}
+
+// ConfigToolPluginOptionsRequest represents plugin schema inspection input.
+type ConfigToolPluginOptionsRequest struct {
+	PluginType        string   `json:"pluginType"`
+	FactoryIdentifier string   `json:"factoryIdentifier"`
+	PluginJars        []string `json:"pluginJars,omitempty"`
+	IncludeSupplement bool     `json:"includeSupplement"`
+}
+
+// ConfigToolPluginOptionDescriptor mirrors java-proxy plugin option descriptor.
+type ConfigToolPluginOptionDescriptor struct {
+	Key                 string      `json:"key"`
+	Type                string      `json:"type,omitempty"`
+	ElementType         string      `json:"elementType,omitempty"`
+	DefaultValue        interface{} `json:"defaultValue,omitempty"`
+	Description         string      `json:"description,omitempty"`
+	FallbackKeys        []string    `json:"fallbackKeys,omitempty"`
+	EnumValues          []string    `json:"enumValues,omitempty"`
+	EnumDisplayValues   []string    `json:"enumDisplayValues,omitempty"`
+	RequiredMode        string      `json:"requiredMode,omitempty"`
+	ConditionExpression string      `json:"conditionExpression,omitempty"`
+	ConstraintGroup     string      `json:"constraintGroup,omitempty"`
+	Origins             []string    `json:"origins,omitempty"`
+	DeclaredClasses     []string    `json:"declaredClasses,omitempty"`
+	Advanced            bool        `json:"advanced"`
+}
+
+// ConfigToolPluginOptionsResponse mirrors java-proxy plugin options response.
+type ConfigToolPluginOptionsResponse struct {
+	OK                bool                               `json:"ok"`
+	PluginType        string                             `json:"pluginType"`
+	FactoryIdentifier string                             `json:"factoryIdentifier"`
+	Options           []ConfigToolPluginOptionDescriptor `json:"options"`
+	Warnings          []string                           `json:"warnings"`
+}
+
+// ConfigToolPluginTemplateRequest represents plugin template rendering input.
+type ConfigToolPluginTemplateRequest struct {
+	PluginType        string   `json:"pluginType"`
+	FactoryIdentifier string   `json:"factoryIdentifier"`
+	PluginJars        []string `json:"pluginJars,omitempty"`
+	IncludeSupplement bool     `json:"includeSupplement"`
+	IncludeComments   bool     `json:"includeComments"`
+	IncludeAdvanced   bool     `json:"includeAdvanced"`
+}
+
+// ConfigToolPluginTemplateResponse mirrors java-proxy template response.
+type ConfigToolPluginTemplateResponse struct {
+	OK                bool     `json:"ok"`
+	PluginType        string   `json:"pluginType"`
+	FactoryIdentifier string   `json:"factoryIdentifier"`
+	ContentFormat     string   `json:"contentFormat"`
+	Template          string   `json:"template"`
+	Warnings          []string `json:"warnings"`
+}
+
+// ConfigToolPluginEnumValuesRequest represents plugin enum values input.
+type ConfigToolPluginEnumValuesRequest struct {
+	PluginType        string   `json:"pluginType"`
+	FactoryIdentifier string   `json:"factoryIdentifier"`
+	OptionKey         string   `json:"optionKey"`
+	PluginJars        []string `json:"pluginJars,omitempty"`
+	IncludeSupplement bool     `json:"includeSupplement"`
+}
+
+// ConfigToolPluginEnumValuesResponse mirrors java-proxy enum values response.
+type ConfigToolPluginEnumValuesResponse struct {
+	OK                bool     `json:"ok"`
+	PluginType        string   `json:"pluginType"`
+	FactoryIdentifier string   `json:"factoryIdentifier"`
+	OptionKey         string   `json:"optionKey"`
+	EnumValues        []string `json:"enumValues"`
+	Warnings          []string `json:"warnings"`
 }
 
 // ConfigToolGraph mirrors java-proxy DAG payload.
@@ -238,6 +337,42 @@ func (c *DefaultConfigToolClient) DeriveSourcePreview(ctx context.Context, endpo
 func (c *DefaultConfigToolClient) DeriveTransformPreview(ctx context.Context, endpoint string, req *ConfigToolPreviewRequest) (*ConfigToolPreviewResponse, error) {
 	var result ConfigToolPreviewResponse
 	if err := c.postJSON(ctx, endpoint, "/api/v1/config/preview/transform", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListPlugins calls /api/v1/plugin/list.
+func (c *DefaultConfigToolClient) ListPlugins(ctx context.Context, endpoint string, req *ConfigToolPluginListRequest) (*ConfigToolPluginListResponse, error) {
+	var result ConfigToolPluginListResponse
+	if err := c.postJSON(ctx, endpoint, "/api/v1/plugin/list", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetPluginOptions calls /api/v1/plugin/options.
+func (c *DefaultConfigToolClient) GetPluginOptions(ctx context.Context, endpoint string, req *ConfigToolPluginOptionsRequest) (*ConfigToolPluginOptionsResponse, error) {
+	var result ConfigToolPluginOptionsResponse
+	if err := c.postJSON(ctx, endpoint, "/api/v1/plugin/options", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RenderPluginTemplate calls /api/v1/plugin/template.
+func (c *DefaultConfigToolClient) RenderPluginTemplate(ctx context.Context, endpoint string, req *ConfigToolPluginTemplateRequest) (*ConfigToolPluginTemplateResponse, error) {
+	var result ConfigToolPluginTemplateResponse
+	if err := c.postJSON(ctx, endpoint, "/api/v1/plugin/template", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListPluginEnumValues calls /api/v1/plugin/enum-values.
+func (c *DefaultConfigToolClient) ListPluginEnumValues(ctx context.Context, endpoint string, req *ConfigToolPluginEnumValuesRequest) (*ConfigToolPluginEnumValuesResponse, error) {
+	var result ConfigToolPluginEnumValuesResponse
+	if err := c.postJSON(ctx, endpoint, "/api/v1/plugin/enum-values", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

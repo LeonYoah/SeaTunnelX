@@ -200,6 +200,9 @@ func (s *Service) SetExecutionTargetResolver(resolver ExecutionTargetResolver) {
 	s.executionTargetResolver = resolver
 }
 func (s *Service) SetClusterLogProvider(provider ClusterLogProvider) { s.clusterLogProvider = provider }
+func (s *Service) SetClusterVersionProvider(provider ClusterVersionProvider) {
+	s.clusterVersionProvider = provider
+}
 
 func taskExecutionMode(task *Task) string {
 	if task == nil {

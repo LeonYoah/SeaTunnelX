@@ -3130,6 +3130,18 @@
     "zetaCluster": "Zeta Cluster",
     "selectCluster": "Select a cluster",
     "unselected": "Unselected",
+    "pluginTemplates": "Config Templates",
+    "pluginAdvancedMode": "Advanced",
+    "sourceTemplate": "Source",
+    "transformTemplate": "Transform",
+    "sinkTemplate": "Sink",
+    "selectSourcePlugin": "Select a source plugin",
+    "selectTransformPlugin": "Select a transform plugin",
+    "selectSinkPlugin": "Select a sink plugin",
+    "loadingPluginTemplates": "Loading plugin templates...",
+    "pluginTemplateHint": "Selecting a plugin appends its HOCON template to the editor and selects the new block.",
+    "loadPluginTemplatesFailed": "Failed to load plugin templates",
+    "insertPluginTemplateFailed": "Failed to insert plugin template",
     "customVariables": "Custom Variables",
     "add": "Add",
     "unnamed": "Unnamed",
@@ -3365,6 +3377,9 @@
     "storageType": "Storage Type",
     "size": "Size",
     "encoding": "Encoding",
-    "updatedAt": "Updated At"
+    "updatedAt": "Updated At",
+    "selectClusterFirst": "Please select a cluster first",
+    "generatingPluginTemplate": "Generating template for {plugin}...",
+    "noMatchingPlugins": "No matching plugins"
   }
 }

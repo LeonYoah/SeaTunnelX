@@ -17,6 +17,8 @@
 
 package org.apache.seatunnel.tools.proxy.service;
 
+import org.apache.seatunnel.shade.org.apache.commons.lang3.StringUtils;
+
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -24,7 +26,9 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 public final class PluginClassLoaderUtils {
 
@@ -41,6 +45,47 @@ public final class PluginClassLoaderUtils {
             urls[i] = jarPath.toUri().toURL();
         }
         return new URLClassLoader(urls, parent);
+    }
+
+    public static URLClassLoader createClassLoaderFromSeatunnelHome(ClassLoader parent)
+            throws IOException {
+        String seatunnelHome = System.getProperty("SEATUNNEL_HOME");
+        if (StringUtils.isBlank(seatunnelHome)) {
+            seatunnelHome = System.getenv("SEATUNNEL_HOME");
+        }
+        if (StringUtils.isBlank(seatunnelHome)) {
+            return null;
+        }
+        List<String> pluginJars = collectJarPaths(Paths.get(seatunnelHome));
+        if (pluginJars.isEmpty()) {
+            return null;
+        }
+        return createClassLoader(pluginJars, parent);
+    }
+
+    static List<String> collectJarPaths(Path seatunnelHome) throws IOException {
+        List<String> pluginJars = new ArrayList<>();
+        if (seatunnelHome == null) {
+            return pluginJars;
+        }
+        collectJarPaths(seatunnelHome.resolve("connectors"), pluginJars);
+        collectJarPaths(seatunnelHome.resolve("plugins"), pluginJars);
+        return pluginJars;
+    }
+
+    static void collectJarPaths(Path root, List<String> pluginJars) throws IOException {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> pathStream = Files.walk(root)) {
+            pathStream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .map(Path::toAbsolutePath)
+                    .map(Path::toString)
+                    .sorted()
+                    .forEach(pluginJars::add);
+        }
     }
 
     public static void closeQuietly(ClassLoader classLoader) {

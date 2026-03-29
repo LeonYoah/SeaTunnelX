@@ -1,0 +1,44 @@
+{
+  "id": "sync-plugin-template-schema",
+  "name": "sync-plugin-template-schema",
+  "title": "sync 工作台插件模板与配置 schema 联动",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/data-sync-studio",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "data-sync-studio",
+  "relatedFiles": [],
+  "notes": "高级模式允许展示 proxy 运行时发现但平台未建档的插件；模板只输出空值或官方默认值；追加模板后自动滚动、聚焦并直接选中新插入 block；未建档插件仅标注 proxy 运行时发现来源，不做额外分析；编辑器枚举提示改走新接口。；已补 HOCON 自定义高亮、hover 元数据、枚举真实值/展示值拆分、全局枚举预加载、模板 required/conditional/optional 分区、低于 2.3.9 时模板与预览脚本自动切换旧版 source_table_name/result_table_name、编辑器 value 区域枚举触发与整段替换修复",
+  "meta": {}
+}

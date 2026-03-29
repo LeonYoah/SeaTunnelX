@@ -17,6 +17,7 @@
 
 'use client';
 
+import {useMonaco} from '@monaco-editor/react';
 import dynamic from 'next/dynamic';
 import {useTranslations} from 'next-intl';
 import {
@@ -32,6 +33,7 @@ import {useTheme} from 'next-themes';
 import {toast} from 'sonner';
 import {
   Bug,
+  Check,
   Copy,
   ChevronDown,
   ChevronRight,
@@ -79,6 +81,8 @@ import type {
   SyncJobInstance,
   SyncJobLogsResult,
   SyncJSON,
+  SyncPluginFactoryInfo,
+  SyncPluginType,
   SyncPreviewDataset,
   SyncPreviewSnapshot,
   SyncTask,
@@ -89,6 +93,13 @@ import type {
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   Dialog,
   DialogContent,
@@ -104,6 +115,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
+import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover';
 import {ScrollArea} from '@/components/ui/scroll-area';
 import {
   Select,
@@ -209,6 +221,229 @@ type BottomConsoleTab = 'jobs' | 'logs' | 'preview' | 'checkpoint';
 type ExecutionMode = 'cluster' | 'local';
 type LogFilterMode = 'all' | 'warn' | 'error';
 type PendingActionKind = 'dag' | 'preview' | 'test_connections' | 'recover';
+
+interface TemplatePluginItem {
+  value: string;
+  label: string;
+  origin?: string;
+}
+
+type OptionMetadataMap = Record<string, any>;
+
+type PluginEnumCatalogMap = Partial<
+  Record<SyncPluginType | 'env', Record<string, OptionMetadataMap>>
+>;
+
+function isCursorInsideValueRegion(
+  lineContent: string,
+  column: number,
+): boolean {
+  const equalsIndex = lineContent.indexOf('=');
+  if (equalsIndex < 0) {
+    return false;
+  }
+  const prefix = lineContent.slice(0, equalsIndex);
+  if (!/^\s*#*\s*[A-Za-z0-9_.-]+\s*$/.test(prefix)) {
+    return false;
+  }
+  return column >= equalsIndex + 2;
+}
+
+function formatMetadataValue(value: unknown): string {
+  if (value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (
+    value === null ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function resolveEnumSuggestionItems(metadata: any): Array<{
+  label: string;
+  value: string;
+}> {
+  const values = Array.isArray(metadata?.enum_values)
+    ? metadata.enum_values
+    : [];
+  const displays = Array.isArray(metadata?.enum_display_values)
+    ? metadata.enum_display_values
+    : [];
+  return values.map((value: string, index: number) => ({
+    label: displays[index] || value,
+    value,
+  }));
+}
+
+function resolveEnumValueBounds(lineContent: string, lineNumber: number) {
+  const assignmentMatch = lineContent.match(
+    /^(\s*[A-Za-z0-9_.-]+\s*=\s*)(.*)$/,
+  );
+  if (!assignmentMatch) {
+    return null;
+  }
+  const valueOffset = assignmentMatch[1].length + 1;
+  const rawValue = assignmentMatch[2] || '';
+  const quotedMatch = rawValue.match(/^"([^"]*)"?/);
+  if (quotedMatch) {
+    const content = quotedMatch[1] || '';
+    return {
+      quoted: true,
+      startColumn: valueOffset + 1,
+      endColumn: valueOffset + 1 + content.length,
+    };
+  }
+  const unquotedEnd = rawValue.search(/\s|#/);
+  const contentLength = unquotedEnd >= 0 ? unquotedEnd : rawValue.length;
+  return {
+    quoted: false,
+    startColumn: valueOffset,
+    endColumn: valueOffset + contentLength,
+  };
+}
+
+function resolveEnumSuggestRange(position: {
+  lineNumber: number;
+  column: number;
+}) {
+  return {
+    startLineNumber: position.lineNumber,
+    endLineNumber: position.lineNumber,
+    startColumn: position.column,
+    endColumn: position.column,
+  };
+}
+
+function ensureSyncHoconLanguage(monaco: any) {
+  const languageId = 'sync-hocon';
+  const languages = monaco.languages.getLanguages?.() || [];
+  if (!languages.some((item: any) => item.id === languageId)) {
+    monaco.languages.register({id: languageId});
+    monaco.languages.setMonarchTokensProvider(languageId, {
+      tokenizer: {
+        root: [
+          [/^\s*#.*$/, 'comment'],
+          [/^\s*(env)(?=\s*\{)/, 'keyword.env'],
+          [/^\s*(source)(?=\s*\{)/, 'keyword.source'],
+          [/^\s*(transform)(?=\s*\{)/, 'keyword.transform'],
+          [/^\s*(sink)(?=\s*\{)/, 'keyword.sink'],
+          [/[{}[\]]/, '@brackets'],
+          [/[,:=]/, 'delimiter'],
+          [/"(?:[^"\\]|\\.)*"/, 'string'],
+          [/[A-Za-z_][\w.-]*/, 'identifier'],
+          [/-?\d+(?:\.\d+)?/, 'number'],
+        ],
+      },
+    });
+    monaco.languages.setLanguageConfiguration(languageId, {
+      comments: {lineComment: '#'},
+      autoClosingPairs: [
+        {open: '{', close: '}'},
+        {open: '[', close: ']'},
+        {open: '"', close: '"'},
+      ],
+      surroundingPairs: [
+        {open: '{', close: '}'},
+        {open: '[', close: ']'},
+        {open: '"', close: '"'},
+      ],
+      brackets: [
+        ['{', '}'],
+        ['[', ']'],
+      ],
+    });
+  }
+  monaco.editor.defineTheme('sync-hocon-light', {
+    base: 'vs',
+    inherit: true,
+    rules: [
+      {token: 'keyword.env', foreground: '7c3aed', fontStyle: 'bold'},
+      {token: 'keyword.source', foreground: '0f766e', fontStyle: 'bold'},
+      {token: 'keyword.transform', foreground: 'b45309', fontStyle: 'bold'},
+      {token: 'keyword.sink', foreground: '1d4ed8', fontStyle: 'bold'},
+      {token: 'string', foreground: 'b91c1c'},
+      {token: 'comment', foreground: '6b7280'},
+    ],
+    colors: {},
+  });
+  monaco.editor.defineTheme('sync-hocon-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      {token: 'keyword.env', foreground: 'c084fc', fontStyle: 'bold'},
+      {token: 'keyword.source', foreground: '2dd4bf', fontStyle: 'bold'},
+      {token: 'keyword.transform', foreground: 'fbbf24', fontStyle: 'bold'},
+      {token: 'keyword.sink', foreground: '60a5fa', fontStyle: 'bold'},
+      {token: 'string', foreground: 'fca5a5'},
+      {token: 'comment', foreground: '9ca3af'},
+    ],
+    colors: {},
+  });
+}
+
+const ENV_OPTION_METADATA: Record<
+  string,
+  {
+    description: string;
+    enumValues?: string[];
+    defaultValue?: string | number;
+    requiredMode?: string;
+  }
+> = {
+  'job.mode': {
+    description: 'SeaTunnel 作业模式',
+    enumValues: ['BATCH', 'STREAMING'],
+    defaultValue: 'BATCH',
+    requiredMode: 'OPTIONAL',
+  },
+  'savemode.execute.location': {
+    description: 'SaveMode 执行位置',
+    enumValues: ['CLUSTER', 'ENGINE'],
+    defaultValue: 'CLUSTER',
+    requiredMode: 'OPTIONAL',
+  },
+  parallelism: {
+    description: '作业并行度',
+    defaultValue: 1,
+    requiredMode: 'OPTIONAL',
+  },
+  'job.retry.times': {
+    description: '失败重试次数',
+    defaultValue: 0,
+    requiredMode: 'OPTIONAL',
+  },
+  'job.retry.interval.seconds': {
+    description: '重试间隔秒数',
+    defaultValue: 3,
+    requiredMode: 'OPTIONAL',
+  },
+  'min-pause': {
+    description: 'Checkpoint 最小间隔',
+    defaultValue: -1,
+    requiredMode: 'OPTIONAL',
+  },
+  'checkpoint.interval': {
+    description: 'Checkpoint 间隔毫秒',
+    defaultValue: 10000,
+    requiredMode: 'OPTIONAL',
+  },
+  'checkpoint.timeout': {
+    description: 'Checkpoint 超时毫秒',
+    defaultValue: 30000,
+    requiredMode: 'OPTIONAL',
+  },
+};
 
 const LOG_CHUNK_BASE_BYTES = 64 * 1024;
 const LOG_CHUNK_MAX_BYTES = 1024 * 1024;
@@ -772,15 +1007,28 @@ function yearWeek(date: Date, weekStart = 1): {year: number; week: number} {
   const day = next.getDay();
   const diff = (7 + day - jsWeekStart) % 7;
   next.setDate(next.getDate() - diff);
-  const first = new Date(next.getFullYear(), 0, 1, next.getHours(), next.getMinutes(), next.getSeconds(), next.getMilliseconds());
+  const first = new Date(
+    next.getFullYear(),
+    0,
+    1,
+    next.getHours(),
+    next.getMinutes(),
+    next.getSeconds(),
+    next.getMilliseconds(),
+  );
   const firstDay = first.getDay();
   const firstDiff = (7 + firstDay - jsWeekStart) % 7;
   first.setDate(first.getDate() - firstDiff);
-  const week = Math.floor((next.getTime() - first.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  const week =
+    Math.floor((next.getTime() - first.getTime()) / (7 * 24 * 60 * 60 * 1000)) +
+    1;
   return {year: next.getFullYear(), week};
 }
 
-function resolveBuiltinPreviewExpression(expr: string, now = new Date()): string | null {
+function resolveBuiltinPreviewExpression(
+  expr: string,
+  now = new Date(),
+): string | null {
   const trimmed = expr.trim();
   if (!trimmed) {
     return null;
@@ -825,14 +1073,28 @@ function resolveBuiltinPreviewExpression(expr: string, now = new Date()): string
     const match = trimmed.match(/^month_first_day\((.+),(.+)\)$/);
     if (!match) return null;
     const target = addMonths(now, Number(match[2].trim()));
-    const first = new Date(target.getFullYear(), target.getMonth(), 1, target.getHours(), target.getMinutes(), target.getSeconds());
+    const first = new Date(
+      target.getFullYear(),
+      target.getMonth(),
+      1,
+      target.getHours(),
+      target.getMinutes(),
+      target.getSeconds(),
+    );
     return formatBuiltinPreviewDate(first, match[1].trim());
   }
   if (/^month_last_day\((.+),(.+)\)$/.test(trimmed)) {
     const match = trimmed.match(/^month_last_day\((.+),(.+)\)$/);
     if (!match) return null;
     const target = addMonths(now, Number(match[2].trim()) + 1);
-    const last = new Date(target.getFullYear(), target.getMonth(), 0, target.getHours(), target.getMinutes(), target.getSeconds());
+    const last = new Date(
+      target.getFullYear(),
+      target.getMonth(),
+      0,
+      target.getHours(),
+      target.getMinutes(),
+      target.getSeconds(),
+    );
     return formatBuiltinPreviewDate(last, match[1].trim());
   }
   if (/^week_first_day\((.+),(.+)\)$/.test(trimmed)) {
@@ -851,7 +1113,10 @@ function resolveBuiltinPreviewExpression(expr: string, now = new Date()): string
     end.setDate(end.getDate() + 6);
     return formatBuiltinPreviewDate(end, match[1].trim());
   }
-  if (/^year_week\((.+)\)$/.test(trimmed) || /^year_week\((.+),(.+)\)$/.test(trimmed)) {
+  if (
+    /^year_week\((.+)\)$/.test(trimmed) ||
+    /^year_week\((.+),(.+)\)$/.test(trimmed)
+  ) {
     const match = trimmed.match(/^year_week\((.+?)(?:,(.+))?\)$/);
     if (!match) return null;
     const format = match[1].trim();
@@ -865,7 +1130,10 @@ function resolveBuiltinPreviewExpression(expr: string, now = new Date()): string
   if (offsetMatch) {
     const [, format, sign, rawOffset] = offsetMatch;
     const [first, ...rest] = rawOffset.split('/');
-    const offset = rest.reduce((acc, value) => acc / Number(value), Number(first));
+    const offset = rest.reduce(
+      (acc, value) => acc / Number(value),
+      Number(first),
+    );
     const hours = (sign === '-' ? -1 : 1) * offset * 24;
     const target = new Date(now.getTime() + hours * 60 * 60 * 1000);
     return formatBuiltinPreviewDate(target, format.trim());
@@ -1213,7 +1481,9 @@ function getDisplayJobLifecycleStatus(job: SyncJobInstance | null): string {
   return String(job.status || '-');
 }
 
-function normalizeJobLifecycleStatus(status: string | null | undefined): string {
+function normalizeJobLifecycleStatus(
+  status: string | null | undefined,
+): string {
   return String(status || '')
     .trim()
     .toUpperCase();
@@ -1278,15 +1548,21 @@ function getJobSubmittedScript(job: SyncJobInstance | null): {
   if (submittedContent) {
     return {
       content: submittedContent,
-      format: String(submitSpec.submitted_format || submitSpec.format || 'hocon'),
+      format: String(
+        submitSpec.submitted_format || submitSpec.format || 'hocon',
+      ),
     };
   }
-  const previewContent = String(toObject(job.result_preview).preview_content || '').trim();
+  const previewContent = String(
+    toObject(job.result_preview).preview_content || '',
+  ).trim();
   if (previewContent) {
     return {
       content: previewContent,
       format: String(
-        toObject(job.result_preview).content_format || submitSpec.format || 'hocon',
+        toObject(job.result_preview).content_format ||
+          submitSpec.format ||
+          'hocon',
       ),
     };
   }
@@ -1485,7 +1761,31 @@ function resolveDefaultPreviewHTTPSinkURL(): string {
 }
 
 function buildDefaultContent(format: SyncFormat): string {
-  return 'env {\n  job.mode = "batch"\n}\n\nsource {\n}\n\ntransform {\n}\n\nsink {\n}\n';
+  return (
+    'env {\n' +
+    '  job.mode = "BATCH"\n' +
+    '  parallelism = 1\n' +
+    '  job.retry.times = 0\n' +
+    '  job.retry.interval.seconds = 3\n' +
+    '  min-pause = -1\n' +
+    '  savemode.execute.location = "CLUSTER"\n' +
+    '  \n' +
+    '  ## limit speed\n' +
+    '  # read_limit.rows_per_second = 1000\n' +
+    '  # read_limit.bytes_per_second = 1048576\n' +
+    '  \n' +
+    '  ## checkpoint \n' +
+    '  # checkpoint.interval = 10000\n' +
+    '  # checkpoint.timeout = 30000\n' +
+    '}\n\n' +
+    'source {\n' +
+    '}\n\n' +
+    'transform {\n' +
+    '}\n\n' +
+    'sink {\n' +
+    '  Console {}\n' +
+    '}\n'
+  );
 }
 
 function formatMetricDisplayValue(value: unknown): string {
@@ -1817,9 +2117,222 @@ function buildMetricGroups(
     .filter((item) => item.items.length > 0);
 }
 
+function normalizePluginIdentity(value?: string | null): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function buildTemplatePluginItems(
+  plugins: SyncPluginFactoryInfo[],
+): TemplatePluginItem[] {
+  return (plugins || [])
+    .map((item) => {
+      return {
+        value: item.factory_identifier,
+        label: item.factory_identifier,
+        origin: item.origin,
+      };
+    })
+    .filter(
+      (item) =>
+        normalizePluginIdentity(item.value) !==
+        normalizePluginIdentity('MultiTableSink'),
+    )
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function resolveEditorPluginContext(
+  content: string,
+  lineNumber: number,
+): {
+  pluginType: SyncPluginType | null;
+  factoryIdentifier: string | null;
+} {
+  const lines = content.split('\n').slice(0, Math.max(lineNumber, 1));
+  const blockStack: string[] = [];
+  let pluginType: SyncPluginType | null = null;
+  let factoryIdentifier: string | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/#.*$/, '').trim();
+    if (!line) {
+      continue;
+    }
+    const opens = (line.match(/\{/g) || []).length;
+    const closes = (line.match(/\}/g) || []).length;
+    const typeMatch = line.match(/^(source|transform|sink|catalog)\s*\{$/i);
+    if (typeMatch) {
+      pluginType = typeMatch[1].toLowerCase() as SyncPluginType;
+      blockStack.push(pluginType);
+      continue;
+    }
+    if (
+      pluginType &&
+      !factoryIdentifier &&
+      blockStack.length === 1 &&
+      opens > 0 &&
+      closes === 0
+    ) {
+      const pluginMatch = line.match(/^([A-Za-z0-9_.-]+)\s*\{$/);
+      if (pluginMatch) {
+        factoryIdentifier = pluginMatch[1];
+        blockStack.push(factoryIdentifier);
+        continue;
+      }
+    }
+    for (let index = 0; index < opens; index += 1) {
+      blockStack.push('{');
+    }
+    for (let index = 0; index < closes; index += 1) {
+      const popped = blockStack.pop();
+      if (popped && factoryIdentifier && popped === factoryIdentifier) {
+        factoryIdentifier = null;
+      } else if (popped && pluginType && popped === pluginType) {
+        pluginType = null;
+      }
+    }
+  }
+
+  return {pluginType, factoryIdentifier};
+}
+
+function findTopLevelBlockInsertOffset(
+  content: string,
+  pluginType: SyncPluginType,
+): number | null {
+  const lines = content.split('\n');
+  let depth = 0;
+  let insideTarget = false;
+  let offset = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/#.*$/, '').trim();
+    const opens = (line.match(/\{/g) || []).length;
+    const closes = (line.match(/\}/g) || []).length;
+    if (!insideTarget && depth === 0 && line === `${pluginType} {`) {
+      insideTarget = true;
+      depth += opens - closes;
+      offset += rawLine.length + 1;
+      continue;
+    }
+    if (insideTarget && depth === 1 && closes > 0) {
+      return offset;
+    }
+    depth += opens - closes;
+    offset += rawLine.length + 1;
+  }
+
+  return null;
+}
+
+function resolveOptionKeyFromLine(
+  lineContent: string,
+  column: number,
+): {
+  key: string | null;
+  startColumn: number;
+  endColumn: number;
+} {
+  const commentedMatch = lineContent.match(/^(\s*#+\s*)([A-Za-z0-9_.-]+)/);
+  if (commentedMatch?.[2]) {
+    const key = commentedMatch[2];
+    const startColumn = commentedMatch[1].length + 1;
+    const endColumn = startColumn + key.length;
+    if (column >= startColumn && column <= endColumn) {
+      return {key, startColumn, endColumn};
+    }
+    return {key: null, startColumn, endColumn};
+  }
+
+  const assignmentMatch = lineContent.match(/^(\s*)([A-Za-z0-9_.-]+)\s*=/);
+  if (!assignmentMatch || !assignmentMatch[2]) {
+    return {key: null, startColumn: column, endColumn: column};
+  }
+  const key = assignmentMatch[2];
+  const startColumn = assignmentMatch[1].length + 1;
+  const endColumn = startColumn + key.length;
+  if (column < startColumn || column > endColumn) {
+    return {key: null, startColumn, endColumn};
+  }
+  return {key, startColumn, endColumn};
+}
+
+function buildInsertedTemplateContent(
+  content: string,
+  pluginType: SyncPluginType,
+  pluginBlock: string,
+): {
+  nextContent: string;
+  startOffset: number;
+  endOffset: number;
+} {
+  const existingInsertOffset = findTopLevelBlockInsertOffset(
+    content,
+    pluginType,
+  );
+  if (existingInsertOffset !== null) {
+    const insertText = `  ${pluginBlock.replace(/\n/g, '\n  ')}\n`;
+    const nextContent =
+      content.slice(0, existingInsertOffset) +
+      insertText +
+      content.slice(existingInsertOffset);
+    return {
+      nextContent,
+      startOffset: existingInsertOffset,
+      endOffset: existingInsertOffset + insertText.length - 1,
+    };
+  }
+
+  const prefix = content.trim().length > 0 ? '\n\n' : '';
+  const wrappedBlock = `${pluginType} {\n  ${pluginBlock.replace(
+    /\n/g,
+    '\n  ',
+  )}\n}`;
+  const nextContent = `${content}${prefix}${wrappedBlock}`;
+  return {
+    nextContent,
+    startOffset: content.length + prefix.length,
+    endOffset: nextContent.length,
+  };
+}
+
 export function DataSyncStudio() {
   const t = useTranslations('workbenchStudio');
   const {resolvedTheme} = useTheme();
+  const monacoFromHook = useMonaco();
+  const editorInstanceRef = useRef<any>(null);
+  const monacoInstanceRef = useRef<any>(null);
+  const completionDisposableRef = useRef<any>(null);
+  const hoverDisposableRef = useRef<any>(null);
+  const contentChangeDisposableRef = useRef<any>(null);
+  const cursorPositionChangeDisposableRef = useRef<any>(null);
+  const cursorSelectionChangeDisposableRef = useRef<any>(null);
+  const lastSuggestTriggerRef = useRef('');
+  const enumCompletionCommandIdRef = useRef('sync.applyEnumCompletion');
+  const enumCompletionCommandRegisteredRef = useRef(false);
+  const monacoLanguageReadyRef = useRef(false);
+  const currentClusterIdRef = useRef('');
+  const pendingTemplateSelectionRef = useRef<{
+    startOffset: number;
+    endOffset: number;
+  } | null>(null);
+  const pluginSchemaCacheRef = useRef<Record<string, Record<string, any>>>({});
+  const pluginListCacheRef = useRef<Record<string, SyncPluginFactoryInfo[]>>(
+    {},
+  );
+  const templateCacheRef = useRef<Record<string, string>>({});
+  const enumCatalogCacheRef = useRef<Record<string, PluginEnumCatalogMap>>({});
+  const loadPluginEnumCatalogRef = useRef<
+    (clusterId: number) => Promise<PluginEnumCatalogMap>
+  >(async () => ({}));
+  const ensurePluginSchemaRef = useRef<
+    (
+      pluginType: SyncPluginType,
+      factoryIdentifier: string,
+    ) => Promise<Record<string, any>>
+  >(async () => ({}));
   const [clusters, setClusters] = useState<ClusterInfo[]>([]);
   const [tree, setTree] = useState<SyncTaskTreeNode[]>([]);
   const [keyword, setKeyword] = useState('');
@@ -1873,9 +2386,8 @@ export function DataSyncStudio() {
     null,
   );
   const [jobScriptOpen, setJobScriptOpen] = useState(false);
-  const [jobScriptTarget, setJobScriptTarget] = useState<SyncJobInstance | null>(
-    null,
-  );
+  const [jobScriptTarget, setJobScriptTarget] =
+    useState<SyncJobInstance | null>(null);
   const [previewRunDialog, setPreviewRunDialog] =
     useState<PreviewRunDialogState>({
       open: false,
@@ -1941,6 +2453,19 @@ export function DataSyncStudio() {
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const [logFilterMode, setLogFilterMode] = useState<LogFilterMode>('all');
   const [logSearchTerm, setLogSearchTerm] = useState('');
+  const [pluginPanelLoading, setPluginPanelLoading] = useState(false);
+  const [pluginTemplateLoadingText, setPluginTemplateLoadingText] = useState<
+    string | null
+  >(null);
+  const [pluginTemplatePendingType, setPluginTemplatePendingType] =
+    useState<SyncPluginType | null>(null);
+  const [pluginFactories, setPluginFactories] = useState<
+    Record<'source' | 'transform' | 'sink', SyncPluginFactoryInfo[]>
+  >({
+    source: [],
+    transform: [],
+    sink: [],
+  });
   const [treeMenu, setTreeMenu] = useState<TreeContextMenuState>({
     open: false,
     x: 0,
@@ -2056,7 +2581,10 @@ export function DataSyncStudio() {
     );
   }, [previewDatasetName, previewDatasets]);
   const activeJobs = useMemo(
-    () => jobs.filter((job) => isJobLifecycleActive(getDisplayJobLifecycleStatus(job))),
+    () =>
+      jobs.filter((job) =>
+        isJobLifecycleActive(getDisplayJobLifecycleStatus(job)),
+      ),
     [jobs],
   );
   const hasActivePreview = activeJobs.some((job) => job.run_type === 'preview');
@@ -2093,6 +2621,10 @@ export function DataSyncStudio() {
   useEffect(() => {
     customVariableRowsRef.current = customVariableRows;
   }, [customVariableRows]);
+
+  useEffect(() => {
+    currentClusterIdRef.current = editor.clusterId;
+  }, [editor.clusterId]);
 
   const markEditorDraft = useCallback(
     (
@@ -2236,6 +2768,147 @@ export function DataSyncStudio() {
     },
     [syncOpenTabs],
   );
+
+  const loadPluginPanelData = useCallback(
+    async (clusterId: number) => {
+      const clusterKey = String(clusterId);
+      setPluginPanelLoading(true);
+      try {
+        const fetchRuntime = (pluginType: SyncPluginType) => {
+          const cacheKey = `${clusterKey}:${pluginType}`;
+          if (pluginListCacheRef.current[cacheKey]) {
+            return Promise.resolve(pluginListCacheRef.current[cacheKey]);
+          }
+          return services.sync
+            .listPluginFactories({
+              cluster_id: clusterId,
+              plugin_type: pluginType,
+            })
+            .then((result) => {
+              const items = result.plugins || [];
+              pluginListCacheRef.current[cacheKey] = items;
+              return items;
+            });
+        };
+        const [sourceItems, transformItems, sinkItems] = await Promise.all([
+          fetchRuntime('source'),
+          fetchRuntime('transform'),
+          fetchRuntime('sink'),
+        ]);
+        void loadPluginEnumCatalogRef.current(clusterId).catch((error) => {
+          console.warn(
+            '[sync] plugin enum preload skipped',
+            error instanceof Error ? error.message : error,
+          );
+        });
+        setPluginFactories({
+          source: sourceItems || [],
+          transform: transformItems || [],
+          sink: sinkItems || [],
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : t('loadPluginTemplatesFailed'),
+        );
+        setPluginFactories({source: [], transform: [], sink: []});
+      } finally {
+        setPluginPanelLoading(false);
+      }
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    if (executionMode !== 'cluster' || !editor.clusterId) {
+      setPluginFactories({source: [], transform: [], sink: []});
+      return;
+    }
+    void loadPluginPanelData(Number(editor.clusterId));
+  }, [editor.clusterId, executionMode, loadPluginPanelData]);
+
+  const sourceTemplateItems = useMemo(
+    () => buildTemplatePluginItems(pluginFactories.source),
+    [pluginFactories.source],
+  );
+  const sinkTemplateItems = useMemo(
+    () => buildTemplatePluginItems(pluginFactories.sink),
+    [pluginFactories.sink],
+  );
+  const transformTemplateItems = useMemo(
+    () =>
+      (pluginFactories.transform || [])
+        .map((item) => ({
+          value: item.factory_identifier,
+          label: item.factory_identifier,
+          origin: item.origin,
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+    [pluginFactories.transform],
+  );
+
+  const ensurePluginSchema = useCallback(
+    async (pluginType: SyncPluginType, factoryIdentifier: string) => {
+      if (!editor.clusterId) {
+        return {};
+      }
+      const cacheKey = `${editor.clusterId}:${pluginType}:${factoryIdentifier}`;
+      if (pluginSchemaCacheRef.current[cacheKey]) {
+        return pluginSchemaCacheRef.current[cacheKey];
+      }
+      const result = await services.sync.getPluginOptions({
+        cluster_id: Number(editor.clusterId),
+        plugin_type: pluginType,
+        factory_identifier: factoryIdentifier,
+        include_supplement: true,
+      });
+      const mapped = Object.fromEntries(
+        (result.options || []).map((item) => [item.key, item]),
+      );
+      pluginSchemaCacheRef.current[cacheKey] = mapped;
+      return mapped;
+    },
+    [editor.clusterId],
+  );
+
+  useEffect(() => {
+    ensurePluginSchemaRef.current = ensurePluginSchema;
+  }, [ensurePluginSchema]);
+
+  const loadPluginEnumCatalog = useCallback(async (clusterId: number) => {
+    const cacheKey = String(clusterId);
+    if (enumCatalogCacheRef.current[cacheKey]) {
+      return enumCatalogCacheRef.current[cacheKey];
+    }
+    const result = await services.sync.listPluginEnumCatalog({
+      cluster_id: clusterId,
+      include_supplement: true,
+    });
+    const mapped: PluginEnumCatalogMap = {};
+    for (const plugin of result.plugins || []) {
+      const pluginType = plugin.plugin_type;
+      if (!mapped[pluginType]) {
+        mapped[pluginType] = {};
+      }
+      mapped[pluginType]![plugin.factory_identifier] = Object.fromEntries(
+        (plugin.options || []).map((item) => [item.key, item]),
+      );
+    }
+    if ((result.env_options || []).length > 0) {
+      mapped.env = {
+        __env__: Object.fromEntries(
+          (result.env_options || []).map((item) => [item.key, item]),
+        ),
+      } as any;
+    }
+    enumCatalogCacheRef.current[cacheKey] = mapped;
+    return mapped;
+  }, []);
+
+  useEffect(() => {
+    loadPluginEnumCatalogRef.current = loadPluginEnumCatalog;
+  }, [loadPluginEnumCatalog]);
 
   const loadJobs = useCallback(async (taskId: number | null) => {
     if (!taskId) {
@@ -2834,6 +3507,457 @@ export function DataSyncStudio() {
     });
   };
 
+  const insertPluginTemplate = useCallback(
+    async (pluginType: SyncPluginType, factoryIdentifier: string) => {
+      if (!editor.clusterId) {
+        toast.error(t('selectClusterFirst'));
+        return;
+      }
+      const clusterId = Number(editor.clusterId);
+      const cacheKey = `${clusterId}:${pluginType}:${factoryIdentifier}`;
+      setPluginTemplatePendingType(pluginType);
+      setPluginTemplateLoadingText(factoryIdentifier);
+      const loadingToastId = toast.loading(
+        t('generatingPluginTemplate', {plugin: factoryIdentifier}),
+      );
+      try {
+        await ensurePluginSchema(pluginType, factoryIdentifier);
+        const template =
+          templateCacheRef.current[cacheKey] ||
+          (
+            await services.sync.renderPluginTemplate({
+              cluster_id: clusterId,
+              plugin_type: pluginType,
+              factory_identifier: factoryIdentifier,
+              include_comments: false,
+              include_advanced: false,
+              include_supplement: true,
+            })
+          ).template;
+        templateCacheRef.current[cacheKey] = template;
+        setEditor((prev) => {
+          const existing = prev.content || '';
+          const inserted = buildInsertedTemplateContent(
+            existing,
+            pluginType,
+            template,
+          );
+          pendingTemplateSelectionRef.current = {
+            startOffset: inserted.startOffset,
+            endOffset: inserted.endOffset,
+          };
+          const nextEditor = {...prev, content: inserted.nextContent};
+          if (nextEditor.id) {
+            markEditorDraft(
+              nextEditor.id,
+              nextEditor,
+              customVariableRowsRef.current,
+              true,
+            );
+          }
+          return nextEditor;
+        });
+        toast.dismiss(loadingToastId);
+      } catch (error) {
+        toast.dismiss(loadingToastId);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : t('insertPluginTemplateFailed'),
+        );
+      } finally {
+        setPluginTemplatePendingType(null);
+        setPluginTemplateLoadingText(null);
+      }
+    },
+    [editor.clusterId, ensurePluginSchema, markEditorDraft, t],
+  );
+
+  useEffect(() => {
+    if (!pendingTemplateSelectionRef.current || !editorInstanceRef.current) {
+      return;
+    }
+    const model = editorInstanceRef.current.getModel?.();
+    const monaco = monacoInstanceRef.current;
+    if (!model || !monaco) {
+      return;
+    }
+    const pending = pendingTemplateSelectionRef.current;
+    pendingTemplateSelectionRef.current = null;
+    const start = model.getPositionAt(pending.startOffset);
+    const end = model.getPositionAt(pending.endOffset);
+    editorInstanceRef.current.focus?.();
+    editorInstanceRef.current.setSelection?.(
+      new monaco.Selection(
+        start.lineNumber,
+        start.column,
+        end.lineNumber,
+        end.column,
+      ),
+    );
+    editorInstanceRef.current.revealLineNearTop?.(start.lineNumber);
+  }, [editor.content]);
+
+  const registerEditorAssistProviders = useCallback((monaco: any) => {
+    monacoInstanceRef.current = monaco;
+    if (typeof window !== 'undefined') {
+      (window as typeof window & {monaco?: any}).monaco = monaco;
+    }
+    if (!monacoLanguageReadyRef.current) {
+      ensureSyncHoconLanguage(monaco);
+      monacoLanguageReadyRef.current = true;
+    }
+    completionDisposableRef.current?.dispose?.();
+    hoverDisposableRef.current?.dispose?.();
+    if (!enumCompletionCommandRegisteredRef.current) {
+      monaco.editor.registerCommand(
+        enumCompletionCommandIdRef.current,
+        (
+          _accessor: unknown,
+          payload?: {lineNumber?: number; value?: string},
+        ) => {
+          const editor = editorInstanceRef.current;
+          const model = editor?.getModel?.();
+          if (
+            !editor ||
+            !model ||
+            !payload?.lineNumber ||
+            payload.value == null
+          ) {
+            return;
+          }
+          const lineContent = model.getLineContent(payload.lineNumber);
+          const bounds = resolveEnumValueBounds(
+            lineContent,
+            payload.lineNumber,
+          );
+          if (!bounds) {
+            return;
+          }
+          const renderedValue = bounds.quoted
+            ? payload.value
+            : JSON.stringify(payload.value);
+          editor.executeEdits?.('sync-enum-completion', [
+            {
+              range: {
+                startLineNumber: payload.lineNumber,
+                endLineNumber: payload.lineNumber,
+                startColumn: bounds.startColumn,
+                endColumn: bounds.endColumn,
+              },
+              text: renderedValue,
+            },
+          ]);
+        },
+      );
+      enumCompletionCommandRegisteredRef.current = true;
+    }
+    completionDisposableRef.current =
+      monaco.languages.registerCompletionItemProvider('sync-hocon', {
+        triggerCharacters: ['=', ' ', '"'],
+        provideCompletionItems: async (
+          model: any,
+          position: {lineNumber: number; column: number},
+        ) => {
+          const lineContent = model.getLineContent(position.lineNumber);
+          const linePrefix = model
+            .getLineContent(position.lineNumber)
+            .slice(0, Math.max(position.column - 1, 0));
+          const keyMatch = linePrefix.match(
+            /^\s*([A-Za-z0-9_.-]+)\s*=\s*(?:"[^"]*)?$/,
+          );
+          if (!keyMatch) {
+            return {suggestions: []};
+          }
+          const optionKey = keyMatch[1];
+          const context = resolveEditorPluginContext(
+            model.getValue(),
+            position.lineNumber,
+          );
+          let metadata: any = null;
+          const enumCatalog =
+            enumCatalogCacheRef.current[currentClusterIdRef.current] || {};
+          if (context.pluginType && context.factoryIdentifier) {
+            metadata =
+              enumCatalog[context.pluginType]?.[context.factoryIdentifier]?.[
+                optionKey
+              ] || null;
+          } else if (
+            enumCatalog.env?.__env__?.[optionKey]?.enum_values?.length
+          ) {
+            metadata = enumCatalog.env.__env__[optionKey];
+          }
+          if (
+            !(metadata?.enum_values || []).length &&
+            context.pluginType &&
+            context.factoryIdentifier &&
+            currentClusterIdRef.current
+          ) {
+            try {
+              const schema = await ensurePluginSchemaRef.current(
+                context.pluginType,
+                context.factoryIdentifier,
+              );
+              metadata = schema[optionKey] || null;
+            } catch {
+              metadata = null;
+            }
+          }
+          if (
+            !(metadata?.enum_values || []).length &&
+            ENV_OPTION_METADATA[optionKey]?.enumValues
+          ) {
+            metadata = {
+              enum_values: ENV_OPTION_METADATA[optionKey].enumValues || [],
+              enum_display_values:
+                ENV_OPTION_METADATA[optionKey].enumValues || [],
+            };
+          }
+          const enumItems = resolveEnumSuggestionItems(metadata);
+          const enumValues = enumItems.map((item) => item.value);
+          if (!enumValues?.length) {
+            return {suggestions: []};
+          }
+          const currentWord = model.getWordUntilPosition(position)?.word || '';
+          return {
+            suggestions: enumItems.map((item) => ({
+              label: item.label,
+              detail:
+                item.label !== item.value ? `插入值: ${item.value}` : undefined,
+              kind: monaco.languages.CompletionItemKind.EnumMember,
+              insertText: '',
+              filterText: [currentWord, optionKey, item.label, item.value]
+                .filter(Boolean)
+                .join(' '),
+              range: resolveEnumSuggestRange(position),
+              command: {
+                id: enumCompletionCommandIdRef.current,
+                title: 'Apply enum completion',
+                arguments: [
+                  {
+                    lineNumber: position.lineNumber,
+                    value: item.value,
+                  },
+                ],
+              },
+            })),
+          };
+        },
+      });
+    hoverDisposableRef.current = monaco.languages.registerHoverProvider(
+      'sync-hocon',
+      {
+        provideHover: async (
+          model: any,
+          position: {lineNumber: number; column: number},
+        ) => {
+          const lineContent = model.getLineContent(position.lineNumber);
+          const optionKeyInfo = resolveOptionKeyFromLine(
+            lineContent,
+            position.column,
+          );
+          if (!optionKeyInfo.key) {
+            return null;
+          }
+          const optionKey = optionKeyInfo.key;
+          let metadata: any = ENV_OPTION_METADATA[optionKey] || null;
+          const context = resolveEditorPluginContext(
+            model.getValue(),
+            position.lineNumber,
+          );
+          const enumCatalog =
+            enumCatalogCacheRef.current[currentClusterIdRef.current] || {};
+          if (!metadata && enumCatalog.env?.__env__?.[optionKey]) {
+            metadata = enumCatalog.env.__env__[optionKey];
+          }
+          if (!metadata && context.pluginType && context.factoryIdentifier) {
+            metadata =
+              enumCatalog[context.pluginType]?.[context.factoryIdentifier]?.[
+                optionKey
+              ] || null;
+          }
+          if (
+            !metadata &&
+            context.pluginType &&
+            context.factoryIdentifier &&
+            currentClusterIdRef.current
+          ) {
+            try {
+              const schema = await ensurePluginSchemaRef.current(
+                context.pluginType,
+                context.factoryIdentifier,
+              );
+              metadata = schema[optionKey] || null;
+            } catch {
+              metadata = null;
+            }
+          }
+          if (!metadata) {
+            return null;
+          }
+          const lines = [`**${optionKey}**`];
+          if (metadata.description) {
+            lines.push('', String(metadata.description));
+          }
+          if (metadata.default_value !== undefined) {
+            lines.push(
+              '',
+              `默认值：\`${formatMetadataValue(metadata.default_value)}\``,
+            );
+          }
+          if (metadata.required_mode) {
+            lines.push('', `必填模式：\`${String(metadata.required_mode)}\``);
+          }
+          if (metadata.enum_values?.length || metadata.enumValues?.length) {
+            const values = resolveEnumSuggestionItems({
+              enum_values: metadata.enum_values || metadata.enumValues || [],
+              enum_display_values:
+                metadata.enum_display_values ||
+                metadata.enumDisplayValues ||
+                [],
+            });
+            lines.push(
+              '',
+              `枚举值：\`${values
+                .map((item) =>
+                  item.label !== item.value
+                    ? `${item.label} => ${item.value}`
+                    : item.value,
+                )
+                .join('`, `')}\``,
+            );
+          }
+          return {
+            range: new monaco.Range(
+              position.lineNumber,
+              optionKeyInfo.startColumn,
+              position.lineNumber,
+              optionKeyInfo.endColumn,
+            ),
+            contents: [{value: lines.join('\n')}],
+          };
+        },
+      },
+    );
+  }, []);
+
+  const handleEditorBeforeMount = useCallback(
+    (monaco: any) => {
+      registerEditorAssistProviders(monaco);
+    },
+    [registerEditorAssistProviders],
+  );
+
+  const handleEditorMount = useCallback(
+    (instance: any, monaco: any) => {
+      editorInstanceRef.current = instance;
+      registerEditorAssistProviders(monaco);
+      contentChangeDisposableRef.current?.dispose?.();
+      cursorPositionChangeDisposableRef.current?.dispose?.();
+      cursorSelectionChangeDisposableRef.current?.dispose?.();
+      contentChangeDisposableRef.current = instance.onDidType?.(
+        (typedText: string) => {
+          const position = instance.getPosition?.();
+          const model = instance.getModel?.();
+          if (!position || !model) {
+            return;
+          }
+          const linePrefix = model
+            .getLineContent(position.lineNumber)
+            .slice(0, Math.max(position.column - 1, 0));
+          const inValueRegion = /^\s*[A-Za-z0-9_.-]+\s*=\s*(?:"[^"]*)?$/.test(
+            linePrefix,
+          );
+          if (!inValueRegion) {
+            return;
+          }
+          const shouldTrigger =
+            ['=', ' ', '"'].includes(typedText) ||
+            /^[A-Za-z0-9_.-]$/.test(typedText);
+          if (!shouldTrigger) {
+            return;
+          }
+          if (typedText === ' ' && !/=\s+$/.test(linePrefix)) {
+            return;
+          }
+          setTimeout(() => {
+            instance.trigger?.(
+              'sync-plugin-completion',
+              'editor.action.triggerSuggest',
+              {},
+            );
+          }, 0);
+        },
+      );
+      cursorPositionChangeDisposableRef.current =
+        instance.onDidChangeCursorPosition?.((event: any) => {
+          const model = instance.getModel?.();
+          const position = event?.position;
+          if (!model || !position) {
+            return;
+          }
+          const lineContent = model.getLineContent(position.lineNumber);
+          if (!isCursorInsideValueRegion(lineContent, position.column)) {
+            return;
+          }
+          const triggerKey = `${position.lineNumber}:${position.column}:${lineContent}`;
+          if (lastSuggestTriggerRef.current === triggerKey) {
+            return;
+          }
+          lastSuggestTriggerRef.current = triggerKey;
+          setTimeout(() => {
+            instance.trigger?.(
+              'sync-plugin-cursor',
+              'editor.action.triggerSuggest',
+              {},
+            );
+          }, 0);
+        });
+      cursorSelectionChangeDisposableRef.current =
+        instance.onDidChangeCursorSelection?.((event: any) => {
+          const model = instance.getModel?.();
+          const position = event?.selection?.getPosition?.();
+          if (!model || !position) {
+            return;
+          }
+          const lineContent = model.getLineContent(position.lineNumber);
+          if (!isCursorInsideValueRegion(lineContent, position.column)) {
+            return;
+          }
+          const triggerKey = `selection:${position.lineNumber}:${position.column}:${lineContent}`;
+          if (lastSuggestTriggerRef.current === triggerKey) {
+            return;
+          }
+          lastSuggestTriggerRef.current = triggerKey;
+          setTimeout(() => {
+            instance.trigger?.(
+              'sync-plugin-selection',
+              'editor.action.triggerSuggest',
+              {},
+            );
+          }, 0);
+        });
+    },
+    [registerEditorAssistProviders],
+  );
+
+  useEffect(() => {
+    if (!monacoFromHook) {
+      return;
+    }
+    registerEditorAssistProviders(monacoFromHook);
+  }, [monacoFromHook, registerEditorAssistProviders]);
+
+  useEffect(() => {
+    return () => {
+      completionDisposableRef.current?.dispose?.();
+      hoverDisposableRef.current?.dispose?.();
+      contentChangeDisposableRef.current?.dispose?.();
+      cursorPositionChangeDisposableRef.current?.dispose?.();
+      cursorSelectionChangeDisposableRef.current?.dispose?.();
+    };
+  }, []);
+
   const buildTaskPayload = useCallback(
     (): CreateSyncTaskRequest => ({
       parent_id: editor.parentId,
@@ -3262,7 +4386,10 @@ export function DataSyncStudio() {
     actionLabel: string,
     draft?: ReturnType<typeof buildTaskPayload>,
   ) => {
-    const result = await services.sync.validateTask(taskId, draft ? {draft} : {});
+    const result = await services.sync.validateTask(
+      taskId,
+      draft ? {draft} : {},
+    );
     if (!result.valid) {
       setValidationTitle(t('validateConfigTitle'));
       setValidationResult(result);
@@ -3445,14 +4572,6 @@ export function DataSyncStudio() {
     };
     setActionPending('preview');
     try {
-      const passed = await runPreflightValidation(
-        editor.id,
-        t('previewActionLabel'),
-        draft,
-      );
-      if (!passed) {
-        return;
-      }
       const job = await services.sync.previewTask(editor.id, {
         row_limit: normalizedRowLimit,
         timeout_minutes: normalizedTimeoutMinutes,
@@ -3463,11 +4582,7 @@ export function DataSyncStudio() {
       setBottomConsoleTab('preview');
       toast.success(t('previewSubmitted'));
     } catch (error) {
-      const uiError = formatSyncUserFacingError(
-        error,
-        t('previewFailed'),
-        t,
-      );
+      const uiError = formatSyncUserFacingError(error, t('previewFailed'), t);
       toast.error(uiError.description);
     } finally {
       setActionPending((current) => (current === 'preview' ? null : current));
@@ -3489,17 +4604,9 @@ export function DataSyncStudio() {
       return;
     }
     try {
-      const passed = await runPreflightValidation(
-        actionContext.taskId,
-        actionLabel,
-        actionContext.draft,
-      );
-      if (!passed) {
-        return;
-      }
       const resolvedRecoverSourceId =
         mode === 'recover'
-          ? sourceJobId ?? preferredRecoverSourceId ?? null
+          ? (sourceJobId ?? preferredRecoverSourceId ?? null)
           : null;
       if (mode === 'recover' && !resolvedRecoverSourceId) {
         throw new Error(t('noRecoverSource'));
@@ -3550,7 +4657,8 @@ export function DataSyncStudio() {
 
   const handleStopActiveJob = async (mode: 'normal' | 'savepoint') => {
     const activeJob =
-      selectedJob && isJobLifecycleActive(getDisplayJobLifecycleStatus(selectedJob))
+      selectedJob &&
+      isJobLifecycleActive(getDisplayJobLifecycleStatus(selectedJob))
         ? selectedJob
         : activeJobs[0];
     if (!activeJob) {
@@ -4055,14 +5163,31 @@ export function DataSyncStudio() {
             <div className='min-h-0 flex-1'>
               <MonacoEditor
                 height='100%'
-                language={editor.contentFormat === 'json' ? 'json' : 'shell'}
-                theme={monacoTheme}
+                language={
+                  editor.contentFormat === 'json' ? 'json' : 'sync-hocon'
+                }
+                theme={
+                  editor.contentFormat === 'json'
+                    ? monacoTheme
+                    : resolvedTheme === 'light'
+                      ? 'sync-hocon-light'
+                      : 'sync-hocon-dark'
+                }
                 value={editor.content}
+                beforeMount={handleEditorBeforeMount}
+                onMount={handleEditorMount}
                 onChange={(value) => updateEditor('content', value || '')}
                 options={{
                   minimap: {enabled: true},
                   fontSize: 13,
                   wordWrap: 'on',
+                  quickSuggestions: {
+                    other: false,
+                    comments: false,
+                    strings: true,
+                  },
+                  suggestOnTriggerCharacters: true,
+                  wordBasedSuggestions: 'off',
                   automaticLayout: true,
                   scrollBeyondLastLine: false,
                   smoothScrolling: true,
@@ -4112,6 +5237,15 @@ export function DataSyncStudio() {
               onExecutionModeChange={handleExecutionModeChange}
               onClusterChange={(value) =>
                 updateEditor('clusterId', value === '__empty__' ? '' : value)
+              }
+              pluginPanelLoading={pluginPanelLoading}
+              pluginTemplatePendingType={pluginTemplatePendingType}
+              pluginTemplateLoadingText={pluginTemplateLoadingText}
+              sourceTemplateItems={sourceTemplateItems}
+              transformTemplateItems={transformTemplateItems}
+              sinkTemplateItems={sinkTemplateItems}
+              onInsertPluginTemplate={(pluginType, factoryIdentifier) =>
+                void insertPluginTemplate(pluginType, factoryIdentifier)
               }
               onStartEditCustomVariableRow={handleStartEditCustomVariableRow}
               onCustomVariableDraftChange={handleCustomVariableDraftChange}
@@ -4189,9 +5323,7 @@ export function DataSyncStudio() {
                   onSelectJob={setSelectedJobId}
                   onRecover={handleRecoverFromHistory}
                   onCancel={handleCancelJob}
-                  onSavepointStop={(jobId) =>
-                    void handleCancelJob(jobId, true)
-                  }
+                  onSavepointStop={(jobId) => void handleCancelJob(jobId, true)}
                   onViewMetrics={(job) => {
                     setMetricsDialogJob(job);
                     setJobMetricsDialogOpen(true);
@@ -5015,16 +6147,91 @@ function StudioSidebarShell({
   );
 }
 
+function TemplatePluginSelect({
+  label,
+  placeholder,
+  items,
+  disabled,
+  loading,
+  loadingText,
+  onSelect,
+}: {
+  label: string;
+  placeholder: string;
+  items: TemplatePluginItem[];
+  disabled?: boolean;
+  loading?: boolean;
+  loadingText?: string | null;
+  onSelect: (value: string) => void;
+}) {
+  const t = useTranslations('workbenchStudio');
+  const [open, setOpen] = useState(false);
+  const selectedLabel = loading ? loadingText || placeholder : placeholder;
+
+  return (
+    <div className='space-y-1.5'>
+      <Label className='text-[11px] text-muted-foreground'>{label}</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type='button'
+            variant='outline'
+            role='combobox'
+            aria-expanded={open}
+            disabled={disabled}
+            className='w-full justify-between'
+          >
+            <span className='truncate text-left'>{selectedLabel}</span>
+            {loading ? (
+              <Loader2 className='ml-2 size-4 shrink-0 animate-spin opacity-70' />
+            ) : (
+              <ChevronDown className='ml-2 size-4 shrink-0 opacity-50' />
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className='w-[var(--radix-popover-trigger-width)] min-w-0 p-0'>
+          <Command>
+            <CommandInput placeholder={`${placeholder}...`} />
+            <CommandList>
+              <CommandEmpty>{t('noMatchingPlugins')}</CommandEmpty>
+              {items.map((item) => (
+                <CommandItem
+                  key={`${label}:${item.value}`}
+                  value={`${item.label} ${item.value}`}
+                  onSelect={() => {
+                    setOpen(false);
+                    onSelect(item.value);
+                  }}
+                >
+                  <Check className='size-4 opacity-0' />
+                  <span className='truncate'>{item.label}</span>
+                </CommandItem>
+              ))}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 function SettingsSidebarPanel({
   executionMode,
   clusterId,
   clusters,
+  pluginPanelLoading,
+  pluginTemplatePendingType,
+  pluginTemplateLoadingText,
+  sourceTemplateItems,
+  transformTemplateItems,
+  sinkTemplateItems,
   detectedVariables,
   customVariableRows,
   editingCustomVariableId,
   customVariableDraft,
   onExecutionModeChange,
   onClusterChange,
+  onInsertPluginTemplate,
   onStartEditCustomVariableRow,
   onCustomVariableDraftChange,
   onSaveCustomVariableRow,
@@ -5035,12 +6242,22 @@ function SettingsSidebarPanel({
   executionMode: ExecutionMode;
   clusterId: string;
   clusters: ClusterInfo[];
+  pluginPanelLoading: boolean;
+  pluginTemplatePendingType: SyncPluginType | null;
+  pluginTemplateLoadingText: string | null;
+  sourceTemplateItems: TemplatePluginItem[];
+  transformTemplateItems: TemplatePluginItem[];
+  sinkTemplateItems: TemplatePluginItem[];
   detectedVariables: string[];
   customVariableRows: VariableRow[];
   editingCustomVariableId: string | null;
   customVariableDraft: VariableDraft;
   onExecutionModeChange: (value: ExecutionMode) => void;
   onClusterChange: (value: string) => void;
+  onInsertPluginTemplate: (
+    pluginType: SyncPluginType,
+    factoryIdentifier: string,
+  ) => void;
   onStartEditCustomVariableRow: (rowId: string) => void;
   onCustomVariableDraftChange: (
     field: keyof VariableDraft,
@@ -5097,6 +6314,64 @@ function SettingsSidebarPanel({
               ))}
             </SelectContent>
           </Select>
+        </div>
+      ) : null}
+
+      {executionMode === 'cluster' ? (
+        <div className='rounded-lg border border-border/50 bg-muted/10 p-3'>
+          <Label className='mb-3 block text-xs'>{t('pluginTemplates')}</Label>
+          <div className='space-y-3'>
+            <TemplatePluginSelect
+              disabled={!clusterId || pluginPanelLoading}
+              items={sourceTemplateItems}
+              label={t('sourceTemplate')}
+              loading={pluginTemplatePendingType === 'source'}
+              loadingText={
+                pluginTemplatePendingType === 'source'
+                  ? pluginTemplateLoadingText
+                  : null
+              }
+              placeholder={t('selectSourcePlugin')}
+              onSelect={(value) => onInsertPluginTemplate('source', value)}
+            />
+            <TemplatePluginSelect
+              disabled={!clusterId || pluginPanelLoading}
+              items={transformTemplateItems}
+              label={t('transformTemplate')}
+              loading={pluginTemplatePendingType === 'transform'}
+              loadingText={
+                pluginTemplatePendingType === 'transform'
+                  ? pluginTemplateLoadingText
+                  : null
+              }
+              placeholder={t('selectTransformPlugin')}
+              onSelect={(value) => onInsertPluginTemplate('transform', value)}
+            />
+            <TemplatePluginSelect
+              disabled={!clusterId || pluginPanelLoading}
+              items={sinkTemplateItems}
+              label={t('sinkTemplate')}
+              loading={pluginTemplatePendingType === 'sink'}
+              loadingText={
+                pluginTemplatePendingType === 'sink'
+                  ? pluginTemplateLoadingText
+                  : null
+              }
+              placeholder={t('selectSinkPlugin')}
+              onSelect={(value) => onInsertPluginTemplate('sink', value)}
+            />
+            <p className='text-[11px] leading-5 text-muted-foreground'>
+              {!clusterId
+                ? t('selectClusterFirst')
+                : pluginPanelLoading
+                  ? t('loadingPluginTemplates')
+                  : pluginTemplateLoadingText
+                    ? t('generatingPluginTemplate', {
+                        plugin: pluginTemplateLoadingText,
+                      })
+                    : t('pluginTemplateHint')}
+            </p>
+          </div>
         </div>
       ) : null}
 
@@ -5241,7 +6516,10 @@ function SettingsSidebarPanel({
                 </TooltipTrigger>
                 <TooltipContent className='max-w-[320px] break-all text-xs'>
                   <div>{`{{${variable}}}`}</div>
-                  {resolveBuiltinPreviewExpression(variable, builtinPreviewNow) ? (
+                  {resolveBuiltinPreviewExpression(
+                    variable,
+                    builtinPreviewNow,
+                  ) ? (
                     <div className='mt-1 text-muted-foreground'>
                       {t('builtinPreviewResult', {
                         value:
@@ -5954,10 +7232,7 @@ function JobRunsPanel({
                         size='sm'
                         variant='outline'
                         className='h-8 text-xs'
-                        disabled={
-                          disableRecover ||
-                          !canRecoverFromJob(job)
-                        }
+                        disabled={disableRecover || !canRecoverFromJob(job)}
                         onClick={(event) => {
                           event.stopPropagation();
                           onRecover(job.id);
@@ -5966,9 +7241,7 @@ function JobRunsPanel({
                         {t('recover')}
                       </Button>
                     ) : null}
-                    {isJobLifecycleActive(
-                      getDisplayJobLifecycleStatus(job),
-                    ) ? (
+                    {isJobLifecycleActive(getDisplayJobLifecycleStatus(job)) ? (
                       <>
                         <Button
                           size='sm'
@@ -7283,7 +8556,9 @@ function JobScriptDialogContent({
   const t = useTranslations('workbenchStudio');
   const script = getJobSubmittedScript(job);
   if (!job) {
-    return <div className='text-sm text-muted-foreground'>{t('noJobRuns')}</div>;
+    return (
+      <div className='text-sm text-muted-foreground'>{t('noJobRuns')}</div>
+    );
   }
   if (!script) {
     return (

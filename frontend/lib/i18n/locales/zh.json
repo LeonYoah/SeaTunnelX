@@ -3130,6 +3130,18 @@
     "zetaCluster": "Zeta 集群",
     "selectCluster": "请选择集群",
     "unselected": "未选择",
+    "pluginTemplates": "配置模板",
+    "pluginAdvancedMode": "高级模式",
+    "sourceTemplate": "Source",
+    "transformTemplate": "Transform",
+    "sinkTemplate": "Sink",
+    "selectSourcePlugin": "选择 Source 插件",
+    "selectTransformPlugin": "选择 Transform 插件",
+    "selectSinkPlugin": "选择 Sink 插件",
+    "loadingPluginTemplates": "正在加载插件模板...",
+    "pluginTemplateHint": "选择插件后会自动将 HOCON 模板追加到编辑器，并选中新插入区域。",
+    "loadPluginTemplatesFailed": "加载插件模板失败",
+    "insertPluginTemplateFailed": "插入插件模板失败",
     "customVariables": "自定义变量",
     "add": "新增",
     "unnamed": "未命名",
@@ -3365,6 +3377,9 @@
     "storageType": "存储类型",
     "size": "大小",
     "encoding": "编码",
-    "updatedAt": "更新时间"
+    "updatedAt": "更新时间",
+    "selectClusterFirst": "请先选择集群",
+    "generatingPluginTemplate": "正在生成 {plugin} 模板...",
+    "noMatchingPlugins": "暂无匹配插件"
   }
 }

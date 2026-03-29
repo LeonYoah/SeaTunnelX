@@ -674,6 +674,7 @@ func Serve() {
 			syncService.SetRuntimeResolver(syncapp.NewDefaultClusterRuntimeResolver(clusterRepo, hostRepo))
 			syncService.SetExecutionTargetResolver(syncapp.NewDefaultExecutionTargetResolver(clusterRepo, hostRepo))
 			syncService.SetClusterLogProvider(clusterService)
+			syncService.SetClusterVersionProvider(clusterService)
 			syncService.SetConfigToolClient(syncapp.NewDefaultConfigToolClient())
 			syncService.SetConfigToolResolver(syncapp.NewDefaultConfigToolResolver(clusterService))
 			if agentManager != nil {
@@ -713,6 +714,15 @@ func Serve() {
 					syncGlobalVarRouter.POST("", syncHandler.CreateGlobalVariable)
 					syncGlobalVarRouter.PUT("/:id", syncHandler.UpdateGlobalVariable)
 					syncGlobalVarRouter.DELETE("/:id", syncHandler.DeleteGlobalVariable)
+				}
+
+				syncPluginRouter := syncRouter.Group("/plugins")
+				{
+					syncPluginRouter.POST("/list", syncHandler.ListPluginFactories)
+					syncPluginRouter.POST("/options", syncHandler.GetPluginOptions)
+					syncPluginRouter.POST("/template", syncHandler.RenderPluginTemplate)
+					syncPluginRouter.POST("/enum-values", syncHandler.ListPluginEnumValues)
+					syncPluginRouter.POST("/enum-catalog", syncHandler.ListPluginEnumCatalog)
 				}
 
 				syncJobRouter := syncRouter.Group("/jobs")

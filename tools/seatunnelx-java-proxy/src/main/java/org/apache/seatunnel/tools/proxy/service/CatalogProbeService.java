@@ -65,6 +65,11 @@ public class CatalogProbeService {
             if (!pluginJars.isEmpty()) {
                 urlClassLoader = PluginClassLoaderUtils.createClassLoader(pluginJars, parent);
                 probeClassLoader = urlClassLoader;
+            } else {
+                urlClassLoader = PluginClassLoaderUtils.createClassLoaderFromSeatunnelHome(parent);
+                if (urlClassLoader != null) {
+                    probeClassLoader = urlClassLoader;
+                }
             }
 
             Thread currentThread = Thread.currentThread();

@@ -48,6 +48,9 @@ import org.apache.seatunnel.tools.proxy.model.NodeKind;
 import org.apache.seatunnel.tools.proxy.model.ProxyEdge;
 import org.apache.seatunnel.tools.proxy.model.ProxyNode;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import scala.Tuple2;
 
 import java.io.IOException;
@@ -74,6 +77,8 @@ import static org.apache.seatunnel.api.options.ConnectorCommonOptions.PLUGIN_OUT
 import static org.apache.seatunnel.api.table.factory.FactoryUtil.DEFAULT_ID;
 
 public class JobConfigSupportService {
+    private static final Logger LOG = LoggerFactory.getLogger(JobConfigSupportService.class);
+
     public JobConfigContext parseJobContext(Map<String, Object> request) {
         try {
             Config jobConfig = loadJobConfig(request);
@@ -385,11 +390,17 @@ public class JobConfigSupportService {
                     datasetCatalogTables.put(output, catalogTables);
                     result.put(nodeId, toDisplayInfo(catalogTables));
                 } catch (Exception e) {
+                    LOG.error(
+                            "Official source tablePath resolution failed. index={}, plugin={}, output={}",
+                            i,
+                            readonlyConfig.get(PLUGIN_NAME),
+                            output,
+                            e);
                     throw new ProxyException(
                             400,
                             String.format(
                                     "Source[%d]-%s official tablePath resolution failed: %s",
-                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                                    i, readonlyConfig.get(PLUGIN_NAME), summarizeException(e)),
                             e);
                 }
             }
@@ -408,11 +419,17 @@ public class JobConfigSupportService {
                     datasetCatalogTables.put(output, catalogTables);
                     result.put(nodeId, toDisplayInfo(catalogTables));
                 } catch (Exception e) {
+                    LOG.error(
+                            "Official transform tablePath resolution failed. index={}, plugin={}, output={}",
+                            i,
+                            readonlyConfig.get(PLUGIN_NAME),
+                            output,
+                            e);
                     throw new ProxyException(
                             400,
                             String.format(
                                     "Transform[%d]-%s official tablePath resolution failed: %s",
-                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                                    i, readonlyConfig.get(PLUGIN_NAME), summarizeException(e)),
                             e);
                 }
             }
@@ -429,11 +446,16 @@ public class JobConfigSupportService {
                             resolveSinkDisplayInfo(
                                     readonlyConfig, inputCatalogTables, classLoader));
                 } catch (Exception e) {
+                    LOG.error(
+                            "Official sink tablePath resolution failed. index={}, plugin={}",
+                            i,
+                            readonlyConfig.get(PLUGIN_NAME),
+                            e);
                     throw new ProxyException(
                             400,
                             String.format(
                                     "Sink[%d]-%s official tablePath resolution failed: %s",
-                                    i, readonlyConfig.get(PLUGIN_NAME), e.getMessage()),
+                                    i, readonlyConfig.get(PLUGIN_NAME), summarizeException(e)),
                             e);
                 }
             }
@@ -712,6 +734,27 @@ public class JobConfigSupportService {
             return Collections.singletonList(output);
         }
         return inputs;
+    }
+
+    static String summarizeException(Throwable throwable) {
+        if (throwable == null) {
+            return "unknown error";
+        }
+        StringBuilder builder = new StringBuilder();
+        Throwable current = throwable;
+        int depth = 0;
+        while (current != null && depth < 4) {
+            String message =
+                    StringUtils.defaultIfBlank(
+                            current.getMessage(), current.getClass().getSimpleName());
+            if (builder.length() > 0) {
+                builder.append(" | caused by: ");
+            }
+            builder.append(current.getClass().getSimpleName()).append(": ").append(message);
+            current = current.getCause();
+            depth += 1;
+        }
+        return builder.toString();
     }
 
     private static final class OfficialNodeDisplayInfo {

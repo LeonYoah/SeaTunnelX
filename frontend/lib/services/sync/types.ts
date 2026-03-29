@@ -339,3 +339,69 @@ export interface SyncTaskActionRequest {
 export interface SyncRecoverJobRequest {
   draft?: UpdateSyncTaskRequest;
 }
+
+export type SyncPluginType = 'source' | 'transform' | 'sink' | 'catalog';
+
+export interface SyncPluginFactoryInfo {
+  factory_identifier: string;
+  class_name?: string;
+  origin?: string;
+}
+
+export interface SyncPluginFactoryListResult {
+  plugin_type: SyncPluginType;
+  plugins: SyncPluginFactoryInfo[];
+  warnings?: string[];
+}
+
+export interface SyncPluginOptionDescriptor {
+  key: string;
+  type?: string;
+  element_type?: string;
+  default_value?: unknown;
+  description?: string;
+  fallback_keys?: string[];
+  enum_values?: string[];
+  enum_display_values?: string[];
+  required_mode?: string;
+  condition_expression?: string;
+  constraint_group?: string;
+  origins?: string[];
+  declared_classes?: string[];
+  advanced: boolean;
+}
+
+export interface SyncPluginOptionSchemaResult {
+  plugin_type: SyncPluginType;
+  factory_identifier: string;
+  options: SyncPluginOptionDescriptor[];
+  warnings?: string[];
+}
+
+export interface SyncPluginTemplateResult {
+  plugin_type: SyncPluginType;
+  factory_identifier: string;
+  content_format: string;
+  template: string;
+  warnings?: string[];
+}
+
+export interface SyncPluginEnumValuesResult {
+  plugin_type: SyncPluginType;
+  factory_identifier: string;
+  option_key: string;
+  enum_values: string[];
+  warnings?: string[];
+}
+
+export interface SyncPluginEnumCatalogPlugin {
+  plugin_type: SyncPluginType;
+  factory_identifier: string;
+  options: SyncPluginOptionDescriptor[];
+}
+
+export interface SyncPluginEnumCatalogResult {
+  env_options: SyncPluginOptionDescriptor[];
+  plugins: SyncPluginEnumCatalogPlugin[];
+  warnings?: string[];
+}

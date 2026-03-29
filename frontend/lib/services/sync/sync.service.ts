@@ -41,6 +41,12 @@ import type {
   SyncRecoverJobRequest,
   UpdateSyncGlobalVariableRequest,
   UpdateSyncTaskRequest,
+  SyncPluginType,
+  SyncPluginFactoryListResult,
+  SyncPluginOptionSchemaResult,
+  SyncPluginTemplateResult,
+  SyncPluginEnumValuesResult,
+  SyncPluginEnumCatalogResult,
 } from './types';
 
 export class SyncService extends BaseService {
@@ -248,5 +254,54 @@ export class SyncService extends BaseService {
     request?: {stop_with_savepoint?: boolean},
   ): Promise<SyncJobInstance> {
     return this.post<SyncJobInstance>(`/jobs/${jobId}/cancel`, request || {});
+  }
+  static async listPluginFactories(request: {
+    cluster_id: number;
+    plugin_type: SyncPluginType;
+  }): Promise<SyncPluginFactoryListResult> {
+    return this.post<SyncPluginFactoryListResult>('/plugins/list', request);
+  }
+
+  static async getPluginOptions(request: {
+    cluster_id: number;
+    plugin_type: SyncPluginType;
+    factory_identifier: string;
+    include_supplement?: boolean;
+  }): Promise<SyncPluginOptionSchemaResult> {
+    return this.post<SyncPluginOptionSchemaResult>('/plugins/options', request);
+  }
+
+  static async renderPluginTemplate(request: {
+    cluster_id: number;
+    plugin_type: SyncPluginType;
+    factory_identifier: string;
+    include_supplement?: boolean;
+    include_comments?: boolean;
+    include_advanced?: boolean;
+  }): Promise<SyncPluginTemplateResult> {
+    return this.post<SyncPluginTemplateResult>('/plugins/template', request);
+  }
+
+  static async listPluginEnumValues(request: {
+    cluster_id: number;
+    plugin_type: SyncPluginType;
+    factory_identifier: string;
+    option_key: string;
+    include_supplement?: boolean;
+  }): Promise<SyncPluginEnumValuesResult> {
+    return this.post<SyncPluginEnumValuesResult>(
+      '/plugins/enum-values',
+      request,
+    );
+  }
+
+  static async listPluginEnumCatalog(request: {
+    cluster_id: number;
+    include_supplement?: boolean;
+  }): Promise<SyncPluginEnumCatalogResult> {
+    return this.post<SyncPluginEnumCatalogResult>(
+      '/plugins/enum-catalog',
+      request,
+    );
   }
 }

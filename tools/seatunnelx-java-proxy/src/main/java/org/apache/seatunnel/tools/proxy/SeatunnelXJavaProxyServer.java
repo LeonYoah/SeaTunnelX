@@ -27,11 +27,15 @@ import org.apache.seatunnel.tools.proxy.service.ConfigResourceService;
 import org.apache.seatunnel.tools.proxy.service.ConfigValidationService;
 import org.apache.seatunnel.tools.proxy.service.IMapProbeService;
 import org.apache.seatunnel.tools.proxy.service.IMapWalInspectService;
+import org.apache.seatunnel.tools.proxy.service.PluginEnumValueService;
+import org.apache.seatunnel.tools.proxy.service.PluginOptionSchemaService;
+import org.apache.seatunnel.tools.proxy.service.PluginRuntimeService;
 import org.apache.seatunnel.tools.proxy.service.PreviewConfigService;
 import org.apache.seatunnel.tools.proxy.service.ProxyException;
 import org.apache.seatunnel.tools.proxy.service.RuntimeStorageListService;
 import org.apache.seatunnel.tools.proxy.service.RuntimeStoragePreviewService;
 import org.apache.seatunnel.tools.proxy.service.RuntimeStorageStatService;
+import org.apache.seatunnel.tools.proxy.service.TemplateRenderService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,6 +73,10 @@ public class SeatunnelXJavaProxyServer {
     private final CheckpointDeserializeService checkpointDeserializeService;
     private final IMapWalInspectService iMapWalInspectService;
     private final PreviewConfigService previewConfigService;
+    private final PluginRuntimeService pluginRuntimeService;
+    private final PluginOptionSchemaService pluginOptionSchemaService;
+    private final TemplateRenderService templateRenderService;
+    private final PluginEnumValueService pluginEnumValueService;
 
     public SeatunnelXJavaProxyServer(int port, int workerThreads) throws IOException {
         this(
@@ -84,7 +92,11 @@ public class SeatunnelXJavaProxyServer {
                 new RuntimeStoragePreviewService(),
                 new CheckpointDeserializeService(),
                 new IMapWalInspectService(),
-                new PreviewConfigService());
+                new PreviewConfigService(),
+                new PluginRuntimeService(),
+                new PluginOptionSchemaService(),
+                new TemplateRenderService(),
+                new PluginEnumValueService());
     }
 
     SeatunnelXJavaProxyServer(
@@ -100,7 +112,11 @@ public class SeatunnelXJavaProxyServer {
             RuntimeStoragePreviewService runtimeStoragePreviewService,
             CheckpointDeserializeService checkpointDeserializeService,
             IMapWalInspectService iMapWalInspectService,
-            PreviewConfigService previewConfigService) {
+            PreviewConfigService previewConfigService,
+            PluginRuntimeService pluginRuntimeService,
+            PluginOptionSchemaService pluginOptionSchemaService,
+            TemplateRenderService templateRenderService,
+            PluginEnumValueService pluginEnumValueService) {
         this.httpServer = httpServer;
         this.executorService = executorService;
         this.configResourceService = configResourceService;
@@ -114,6 +130,10 @@ public class SeatunnelXJavaProxyServer {
         this.checkpointDeserializeService = checkpointDeserializeService;
         this.iMapWalInspectService = iMapWalInspectService;
         this.previewConfigService = previewConfigService;
+        this.pluginRuntimeService = pluginRuntimeService;
+        this.pluginOptionSchemaService = pluginOptionSchemaService;
+        this.templateRenderService = templateRenderService;
+        this.pluginEnumValueService = pluginEnumValueService;
         registerContexts();
         this.httpServer.setExecutor(executorService);
     }
@@ -177,6 +197,38 @@ public class SeatunnelXJavaProxyServer {
                     @Override
                     protected Object handleRequest(Map<String, Object> request) {
                         return catalogProbeService.probe(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/plugin/list",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return pluginRuntimeService.list(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/plugin/options",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return pluginOptionSchemaService.inspect(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/plugin/template",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return templateRenderService.render(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/plugin/enum-values",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return pluginEnumValueService.listValues(request);
                     }
                 });
         httpServer.createContext(
@@ -274,7 +326,11 @@ public class SeatunnelXJavaProxyServer {
                 Object result = handleRequest(request);
                 writeJson(exchange, 200, result);
             } catch (ProxyException e) {
-                LOG.warn("Request failed: {}", e.getMessage());
+                if (e.getCause() != null) {
+                    LOG.warn("Request failed: {}", e.getMessage(), e);
+                } else {
+                    LOG.warn("Request failed: {}", e.getMessage());
+                }
                 writeJson(exchange, e.getStatusCode(), errorBody(e.getMessage()));
             } catch (Exception e) {
                 LOG.error("Unexpected request failure", e);

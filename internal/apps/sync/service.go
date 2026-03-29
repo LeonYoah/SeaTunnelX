@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/seatunnel/seatunnelX/internal/config"
+	"github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
 var safeTaskNamePattern = regexp.MustCompile(`^[\p{L}\p{N}._-]+$`)
@@ -48,6 +49,12 @@ type Service struct {
 	agentSender             AgentCommandSender
 	executionTargetResolver ExecutionTargetResolver
 	clusterLogProvider      ClusterLogProvider
+	clusterVersionProvider  ClusterVersionProvider
+}
+
+// ClusterVersionProvider provides SeaTunnel cluster version lookup.
+type ClusterVersionProvider interface {
+	GetClusterVersion(ctx context.Context, clusterID uint) (string, error)
 }
 
 const (
@@ -1550,6 +1557,32 @@ func extractWebUIDAGEdges(pipelineEdges map[string][]ConfigToolWebUIDAGEdge) []J
 	return edges
 }
 
+func (s *Service) usesLegacyPluginIOKeys(ctx context.Context, clusterID uint) bool {
+	if s == nil || s.clusterVersionProvider == nil || clusterID == 0 {
+		return false
+	}
+	version, err := s.clusterVersionProvider.GetClusterVersion(ctx, clusterID)
+	if err != nil {
+		return false
+	}
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	return seatunnel.CompareVersions(version, "2.3.9") < 0
+}
+
+func rewritePluginIOKeysForLegacy(content string, legacy bool) string {
+	if !legacy || strings.TrimSpace(content) == "" {
+		return content
+	}
+	replacer := strings.NewReplacer(
+		"plugin_input", "source_table_name",
+		"plugin_output", "result_table_name",
+	)
+	return replacer.Replace(content)
+}
+
 func (s *Service) buildSubmitPayload(ctx context.Context, task *Task, runtime *taskVariableRuntime) ([]byte, string, string, error) {
 	if task == nil {
 		return nil, "", "", fmt.Errorf("sync: task is required")
@@ -1640,6 +1673,7 @@ func (s *Service) derivePreviewPayload(ctx context.Context, task *Task, platform
 	if resp == nil || !resp.OK || strings.TrimSpace(resp.Content) == "" {
 		return nil, "", nil, fmt.Errorf("sync: preview derive returned empty content")
 	}
+	resp.Content = rewritePluginIOKeysForLegacy(resp.Content, s.usesLegacyPluginIOKeys(ctx, task.ClusterID))
 	return []byte(resp.Content), normalizeSubmitFormat(resp.ContentFormat), resp, nil
 }
 

@@ -63,6 +63,22 @@ func (s *stubConfigToolClient) DeriveTransformPreview(ctx context.Context, endpo
 	return nil, nil
 }
 
+func (s *stubConfigToolClient) ListPlugins(ctx context.Context, endpoint string, req *ConfigToolPluginListRequest) (*ConfigToolPluginListResponse, error) {
+	return nil, nil
+}
+
+func (s *stubConfigToolClient) GetPluginOptions(ctx context.Context, endpoint string, req *ConfigToolPluginOptionsRequest) (*ConfigToolPluginOptionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubConfigToolClient) RenderPluginTemplate(ctx context.Context, endpoint string, req *ConfigToolPluginTemplateRequest) (*ConfigToolPluginTemplateResponse, error) {
+	return nil, nil
+}
+
+func (s *stubConfigToolClient) ListPluginEnumValues(ctx context.Context, endpoint string, req *ConfigToolPluginEnumValuesRequest) (*ConfigToolPluginEnumValuesResponse, error) {
+	return nil, nil
+}
+
 type stubConfigToolResolver struct {
 	endpoint string
 	err      error
