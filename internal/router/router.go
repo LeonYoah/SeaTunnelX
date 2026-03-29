@@ -681,6 +681,7 @@ func Serve() {
 				syncService.SetAgentCommandSender(&agentCommandSenderAdapter{manager: agentManager})
 			}
 			syncService.StartPreviewRuntime(ctx)
+			syncService.StartTaskScheduleRuntime(ctx)
 			syncHandler := syncapp.NewHandler(syncService)
 
 			apiV1Router.POST("/sync/preview/collect", syncHandler.CollectPreview)
@@ -1174,7 +1175,7 @@ func (a *agentCommandSenderAdapter) SendCommand(ctx context.Context, agentID str
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_imap_wal", "sync_local_run", "sync_local_status", "sync_local_stop", "sync_local_logs", "sync_job_logs", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_checkpoint_source_state", "seatunnelx_java_proxy_inspect_imap_wal", "sync_local_run", "sync_local_status", "sync_local_stop", "sync_local_logs", "sync_job_logs", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL
@@ -1419,7 +1420,7 @@ func (a *installerAgentManagerAdapter) SendCommand(ctx context.Context, agentID 
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *installerAgentManagerAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_imap_wal", "sync_local_run", "sync_local_status", "sync_local_stop", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_checkpoint_source_state", "seatunnelx_java_proxy_inspect_imap_wal", "sync_local_run", "sync_local_status", "sync_local_stop", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL

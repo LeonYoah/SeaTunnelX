@@ -903,12 +903,18 @@ func (h *Handler) InspectCheckpointRuntimeStorage(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Path string `json:"path"`
+		Path      string                                    `json:"path"`
+		JobConfig *RuntimeStorageCheckpointInspectJobConfig `json:"job_config"`
 	}
 	if c.Request.Body != nil {
 		_ = c.ShouldBindJSON(&req)
 	}
-	result, err := h.service.InspectCheckpointRuntimeStorage(c.Request.Context(), uint(clusterID), req.Path)
+	result, err := h.service.InspectCheckpointRuntimeStorage(
+		c.Request.Context(),
+		uint(clusterID),
+		req.Path,
+		req.JobConfig,
+	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, InspectCheckpointRuntimeStorageResponse{ErrorMsg: err.Error()})
 		return

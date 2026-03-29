@@ -382,6 +382,22 @@ export interface RuntimeStorageCheckpointInspectResult {
   completed_checkpoint?: Record<string, unknown>;
   action_states?: Record<string, unknown>[];
   task_statistics?: Record<string, unknown>[];
+  source_state_inspect?: RuntimeStorageCheckpointSourceStateInspectResult;
+}
+
+export interface RuntimeStorageCheckpointInspectJobConfig {
+  content: string;
+  content_format?: string;
+  variables?: Record<string, unknown>;
+}
+
+export interface RuntimeStorageCheckpointSourceStateInspectResult {
+  pipeline_state?: Record<string, unknown>;
+  completed_checkpoint?: Record<string, unknown>;
+  sources?: Record<string, unknown>[];
+  unsupported_sources?: Record<string, unknown>[];
+  warnings?: string[];
+  error_message?: string;
 }
 
 export interface RuntimeStorageIMAPInspectResult {

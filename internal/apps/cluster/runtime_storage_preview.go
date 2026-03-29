@@ -47,20 +47,36 @@ type RuntimeStoragePreviewResult struct {
 }
 
 type RuntimeStorageCheckpointInspectResult struct {
-	ClusterID           uint                     `json:"cluster_id"`
-	Path                string                   `json:"path,omitempty"`
-	FileName            string                   `json:"file_name,omitempty"`
-	StorageType         string                   `json:"storage_type,omitempty"`
-	SizeBytes           int64                    `json:"size_bytes,omitempty"`
-	Truncated           bool                     `json:"truncated,omitempty"`
-	Binary              bool                     `json:"binary,omitempty"`
-	Encoding            string                   `json:"encoding,omitempty"`
-	TextPreview         string                   `json:"text_preview,omitempty"`
-	HexPreview          string                   `json:"hex_preview,omitempty"`
+	ClusterID           uint                                              `json:"cluster_id"`
+	Path                string                                            `json:"path,omitempty"`
+	FileName            string                                            `json:"file_name,omitempty"`
+	StorageType         string                                            `json:"storage_type,omitempty"`
+	SizeBytes           int64                                             `json:"size_bytes,omitempty"`
+	Truncated           bool                                              `json:"truncated,omitempty"`
+	Binary              bool                                              `json:"binary,omitempty"`
+	Encoding            string                                            `json:"encoding,omitempty"`
+	TextPreview         string                                            `json:"text_preview,omitempty"`
+	HexPreview          string                                            `json:"hex_preview,omitempty"`
+	PipelineState       map[string]interface{}                            `json:"pipeline_state,omitempty"`
+	CompletedCheckpoint map[string]interface{}                            `json:"completed_checkpoint,omitempty"`
+	ActionStates        []map[string]interface{}                          `json:"action_states,omitempty"`
+	TaskStatistics      []map[string]interface{}                          `json:"task_statistics,omitempty"`
+	SourceStateInspect  *RuntimeStorageCheckpointSourceStateInspectResult `json:"source_state_inspect,omitempty"`
+}
+
+type RuntimeStorageCheckpointInspectJobConfig struct {
+	Content       string                 `json:"content,omitempty"`
+	ContentFormat string                 `json:"content_format,omitempty"`
+	Variables     map[string]interface{} `json:"variables,omitempty"`
+}
+
+type RuntimeStorageCheckpointSourceStateInspectResult struct {
 	PipelineState       map[string]interface{}   `json:"pipeline_state,omitempty"`
 	CompletedCheckpoint map[string]interface{}   `json:"completed_checkpoint,omitempty"`
-	ActionStates        []map[string]interface{} `json:"action_states,omitempty"`
-	TaskStatistics      []map[string]interface{} `json:"task_statistics,omitempty"`
+	Sources             []map[string]interface{} `json:"sources,omitempty"`
+	UnsupportedSources  []map[string]interface{} `json:"unsupported_sources,omitempty"`
+	Warnings            []string                 `json:"warnings,omitempty"`
+	ErrorMessage        string                   `json:"error_message,omitempty"`
 }
 
 type RuntimeStorageIMAPInspectResult struct {
@@ -128,6 +144,7 @@ func (s *Service) InspectCheckpointRuntimeStorage(
 	ctx context.Context,
 	clusterID uint,
 	path string,
+	jobConfig *RuntimeStorageCheckpointInspectJobConfig,
 ) (*RuntimeStorageCheckpointInspectResult, error) {
 	if s.agentSender == nil || s.hostProvider == nil {
 		return nil, fmt.Errorf("agent sender or host provider is not configured")
@@ -161,7 +178,18 @@ func (s *Service) InspectCheckpointRuntimeStorage(
 		success, output, sendErr := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "seatunnelx_java_proxy_inspect_checkpoint", params)
 		result := runtimeStorageHostResultFromCommandOutput(success, output)
 		if sendErr == nil && result.Success {
-			return decodeRuntimeStorageCheckpointInspectResult(clusterID, result), nil
+			inspectResult := decodeRuntimeStorageCheckpointInspectResult(clusterID, result)
+			s.attachCheckpointSourceStateInspect(
+				ctx,
+				clusterObj,
+				node,
+				hostInfo,
+				inspectResult,
+				path,
+				jobConfig,
+				"",
+			)
+			return inspectResult, nil
 		}
 		if sendErr != nil {
 			return nil, sendErr
@@ -182,7 +210,18 @@ func (s *Service) InspectCheckpointRuntimeStorage(
 	if !result.Success {
 		return nil, fmt.Errorf("%s", firstNonEmpty(result.Message, "checkpoint deserialize failed"))
 	}
-	return decodeRuntimeStorageCheckpointInspectResult(clusterID, result), nil
+	inspectResult := decodeRuntimeStorageCheckpointInspectResult(clusterID, result)
+	s.attachCheckpointSourceStateInspect(
+		ctx,
+		clusterObj,
+		node,
+		hostInfo,
+		inspectResult,
+		path,
+		jobConfig,
+		contentBase64,
+	)
+	return inspectResult, nil
 }
 
 func (s *Service) InspectIMAPRuntimeStorage(
@@ -236,6 +275,93 @@ func (s *Service) InspectIMAPRuntimeStorage(
 	return decodeRuntimeStorageIMAPInspectResult(clusterID, result), nil
 }
 
+func (s *Service) attachCheckpointSourceStateInspect(
+	ctx context.Context,
+	clusterObj *Cluster,
+	node *NodeInfo,
+	hostInfo *HostInfo,
+	inspectResult *RuntimeStorageCheckpointInspectResult,
+	path string,
+	jobConfig *RuntimeStorageCheckpointInspectJobConfig,
+	contentBase64 string,
+) {
+	if inspectResult == nil || clusterObj == nil || node == nil || hostInfo == nil {
+		return
+	}
+	if jobConfig == nil || strings.TrimSpace(jobConfig.Content) == "" {
+		return
+	}
+	result, err := s.inspectCheckpointSourceStateRuntimeStorage(
+		ctx,
+		clusterObj,
+		node,
+		hostInfo,
+		path,
+		jobConfig,
+		contentBase64,
+	)
+	if err != nil {
+		inspectResult.SourceStateInspect = &RuntimeStorageCheckpointSourceStateInspectResult{
+			ErrorMessage: err.Error(),
+		}
+		return
+	}
+	inspectResult.SourceStateInspect = result
+}
+
+func (s *Service) inspectCheckpointSourceStateRuntimeStorage(
+	ctx context.Context,
+	clusterObj *Cluster,
+	node *NodeInfo,
+	hostInfo *HostInfo,
+	path string,
+	jobConfig *RuntimeStorageCheckpointInspectJobConfig,
+	contentBase64 string,
+) (*RuntimeStorageCheckpointSourceStateInspectResult, error) {
+	var params map[string]string
+	if strings.TrimSpace(contentBase64) != "" {
+		params = map[string]string{
+			"install_dir":    node.InstallDir,
+			"version":        clusterObj.Version,
+			"path":           strings.TrimSpace(path),
+			"content_base64": strings.TrimSpace(contentBase64),
+		}
+	} else {
+		cfg, err := s.resolveRuntimeStorageValidationConfig(
+			ctx, clusterObj, node, installerapp.RuntimeStorageValidationCheckpoint)
+		if err != nil {
+			return nil, err
+		}
+		params = runtimeStorageProxyParams(
+			node.InstallDir,
+			clusterObj.Version,
+			installerapp.RuntimeStorageValidationCheckpoint,
+			cfg.Checkpoint,
+			cfg.IMAP,
+		)
+		params["path"] = strings.TrimSpace(path)
+	}
+	jobConfigJSON, err := json.Marshal(jobConfig)
+	if err != nil {
+		return nil, err
+	}
+	params["job_config_json"] = string(jobConfigJSON)
+	success, output, sendErr := s.agentSender.SendCommand(
+		ctx,
+		hostInfo.AgentID,
+		"seatunnelx_java_proxy_inspect_checkpoint_source_state",
+		params,
+	)
+	if sendErr != nil {
+		return nil, sendErr
+	}
+	result := runtimeStorageHostResultFromCommandOutput(success, output)
+	if !result.Success {
+		return nil, fmt.Errorf("%s", firstNonEmpty(result.Message, "checkpoint source state inspect failed"))
+	}
+	return decodeRuntimeStorageCheckpointSourceStateInspectResult(result), nil
+}
+
 func decodeRuntimeStoragePreviewResult(clusterID uint, kind string, result *installerapp.RuntimeStorageValidationHostResult) *RuntimeStoragePreviewResult {
 	preview := &RuntimeStoragePreviewResult{ClusterID: clusterID, Kind: kind}
 	if result == nil {
@@ -278,6 +404,31 @@ func decodeRuntimeStorageCheckpointInspectResult(clusterID uint, result *install
 	}
 	if raw := strings.TrimSpace(result.Details["task_statistics_json"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &inspect.TaskStatistics)
+	}
+	return inspect
+}
+
+func decodeRuntimeStorageCheckpointSourceStateInspectResult(
+	result *installerapp.RuntimeStorageValidationHostResult,
+) *RuntimeStorageCheckpointSourceStateInspectResult {
+	inspect := &RuntimeStorageCheckpointSourceStateInspectResult{}
+	if result == nil {
+		return inspect
+	}
+	if raw := strings.TrimSpace(result.Details["pipeline_state_json"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &inspect.PipelineState)
+	}
+	if raw := strings.TrimSpace(result.Details["completed_checkpoint_json"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &inspect.CompletedCheckpoint)
+	}
+	if raw := strings.TrimSpace(result.Details["sources_json"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &inspect.Sources)
+	}
+	if raw := strings.TrimSpace(result.Details["unsupported_sources_json"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &inspect.UnsupportedSources)
+	}
+	if raw := strings.TrimSpace(result.Details["warnings_json"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &inspect.Warnings)
 	}
 	return inspect
 }

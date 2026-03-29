@@ -1,0 +1,44 @@
+{
+  "id": "checkpoint-source-state-official-inspect",
+  "name": "checkpoint-source-state-official-inspect",
+  "title": "checkpoint source state 官方深度 inspect",
+  "description": "为 seatunnelx-java-proxy 新增基于官方 serializer / factory / state class 的 checkpoint source state 深度 inspect 能力。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P1",
+  "creator": "openai-agent",
+  "assignee": "openai-agent",
+  "createdAt": "2026-03-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/data-sync-studio",
+  "worktree_path": null,
+  "current_phase": 2,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "data-sync-studio",
+  "relatedFiles": [],
+  "notes": "已完成 proxy 侧官方 source state inspect MVP 与 projector 首轮覆盖；平台侧已把 source state 深度信息无感并入现有 CK 详情接口；前端已将 Action 状态、Task 统计、Source State 融合到同一详情区块，且 action 默认展开。已完成后端、agent、前端编译验证，并用 MySQL-CDC checkpoint 通过平台接口回归拿到 file/pos/server_id。",
+  "meta": {}
+}

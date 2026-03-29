@@ -576,7 +576,7 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
         const result =
           await services.cluster.inspectCheckpointRuntimeStorageSafe(
             clusterId,
-            path,
+            {path},
           );
         if (!result.success || !result.data) {
           toast.error(

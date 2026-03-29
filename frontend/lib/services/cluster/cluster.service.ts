@@ -65,6 +65,7 @@ import {
   RuntimeStorageListResult,
   RuntimeStoragePreviewResult,
   RuntimeStorageCheckpointInspectResult,
+  RuntimeStorageCheckpointInspectJobConfig,
   RuntimeStorageIMAPInspectResult,
   SeatunnelXJavaProxyLogPreviewResponse,
   SeatunnelXJavaProxyLogPreviewResult,
@@ -524,12 +525,15 @@ export class ClusterService extends BaseService {
 
   static async inspectCheckpointRuntimeStorage(
     clusterId: number,
-    path: string,
+    params: {
+      path: string;
+      job_config?: RuntimeStorageCheckpointInspectJobConfig;
+    },
   ): Promise<RuntimeStorageCheckpointInspectResult> {
     const response =
       await apiClient.post<InspectCheckpointRuntimeStorageResponse>(
         `${this.basePath}/${clusterId}/runtime-storage/checkpoint/inspect`,
-        {path},
+        params,
       );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
@@ -1045,14 +1049,20 @@ export class ClusterService extends BaseService {
 
   static async inspectCheckpointRuntimeStorageSafe(
     clusterId: number,
-    path: string,
+    params: {
+      path: string;
+      job_config?: RuntimeStorageCheckpointInspectJobConfig;
+    },
   ): Promise<{
     success: boolean;
     data?: RuntimeStorageCheckpointInspectResult;
     error?: string;
   }> {
     try {
-      const data = await this.inspectCheckpointRuntimeStorage(clusterId, path);
+      const data = await this.inspectCheckpointRuntimeStorage(
+        clusterId,
+        params,
+      );
       return {success: true, data};
     } catch (error) {
       const errorMessage =

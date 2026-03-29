@@ -142,6 +142,18 @@ type RuntimeStorageCheckpointInspectResult struct {
 	TaskStatistics      []map[string]interface{} `json:"taskStatistics,omitempty"`
 }
 
+// RuntimeStorageCheckpointSourceStateInspectResult is the exported checkpoint source state inspect result.
+type RuntimeStorageCheckpointSourceStateInspectResult struct {
+	OK                  bool                     `json:"ok"`
+	StatusCode          int                      `json:"statusCode,omitempty"`
+	Message             string                   `json:"message,omitempty"`
+	PipelineState       map[string]interface{}   `json:"pipelineState,omitempty"`
+	CompletedCheckpoint map[string]interface{}   `json:"completedCheckpoint,omitempty"`
+	Sources             []map[string]interface{} `json:"sources,omitempty"`
+	UnsupportedSources  []map[string]interface{} `json:"unsupportedSources,omitempty"`
+	Warnings            []string                 `json:"warnings,omitempty"`
+}
+
 // RuntimeStorageIMAPInspectResult is the exported IMAP WAL inspect result.
 type RuntimeStorageIMAPInspectResult struct {
 	OK          bool                     `json:"ok"`
@@ -1321,6 +1333,50 @@ func executeCheckpointRuntimeStorageInspectViaManagedService(
 	return &result, nil
 }
 
+func executeCheckpointRuntimeStorageInspectSourceStateViaManagedService(
+	ctx context.Context,
+	installDir string,
+	seatunnelVersion string,
+	request map[string]interface{},
+) (*RuntimeStorageCheckpointSourceStateInspectResult, error) {
+	baseURL, err := ensureSeatunnelXJavaProxyService(ctx, installDir, seatunnelVersion)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal checkpoint source state inspect request: %w", err)
+	}
+	inspectCtx, cancel := context.WithTimeout(ctx, runtimeProbeTimeout+(10*time.Second))
+	defer cancel()
+	url := strings.TrimRight(baseURL, "/") + "/api/v1/storage/checkpoint/inspect-source-state"
+	req, err := http.NewRequestWithContext(inspectCtx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create managed seatunnelx-java-proxy source state inspect request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call managed seatunnelx-java-proxy source state inspect service %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if readErr != nil {
+		return nil, fmt.Errorf("read managed seatunnelx-java-proxy source state inspect response: %w", readErr)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("managed seatunnelx-java-proxy source state inspect returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("managed seatunnelx-java-proxy source state inspect returned an empty response")
+	}
+	var result RuntimeStorageCheckpointSourceStateInspectResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse managed seatunnelx-java-proxy source state inspect response: %w", err)
+	}
+	return &result, nil
+}
+
 func executeIMAPRuntimeStorageInspectViaManagedService(
 	ctx context.Context,
 	installDir string,
@@ -1407,6 +1463,44 @@ func ExecuteCheckpointInspectFromBase64(
 		"contentBase64": strings.TrimSpace(contentBase64),
 	}
 	return executeCheckpointRuntimeStorageInspectViaManagedService(ctx, installDir, seatunnelVersion, request)
+}
+
+func ExecuteCheckpointInspectSourceState(
+	ctx context.Context,
+	installDir string,
+	seatunnelVersion string,
+	cfg *CheckpointConfig,
+	path string,
+	jobConfig map[string]interface{},
+) (*RuntimeStorageCheckpointSourceStateInspectResult, error) {
+	pluginConfig, err := buildCheckpointPluginConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	request := map[string]interface{}{
+		"config":    pluginConfig,
+		"path":      strings.TrimSpace(path),
+		"jobConfig": jobConfig,
+	}
+	return executeCheckpointRuntimeStorageInspectSourceStateViaManagedService(
+		ctx, installDir, seatunnelVersion, request)
+}
+
+func ExecuteCheckpointInspectSourceStateFromBase64(
+	ctx context.Context,
+	installDir string,
+	seatunnelVersion string,
+	path string,
+	contentBase64 string,
+	jobConfig map[string]interface{},
+) (*RuntimeStorageCheckpointSourceStateInspectResult, error) {
+	request := map[string]interface{}{
+		"path":          strings.TrimSpace(path),
+		"contentBase64": strings.TrimSpace(contentBase64),
+		"jobConfig":     jobConfig,
+	}
+	return executeCheckpointRuntimeStorageInspectSourceStateViaManagedService(
+		ctx, installDir, seatunnelVersion, request)
 }
 
 func ExecuteCheckpointInspect(

@@ -64,11 +64,13 @@ import {
   Plus,
   Loader2,
   Eye,
+  Clock3,
 } from 'lucide-react';
 import services from '@/lib/services';
 import {cn} from '@/lib/utils';
 import type {ClusterInfo} from '@/lib/services/cluster';
 import type {
+  RuntimeStorageCheckpointInspectJobConfig,
   RuntimeStorageCheckpointInspectResult,
   RuntimeStorageListItem,
 } from '@/lib/services/cluster/types';
@@ -134,6 +136,10 @@ import {
 } from '@/components/ui/table';
 import {Tooltip, TooltipContent, TooltipTrigger} from '@/components/ui/tooltip';
 import {WebUiDagPreview} from '@/components/common/sync/WebUiDagPreview';
+import {
+  TaskScheduleSidebarPanel,
+  type TaskScheduleValue,
+} from '@/components/common/sync/TaskScheduleSidebarPanel';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
@@ -216,7 +222,7 @@ interface UserFacingErrorState {
   raw?: string;
 }
 
-type RightSidebarTab = 'settings' | 'versions' | 'globals';
+type RightSidebarTab = 'settings' | 'schedule' | 'versions' | 'globals';
 type BottomConsoleTab = 'jobs' | 'logs' | 'preview' | 'checkpoint';
 type ExecutionMode = 'cluster' | 'local';
 type LogFilterMode = 'all' | 'warn' | 'error';
@@ -1144,6 +1150,22 @@ function resolveBuiltinPreviewExpression(
   return null;
 }
 
+function extractTaskScheduleValue(definition: SyncJSON): TaskScheduleValue {
+  const schedule = toObject(toObject(definition).schedule);
+  return {
+    enabled: Boolean(schedule.enabled),
+    cron_expr:
+      typeof schedule.cron_expr === 'string'
+        ? String(schedule.cron_expr)
+        : '0 0 * * *',
+    timezone:
+      typeof schedule.timezone === 'string' &&
+      schedule.timezone.trim().length > 0
+        ? String(schedule.timezone)
+        : 'Asia/Shanghai',
+  };
+}
+
 const BUILTIN_TIME_VARIABLE_ITEMS = [
   {expr: 'system.biz.curdate', descKey: 'builtinSystemBizCurdateDesc'},
   {expr: 'system.biz.date', descKey: 'builtinSystemBizDateDesc'},
@@ -1633,6 +1655,242 @@ function getJobSubmittedScript(job: SyncJobInstance | null): {
     };
   }
   return null;
+}
+
+function buildCheckpointInspectJobConfig(
+  job: SyncJobInstance | null,
+  editor: EditorState,
+  customVariables: VariableRow[],
+): RuntimeStorageCheckpointInspectJobConfig | undefined {
+  const submittedScript = getJobSubmittedScript(job);
+  if (submittedScript?.content?.trim()) {
+    return {
+      content: submittedScript.content,
+      content_format: submittedScript.format || 'hocon',
+      variables: {},
+    };
+  }
+  if (!editor.content.trim()) {
+    return undefined;
+  }
+  return {
+    content: editor.content,
+    content_format: editor.contentFormat || 'hocon',
+    variables: fromVariableRows(customVariables),
+  };
+}
+
+function normalizeCheckpointActionIdentity(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  const bracketMatch = raw.match(/\[(.+)\]$/);
+  return (bracketMatch?.[1] || raw).trim();
+}
+
+type CheckpointActionViewModel = {
+  key: string;
+  actionName: string;
+  actionState?: Record<string, unknown>;
+  taskStatistics?: Record<string, unknown>;
+  sourceState?: Record<string, unknown>;
+  unsupportedSource?: Record<string, unknown>;
+};
+
+function buildCheckpointActionViewModels(
+  result: RuntimeStorageCheckpointInspectResult | null,
+): CheckpointActionViewModel[] {
+  const actionStates = Array.isArray(result?.action_states)
+    ? result.action_states
+    : [];
+  const taskStatistics = Array.isArray(result?.task_statistics)
+    ? result.task_statistics
+    : [];
+  const sourceStates = Array.isArray(result?.source_state_inspect?.sources)
+    ? result.source_state_inspect.sources
+    : [];
+  const unsupportedSources = Array.isArray(
+    result?.source_state_inspect?.unsupported_sources,
+  )
+    ? result.source_state_inspect.unsupported_sources
+    : [];
+  const actionMap = new Map<string, CheckpointActionViewModel>();
+
+  const ensureEntry = (name: unknown): CheckpointActionViewModel => {
+    const actionName = normalizeCheckpointActionIdentity(name);
+    const key = actionName || `unknown-${actionMap.size}`;
+    const existing = actionMap.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created: CheckpointActionViewModel = {
+      key,
+      actionName,
+    };
+    actionMap.set(key, created);
+    return created;
+  };
+
+  actionStates.forEach((item) => {
+    const entry = ensureEntry(item.name);
+    entry.actionState = item;
+  });
+  taskStatistics.forEach((item) => {
+    const entry = ensureEntry(item.jobVertexId);
+    entry.taskStatistics = item;
+  });
+  sourceStates.forEach((item) => {
+    const entry = ensureEntry(item.actionName);
+    entry.sourceState = item;
+  });
+  unsupportedSources.forEach((item) => {
+    const entry = ensureEntry(item.actionName);
+    entry.unsupportedSource = item;
+  });
+
+  return Array.from(actionMap.values()).sort((left, right) =>
+    left.actionName.localeCompare(right.actionName),
+  );
+}
+
+type CheckpointSourceSummary = {
+  target: string;
+  offset: string;
+  splitCount: number;
+  progress: string;
+};
+
+function summarizeCheckpointSourceState(
+  sourceState?: Record<string, unknown> | null,
+): CheckpointSourceSummary {
+  const subtasks = Array.isArray(sourceState?.subtasks)
+    ? (sourceState?.subtasks as Record<string, unknown>[])
+    : [];
+  const firstSubtask = subtasks[0] || {};
+  const firstSplits = Array.isArray(firstSubtask.splits)
+    ? (firstSubtask.splits as Record<string, unknown>[])
+    : [];
+  const firstSplit = firstSplits[0] || {};
+  const coordinator = toObject(sourceState?.coordinator);
+  const snapshotPhase = toObject(coordinator.snapshotPhase);
+  const incrementalPhase = toObject(coordinator.incrementalPhase);
+  const startupOffset = toObject(firstSplit.startupOffset);
+  const offsetValues = toObject(startupOffset.values);
+  const tableIds = Array.isArray(firstSplit.tableIds)
+    ? (firstSplit.tableIds as unknown[])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    : [];
+  const processedTables = Array.isArray(snapshotPhase.alreadyProcessedTables)
+    ? (snapshotPhase.alreadyProcessedTables as unknown[])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    : [];
+  const pendingTables = Array.isArray(coordinator.pendingTables)
+    ? (coordinator.pendingTables as unknown[])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    : [];
+  const tableOffsets = toObject(coordinator.tableOffsets);
+
+  let offset = '-';
+  if (offsetValues.file || offsetValues.pos) {
+    offset = `${String(offsetValues.file || '').trim()}:${String(
+      offsetValues.pos || '',
+    ).trim()}`.replace(/:$/, '');
+  } else if (offsetValues.scn) {
+    offset = `SCN ${String(offsetValues.scn)}`;
+  } else if (offsetValues.lsn) {
+    offset = `LSN ${String(offsetValues.lsn)}`;
+  } else if (offsetValues.commit_lsn) {
+    offset = `LSN ${String(offsetValues.commit_lsn)}`;
+  } else if (offsetValues.resumeToken) {
+    offset = `resumeToken ${String(offsetValues.resumeToken).slice(0, 24)}`;
+  } else if (offsetValues.resolvedTs) {
+    offset = `resolvedTs ${String(offsetValues.resolvedTs)}`;
+  } else if (firstSplit.resolvedTs !== undefined) {
+    offset = `resolvedTs ${String(firstSplit.resolvedTs)}`;
+  } else if (firstSplit.latestConsumedId) {
+    offset = String(firstSplit.latestConsumedId);
+  } else if (firstSplit.startCursor) {
+    offset = String(firstSplit.startCursor);
+  } else if (firstSplit.currentOffset !== undefined) {
+    offset = String(firstSplit.currentOffset);
+  } else if (offsetValues.timestamp) {
+    offset = String(offsetValues.timestamp);
+  } else if (firstSplit.startOffset || firstSplit.currentOffset) {
+    offset = String(firstSplit.currentOffset || firstSplit.startOffset);
+  } else if (firstSplit.recordOffset !== undefined) {
+    offset = `record ${String(firstSplit.recordOffset)}`;
+  } else if (coordinator.currentSnapshotId !== undefined) {
+    offset = `snapshot ${String(coordinator.currentSnapshotId)}`;
+  } else if (coordinator.resolvedTs !== undefined) {
+    offset = `resolvedTs ${String(coordinator.resolvedTs)}`;
+  }
+
+  let target = '-';
+  if (tableIds.length > 0) {
+    target = tableIds.join(', ');
+  } else if (firstSplit.topic) {
+    target = [
+      String(firstSplit.topic),
+      firstSplit.partition !== undefined
+        ? `partition ${String(firstSplit.partition)}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' / ');
+  } else if (firstSplit.project || firstSplit.logStore) {
+    target = [firstSplit.project, firstSplit.logStore, firstSplit.shardId]
+      .filter(
+        (item) => item !== undefined && item !== null && String(item) !== '',
+      )
+      .map((item) => String(item))
+      .join(' / ');
+  } else if (firstSplit.database || firstSplit.table) {
+    target = [firstSplit.database, firstSplit.table]
+      .filter((item) => item !== undefined && item !== null && String(item) !== '')
+      .map((item) => String(item))
+      .join('.');
+  } else if (firstSplit.tableName) {
+    target = String(firstSplit.tableName);
+  } else if (firstSplit.tablePath) {
+    target = String(firstSplit.tablePath);
+  } else if (firstSplit.tableId) {
+    target = String(firstSplit.tableId);
+  } else if (processedTables.length > 0) {
+    target = processedTables.join(', ');
+  } else if (pendingTables.length > 0) {
+    target = pendingTables.join(', ');
+  } else if (firstSplit.splitId) {
+    target = String(firstSplit.splitId);
+  }
+
+  let progress = '-';
+  if (processedTables.length > 0) {
+    progress = `${processedTables.length} tables`;
+  } else if (pendingTables.length > 0) {
+    progress = `${pendingTables.length} pending`;
+  } else if (Object.keys(tableOffsets).length > 0) {
+    progress = `${Object.keys(tableOffsets).length} table offsets`;
+  } else if (coordinator.pendingSplitCount !== undefined) {
+    progress = `${String(coordinator.pendingSplitCount)} pending splits`;
+  } else if (coordinator.assignedSplitCount !== undefined) {
+    progress = `${String(coordinator.assignedSplitCount)} assigned`;
+  } else if (incrementalPhase.className) {
+    progress = String(incrementalPhase.className).split('.').pop() || '-';
+  }
+
+  return {
+    target,
+    offset,
+    splitCount: subtasks.reduce(
+      (sum, item) => sum + Number(item.splitCount || 0),
+      0,
+    ),
+    progress,
+  };
 }
 
 function normalizeStoredScriptContent(value: unknown): string {
@@ -2598,7 +2856,10 @@ export function DataSyncStudio() {
   const runJobs = useMemo(
     () =>
       jobs.filter(
-        (job) => job.run_type === 'run' || job.run_type === 'recover',
+        (job) =>
+          job.run_type === 'run' ||
+          job.run_type === 'recover' ||
+          job.run_type === 'schedule',
       ),
     [jobs],
   );
@@ -2655,7 +2916,10 @@ export function DataSyncStudio() {
   );
   const hasActivePreview = activeJobs.some((job) => job.run_type === 'preview');
   const hasActiveRun = activeJobs.some(
-    (job) => job.run_type === 'run' || job.run_type === 'recover',
+    (job) =>
+      job.run_type === 'run' ||
+      job.run_type === 'recover' ||
+      job.run_type === 'schedule',
   );
   const dagNodes = useMemo(
     () => (Array.isArray(dagResult?.nodes) ? dagResult?.nodes : []),
@@ -3130,12 +3394,20 @@ export function DataSyncStudio() {
         toast.error(t('checkpointInspectUnavailable'));
         return;
       }
+      const jobConfig = buildCheckpointInspectJobConfig(
+        selectedJob,
+        editor,
+        customVariableRows,
+      );
       setCheckpointInspectDialogLoading(path);
       try {
         const result =
           await services.cluster.inspectCheckpointRuntimeStorageSafe(
             clusterId,
-            path,
+            {
+              path,
+              job_config: jobConfig,
+            },
           );
         if (!result.success || !result.data) {
           toast.error(result.error || t('checkpointInspectFailed'));
@@ -3147,7 +3419,7 @@ export function DataSyncStudio() {
         setCheckpointInspectDialogLoading(null);
       }
     },
-    [selectedJob, t],
+    [customVariableRows, editor, selectedJob, t],
   );
 
   const loadVersions = useCallback(
@@ -4769,6 +5041,17 @@ export function DataSyncStudio() {
     });
   };
 
+  const handleScheduleChange = (value: TaskScheduleValue) => {
+    updateEditor('definition', {
+      ...editor.definition,
+      schedule: {
+        enabled: value.enabled,
+        cron_expr: value.cron_expr,
+        timezone: value.timezone,
+      },
+    });
+  };
+
   const syncCustomVariablesToEditor = useCallback(
     (rows: VariableRow[]) => {
       setCustomVariableRows(rows);
@@ -5281,6 +5564,12 @@ export function DataSyncStudio() {
                 onClick={() => setRightSidebarTab('settings')}
               />
               <SidebarIconTab
+                active={rightSidebarTab === 'schedule'}
+                icon={<Clock3 className='size-4' />}
+                label={t('taskSchedule')}
+                onClick={() => setRightSidebarTab('schedule')}
+              />
+              <SidebarIconTab
                 active={rightSidebarTab === 'versions'}
                 icon={<GitBranch className='size-4' />}
                 label={t('versionManagement')}
@@ -5323,6 +5612,11 @@ export function DataSyncStudio() {
               onCancelEditCustomVariableRow={handleCancelEditCustomVariableRow}
               onAddCustomVariableRow={handleAddCustomVariableRow}
               onDeleteCustomVariableRow={handleDeleteCustomVariableRow}
+            />
+          ) : rightSidebarTab === 'schedule' ? (
+            <TaskScheduleSidebarPanel
+              value={extractTaskScheduleValue(editor.definition || {})}
+              onChange={handleScheduleChange}
             />
           ) : rightSidebarTab === 'versions' ? (
             <VersionSidebarPanel
@@ -5838,17 +6132,30 @@ export function DataSyncStudio() {
                 title={t('completedCheckpoint')}
                 value={checkpointInspectDialogResult?.completed_checkpoint}
               />
+              <CheckpointInspectSourceHighlightsSection
+                title={t('checkpointSourceState')}
+                result={checkpointInspectDialogResult}
+                decodeStrategyLabel={t('decodeStrategy')}
+                splitCountLabel={t('splitCount')}
+                warningsLabel={t('warnings')}
+                unsupportedLabel={t('unsupportedSources')}
+                currentOffsetLabel={t('currentOffset')}
+                targetLabel={t('sourceTarget')}
+                progressLabel={t('sourceProgress')}
+              />
               <CheckpointInspectObjectSection
                 title={t('pipelineState')}
                 value={checkpointInspectDialogResult?.pipeline_state}
               />
-              <CheckpointInspectActionStatesSection
-                title={t('actionStates')}
-                value={checkpointInspectDialogResult?.action_states}
-              />
-              <CheckpointInspectTaskStatisticsSection
-                title={t('taskStatistics')}
-                value={checkpointInspectDialogResult?.task_statistics}
+              <CheckpointInspectActionsSection
+                title={t('actions')}
+                result={checkpointInspectDialogResult}
+                sourceStateTitle={t('checkpointSourceState')}
+                decodeStrategyLabel={t('decodeStrategy')}
+                coordinatorLabel={t('coordinator')}
+                splitCountLabel={t('splitCount')}
+                unsupportedLabel={t('unsupportedSources')}
+                rawDetailsLabel={t('rawDetails')}
               />
             </div>
           </ScrollArea>
@@ -7923,100 +8230,331 @@ function CheckpointInspectObjectSection({
   );
 }
 
-function CheckpointInspectActionStatesSection({
+function CheckpointInspectSourceHighlightsSection({
   title,
-  value,
+  result,
+  decodeStrategyLabel,
+  splitCountLabel,
+  warningsLabel,
+  unsupportedLabel,
+  currentOffsetLabel,
+  targetLabel,
+  progressLabel,
 }: {
   title: string;
-  value?: Record<string, unknown>[] | null;
+  result: RuntimeStorageCheckpointInspectResult | null;
+  decodeStrategyLabel: string;
+  splitCountLabel: string;
+  warningsLabel: string;
+  unsupportedLabel: string;
+  currentOffsetLabel: string;
+  targetLabel: string;
+  progressLabel: string;
 }) {
-  const rows = Array.isArray(value) ? value : [];
+  const sourceStates = Array.isArray(result?.source_state_inspect?.sources)
+    ? result.source_state_inspect.sources
+    : [];
+  const unsupportedSources = Array.isArray(
+    result?.source_state_inspect?.unsupported_sources,
+  )
+    ? result.source_state_inspect.unsupported_sources
+    : [];
+  const warnings = Array.isArray(result?.source_state_inspect?.warnings)
+    ? result.source_state_inspect.warnings
+    : [];
+  const errorMessage = result?.source_state_inspect?.error_message?.trim();
+
+  if (
+    !errorMessage &&
+    sourceStates.length === 0 &&
+    unsupportedSources.length === 0
+  ) {
+    return null;
+  }
+
   return (
-    <CheckpointInspectSectionShell
-      title={title}
-      collapsible
-      defaultOpen={false}
-    >
+    <CheckpointInspectSectionShell title={title}>
+      <div className='space-y-4'>
+        {errorMessage ? (
+          <div className='rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300'>
+            {errorMessage}
+          </div>
+        ) : null}
+        {warnings.length > 0 ? (
+          <div className='rounded-lg border border-border/60 bg-muted/20 p-3'>
+            <div className='mb-2 text-xs font-medium text-muted-foreground'>
+              {warningsLabel}
+            </div>
+            <ul className='list-disc space-y-1 pl-5 text-sm'>
+              {warnings.map((warning, index) => (
+                <li key={`${warning}-${index}`}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {sourceStates.length > 0 ? (
+          <div className='grid gap-4 xl:grid-cols-2'>
+            {sourceStates.map((item, index) => {
+              const summary = summarizeCheckpointSourceState(item);
+              return (
+                <div
+                  key={`${item.actionName || item.pluginName || index}`}
+                  className='rounded-xl border border-primary/20 bg-primary/5 p-4'
+                >
+                  <div className='flex flex-wrap items-start justify-between gap-3'>
+                    <div className='min-w-0'>
+                      <div className='text-xs text-muted-foreground'>
+                        {String(item.pluginName || title)}
+                      </div>
+                      <div className='break-all text-base font-semibold'>
+                        {String(item.actionName || item.pluginName || '-')}
+                      </div>
+                    </div>
+                    <Badge variant='outline'>
+                      {decodeStrategyLabel}:{' '}
+                      {formatCellValue(item.decodeStrategy)}
+                    </Badge>
+                  </div>
+                  <div className='mt-4 grid gap-3 md:grid-cols-2'>
+                    <CheckpointInspectMetricCard
+                      label={currentOffsetLabel}
+                      value={summary.offset}
+                    />
+                    <CheckpointInspectMetricCard
+                      label={targetLabel}
+                      value={summary.target}
+                    />
+                    <CheckpointInspectMetricCard
+                      label={splitCountLabel}
+                      value={summary.splitCount}
+                    />
+                    <CheckpointInspectMetricCard
+                      label={progressLabel}
+                      value={summary.progress}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {unsupportedSources.length > 0 ? (
+          <details className='rounded-lg border border-border/60 bg-background/60'>
+            <summary className='cursor-pointer list-none px-3 py-3 text-sm font-medium marker:hidden'>
+              {unsupportedLabel}
+            </summary>
+            <div className='border-t border-border/50 p-3'>
+              <div className='space-y-3'>
+                {unsupportedSources.map((item, index) => (
+                  <CheckpointInspectMiniObject
+                    key={`${item.actionName || index}`}
+                    title={String(item.actionName || unsupportedLabel)}
+                    value={item}
+                  />
+                ))}
+              </div>
+            </div>
+          </details>
+        ) : null}
+      </div>
+    </CheckpointInspectSectionShell>
+  );
+}
+
+function CheckpointInspectActionsSection({
+  title,
+  result,
+  sourceStateTitle,
+  decodeStrategyLabel,
+  coordinatorLabel,
+  splitCountLabel,
+  unsupportedLabel,
+  rawDetailsLabel,
+}: {
+  title: string;
+  result: RuntimeStorageCheckpointInspectResult | null;
+  sourceStateTitle: string;
+  decodeStrategyLabel: string;
+  coordinatorLabel: string;
+  splitCountLabel: string;
+  unsupportedLabel: string;
+  rawDetailsLabel: string;
+}) {
+  const rows = buildCheckpointActionViewModels(result);
+  return (
+    <CheckpointInspectSectionShell title={title}>
       {rows.length > 0 ? (
         <div className='space-y-4'>
-          {rows.map((row, index) => {
-            const subtasks = Array.isArray(row.subtasks)
-              ? (row.subtasks as Record<string, unknown>[])
+          {rows.map((row) => {
+            const actionState = row.actionState || {};
+            const statistics = row.taskStatistics || {};
+            const stateSubtasks = Array.isArray(actionState.subtasks)
+              ? (actionState.subtasks as Record<string, unknown>[])
+              : [];
+            const statSubtasks = Array.isArray(statistics.subtasks)
+              ? (statistics.subtasks as Record<string, unknown>[])
+              : [];
+            const sourceSubtasks = Array.isArray(row.sourceState?.subtasks)
+              ? (row.sourceState?.subtasks as Record<string, unknown>[])
               : [];
             return (
-              <div
-                key={`${row.name || index}`}
-                className='space-y-3 rounded-lg border border-border/60 bg-background/60 p-3'
+              <details
+                key={row.key}
+                open
+                className='rounded-lg border border-border/60 bg-background/60'
               >
-                <div className='flex flex-wrap items-start justify-between gap-3'>
-                  <div className='min-w-0'>
-                    <div className='text-xs text-muted-foreground'>Action</div>
-                    <div className='break-all text-sm font-medium'>
-                      {formatCellValue(row.name)}
+                <summary className='cursor-pointer list-none px-3 py-3 marker:hidden'>
+                  <div className='flex flex-wrap items-start justify-between gap-3'>
+                    <div className='min-w-0'>
+                      <div className='text-xs text-muted-foreground'>
+                        {title}
+                      </div>
+                      <div className='break-all text-sm font-medium'>
+                        {row.actionName || '-'}
+                      </div>
+                    </div>
+                    <div className='flex flex-wrap gap-2'>
+                      {actionState.parallelism !== undefined ? (
+                        <Badge variant='outline'>
+                          P {formatCellValue(actionState.parallelism)}
+                        </Badge>
+                      ) : null}
+                      {actionState.subtaskCount !== undefined ? (
+                        <Badge variant='outline'>
+                          S {formatCellValue(actionState.subtaskCount)}
+                        </Badge>
+                      ) : null}
+                      {statistics.acknowledgedSubtasks !== undefined ? (
+                        <Badge variant='outline'>
+                          Ack {formatCellValue(statistics.acknowledgedSubtasks)}
+                        </Badge>
+                      ) : null}
+                      {row.sourceState?.decodeStrategy ? (
+                        <Badge variant='outline'>
+                          {formatCellValue(row.sourceState.decodeStrategy)}
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
-                  <div className='flex flex-wrap gap-2'>
-                    <Badge variant='outline'>
-                      P {formatCellValue(row.parallelism)}
-                    </Badge>
-                    <Badge variant='outline'>
-                      S {formatCellValue(row.subtaskCount)}
-                    </Badge>
-                    <Badge variant='outline'>
-                      Chunks {formatCellValue(row.coordinatorStateChunks)}
-                    </Badge>
+                </summary>
+                <div className='space-y-4 border-t border-border/50 p-3'>
+                  <div className='grid gap-3 md:grid-cols-3 xl:grid-cols-6'>
+                    <CheckpointInspectMetricCard
+                      label='Parallelism'
+                      value={actionState.parallelism}
+                    />
+                    <CheckpointInspectMetricCard
+                      label='Subtasks'
+                      value={actionState.subtaskCount}
+                    />
+                    <CheckpointInspectMetricCard
+                      label='Coordinator Chunks'
+                      value={actionState.coordinatorStateChunks}
+                    />
+                    <CheckpointInspectMetricCard
+                      label='Acked'
+                      value={statistics.acknowledgedSubtasks}
+                    />
+                    <CheckpointInspectMetricCard
+                      label='Latest Ack'
+                      value={statistics.latestAckTimestamp}
+                      valueKey='latestAckTimestamp'
+                    />
+                    <CheckpointInspectMetricCard
+                      label={decodeStrategyLabel}
+                      value={row.sourceState?.decodeStrategy}
+                    />
                   </div>
+
+                  <CheckpointInspectInlineTable
+                    title='Action State'
+                    columns={[
+                      {key: 'index', label: 'Index'},
+                      {key: 'bytes', label: 'Bytes'},
+                      {key: 'chunks', label: 'Chunks'},
+                    ]}
+                    rows={stateSubtasks}
+                  />
+
+                  <CheckpointInspectInlineTable
+                    title='Task Statistics'
+                    columns={[
+                      {key: 'subtaskIndex', label: 'Subtask'},
+                      {key: 'status', label: 'Status'},
+                      {key: 'stateSize', label: 'State Size'},
+                      {key: 'ackTimestamp', label: 'Ack Timestamp'},
+                    ]}
+                    rows={statSubtasks}
+                  />
+
+                  {row.sourceState ? (
+                    <details className='rounded-md border border-border/50 bg-muted/5'>
+                      <summary className='cursor-pointer list-none px-3 py-3 text-sm font-medium marker:hidden'>
+                        {sourceStateTitle} / {rawDetailsLabel}
+                      </summary>
+                      <div className='space-y-3 border-t border-border/50 p-3'>
+                        <CheckpointInspectMiniObject
+                          title={coordinatorLabel}
+                          value={
+                            row.sourceState.coordinator as
+                              | Record<string, unknown>
+                              | undefined
+                          }
+                        />
+                        {sourceSubtasks.map((subtask, subtaskIndex) => {
+                          const splits = Array.isArray(subtask.splits)
+                            ? (subtask.splits as Record<string, unknown>[])
+                            : [];
+                          return (
+                            <div
+                              key={`${row.key}-source-${subtaskIndex}`}
+                              className='rounded-md border border-border/50 p-3'
+                            >
+                              <div className='mb-3 flex flex-wrap items-center gap-2 text-sm font-medium'>
+                                <span>
+                                  Subtask{' '}
+                                  {formatCellValue(subtask.subtaskIndex)}
+                                </span>
+                                <Badge variant='outline'>
+                                  {splitCountLabel}:{' '}
+                                  {formatCellValue(subtask.splitCount)}
+                                </Badge>
+                                <Badge variant='outline'>
+                                  Bytes:{' '}
+                                  {renderCheckpointFieldValue(
+                                    'stateBytes',
+                                    subtask.bytes,
+                                  )}
+                                </Badge>
+                              </div>
+                              <div className='space-y-2'>
+                                {splits.length > 0 ? (
+                                  splits.map((split, splitIndex) => (
+                                    <CheckpointInspectMiniObject
+                                      key={`${row.key}-split-${subtaskIndex}-${splitIndex}`}
+                                      title={`Split ${splitIndex + 1}`}
+                                      value={split}
+                                    />
+                                  ))
+                                ) : (
+                                  <div className='text-sm text-muted-foreground'>
+                                    -
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  ) : row.unsupportedSource ? (
+                    <CheckpointInspectMiniObject
+                      title={unsupportedLabel}
+                      value={row.unsupportedSource}
+                    />
+                  ) : null}
                 </div>
-                <div className='rounded-md border border-border/50'>
-                  <div className='border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground'>
-                    Subtasks
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Index</TableHead>
-                        <TableHead>Bytes</TableHead>
-                        <TableHead>Chunks</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {subtasks.length > 0 ? (
-                        subtasks.map((subtask, subtaskIndex) => (
-                          <TableRow key={subtaskIndex}>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'index',
-                                subtask.index,
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'stateBytes',
-                                subtask.bytes,
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'chunks',
-                                subtask.chunks,
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell
-                            colSpan={3}
-                            className='text-center text-muted-foreground'
-                          >
-                            -
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
+              </details>
             );
           })}
         </div>
@@ -8027,128 +8565,105 @@ function CheckpointInspectActionStatesSection({
   );
 }
 
-function CheckpointInspectTaskStatisticsSection({
+function CheckpointInspectMetricCard({
+  label,
+  value,
+  valueKey,
+}: {
+  label: string;
+  value: unknown;
+  valueKey?: string;
+}) {
+  return (
+    <div className='rounded-lg border border-border/60 bg-muted/10 p-3'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div className='mt-1 break-all text-sm font-medium'>
+        {renderCheckpointFieldValue(valueKey || label, value)}
+      </div>
+    </div>
+  );
+}
+
+function CheckpointInspectInlineTable({
+  title,
+  columns,
+  rows,
+}: {
+  title: string;
+  columns: Array<{key: string; label: string}>;
+  rows: Record<string, unknown>[];
+}) {
+  return (
+    <div className='rounded-md border border-border/50'>
+      <div className='border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground'>
+        {title}
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {columns.map((column) => (
+              <TableHead key={column.key}>{column.label}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length > 0 ? (
+            rows.map((row, rowIndex) => (
+              <TableRow key={`${title}-${rowIndex}`}>
+                {columns.map((column) => (
+                  <TableCell key={column.key}>
+                    {renderCheckpointFieldValue(column.key, row[column.key])}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : (
+            <TableRow>
+              <TableCell
+                colSpan={columns.length}
+                className='text-center text-muted-foreground'
+              >
+                -
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function CheckpointInspectMiniObject({
   title,
   value,
 }: {
   title: string;
-  value?: Record<string, unknown>[] | null;
+  value?: Record<string, unknown> | null;
 }) {
-  const rows = Array.isArray(value) ? value : [];
+  const entries = value ? Object.entries(value) : [];
   return (
-    <CheckpointInspectSectionShell title={title}>
-      {rows.length > 0 ? (
-        <div className='space-y-4'>
-          {rows.map((row, index) => {
-            const subtasks = Array.isArray(row.subtasks)
-              ? (row.subtasks as Record<string, unknown>[])
-              : [];
-            return (
-              <div
-                key={`${row.jobVertexId || index}`}
-                className='space-y-3 rounded-lg border border-border/60 bg-background/60 p-3'
-              >
-                <div className='flex flex-wrap items-start justify-between gap-3'>
-                  <div className='min-w-0'>
-                    <div className='text-xs text-muted-foreground'>
-                      Job Vertex ID
-                    </div>
-                    <div className='text-sm font-medium'>
-                      {formatCellValue(row.jobVertexId)}
-                    </div>
-                  </div>
-                  <div className='flex flex-wrap gap-2'>
-                    <Badge variant='outline'>
-                      Ack {formatCellValue(row.acknowledgedSubtasks)}
-                    </Badge>
-                    <Badge
-                      variant='outline'
-                      className={cn(
-                        'rounded-sm border px-2 py-0.5 text-[11px]',
-                        getCheckpointEnumBadgeClass(
-                          Boolean(row.completed),
-                          'boolean',
-                        ),
-                      )}
-                    >
-                      {row.completed ? 'Completed' : 'Pending'}
-                    </Badge>
-                    <Badge variant='outline'>
-                      P {formatCellValue(row.parallelism)}
-                    </Badge>
-                  </div>
-                </div>
-                <div className='text-xs text-muted-foreground'>
-                  Latest Ack:{' '}
-                  {formatCheckpointFieldValue(
-                    'latestAckTimestamp',
-                    row.latestAckTimestamp,
-                  )}
-                </div>
-                <div className='rounded-md border border-border/50'>
-                  <div className='border-b border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground'>
-                    Subtasks
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Subtask</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>State Size</TableHead>
-                        <TableHead>Ack Timestamp</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {subtasks.length > 0 ? (
-                        subtasks.map((subtask, subtaskIndex) => (
-                          <TableRow key={subtaskIndex}>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'subtaskIndex',
-                                subtask.subtaskIndex,
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'status',
-                                subtask.status,
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'stateSize',
-                                subtask.stateSize,
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {renderCheckpointFieldValue(
-                                'ackTimestamp',
-                                subtask.ackTimestamp,
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell
-                            colSpan={4}
-                            className='text-center text-muted-foreground'
-                          >
-                            -
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+    <div className='rounded-md border border-border/50 p-3'>
+      <div className='mb-2 text-xs font-medium text-muted-foreground'>
+        {title}
+      </div>
+      {entries.length > 0 ? (
+        <div className='grid gap-2 md:grid-cols-2'>
+          {entries.map(([key, entryValue]) => (
+            <div
+              key={key}
+              className='rounded border border-border/40 bg-muted/10 p-2'
+            >
+              <div className='text-[11px] text-muted-foreground'>{key}</div>
+              <div className='mt-1 break-all text-sm'>
+                {renderCheckpointFieldValue(key, entryValue)}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       ) : (
         <div className='text-sm text-muted-foreground'>-</div>
       )}
-    </CheckpointInspectSectionShell>
+    </div>
   );
 }
 

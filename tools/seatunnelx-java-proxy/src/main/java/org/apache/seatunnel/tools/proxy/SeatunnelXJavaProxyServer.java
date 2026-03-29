@@ -23,6 +23,7 @@ import org.apache.seatunnel.common.utils.JsonUtils;
 import org.apache.seatunnel.tools.proxy.service.CatalogProbeService;
 import org.apache.seatunnel.tools.proxy.service.CheckpointDeserializeService;
 import org.apache.seatunnel.tools.proxy.service.CheckpointProbeService;
+import org.apache.seatunnel.tools.proxy.service.CheckpointSourceStateInspectService;
 import org.apache.seatunnel.tools.proxy.service.ConfigResourceService;
 import org.apache.seatunnel.tools.proxy.service.ConfigValidationService;
 import org.apache.seatunnel.tools.proxy.service.IMapProbeService;
@@ -71,6 +72,7 @@ public class SeatunnelXJavaProxyServer {
     private final RuntimeStorageListService runtimeStorageListService;
     private final RuntimeStoragePreviewService runtimeStoragePreviewService;
     private final CheckpointDeserializeService checkpointDeserializeService;
+    private final CheckpointSourceStateInspectService checkpointSourceStateInspectService;
     private final IMapWalInspectService iMapWalInspectService;
     private final PreviewConfigService previewConfigService;
     private final PluginRuntimeService pluginRuntimeService;
@@ -91,6 +93,7 @@ public class SeatunnelXJavaProxyServer {
                 new RuntimeStorageListService(),
                 new RuntimeStoragePreviewService(),
                 new CheckpointDeserializeService(),
+                new CheckpointSourceStateInspectService(),
                 new IMapWalInspectService(),
                 new PreviewConfigService(),
                 new PluginRuntimeService(),
@@ -111,6 +114,7 @@ public class SeatunnelXJavaProxyServer {
             RuntimeStorageListService runtimeStorageListService,
             RuntimeStoragePreviewService runtimeStoragePreviewService,
             CheckpointDeserializeService checkpointDeserializeService,
+            CheckpointSourceStateInspectService checkpointSourceStateInspectService,
             IMapWalInspectService iMapWalInspectService,
             PreviewConfigService previewConfigService,
             PluginRuntimeService pluginRuntimeService,
@@ -128,6 +132,7 @@ public class SeatunnelXJavaProxyServer {
         this.runtimeStorageListService = runtimeStorageListService;
         this.runtimeStoragePreviewService = runtimeStoragePreviewService;
         this.checkpointDeserializeService = checkpointDeserializeService;
+        this.checkpointSourceStateInspectService = checkpointSourceStateInspectService;
         this.iMapWalInspectService = iMapWalInspectService;
         this.previewConfigService = previewConfigService;
         this.pluginRuntimeService = pluginRuntimeService;
@@ -302,6 +307,14 @@ public class SeatunnelXJavaProxyServer {
                     @Override
                     protected Object handleRequest(Map<String, Object> request) {
                         return checkpointDeserializeService.inspect(request);
+                    }
+                });
+        httpServer.createContext(
+                "/api/v1/storage/checkpoint/inspect-source-state",
+                new JsonPostHandler() {
+                    @Override
+                    protected Object handleRequest(Map<String, Object> request) {
+                        return checkpointSourceStateInspectService.inspect(request);
                     }
                 });
         httpServer.createContext(
