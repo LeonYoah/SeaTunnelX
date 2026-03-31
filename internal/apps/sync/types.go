@@ -125,10 +125,12 @@ type TaskFilter struct {
 
 // JobFilter represents job instance list query filters.
 type JobFilter struct {
-	TaskID  uint
-	RunType RunType
-	Page    int
-	Size    int
+	TaskID        uint
+	RunType       RunType
+	PlatformJobID string
+	EngineJobID   string
+	Page          int
+	Size          int
 }
 
 // ValidateResult represents validation result payload.

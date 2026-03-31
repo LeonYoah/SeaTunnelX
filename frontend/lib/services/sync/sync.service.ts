@@ -199,6 +199,8 @@ export class SyncService extends BaseService {
     size?: number;
     task_id?: number;
     run_type?: string;
+    platform_job_id?: string;
+    engine_job_id?: string;
   }): Promise<SyncJobListData> {
     return this.get<SyncJobListData>('/jobs', params);
   }

@@ -437,7 +437,12 @@ func (h *Handler) SubmitTask(c *gin.Context) {
 
 // ListJobs handles GET /api/v1/sync/jobs.
 func (h *Handler) ListJobs(c *gin.Context) {
-	filter := &JobFilter{Page: parsePositiveInt(c.Query("current"), 1), Size: parsePositiveInt(c.Query("size"), 50)}
+	filter := &JobFilter{
+		Page:          parsePositiveInt(c.Query("current"), 1),
+		Size:          parsePositiveInt(c.Query("size"), 50),
+		PlatformJobID: strings.TrimSpace(c.Query("platform_job_id")),
+		EngineJobID:   strings.TrimSpace(c.Query("engine_job_id")),
+	}
 	if taskID := c.Query("task_id"); taskID != "" {
 		parsed, err := strconv.ParseUint(taskID, 10, 64)
 		if err != nil {

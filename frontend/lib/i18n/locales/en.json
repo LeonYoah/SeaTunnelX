@@ -3140,6 +3140,8 @@
     "selectTransformPlugin": "Select a transform plugin",
     "selectSinkPlugin": "Select a sink plugin",
     "loadingPluginTemplates": "Loading plugin templates...",
+    "timezone": "Timezone",
+    "nextRuns": "Next Runs",
     "pluginTemplateHint": "Selecting a plugin appends its HOCON template to the editor and selects the new block.",
     "loadPluginTemplatesFailed": "Failed to load plugin templates",
     "insertPluginTemplateFailed": "Failed to insert plugin template",
@@ -3168,6 +3170,7 @@
     "liveLogs": "Live Logs",
     "hasErrors": "Has Errors",
     "expand": "Expand",
+    "jobIdNotFound": "No job instance found for the specified Job ID",
     "jobId": "Job ID",
     "engineJobId": "Engine Job ID",
     "logFocusHint": "The main view focuses on recent logs; expand to inspect the full output.",
@@ -3436,6 +3439,7 @@
     "scheduleLastTriggeredAt": "Last triggered",
     "scheduleNextTriggeredAt": "Next trigger",
     "scheduleNoTriggerYet": "No trigger history yet",
-    "scheduleDisabled": "Disabled"
+    "scheduleDisabled": "Disabled",
+    "search": "Search"
   }
 }

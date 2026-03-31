@@ -330,6 +330,12 @@ func (r *Repository) ListJobInstances(ctx context.Context, filter *JobFilter) ([
 		if filter.RunType != "" {
 			query = query.Where("run_type = ?", filter.RunType)
 		}
+		if strings.TrimSpace(filter.PlatformJobID) != "" {
+			query = query.Where("platform_job_id = ?", strings.TrimSpace(filter.PlatformJobID))
+		}
+		if strings.TrimSpace(filter.EngineJobID) != "" {
+			query = query.Where("engine_job_id = ?", strings.TrimSpace(filter.EngineJobID))
+		}
 	}
 
 	var total int64

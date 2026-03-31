@@ -62,6 +62,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Minus,
   Loader2,
   Eye,
   Clock3,
@@ -106,6 +107,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -222,7 +224,7 @@ interface UserFacingErrorState {
   raw?: string;
 }
 
-type RightSidebarTab = 'settings' | 'schedule' | 'versions' | 'globals';
+type RightSidebarTab = 'settings' | 'versions' | 'globals';
 type BottomConsoleTab = 'jobs' | 'logs' | 'preview' | 'checkpoint';
 type ExecutionMode = 'cluster' | 'local';
 type LogFilterMode = 'all' | 'warn' | 'error';
@@ -1761,6 +1763,16 @@ type CheckpointSourceSummary = {
   progress: string;
 };
 
+type CheckpointSubtaskViewRow = {
+  subtaskIndex: number;
+  splitCount: number;
+  bytes: number;
+  chunks: number;
+  stateSize: number;
+  status: string;
+  ackTimestamp: unknown;
+};
+
 function summarizeCheckpointSourceState(
   sourceState?: Record<string, unknown> | null,
 ): CheckpointSourceSummary {
@@ -1891,6 +1903,107 @@ function summarizeCheckpointSourceState(
     ),
     progress,
   };
+}
+
+function toCheckpointNumber(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function buildCheckpointSubtaskRows(
+  row: CheckpointActionViewModel,
+): CheckpointSubtaskViewRow[] {
+  const actionState = row.actionState || {};
+  const statistics = row.taskStatistics || {};
+  const sourceState = row.sourceState || {};
+  const stateSubtasks = Array.isArray(actionState.subtasks)
+    ? (actionState.subtasks as Record<string, unknown>[])
+    : [];
+  const statSubtasks = Array.isArray(statistics.subtasks)
+    ? (statistics.subtasks as Record<string, unknown>[])
+    : [];
+  const sourceSubtasks = Array.isArray(sourceState.subtasks)
+    ? (sourceState.subtasks as Record<string, unknown>[])
+    : [];
+  const rowMap = new Map<number, CheckpointSubtaskViewRow>();
+
+  const ensureRow = (index: number): CheckpointSubtaskViewRow => {
+    const normalized = Number.isFinite(index) ? index : rowMap.size;
+    const existing = rowMap.get(normalized);
+    if (existing) {
+      return existing;
+    }
+    const created: CheckpointSubtaskViewRow = {
+      subtaskIndex: normalized,
+      splitCount: 0,
+      bytes: 0,
+      chunks: 0,
+      stateSize: 0,
+      status: '-',
+      ackTimestamp: undefined,
+    };
+    rowMap.set(normalized, created);
+    return created;
+  };
+
+  stateSubtasks.forEach((item, index) => {
+    const rowItem = ensureRow(toCheckpointNumber(item.index ?? index));
+    rowItem.bytes = toCheckpointNumber(item.bytes);
+    rowItem.chunks = toCheckpointNumber(item.chunks);
+  });
+  statSubtasks.forEach((item, index) => {
+    const rowItem = ensureRow(toCheckpointNumber(item.subtaskIndex ?? index));
+    rowItem.stateSize = toCheckpointNumber(item.stateSize);
+    rowItem.status = String(item.status || '-');
+    rowItem.ackTimestamp = item.ackTimestamp;
+  });
+  sourceSubtasks.forEach((item, index) => {
+    const rowItem = ensureRow(toCheckpointNumber(item.subtaskIndex ?? index));
+    rowItem.splitCount = toCheckpointNumber(item.splitCount);
+    rowItem.bytes = Math.max(rowItem.bytes, toCheckpointNumber(item.bytes));
+  });
+
+  return Array.from(rowMap.values()).sort(
+    (left, right) => left.subtaskIndex - right.subtaskIndex,
+  );
+}
+
+function summarizeCheckpointSubtaskMetrics(rows: CheckpointSubtaskViewRow[]) {
+  const metrics: Array<{
+    key: keyof Pick<
+      CheckpointSubtaskViewRow,
+      'splitCount' | 'bytes' | 'chunks' | 'stateSize'
+    >;
+    label: string;
+  }> = [
+    {key: 'splitCount', label: 'Splits'},
+    {key: 'bytes', label: 'Bytes'},
+    {key: 'chunks', label: 'Chunks'},
+    {key: 'stateSize', label: 'State Size'},
+  ];
+  const aggregate = (mode: 'min' | 'avg' | 'max') => {
+    const entry: Record<string, unknown> = {metric: mode};
+    metrics.forEach(({key, label}) => {
+      const values = rows.map((item) => Number(item[key] || 0));
+      if (values.length === 0) {
+        entry[label] = 0;
+        return;
+      }
+      if (mode === 'min') {
+        entry[label] = Math.min(...values);
+        return;
+      }
+      if (mode === 'max') {
+        entry[label] = Math.max(...values);
+        return;
+      }
+      entry[label] = Math.round(
+        values.reduce((sum, value) => sum + value, 0) / values.length,
+      );
+    });
+    return entry;
+  };
+  return [aggregate('min'), aggregate('avg'), aggregate('max')];
 }
 
 function normalizeStoredScriptContent(value: unknown): string {
@@ -2660,6 +2773,7 @@ export function DataSyncStudio() {
   const [clusters, setClusters] = useState<ClusterInfo[]>([]);
   const [tree, setTree] = useState<SyncTaskTreeNode[]>([]);
   const [keyword, setKeyword] = useState('');
+  const [jobIdLookupInput, setJobIdLookupInput] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
@@ -2685,6 +2799,10 @@ export function DataSyncStudio() {
   const [globalVariablePage, setGlobalVariablePage] = useState(1);
   const [rightSidebarTab, setRightSidebarTab] =
     useState<RightSidebarTab>('settings');
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [scheduleDraft, setScheduleDraft] = useState<TaskScheduleValue>(() =>
+    extractTaskScheduleValue({}),
+  );
   const [bottomConsoleTab, setBottomConsoleTab] =
     useState<BottomConsoleTab>('jobs');
   const [versionPreview, setVersionPreview] = useState<SyncTaskVersion | null>(
@@ -5046,6 +5164,20 @@ export function DataSyncStudio() {
     });
   };
 
+  const openScheduleDialog = () => {
+    setScheduleDraft(extractTaskScheduleValue(editor.definition || {}));
+    setScheduleDialogOpen(true);
+  };
+
+  const handleScheduleDraftChange = (value: TaskScheduleValue) => {
+    setScheduleDraft(value);
+  };
+
+  const handleConfirmScheduleDialog = () => {
+    handleScheduleChange(scheduleDraft);
+    setScheduleDialogOpen(false);
+  };
+
   const handleScheduleChange = (value: TaskScheduleValue) => {
     updateEditor('definition', {
       ...editor.definition,
@@ -5232,6 +5364,46 @@ export function DataSyncStudio() {
     }
   };
 
+  const handleLocateJobId = async () => {
+    const trimmed = jobIdLookupInput.trim();
+    if (!trimmed) {
+      return;
+    }
+    try {
+      const result = await services.sync.listJobs({
+        current: 1,
+        size: 1,
+        platform_job_id: trimmed,
+      });
+      const job = result.items?.[0] || null;
+      if (!job) {
+        toast.error(t('jobIdNotFound'));
+        return;
+      }
+      const targetNode = findTreeNode(tree, job.task_id);
+      if (!targetNode || targetNode.node_type !== 'file') {
+        toast.error(t('loadFileFailed'));
+        return;
+      }
+      const ancestorFolderIds: number[] = [];
+      let cursor = targetNode.parent_id ? findTreeNode(tree, targetNode.parent_id) : null;
+      while (cursor) {
+        if (cursor.node_type === 'folder') {
+          ancestorFolderIds.unshift(cursor.id);
+        }
+        cursor = cursor.parent_id ? findTreeNode(tree, cursor.parent_id) : null;
+      }
+      setExpandedFolderIds((current) =>
+        Array.from(new Set([...current, ...ancestorFolderIds])),
+      );
+      await handleSelectNode(targetNode);
+      setSelectedJobId(job.id);
+      setBottomConsoleTab('jobs');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('loadRunsFailed'));
+    }
+  };
+
   return (
     <div className='-mx-2 flex h-[calc(100vh-96px)] min-h-[780px] flex-col gap-2 bg-background/10 lg:-mx-3'>
       <Card className='gap-0 border-border/60 bg-background/85 py-0 shadow-sm'>
@@ -5246,6 +5418,35 @@ export function DataSyncStudio() {
                 className='h-9 border-border/60 bg-background pl-9 text-sm'
                 placeholder={t('searchWorkspace')}
               />
+            </div>
+            <div className='flex items-center gap-2'>
+              <div className='relative w-[180px]'>
+                <Search className='absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' />
+                <Input
+                  value={jobIdLookupInput}
+                  onChange={(event) =>
+                    setJobIdLookupInput(event.target.value.replace(/\D/g, ''))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void handleLocateJobId();
+                    }
+                  }}
+                  className='h-9 border-border/60 bg-background pl-9 text-sm'
+                  placeholder={t('jobId')}
+                  inputMode='numeric'
+                />
+              </div>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                className='h-9 px-3'
+                onClick={() => void handleLocateJobId()}
+              >
+                <Search className='mr-1.5 size-4' />
+                {t('search')}
+              </Button>
             </div>
           </div>
 
@@ -5569,10 +5770,10 @@ export function DataSyncStudio() {
                 onClick={() => setRightSidebarTab('settings')}
               />
               <SidebarIconTab
-                active={rightSidebarTab === 'schedule'}
+                active={scheduleDialogOpen}
                 icon={<Clock3 className='size-4' />}
                 label={t('taskSchedule')}
-                onClick={() => setRightSidebarTab('schedule')}
+                onClick={openScheduleDialog}
               />
               <SidebarIconTab
                 active={rightSidebarTab === 'versions'}
@@ -5618,13 +5819,6 @@ export function DataSyncStudio() {
               onAddCustomVariableRow={handleAddCustomVariableRow}
               onDeleteCustomVariableRow={handleDeleteCustomVariableRow}
             />
-          ) : rightSidebarTab === 'schedule' ? (
-            <TaskScheduleSidebarPanel
-              value={extractTaskScheduleValue(editor.definition || {})}
-              lastTriggeredAt={selectedScheduleNode?.schedule_last_triggered_at}
-              nextTriggeredAt={selectedScheduleNode?.schedule_next_triggered_at}
-              onChange={handleScheduleChange}
-            />
           ) : rightSidebarTab === 'versions' ? (
             <VersionSidebarPanel
               taskId={editor.id}
@@ -5657,6 +5851,46 @@ export function DataSyncStudio() {
             />
           )}
         </StudioSidebarShell>
+
+        <Dialog
+          open={scheduleDialogOpen}
+          onOpenChange={(open) => {
+            setScheduleDialogOpen(open);
+            if (open) {
+              setScheduleDraft(extractTaskScheduleValue(editor.definition || {}));
+            }
+          }}
+        >
+          <DialogContent className='flex h-[90vh] w-[min(96vw,1280px)] max-w-none flex-col overflow-hidden p-0'>
+            <DialogHeader className='border-b border-border/60 px-6 py-4'>
+              <DialogTitle>{t('taskSchedule')}</DialogTitle>
+            </DialogHeader>
+            <div className='min-h-0 flex-1 overflow-y-auto px-6 py-4'>
+              <TaskScheduleSidebarPanel
+                value={scheduleDraft}
+                lastTriggeredAt={selectedScheduleNode?.schedule_last_triggered_at}
+                nextTriggeredAt={selectedScheduleNode?.schedule_next_triggered_at}
+                onChange={handleScheduleDraftChange}
+                className='mx-auto w-full max-w-6xl'
+              />
+            </div>
+            <DialogFooter className='border-t border-border/60 px-6 py-4'>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => {
+                  setScheduleDraft(extractTaskScheduleValue(editor.definition || {}));
+                  setScheduleDialogOpen(false);
+                }}
+              >
+                {t('cancel')}
+              </Button>
+              <Button type='button' onClick={handleConfirmScheduleDialog}>
+                {t('confirm')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className='col-span-2 row-start-2 gap-0 overflow-hidden border-border/60 bg-background/75 py-0 shadow-sm'>
           <CardContent className='flex h-full min-h-0 p-0'>
@@ -6090,54 +6324,11 @@ export function DataSyncStudio() {
               {checkpointInspectDialogResult?.path || '-'}
             </DialogDescription>
           </DialogHeader>
-          <div className='grid gap-3 text-sm md:grid-cols-4'>
-            <div>
-              <div className='text-muted-foreground'>{t('fileName')}</div>
-              <div className='font-medium break-all'>
-                {checkpointInspectDialogResult?.file_name || '-'}
-              </div>
-            </div>
-            <div>
-              <div className='text-muted-foreground'>{t('storageType')}</div>
-              <div className='font-medium'>
-                {checkpointInspectDialogResult?.storage_type || '-'}
-              </div>
-            </div>
-            <div>
-              <div className='text-muted-foreground'>{t('size')}</div>
-              <div className='font-medium'>
-                {formatSizeBytes(checkpointInspectDialogResult?.size_bytes)}
-              </div>
-            </div>
-            <div>
-              <div className='text-muted-foreground'>{t('encoding')}</div>
-              <div className='font-medium'>
-                {checkpointInspectDialogResult?.encoding || '-'}
-              </div>
-            </div>
-          </div>
-          <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-            {buildCheckpointInspectSummary(checkpointInspectDialogResult).map(
-              (item) => (
-                <div
-                  key={item.label}
-                  className='rounded-lg border border-border/60 bg-muted/10 p-3'
-                >
-                  <div className='text-xs text-muted-foreground'>
-                    {item.label}
-                  </div>
-                  <div className='mt-1 text-sm font-medium'>
-                    {renderCheckpointFieldValue(item.key, item.value)}
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
           <ScrollArea className='min-h-0 flex-1 rounded-md border border-border/50 bg-muted/10 p-3'>
             <div className='space-y-4'>
-              <CheckpointInspectObjectSection
-                title={t('completedCheckpoint')}
-                value={checkpointInspectDialogResult?.completed_checkpoint}
+              <CheckpointInspectOverviewSection
+                result={checkpointInspectDialogResult}
+                t={t}
               />
               <CheckpointInspectSourceHighlightsSection
                 title={t('checkpointSourceState')}
@@ -6150,19 +6341,18 @@ export function DataSyncStudio() {
                 targetLabel={t('sourceTarget')}
                 progressLabel={t('sourceProgress')}
               />
-              <CheckpointInspectObjectSection
-                title={t('pipelineState')}
-                value={checkpointInspectDialogResult?.pipeline_state}
-              />
-              <CheckpointInspectActionsSection
+              <CheckpointInspectPrimaryTableSection
                 title={t('actions')}
                 result={checkpointInspectDialogResult}
                 sourceStateTitle={t('checkpointSourceState')}
                 decodeStrategyLabel={t('decodeStrategy')}
                 coordinatorLabel={t('coordinator')}
-                splitCountLabel={t('splitCount')}
                 unsupportedLabel={t('unsupportedSources')}
                 rawDetailsLabel={t('rawDetails')}
+              />
+              <CheckpointInspectRawDetailsSection
+                result={checkpointInspectDialogResult}
+                t={t}
               />
             </div>
           </ScrollArea>
@@ -8164,6 +8354,29 @@ function CheckpointWorkspacePanel({
   );
 }
 
+function CheckpointDetailsSummary({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <summary
+      className={cn(
+        'flex cursor-pointer list-none items-center gap-2 px-3 py-2 marker:hidden',
+        className,
+      )}
+    >
+      <span className='inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-border/60 text-muted-foreground'>
+        <Plus className='size-3 group-open:hidden' />
+        <Minus className='hidden size-3 group-open:block' />
+      </span>
+      <div className='min-w-0 flex-1'>{children}</div>
+    </summary>
+  );
+}
+
 function CheckpointInspectSectionShell({
   title,
   children,
@@ -8179,16 +8392,11 @@ function CheckpointInspectSectionShell({
     return (
       <details
         open={defaultOpen}
-        className='rounded-lg border border-border/50 bg-background/80'
+        className='group rounded-lg border border-border/50 bg-background/80'
       >
-        <summary className='cursor-pointer list-none border-b border-border/50 px-3 py-2 text-sm font-medium marker:hidden'>
-          <div className='flex items-center justify-between gap-2'>
-            <span>{title}</span>
-            <span className='text-xs text-muted-foreground'>
-              Expand / Collapse
-            </span>
-          </div>
-        </summary>
+        <CheckpointDetailsSummary className='border-b border-border/50 text-sm font-medium'>
+          <span>{title}</span>
+        </CheckpointDetailsSummary>
         <div className='p-3'>{children}</div>
       </details>
     );
@@ -8206,16 +8414,18 @@ function CheckpointInspectSectionShell({
 function CheckpointInspectObjectSection({
   title,
   value,
+  defaultOpen = false,
 }: {
   title: string;
   value?: Record<string, unknown> | null;
+  defaultOpen?: boolean;
 }) {
   const entries = value ? Object.entries(value) : [];
   return (
     <CheckpointInspectSectionShell
       title={title}
       collapsible
-      defaultOpen={false}
+      defaultOpen={defaultOpen}
     >
       {entries.length > 0 ? (
         <Table>
@@ -8300,56 +8510,53 @@ function CheckpointInspectSourceHighlightsSection({
           </div>
         ) : null}
         {sourceStates.length > 0 ? (
-          <div className='grid gap-4 xl:grid-cols-2'>
-            {sourceStates.map((item, index) => {
-              const summary = summarizeCheckpointSourceState(item);
-              return (
-                <div
-                  key={`${item.actionName || item.pluginName || index}`}
-                  className='rounded-xl border border-primary/20 bg-primary/5 p-4'
-                >
-                  <div className='flex flex-wrap items-start justify-between gap-3'>
-                    <div className='min-w-0'>
-                      <div className='text-xs text-muted-foreground'>
-                        {String(item.pluginName || title)}
-                      </div>
-                      <div className='break-all text-base font-semibold'>
-                        {String(item.actionName || item.pluginName || '-')}
-                      </div>
-                    </div>
-                    <Badge variant='outline'>
-                      {decodeStrategyLabel}:{' '}
-                      {formatCellValue(item.decodeStrategy)}
-                    </Badge>
-                  </div>
-                  <div className='mt-4 grid gap-3 md:grid-cols-2'>
-                    <CheckpointInspectMetricCard
-                      label={currentOffsetLabel}
-                      value={summary.offset}
-                    />
-                    <CheckpointInspectMetricCard
-                      label={targetLabel}
-                      value={summary.target}
-                    />
-                    <CheckpointInspectMetricCard
-                      label={splitCountLabel}
-                      value={summary.splitCount}
-                    />
-                    <CheckpointInspectMetricCard
-                      label={progressLabel}
-                      value={summary.progress}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className='rounded-md border border-border/50 bg-background/70'>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Plugin</TableHead>
+                  <TableHead>{currentOffsetLabel}</TableHead>
+                  <TableHead>{targetLabel}</TableHead>
+                  <TableHead>{splitCountLabel}</TableHead>
+                  <TableHead>{progressLabel}</TableHead>
+                  <TableHead>{decodeStrategyLabel}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sourceStates.map((item, index) => {
+                  const summary = summarizeCheckpointSourceState(item);
+                  return (
+                    <TableRow
+                      key={`${item.actionName || item.pluginName || index}`}
+                    >
+                      <TableCell className='font-medium'>
+                        <span className='break-all'>
+                          {String(item.actionName || item.pluginName || '-')}
+                        </span>
+                      </TableCell>
+                      <TableCell>{formatCellValue(item.pluginName)}</TableCell>
+                      <TableCell>
+                        {renderCheckpointFieldValue('currentOffset', summary.offset)}
+                      </TableCell>
+                      <TableCell>
+                        {renderCheckpointFieldValue('sourceTarget', summary.target)}
+                      </TableCell>
+                      <TableCell>{summary.splitCount}</TableCell>
+                      <TableCell>{summary.progress}</TableCell>
+                      <TableCell>{formatCellValue(item.decodeStrategy)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         ) : null}
         {unsupportedSources.length > 0 ? (
-          <details className='rounded-lg border border-border/60 bg-background/60'>
-            <summary className='cursor-pointer list-none px-3 py-3 text-sm font-medium marker:hidden'>
-              {unsupportedLabel}
-            </summary>
+          <details className='group rounded-lg border border-border/60 bg-background/60'>
+            <CheckpointDetailsSummary className='py-3 text-sm font-medium'>
+              <span>{unsupportedLabel}</span>
+            </CheckpointDetailsSummary>
             <div className='border-t border-border/50 p-3'>
               <div className='space-y-3'>
                 {unsupportedSources.map((item, index) => (
@@ -8368,137 +8575,181 @@ function CheckpointInspectSourceHighlightsSection({
   );
 }
 
-function CheckpointInspectActionsSection({
+function CheckpointInspectOverviewSection({
+  result,
+  t,
+}: {
+  result: RuntimeStorageCheckpointInspectResult | null;
+  t: (key: string) => string;
+}) {
+  const summary = buildCheckpointInspectSummary(result);
+  return (
+    <CheckpointInspectSectionShell title={t('checkpointOverview')}>
+      <div className='rounded-md border border-border/50 bg-background/70'>
+        <div className='border-b border-border/50'>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell className='w-[140px] text-muted-foreground'>
+                  {t('fileName')}
+                </TableCell>
+                <TableCell className='break-all font-medium'>
+                  {result?.file_name || '-'}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+        <div className='overflow-x-auto'>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {summary.map((item) => (
+                  <TableHead key={item.label}>{item.label}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                {summary.map((item) => (
+                  <TableCell key={item.label} className='font-medium'>
+                    {renderCheckpointFieldValue(item.key, item.value)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </CheckpointInspectSectionShell>
+  );
+}
+
+function CheckpointInspectRawDetailsSection({
+  result,
+  t,
+}: {
+  result: RuntimeStorageCheckpointInspectResult | null;
+  t: (key: string) => string;
+}) {
+  return (
+    <details className='group rounded-lg border border-border/60 bg-background/60'>
+      <CheckpointDetailsSummary className='px-4 py-3 text-sm font-medium'>
+        <span>{t('rawDetails')}</span>
+      </CheckpointDetailsSummary>
+      <div className='space-y-4 border-t border-border/50 p-4'>
+        <CheckpointInspectObjectSection
+          title={t('completedCheckpoint')}
+          value={result?.completed_checkpoint}
+          defaultOpen={false}
+        />
+        <CheckpointInspectObjectSection
+          title={t('pipelineState')}
+          value={result?.pipeline_state}
+          defaultOpen={false}
+        />
+      </div>
+    </details>
+  );
+}
+
+function CheckpointInspectPrimaryTableSection({
   title,
   result,
   sourceStateTitle,
   decodeStrategyLabel,
   coordinatorLabel,
-  splitCountLabel,
-  unsupportedLabel,
   rawDetailsLabel,
+  unsupportedLabel,
 }: {
   title: string;
   result: RuntimeStorageCheckpointInspectResult | null;
   sourceStateTitle: string;
   decodeStrategyLabel: string;
   coordinatorLabel: string;
-  splitCountLabel: string;
-  unsupportedLabel: string;
   rawDetailsLabel: string;
+  unsupportedLabel: string;
 }) {
   const rows = buildCheckpointActionViewModels(result);
   return (
     <CheckpointInspectSectionShell title={title}>
       {rows.length > 0 ? (
         <div className='space-y-4'>
+          <div className='hidden rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs font-medium text-muted-foreground xl:grid xl:grid-cols-[minmax(0,2fr)_100px_100px_110px_100px_160px_160px] xl:gap-3'>
+            <div>Action</div>
+            <div>Parallelism</div>
+            <div>Subtasks</div>
+            <div>Chunks</div>
+            <div>Acked</div>
+            <div>Latest Ack</div>
+            <div>{decodeStrategyLabel}</div>
+          </div>
           {rows.map((row) => {
             const actionState = row.actionState || {};
             const statistics = row.taskStatistics || {};
-            const stateSubtasks = Array.isArray(actionState.subtasks)
-              ? (actionState.subtasks as Record<string, unknown>[])
-              : [];
-            const statSubtasks = Array.isArray(statistics.subtasks)
-              ? (statistics.subtasks as Record<string, unknown>[])
-              : [];
             const sourceSubtasks = Array.isArray(row.sourceState?.subtasks)
               ? (row.sourceState?.subtasks as Record<string, unknown>[])
               : [];
+            const subtaskRows = buildCheckpointSubtaskRows(row);
+            const subtaskSummaryRows = summarizeCheckpointSubtaskMetrics(
+              subtaskRows,
+            );
+
             return (
               <details
                 key={row.key}
-                open
-                className='rounded-lg border border-border/60 bg-background/60'
+                className='group rounded-lg border border-border/60 bg-background/60'
               >
-                <summary className='cursor-pointer list-none px-3 py-3 marker:hidden'>
-                  <div className='flex flex-wrap items-start justify-between gap-3'>
-                    <div className='min-w-0'>
-                      <div className='text-xs text-muted-foreground'>
-                        {title}
-                      </div>
-                      <div className='break-all text-sm font-medium'>
-                        {row.actionName || '-'}
-                      </div>
+                <CheckpointDetailsSummary className='py-3'>
+                  <div className='grid gap-2 text-sm xl:grid-cols-[minmax(0,2fr)_100px_100px_110px_100px_160px_160px] xl:items-center xl:gap-3'>
+                    <div className='min-w-0 font-medium'>
+                      <span className='break-all'>{row.actionName || '-'}</span>
                     </div>
-                    <div className='flex flex-wrap gap-2'>
-                      {actionState.parallelism !== undefined ? (
-                        <Badge variant='outline'>
-                          P {formatCellValue(actionState.parallelism)}
-                        </Badge>
-                      ) : null}
-                      {actionState.subtaskCount !== undefined ? (
-                        <Badge variant='outline'>
-                          S {formatCellValue(actionState.subtaskCount)}
-                        </Badge>
-                      ) : null}
-                      {statistics.acknowledgedSubtasks !== undefined ? (
-                        <Badge variant='outline'>
-                          Ack {formatCellValue(statistics.acknowledgedSubtasks)}
-                        </Badge>
-                      ) : null}
-                      {row.sourceState?.decodeStrategy ? (
-                        <Badge variant='outline'>
-                          {formatCellValue(row.sourceState.decodeStrategy)}
-                        </Badge>
-                      ) : null}
+                    <div>{formatCellValue(actionState.parallelism)}</div>
+                    <div>{formatCellValue(actionState.subtaskCount)}</div>
+                    <div>{formatCellValue(actionState.coordinatorStateChunks)}</div>
+                    <div>{formatCellValue(statistics.acknowledgedSubtasks)}</div>
+                    <div>
+                      {renderCheckpointFieldValue(
+                        'latestAckTimestamp',
+                        statistics.latestAckTimestamp,
+                      )}
                     </div>
+                    <div>{formatCellValue(row.sourceState?.decodeStrategy)}</div>
                   </div>
-                </summary>
+                </CheckpointDetailsSummary>
                 <div className='space-y-4 border-t border-border/50 p-3'>
-                  <div className='grid gap-3 md:grid-cols-3 xl:grid-cols-6'>
-                    <CheckpointInspectMetricCard
-                      label='Parallelism'
-                      value={actionState.parallelism}
-                    />
-                    <CheckpointInspectMetricCard
-                      label='Subtasks'
-                      value={actionState.subtaskCount}
-                    />
-                    <CheckpointInspectMetricCard
-                      label='Coordinator Chunks'
-                      value={actionState.coordinatorStateChunks}
-                    />
-                    <CheckpointInspectMetricCard
-                      label='Acked'
-                      value={statistics.acknowledgedSubtasks}
-                    />
-                    <CheckpointInspectMetricCard
-                      label='Latest Ack'
-                      value={statistics.latestAckTimestamp}
-                      valueKey='latestAckTimestamp'
-                    />
-                    <CheckpointInspectMetricCard
-                      label={decodeStrategyLabel}
-                      value={row.sourceState?.decodeStrategy}
-                    />
-                  </div>
-
                   <CheckpointInspectInlineTable
-                    title='Action State'
+                    title='Subtasks Summary'
                     columns={[
-                      {key: 'index', label: 'Index'},
-                      {key: 'bytes', label: 'Bytes'},
-                      {key: 'chunks', label: 'Chunks'},
+                      {key: 'metric', label: 'Metric'},
+                      {key: 'Splits', label: 'Splits'},
+                      {key: 'Bytes', label: 'Bytes'},
+                      {key: 'Chunks', label: 'Chunks'},
+                      {key: 'State Size', label: 'State Size'},
                     ]}
-                    rows={stateSubtasks}
+                    rows={subtaskSummaryRows}
                   />
 
                   <CheckpointInspectInlineTable
-                    title='Task Statistics'
+                    title='Subtasks'
                     columns={[
                       {key: 'subtaskIndex', label: 'Subtask'},
-                      {key: 'status', label: 'Status'},
+                      {key: 'splitCount', label: 'Splits'},
+                      {key: 'bytes', label: 'Bytes'},
+                      {key: 'chunks', label: 'Chunks'},
                       {key: 'stateSize', label: 'State Size'},
+                      {key: 'status', label: 'Status'},
                       {key: 'ackTimestamp', label: 'Ack Timestamp'},
                     ]}
-                    rows={statSubtasks}
+                    rows={subtaskRows as unknown as Record<string, unknown>[]}
                   />
 
                   {row.sourceState ? (
-                    <details className='rounded-md border border-border/50 bg-muted/5'>
-                      <summary className='cursor-pointer list-none px-3 py-3 text-sm font-medium marker:hidden'>
-                        {sourceStateTitle} / {rawDetailsLabel}
-                      </summary>
+                    <details className='group rounded-md border border-border/50 bg-muted/5'>
+                      <CheckpointDetailsSummary className='py-3 text-sm font-medium'>
+                        <span>{sourceStateTitle} / {rawDetailsLabel}</span>
+                      </CheckpointDetailsSummary>
                       <div className='space-y-3 border-t border-border/50 p-3'>
                         <CheckpointInspectMiniObject
                           title={coordinatorLabel}
@@ -8514,25 +8765,11 @@ function CheckpointInspectActionsSection({
                             : [];
                           return (
                             <div
-                              key={`${row.key}-source-${subtaskIndex}`}
+                              key={`${row.key}-split-group-${subtaskIndex}`}
                               className='rounded-md border border-border/50 p-3'
                             >
-                              <div className='mb-3 flex flex-wrap items-center gap-2 text-sm font-medium'>
-                                <span>
-                                  Subtask{' '}
-                                  {formatCellValue(subtask.subtaskIndex)}
-                                </span>
-                                <Badge variant='outline'>
-                                  {splitCountLabel}:{' '}
-                                  {formatCellValue(subtask.splitCount)}
-                                </Badge>
-                                <Badge variant='outline'>
-                                  Bytes:{' '}
-                                  {renderCheckpointFieldValue(
-                                    'stateBytes',
-                                    subtask.bytes,
-                                  )}
-                                </Badge>
+                              <div className='mb-3 text-sm font-medium'>
+                                Subtask {formatCellValue(subtask.subtaskIndex)}
                               </div>
                               <div className='space-y-2'>
                                 {splits.length > 0 ? (

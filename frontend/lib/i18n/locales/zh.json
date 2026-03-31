@@ -3140,6 +3140,8 @@
     "selectTransformPlugin": "选择 Transform 插件",
     "selectSinkPlugin": "选择 Sink 插件",
     "loadingPluginTemplates": "正在加载插件模板...",
+    "timezone": "时区",
+    "nextRuns": "未来运行时间",
     "pluginTemplateHint": "选择插件后会自动将 HOCON 模板追加到编辑器，并选中新插入区域。",
     "loadPluginTemplatesFailed": "加载插件模板失败",
     "insertPluginTemplateFailed": "插入插件模板失败",
@@ -3168,6 +3170,7 @@
     "liveLogs": "实时日志",
     "hasErrors": "存在错误",
     "expand": "展开",
+    "jobIdNotFound": "未找到对应 Job ID 的任务实例",
     "jobId": "Job ID",
     "engineJobId": "Engine Job ID",
     "logFocusHint": "主视图聚焦最近日志，展开后可查看完整结果",
@@ -3436,6 +3439,7 @@
     "scheduleLastTriggeredAt": "最近一次触发",
     "scheduleNextTriggeredAt": "下一次触发",
     "scheduleNoTriggerYet": "暂无触发记录",
-    "scheduleDisabled": "未启用"
+    "scheduleDisabled": "未启用",
+    "search": "搜索"
   }
 }
