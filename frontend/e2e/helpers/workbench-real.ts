@@ -16,6 +16,9 @@
  */
 
 import {execFile} from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {promisify} from 'node:util';
 import {expect, type APIRequestContext, type Page} from '@playwright/test';
 
@@ -242,16 +245,23 @@ export async function seedWorkbenchRealMySQLFixture(): Promise<void> {
     );
   }
 
-  await docker(
-    'exec',
-    '-i',
-    mysqlContainerName,
-    'mysql',
-    '-uroot',
-    `-p${mysqlPassword}`,
-    '-e',
-    statements.join('; '),
-  );
+  const sqlFile = path.join(os.tmpdir(), `workbench-real-mysql-${Date.now()}.sql`);
+  const sqlContent = `${statements.join(';\n')};\n`;
+  const containerSqlPath = `/tmp/${path.basename(sqlFile)}`;
+  await fs.writeFile(sqlFile, sqlContent, 'utf8');
+  try {
+    await docker('cp', sqlFile, `${mysqlContainerName}:${containerSqlPath}`);
+    await docker(
+      'exec',
+      mysqlContainerName,
+      'sh',
+      '-lc',
+      `mysql -uroot -p${mysqlPassword} < ${containerSqlPath}`,
+    );
+  } finally {
+    await fs.rm(sqlFile, {force: true}).catch(() => undefined);
+    await docker('exec', mysqlContainerName, 'rm', '-f', containerSqlPath).catch(() => '');
+  }
 }
 
 export async function prepareWorkbenchRealCluster(page: Page): Promise<InstalledClusterFixture> {

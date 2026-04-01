@@ -1776,6 +1776,7 @@ func (s *Service) StartInstallation(ctx context.Context, req *InstallationReques
 	status := &InstallationStatus{
 		ID:          uuid.New().String(),
 		HostID:      req.HostID,
+		ClusterID:   strings.TrimSpace(req.ClusterID),
 		Status:      StepStatusRunning,
 		CurrentStep: InstallStepDownload,
 		Steps:       createInitialSteps(),

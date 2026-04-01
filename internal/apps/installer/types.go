@@ -336,6 +336,7 @@ type StepInfo struct {
 type InstallationStatus struct {
 	ID          string      `json:"id"`
 	HostID      string      `json:"host_id"`
+	ClusterID   string      `json:"cluster_id,omitempty"`
 	Status      StepStatus  `json:"status"`
 	CurrentStep InstallStep `json:"current_step"`
 	Steps       []StepInfo  `json:"steps"`

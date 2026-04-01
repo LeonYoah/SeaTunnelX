@@ -32,6 +32,7 @@ function E2EInstallWizardContent() {
     Number(searchParams.get('initialClusterPort') || '0') || undefined;
   const initialHttpPort =
     Number(searchParams.get('initialHttpPort') || '0') || undefined;
+  const clusterId = Number(searchParams.get('clusterId') || '0') || undefined;
 
   return (
     <InstallWizard
@@ -39,6 +40,7 @@ function E2EInstallWizardContent() {
       onOpenChange={() => {}}
       hostId={hostId}
       hostName={hostName}
+      clusterId={clusterId}
       initialVersion={initialVersion}
       initialInstallDir={initialInstallDir}
       initialClusterPort={initialClusterPort}

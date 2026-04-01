@@ -317,6 +317,7 @@ export interface StepInfo {
 export interface InstallationStatus {
   id: string;
   host_id: string;
+  cluster_id?: string;
   status: StepStatus;
   current_step: InstallStep;
   steps: StepInfo[];

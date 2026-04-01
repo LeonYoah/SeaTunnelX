@@ -321,7 +321,7 @@ export function InstallWizard({
     cancelInstallation,
     resetWizard,
     resetPrecheck,
-    onOpenChange,
+    onOpenChange
   ]);
 
   // Handle precheck / 处理预检查

@@ -23,9 +23,9 @@ import {
   chooseSelectOption,
   expectSeatunnelXJavaProxyProbeSuccess,
   expectInstallationSuccess,
+  prepareClusterForInstallWizard,
   resolveInstalledConfigPaths,
   waitForOnlineHost,
-  waitForClusterByInstallDir,
   waitForSeatunnelXJavaProxyHealthy,
 } from './helpers/install-wizard-real';
 
@@ -69,6 +69,14 @@ test.describe.serial('install wizard real installer', () => {
     const installDir = `${installDirRoot}-local`;
     const clusterPort = clusterPortPrimary;
     const httpPort = httpPortPrimary;
+    const cluster = await prepareClusterForInstallWizard(page, {
+      hostId: host.id,
+      hostName: host.name,
+      version: seatunnelVersion,
+      installDir,
+      clusterPort,
+      httpPort,
+    });
 
     await page.goto(
       buildInstallWizardLabURL({
@@ -78,6 +86,7 @@ test.describe.serial('install wizard real installer', () => {
         installDir,
         clusterPort,
         httpPort,
+        clusterId: cluster.clusterId,
       }),
     );
 
@@ -141,6 +150,14 @@ test.describe.serial('install wizard real installer', () => {
     const installDir = `${installDirRoot}-s3`;
     const clusterPort = clusterPortSecondary;
     const httpPort = httpPortSecondary;
+    const cluster = await prepareClusterForInstallWizard(page, {
+      hostId: host.id,
+      hostName: host.name,
+      version: seatunnelVersion,
+      installDir,
+      clusterPort,
+      httpPort,
+    });
 
     await page.goto(
       buildInstallWizardLabURL({
@@ -150,6 +167,7 @@ test.describe.serial('install wizard real installer', () => {
         installDir,
         clusterPort,
         httpPort,
+        clusterId: cluster.clusterId,
       }),
     );
 
@@ -231,12 +249,7 @@ test.describe.serial('install wizard real installer', () => {
       `fs.s3a.secret.key: ${minioSecretKey}`,
     ]);
 
-    const installedCluster = await waitForClusterByInstallDir(
-      page,
-      host.id,
-      installDir,
-    );
-    await waitForSeatunnelXJavaProxyHealthy(page, installedCluster.id);
+    await waitForSeatunnelXJavaProxyHealthy(page, cluster.clusterId);
 
     const checkpointProbe = await expectSeatunnelXJavaProxyProbeSuccess({
       installDir,
