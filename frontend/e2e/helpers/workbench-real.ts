@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,16 +27,27 @@ import {
   waitForRuntimeStorageReady,
   waitForSeatunnelXJavaProxyHealthy,
 } from './install-wizard-real';
-import {downloadPluginApi, installPluginToClusterApi, waitForInstalledPlugin, waitForLocalPlugin} from './plugin-real';
-import {installSourceCluster, type InstalledClusterFixture} from './upgrade-real';
+import {
+  downloadPluginApi,
+  installPluginToClusterApi,
+  waitForInstalledPlugin,
+  waitForLocalPlugin,
+} from './plugin-real';
+import {
+  installSourceCluster,
+  type InstalledClusterFixture,
+} from './upgrade-real';
 
 const execFileAsync = promisify(execFile);
-const backendBaseURL = process.env.E2E_BACKEND_BASE_URL ?? 'http://127.0.0.1:18000';
+const backendBaseURL =
+  process.env.E2E_BACKEND_BASE_URL ?? 'http://127.0.0.1:18000';
 const seatunnelVersion = process.env.E2E_INSTALLER_REAL_VERSION ?? '2.3.13';
-const mysqlContainerName = process.env.E2E_WORKBENCH_REAL_MYSQL_NAME ?? 'stx-workbench-real-mysql';
+const mysqlContainerName =
+  process.env.E2E_WORKBENCH_REAL_MYSQL_NAME ?? 'stx-workbench-real-mysql';
 const mysqlPort = Number(process.env.E2E_WORKBENCH_REAL_MYSQL_PORT ?? '3307');
 const mysqlImage = process.env.E2E_WORKBENCH_REAL_MYSQL_IMAGE ?? 'mysql:8.0.39';
-const mysqlPassword = process.env.E2E_WORKBENCH_REAL_MYSQL_PASSWORD ?? 'seatunnel';
+const mysqlPassword =
+  process.env.E2E_WORKBENCH_REAL_MYSQL_PASSWORD ?? 'seatunnel';
 
 interface ErrorResponse {
   error_msg?: string;
@@ -102,7 +113,6 @@ interface JobListResponse extends ErrorResponse {
     items?: Array<NonNullable<JobResponse['data']>>;
   };
 }
-
 
 interface JobLogsResponse extends ErrorResponse {
   data?: {
@@ -170,11 +180,24 @@ export interface SyncTaskFixture {
   name: string;
 }
 
-async function readJSON<T>(response: Awaited<ReturnType<APIRequestContext['get']>> | Awaited<ReturnType<APIRequestContext['post']>> | Awaited<ReturnType<APIRequestContext['put']>> | Awaited<ReturnType<APIRequestContext['delete']>>): Promise<T> {
+async function readJSON<T>(
+  response:
+    | Awaited<ReturnType<APIRequestContext['get']>>
+    | Awaited<ReturnType<APIRequestContext['post']>>
+    | Awaited<ReturnType<APIRequestContext['put']>>
+    | Awaited<ReturnType<APIRequestContext['delete']>>,
+): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function assertOK(response: Awaited<ReturnType<APIRequestContext['get']>> | Awaited<ReturnType<APIRequestContext['post']>> | Awaited<ReturnType<APIRequestContext['put']>> | Awaited<ReturnType<APIRequestContext['delete']>>, label: string): Promise<void> {
+async function assertOK(
+  response:
+    | Awaited<ReturnType<APIRequestContext['get']>>
+    | Awaited<ReturnType<APIRequestContext['post']>>
+    | Awaited<ReturnType<APIRequestContext['put']>>
+    | Awaited<ReturnType<APIRequestContext['delete']>>,
+  label: string,
+): Promise<void> {
   if (!response.ok()) {
     let body = '';
     try {
@@ -182,7 +205,9 @@ async function assertOK(response: Awaited<ReturnType<APIRequestContext['get']>> 
     } catch {
       // ignore
     }
-    throw new Error(`${label} failed: HTTP ${response.status()}${body ? ` ${body}` : ''}`);
+    throw new Error(
+      `${label} failed: HTTP ${response.status()}${body ? ` ${body}` : ''}`,
+    );
   }
 }
 
@@ -200,16 +225,27 @@ export async function ensureWorkbenchRealMySQLFixture(): Promise<void> {
   await docker(
     'run',
     '-d',
-    '--name', mysqlContainerName,
-    '-e', `MYSQL_ROOT_PASSWORD=${mysqlPassword}`,
-    '-p', `127.0.0.1:${mysqlPort}:3306`,
+    '--name',
+    mysqlContainerName,
+    '-e',
+    `MYSQL_ROOT_PASSWORD=${mysqlPassword}`,
+    '-p',
+    `127.0.0.1:${mysqlPort}:3306`,
     mysqlImage,
     '--default-authentication-plugin=mysql_native_password',
   );
 
   for (let i = 0; i < 60; i += 1) {
     try {
-      await docker('exec', mysqlContainerName, 'mysqladmin', '-uroot', `-p${mysqlPassword}`, 'ping', '--silent');
+      await docker(
+        'exec',
+        mysqlContainerName,
+        'mysqladmin',
+        '-uroot',
+        `-p${mysqlPassword}`,
+        'ping',
+        '--silent',
+      );
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -245,29 +281,101 @@ export async function seedWorkbenchRealMySQLFixture(): Promise<void> {
     );
   }
 
-  const sqlFile = path.join(os.tmpdir(), `workbench-real-mysql-${Date.now()}.sql`);
+  const sqlFile = path.join(
+    os.tmpdir(),
+    `workbench-real-mysql-${Date.now()}.sql`,
+  );
   const sqlContent = `${statements.join(';\n')};\n`;
   const containerSqlPath = `/tmp/${path.basename(sqlFile)}`;
   await fs.writeFile(sqlFile, sqlContent, 'utf8');
   try {
     await docker('cp', sqlFile, `${mysqlContainerName}:${containerSqlPath}`);
+    await runDockerExecSQLFile(containerSqlPath);
+  } finally {
+    await fs.rm(sqlFile, {force: true}).catch(() => undefined);
     await docker(
       'exec',
       mysqlContainerName,
-      'sh',
-      '-lc',
-      `mysql -uroot -p${mysqlPassword} < ${containerSqlPath}`,
-    );
-  } finally {
-    await fs.rm(sqlFile, {force: true}).catch(() => undefined);
-    await docker('exec', mysqlContainerName, 'rm', '-f', containerSqlPath).catch(() => '');
+      'rm',
+      '-f',
+      containerSqlPath,
+    ).catch(() => '');
   }
 }
 
-export async function prepareWorkbenchRealCluster(page: Page): Promise<InstalledClusterFixture> {
+async function runDockerExecSQLFile(containerSqlPath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      'docker',
+      [
+        'exec',
+        '-i',
+        '-e',
+        `MYSQL_PWD=${mysqlPassword}`,
+        mysqlContainerName,
+        'mysql',
+        '-uroot',
+      ],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
+
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `docker exec mysql import failed with code ${code}: ${stderr.trim()}`,
+        ),
+      );
+    });
+
+    const cat = spawn(
+      'docker',
+      ['exec', mysqlContainerName, 'cat', containerSqlPath],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let catStderr = '';
+    cat.stderr.setEncoding('utf8');
+    cat.stderr.on('data', (chunk) => {
+      catStderr += chunk;
+    });
+    cat.on('error', reject);
+    cat.on('close', (code) => {
+      if (code !== 0) {
+        child.kill('SIGTERM');
+        reject(
+          new Error(
+            `docker exec cat sql failed with code ${code}: ${catStderr.trim()}`,
+          ),
+        );
+      }
+    });
+    cat.stdout.pipe(child.stdin);
+  });
+}
+
+export async function prepareWorkbenchRealCluster(
+  page: Page,
+): Promise<InstalledClusterFixture> {
   const installDir = `${process.env.E2E_INSTALLER_REAL_INSTALL_DIR ?? '/tmp/e2e/workbench-real/seatunnel'}-workbench-${Date.now()}`;
-  const clusterPort = Number(process.env.E2E_INSTALLER_REAL_CLUSTER_PORT_PRIMARY ?? '38181');
-  const httpPort = Number(process.env.E2E_INSTALLER_REAL_HTTP_PORT_PRIMARY ?? '38080');
+  const clusterPort = Number(
+    process.env.E2E_INSTALLER_REAL_CLUSTER_PORT_PRIMARY ?? '38181',
+  );
+  const httpPort = Number(
+    process.env.E2E_INSTALLER_REAL_HTTP_PORT_PRIMARY ?? '38080',
+  );
   const cluster = await installSourceCluster(page, {
     sourceVersion: seatunnelVersion,
     installDir,
@@ -277,18 +385,37 @@ export async function prepareWorkbenchRealCluster(page: Page): Promise<Installed
   await ensureClusterRunning(page, cluster.clusterId);
   await waitForRuntimeStorageReady(page, cluster.clusterId);
   await waitForSeatunnelXJavaProxyHealthy(page, cluster.clusterId);
-  await downloadPluginApi(page.context().request, 'jdbc', seatunnelVersion, ['mysql']);
-  await waitForLocalPlugin(page.context().request, 'jdbc', seatunnelVersion, (plugin) =>
-    (plugin.selected_profile_keys || []).includes('mysql'),
+  await downloadPluginApi(page.context().request, 'jdbc', seatunnelVersion, [
+    'mysql',
+  ]);
+  await waitForLocalPlugin(
+    page.context().request,
+    'jdbc',
+    seatunnelVersion,
+    (plugin) => (plugin.selected_profile_keys || []).includes('mysql'),
   );
-  await installPluginToClusterApi(page.context().request, cluster.clusterId, 'jdbc', seatunnelVersion, ['mysql']);
-  await waitForInstalledPlugin(page.context().request, cluster.clusterId, 'jdbc', seatunnelVersion, (plugin) =>
-    (plugin.selected_profile_keys || []).includes('mysql'),
+  await installPluginToClusterApi(
+    page.context().request,
+    cluster.clusterId,
+    'jdbc',
+    seatunnelVersion,
+    ['mysql'],
+  );
+  await waitForInstalledPlugin(
+    page.context().request,
+    cluster.clusterId,
+    'jdbc',
+    seatunnelVersion,
+    (plugin) => (plugin.selected_profile_keys || []).includes('mysql'),
   );
   return cluster;
 }
 
-export async function createSyncFolder(request: APIRequestContext, name: string, parentId?: number): Promise<number> {
+export async function createSyncFolder(
+  request: APIRequestContext,
+  name: string,
+  parentId?: number,
+): Promise<number> {
   const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks`, {
     data: {
       parent_id: parentId,
@@ -303,17 +430,22 @@ export async function createSyncFolder(request: APIRequestContext, name: string,
   return Number(payload.data?.id);
 }
 
-export async function createSyncTask(request: APIRequestContext, options: {
-  parentId?: number;
-  clusterId: number;
-  engineVersion: string;
-  name: string;
-  content: string;
-  definition?: Record<string, unknown>;
-  contentFormat?: string;
-  jobName?: string;
-}): Promise<SyncTaskFixture> {
-  const folderId = options.parentId ?? await createSyncFolder(request, `workbench-real-${Date.now()}`);
+export async function createSyncTask(
+  request: APIRequestContext,
+  options: {
+    parentId?: number;
+    clusterId: number;
+    engineVersion: string;
+    name: string;
+    content: string;
+    definition?: Record<string, unknown>;
+    contentFormat?: string;
+    jobName?: string;
+  },
+): Promise<SyncTaskFixture> {
+  const folderId =
+    options.parentId ??
+    (await createSyncFolder(request, `workbench-real-${Date.now()}`));
   const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks`, {
     data: {
       parent_id: folderId,
@@ -334,15 +466,29 @@ export async function createSyncTask(request: APIRequestContext, options: {
   return {folderId, taskId: Number(payload.data?.id), name: options.name};
 }
 
-export async function updateSyncTask(request: APIRequestContext, taskId: number, payload: Record<string, unknown>): Promise<void> {
-  const response = await request.put(`${backendBaseURL}/api/v1/sync/tasks/${taskId}`, {data: payload});
+export async function updateSyncTask(
+  request: APIRequestContext,
+  taskId: number,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const response = await request.put(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}`,
+    {data: payload},
+  );
   await assertOK(response, 'update sync task');
   const body = await readJSON<TaskResponse>(response);
   expect(body.error_msg ?? '').toBe('');
 }
 
-export async function publishSyncTask(request: APIRequestContext, taskId: number, comment = 'real ci publish'): Promise<number> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/publish`, {data: {comment}});
+export async function publishSyncTask(
+  request: APIRequestContext,
+  taskId: number,
+  comment = 'real ci publish',
+): Promise<number> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/publish`,
+    {data: {comment}},
+  );
   await assertOK(response, 'publish sync task');
   const body = await readJSON<TaskVersionResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -350,7 +496,9 @@ export async function publishSyncTask(request: APIRequestContext, taskId: number
   return Number(body.data?.version);
 }
 
-export async function listSyncTree(request: APIRequestContext): Promise<Array<Record<string, unknown>>> {
+export async function listSyncTree(
+  request: APIRequestContext,
+): Promise<Array<Record<string, unknown>>> {
   const response = await request.get(`${backendBaseURL}/api/v1/sync/tree`);
   await assertOK(response, 'list sync tree');
   const body = await readJSON<TaskTreeResponse>(response);
@@ -358,8 +506,13 @@ export async function listSyncTree(request: APIRequestContext): Promise<Array<Re
   return body.data?.items ?? [];
 }
 
-export async function validateSyncTask(request: APIRequestContext, taskId: number): Promise<NonNullable<ValidateResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/validate`);
+export async function validateSyncTask(
+  request: APIRequestContext,
+  taskId: number,
+): Promise<NonNullable<ValidateResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/validate`,
+  );
   await assertOK(response, 'validate sync task');
   const body = await readJSON<ValidateResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -367,8 +520,13 @@ export async function validateSyncTask(request: APIRequestContext, taskId: numbe
   return body.data as NonNullable<ValidateResponse['data']>;
 }
 
-export async function testSyncConnections(request: APIRequestContext, taskId: number): Promise<NonNullable<ValidateResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/test-connections`);
+export async function testSyncConnections(
+  request: APIRequestContext,
+  taskId: number,
+): Promise<NonNullable<ValidateResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/test-connections`,
+  );
   await assertOK(response, 'test sync connections');
   const body = await readJSON<ValidateResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -376,8 +534,13 @@ export async function testSyncConnections(request: APIRequestContext, taskId: nu
   return body.data as NonNullable<ValidateResponse['data']>;
 }
 
-export async function getSyncDAG(request: APIRequestContext, taskId: number): Promise<NonNullable<DAGResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/dag`);
+export async function getSyncDAG(
+  request: APIRequestContext,
+  taskId: number,
+): Promise<NonNullable<DAGResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/dag`,
+  );
   await assertOK(response, 'get sync dag');
   const body = await readJSON<DAGResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -385,10 +548,17 @@ export async function getSyncDAG(request: APIRequestContext, taskId: number): Pr
   return body.data as NonNullable<DAGResponse['data']>;
 }
 
-export async function previewSyncTask(request: APIRequestContext, taskId: number, rowLimit = 20): Promise<NonNullable<JobResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/preview`, {
-    data: {row_limit: rowLimit, timeout_minutes: 5},
-  });
+export async function previewSyncTask(
+  request: APIRequestContext,
+  taskId: number,
+  rowLimit = 20,
+): Promise<NonNullable<JobResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/preview`,
+    {
+      data: {row_limit: rowLimit, timeout_minutes: 5},
+    },
+  );
   await assertOK(response, 'preview sync task');
   const body = await readJSON<JobResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -396,8 +566,13 @@ export async function previewSyncTask(request: APIRequestContext, taskId: number
   return body.data as NonNullable<JobResponse['data']>;
 }
 
-export async function runSyncTask(request: APIRequestContext, taskId: number): Promise<NonNullable<JobResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/tasks/${taskId}/submit`);
+export async function runSyncTask(
+  request: APIRequestContext,
+  taskId: number,
+): Promise<NonNullable<JobResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/tasks/${taskId}/submit`,
+  );
   await assertOK(response, 'submit sync task');
   const body = await readJSON<JobResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -405,8 +580,13 @@ export async function runSyncTask(request: APIRequestContext, taskId: number): P
   return body.data as NonNullable<JobResponse['data']>;
 }
 
-export async function recoverSyncJob(request: APIRequestContext, jobId: number): Promise<NonNullable<JobResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/recover`);
+export async function recoverSyncJob(
+  request: APIRequestContext,
+  jobId: number,
+): Promise<NonNullable<JobResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/jobs/${jobId}/recover`,
+  );
   await assertOK(response, 'recover sync job');
   const body = await readJSON<JobResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -414,10 +594,17 @@ export async function recoverSyncJob(request: APIRequestContext, jobId: number):
   return body.data as NonNullable<JobResponse['data']>;
 }
 
-export async function cancelSyncJob(request: APIRequestContext, jobId: number, stopWithSavepoint: boolean): Promise<NonNullable<JobResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/cancel`, {
-    data: {stop_with_savepoint: stopWithSavepoint},
-  });
+export async function cancelSyncJob(
+  request: APIRequestContext,
+  jobId: number,
+  stopWithSavepoint: boolean,
+): Promise<NonNullable<JobResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/sync/jobs/${jobId}/cancel`,
+    {
+      data: {stop_with_savepoint: stopWithSavepoint},
+    },
+  );
   await assertOK(response, 'cancel sync job');
   const body = await readJSON<JobResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -425,10 +612,16 @@ export async function cancelSyncJob(request: APIRequestContext, jobId: number, s
   return body.data as NonNullable<JobResponse['data']>;
 }
 
-export async function getSyncJobLogs(request: APIRequestContext, jobId: number): Promise<NonNullable<JobLogsResponse['data']>> {
-  const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/logs`, {
-    params: {limit_bytes: '65536'},
-  });
+export async function getSyncJobLogs(
+  request: APIRequestContext,
+  jobId: number,
+): Promise<NonNullable<JobLogsResponse['data']>> {
+  const response = await request.get(
+    `${backendBaseURL}/api/v1/sync/jobs/${jobId}/logs`,
+    {
+      params: {limit_bytes: '65536'},
+    },
+  );
   await assertOK(response, 'get sync job logs');
   const body = await readJSON<JobLogsResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -436,8 +629,13 @@ export async function getSyncJobLogs(request: APIRequestContext, jobId: number):
   return body.data as NonNullable<JobLogsResponse['data']>;
 }
 
-export async function getSyncJob(request: APIRequestContext, jobId: number): Promise<NonNullable<JobResponse['data']>> {
-  const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs/${jobId}`);
+export async function getSyncJob(
+  request: APIRequestContext,
+  jobId: number,
+): Promise<NonNullable<JobResponse['data']>> {
+  const response = await request.get(
+    `${backendBaseURL}/api/v1/sync/jobs/${jobId}`,
+  );
   await assertOK(response, 'get sync job');
   const body = await readJSON<JobResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -445,7 +643,10 @@ export async function getSyncJob(request: APIRequestContext, jobId: number): Pro
   return body.data as NonNullable<JobResponse['data']>;
 }
 
-export async function listSyncJobs(request: APIRequestContext, taskId: number): Promise<Array<NonNullable<JobResponse['data']>>> {
+export async function listSyncJobs(
+  request: APIRequestContext,
+  taskId: number,
+): Promise<Array<NonNullable<JobResponse['data']>>> {
   const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs`, {
     params: {task_id: String(taskId), current: '1', size: '100'},
   });
@@ -455,63 +656,115 @@ export async function listSyncJobs(request: APIRequestContext, taskId: number): 
   return body.data?.items ?? [];
 }
 
-export async function waitForJobStatus(request: APIRequestContext, jobId: number, predicate: (job: NonNullable<JobResponse['data']>) => boolean, timeoutMs = 180000): Promise<NonNullable<JobResponse['data']>> {
+export async function waitForJobStatus(
+  request: APIRequestContext,
+  jobId: number,
+  predicate: (job: NonNullable<JobResponse['data']>) => boolean,
+  timeoutMs = 180000,
+): Promise<NonNullable<JobResponse['data']>> {
   let latest: NonNullable<JobResponse['data']> | null = null;
-  await expect.poll(async () => {
-    latest = await getSyncJob(request, jobId);
-    return latest ? predicate(latest) : false;
-  }, {timeout: timeoutMs, intervals: [1000, 2000, 3000]}).toBeTruthy();
+  await expect
+    .poll(
+      async () => {
+        latest = await getSyncJob(request, jobId);
+        return latest ? predicate(latest) : false;
+      },
+      {timeout: timeoutMs, intervals: [1000, 2000, 3000]},
+    )
+    .toBeTruthy();
   return latest as unknown as NonNullable<JobResponse['data']>;
 }
 
-export async function waitForScheduledJob(request: APIRequestContext, taskId: number, timeoutMs = 180000): Promise<NonNullable<JobResponse['data']>> {
+export async function waitForScheduledJob(
+  request: APIRequestContext,
+  taskId: number,
+  timeoutMs = 180000,
+): Promise<NonNullable<JobResponse['data']>> {
   let latest: NonNullable<JobResponse['data']> | null = null;
-  await expect.poll(async () => {
-    const jobs = await listSyncJobs(request, taskId);
-    latest = jobs.find((job) => job.run_type === 'schedule') ?? null;
-    return Boolean(latest);
-  }, {timeout: timeoutMs, intervals: [1000, 2000, 3000]}).toBeTruthy();
+  await expect
+    .poll(
+      async () => {
+        const jobs = await listSyncJobs(request, taskId);
+        latest = jobs.find((job) => job.run_type === 'schedule') ?? null;
+        return Boolean(latest);
+      },
+      {timeout: timeoutMs, intervals: [1000, 2000, 3000]},
+    )
+    .toBeTruthy();
   return latest as unknown as NonNullable<JobResponse['data']>;
 }
 
-export async function waitForPreviewRows(request: APIRequestContext, jobId: number, tablePath?: string, timeoutMs = 180000): Promise<NonNullable<PreviewSnapshotResponse['data']>> {
+export async function waitForPreviewRows(
+  request: APIRequestContext,
+  jobId: number,
+  tablePath?: string,
+  timeoutMs = 180000,
+): Promise<NonNullable<PreviewSnapshotResponse['data']>> {
   let latest: NonNullable<PreviewSnapshotResponse['data']> | null = null;
-  await expect.poll(async () => {
-    const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/preview`, {
-      params: tablePath ? {table_path: tablePath} : undefined,
-    });
-    await assertOK(response, 'get preview snapshot');
-    const body = await readJSON<PreviewSnapshotResponse>(response);
-    expect(body.error_msg ?? '').toBe('');
-    latest = body.data as NonNullable<PreviewSnapshotResponse['data']>;
-    const tables = latest?.tables ?? [];
-    return tables.some((item) => (item.total ?? item.rows?.length ?? 0) > 0) || (latest?.rows?.length ?? 0) > 0;
-  }, {timeout: timeoutMs, intervals: [1000, 2000, 3000]}).toBeTruthy();
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          `${backendBaseURL}/api/v1/sync/jobs/${jobId}/preview`,
+          {
+            params: tablePath ? {table_path: tablePath} : undefined,
+          },
+        );
+        await assertOK(response, 'get preview snapshot');
+        const body = await readJSON<PreviewSnapshotResponse>(response);
+        expect(body.error_msg ?? '').toBe('');
+        latest = body.data as NonNullable<PreviewSnapshotResponse['data']>;
+        const tables = latest?.tables ?? [];
+        return (
+          tables.some((item) => (item.total ?? item.rows?.length ?? 0) > 0) ||
+          (latest?.rows?.length ?? 0) > 0
+        );
+      },
+      {timeout: timeoutMs, intervals: [1000, 2000, 3000]},
+    )
+    .toBeTruthy();
   return latest as unknown as NonNullable<PreviewSnapshotResponse['data']>;
 }
 
-export async function waitForPreviewCleanup(request: APIRequestContext, jobId: number, timeoutMs = 180000): Promise<void> {
-  await expect.poll(async () => {
-    const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/preview`);
-    await assertOK(response, 'get preview snapshot cleanup');
-    const body = await readJSON<PreviewSnapshotResponse>(response);
-    expect(body.error_msg ?? '').toBe('');
-    const data = body.data;
-    const tables = data?.tables ?? [];
-    if ((data?.rows?.length ?? 0) > 0) {
-      return false;
-    }
-    if (tables.some((item) => (item.total ?? item.rows?.length ?? 0) > 0)) {
-      return false;
-    }
-    return Boolean(data?.empty_reason);
-  }, {timeout: timeoutMs, intervals: [2000, 5000, 10000]}).toBeTruthy();
+export async function waitForPreviewCleanup(
+  request: APIRequestContext,
+  jobId: number,
+  timeoutMs = 180000,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          `${backendBaseURL}/api/v1/sync/jobs/${jobId}/preview`,
+        );
+        await assertOK(response, 'get preview snapshot cleanup');
+        const body = await readJSON<PreviewSnapshotResponse>(response);
+        expect(body.error_msg ?? '').toBe('');
+        const data = body.data;
+        const tables = data?.tables ?? [];
+        if ((data?.rows?.length ?? 0) > 0) {
+          return false;
+        }
+        if (tables.some((item) => (item.total ?? item.rows?.length ?? 0) > 0)) {
+          return false;
+        }
+        return Boolean(data?.empty_reason);
+      },
+      {timeout: timeoutMs, intervals: [2000, 5000, 10000]},
+    )
+    .toBeTruthy();
 }
 
-export async function getJobCheckpointSnapshot(request: APIRequestContext, jobId: number): Promise<NonNullable<CheckpointSnapshotResponse['data']>> {
-  const response = await request.get(`${backendBaseURL}/api/v1/sync/jobs/${jobId}/checkpoint`, {
-    params: {limit: '20'},
-  });
+export async function getJobCheckpointSnapshot(
+  request: APIRequestContext,
+  jobId: number,
+): Promise<NonNullable<CheckpointSnapshotResponse['data']>> {
+  const response = await request.get(
+    `${backendBaseURL}/api/v1/sync/jobs/${jobId}/checkpoint`,
+    {
+      params: {limit: '20'},
+    },
+  );
   await assertOK(response, 'get job checkpoint snapshot');
   const body = await readJSON<CheckpointSnapshotResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -519,30 +772,45 @@ export async function getJobCheckpointSnapshot(request: APIRequestContext, jobId
   return body.data as NonNullable<CheckpointSnapshotResponse['data']>;
 }
 
-export async function listCheckpointFiles(request: APIRequestContext, clusterId: number, jobPlatformId: string): Promise<Array<{name?: string; path?: string}>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/list`, {
-    data: {
-      path: `/tmp/seatunnel/checkpoint/${jobPlatformId}`,
-      recursive: true,
-      limit: 200,
+export async function listCheckpointFiles(
+  request: APIRequestContext,
+  clusterId: number,
+  jobPlatformId: string,
+): Promise<Array<{name?: string; path?: string}>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/list`,
+    {
+      data: {
+        path: `/tmp/seatunnel/checkpoint/${jobPlatformId}`,
+        recursive: true,
+        limit: 200,
+      },
     },
-  });
+  );
   await assertOK(response, 'list checkpoint files');
   const body = await readJSON<RuntimeStorageListResponse>(response);
   expect(body.error_msg ?? '').toBe('');
   return (body.data?.items ?? []).filter((item) => !item.directory);
 }
 
-export async function inspectCheckpointFile(request: APIRequestContext, clusterId: number, path: string, content: string): Promise<NonNullable<RuntimeStorageInspectResponse['data']>> {
-  const response = await request.post(`${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/inspect`, {
-    data: {
-      path,
-      job_config: {
-        content,
-        content_format: 'hocon',
+export async function inspectCheckpointFile(
+  request: APIRequestContext,
+  clusterId: number,
+  path: string,
+  content: string,
+): Promise<NonNullable<RuntimeStorageInspectResponse['data']>> {
+  const response = await request.post(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/inspect`,
+    {
+      data: {
+        path,
+        job_config: {
+          content,
+          content_format: 'hocon',
+        },
       },
     },
-  });
+  );
   await assertOK(response, 'inspect checkpoint file');
   const body = await readJSON<RuntimeStorageInspectResponse>(response);
   expect(body.error_msg ?? '').toBe('');
@@ -574,7 +842,10 @@ export function buildStreamingFakeTaskContent(): string {
   return `env {\n  parallelism = 2\n  job.mode = "STREAMING"\n  checkpoint.interval = 2000\n}\n\nsource {\n  FakeSource {\n    parallelism = 2\n    plugin_output = "fake"\n    row.num = 20000\n    schema = {\n      fields {\n        name = "string"\n        age = "int"\n      }\n    }\n  }\n}\n\nsink {\n  Console {\n  }\n}`;
 }
 
-export function buildScheduleDefinition(expr: string, timezone = 'Asia/Shanghai'): Record<string, unknown> {
+export function buildScheduleDefinition(
+  expr: string,
+  timezone = 'Asia/Shanghai',
+): Record<string, unknown> {
   return {
     schedule: {
       enabled: true,
