@@ -67,6 +67,33 @@ interface ClusterNodesResponse {
   }>;
 }
 
+interface ProcessDiscoveryResponse {
+  success?: boolean;
+  message?: string;
+  processes?: Array<{
+    pid?: number;
+    role?: string;
+    install_dir?: string;
+    version?: string;
+    hazelcast_port?: number;
+    api_port?: number;
+  }>;
+}
+
+interface CreateClusterResponse {
+  data?: {
+    id?: number | string;
+  };
+  error_msg?: string;
+}
+
+interface AddNodeResponse {
+  data?: {
+    id?: number | string;
+  };
+  error_msg?: string;
+}
+
 interface RuntimeStorageResponse {
   data?: {
     checkpoint?: {
@@ -253,12 +280,91 @@ export async function expectInstallationSuccess(page: Page): Promise<void> {
   );
 }
 
+async function importDiscoveredClusterByInstallDir(
+  page: Page,
+  hostId: number,
+  installDir: string,
+): Promise<{id: number; status: string; name: string} | null> {
+  const discoveryResponse = await page
+    .context()
+    .request.post(
+      `${backendBaseURL}/api/v1/hosts/${hostId}/discover-processes`,
+    );
+  if (!discoveryResponse.ok()) {
+    return null;
+  }
+  const discoveryPayload =
+    (await discoveryResponse.json()) as ProcessDiscoveryResponse;
+  const process = (discoveryPayload?.processes ?? []).find((item) =>
+    matchesInstallDir(item?.install_dir, installDir),
+  );
+  if (!process?.version || !process?.role) {
+    return null;
+  }
+
+  const deploymentMode =
+    String(process.role).toLowerCase() === 'master/worker'
+      ? 'hybrid'
+      : 'separated';
+  const createResponse = await page
+    .context()
+    .request.post(`${backendBaseURL}/api/v1/clusters`, {
+      data: {
+        name: `e2e-discovered-${Date.now()}`,
+        description: 'Real E2E discovered cluster import',
+        deployment_mode: deploymentMode,
+        version: process.version,
+        install_dir: installDir,
+      },
+    });
+  if (!createResponse.ok()) {
+    return null;
+  }
+  const createPayload = (await createResponse.json()) as CreateClusterResponse;
+  const clusterId = Number(createPayload?.data?.id || 0);
+  if (!clusterId) {
+    return null;
+  }
+
+  const addNodeResponse = await page
+    .context()
+    .request.post(`${backendBaseURL}/api/v1/clusters/${clusterId}/nodes`, {
+      data: {
+        host_id: hostId,
+        role: process.role,
+        install_dir: installDir,
+        hazelcast_port: Number(process.hazelcast_port || 5801),
+        api_port: Number(process.api_port || 8080),
+        worker_port:
+          String(process.role).toLowerCase() === 'master/worker'
+            ? Number(process.hazelcast_port || 5801) + 1
+            : 0,
+        skip_precheck: true,
+      },
+    });
+  if (!addNodeResponse.ok()) {
+    return null;
+  }
+  const addNodePayload = (await addNodeResponse.json()) as AddNodeResponse;
+  if (!addNodePayload?.data?.id) {
+    return null;
+  }
+
+  return {
+    id: clusterId,
+    status: 'installed',
+    name: `Cluster-${clusterId}`,
+  };
+}
+
 export async function waitForClusterByInstallDir(
   page: Page,
+  hostId: number,
   installDir: string,
   timeoutMs: number = 180000,
 ): Promise<{id: number; status: string; name: string}> {
   const startedAt = Date.now();
+  let lastImportAttemptAt = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
     const candidates: Array<{id: number; status: string; name: string}> = [];
@@ -297,6 +403,21 @@ export async function waitForClusterByInstallDir(
     for (const cluster of candidates.slice(0, 20)) {
       if (await clusterMatchesInstallDir(page, cluster.id, installDir)) {
         return cluster;
+      }
+    }
+
+    if (
+      Date.now() - startedAt >= 30000 &&
+      Date.now() - lastImportAttemptAt >= 10000
+    ) {
+      lastImportAttemptAt = Date.now();
+      const imported = await importDiscoveredClusterByInstallDir(
+        page,
+        hostId,
+        installDir,
+      );
+      if (imported) {
+        return imported;
       }
     }
     await page.waitForTimeout(2000);

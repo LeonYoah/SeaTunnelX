@@ -136,6 +136,7 @@ mkdir -p "${TMP_DIR}/logs" "${TMP_DIR}/storage" "${TMP_DIR}/install" "${TMP_DIR}
 mkdir -p "${TMP_DIR}/storage/packages" "${TMP_DIR}/storage/temp"
 docker rm -f "${MINIO_NAME}" >/dev/null 2>&1 || true
 
+JAVA_PROXY_SCRIPT_PATH="${ROOT_DIR}/scripts/seatunnelx-java-proxy.sh"
 JAVA_PROXY_LIB_PATH="${ROOT_DIR}/lib/seatunnelx-java-proxy-${JAVA_PROXY_VERSION}.jar"
 if [[ ! -f "${JAVA_PROXY_LIB_PATH}" ]]; then
   mvn -q -DskipTests package -f "${ROOT_DIR}/tools/seatunnelx-java-proxy/pom.xml"
@@ -147,6 +148,11 @@ if [[ ! -f "${JAVA_PROXY_LIB_PATH}" ]]; then
   mkdir -p "${ROOT_DIR}/lib"
   cp "${BUILT_JAVA_PROXY_JAR}" "${JAVA_PROXY_LIB_PATH}"
 fi
+if [[ ! -f "${JAVA_PROXY_SCRIPT_PATH}" ]]; then
+  echo "seatunnelx-java-proxy script is missing: ${JAVA_PROXY_SCRIPT_PATH}" >&2
+  exit 1
+fi
+chmod +x "${JAVA_PROXY_SCRIPT_PATH}"
 
 BACKEND_HTTP_PORT="$(pick_port "${E2E_INSTALLER_REAL_BACKEND_PORT:-18000}")"
 BACKEND_GRPC_PORT="$(pick_port "${E2E_INSTALLER_REAL_GRPC_PORT:-19090}")"
@@ -221,6 +227,9 @@ done
 
 export E2E_INSTALLER_REAL=1
 export E2E_API_MODE=real
+export SEATUNNELX_JAVA_PROXY_HOME="${ROOT_DIR}"
+export SEATUNNELX_JAVA_PROXY_SCRIPT="${JAVA_PROXY_SCRIPT_PATH}"
+export SEATUNNELX_JAVA_PROXY_JAR="${JAVA_PROXY_LIB_PATH}"
 export E2E_BACKEND_BASE_URL="${E2E_BACKEND_BASE_URL:-http://127.0.0.1:${BACKEND_HTTP_PORT}}"
 export E2E_FRONTEND_HOST="${E2E_FRONTEND_HOST:-127.0.0.1}"
 export E2E_FRONTEND_PORT="${E2E_FRONTEND_PORT:-${FRONTEND_PORT}}"
