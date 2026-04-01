@@ -234,6 +234,12 @@ for version in "${PRELOAD_VERSIONS[@]}"; do
   fi
 done
 
+if [[ -n "${PACKAGE_CACHE_DIR}" ]]; then
+  find "${PACKAGE_CACHE_DIR}" -maxdepth 1 -type f -name 'apache-seatunnel-*-bin.tar.gz' -print0 | while IFS= read -r -d '' package_file; do
+    cp -f "${package_file}" "${TMP_DIR}/storage/packages/"
+  done
+fi
+
 if [[ "${PREPARE_PACKAGE_ONLY}" == "--prepare-package-only" ]]; then
   echo "[e2e-real] package preload only mode completed"
   exit 0
