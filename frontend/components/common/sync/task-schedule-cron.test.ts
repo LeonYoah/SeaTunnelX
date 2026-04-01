@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import {describe, expect, it} from 'vitest';
 
 import {cronToText, getNextRuns, parseCron} from './task-schedule-cron';
@@ -62,11 +79,13 @@ describe('task schedule cron', () => {
 
   it('handles dom and dow together with OR semantics', () => {
     const runs = getNextRuns('0 9 1 * MON', 4, new Date('2026-03-30T08:00:00+08:00'));
-    expect(runs.map((run) => run.toISOString())).toEqual([
-      '2026-03-30T01:00:00.000Z',
-      '2026-04-01T01:00:00.000Z',
-      '2026-04-06T01:00:00.000Z',
-      '2026-04-13T01:00:00.000Z',
+    expect(runs).toHaveLength(4);
+    expect(runs.every((run) => run.getHours() === 9 && run.getMinutes() === 0)).toBe(true);
+    expect(runs.map((run) => ({month: run.getMonth() + 1, date: run.getDate(), day: run.getDay()}))).toEqual([
+      {month: 3, date: 30, day: 1},
+      {month: 4, date: 1, day: 3},
+      {month: 4, date: 6, day: 1},
+      {month: 4, date: 13, day: 1},
     ]);
   });
 

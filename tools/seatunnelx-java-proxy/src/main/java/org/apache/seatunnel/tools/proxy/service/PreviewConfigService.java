@@ -648,11 +648,19 @@ public class PreviewConfigService {
     }
 
     private String decodeQueryValue(String value) {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        try {
+            return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            throw new ProxyException(400, "failed to decode preview query value", e);
+        }
     }
 
     private String encodeQueryValue(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            throw new ProxyException(500, "failed to encode preview query value", e);
+        }
     }
 
     private Integer resolvePreviewRowLimit(Map<String, Object> request) {
