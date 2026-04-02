@@ -3362,7 +3362,7 @@
     "startPreview": "Start Preview",
     "saveBeforeAction": "Please save the file before running “{action}”.",
     "builtinTimeVariables": "Built-in Time Variables",
-    "builtinTimeVariablesHint": "The platform only resolves {{ }} syntax. Hover to preview the resolved value using the current time base. Dollar-sign brace placeholders remain reserved for native SeaTunnel / HOCON / connector usage.",
+    "builtinTimeVariablesHint": "The platform only resolves double-brace variable syntax. Hover to preview the resolved value using the current time base. Native placeholders remain reserved for SeaTunnel / HOCON / connector usage.",
     "builtinPreviewResult": "Preview value: {value}",
     "builtinSystemBizCurdateDesc": "Current business date in yyyyMMdd format.",
     "builtinSystemBizDateDesc": "Previous business date in yyyyMMdd format.",

@@ -3362,7 +3362,7 @@
     "startPreview": "开始预览",
     "saveBeforeAction": "请先保存文件，再执行“{action}”。",
     "builtinTimeVariables": "内置时间变量",
-    "builtinTimeVariablesHint": "平台只解析 {{ }} 语法。鼠标悬停可实时预览当前时间基准下的解析结果；$ 加花括号的原生占位符仍保留给 SeaTunnel / HOCON / connector。",
+    "builtinTimeVariablesHint": "平台只解析双花括号变量语法。鼠标悬停可实时预览当前时间基准下的解析结果；原生占位符仍保留给 SeaTunnel / HOCON / connector。",
     "builtinPreviewResult": "当前预览值：{value}",
     "builtinSystemBizCurdateDesc": "当前业务日期，格式 yyyyMMdd。",
     "builtinSystemBizDateDesc": "当前业务日期前一天，格式 yyyyMMdd。",

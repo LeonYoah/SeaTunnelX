@@ -423,6 +423,26 @@ export async function prepareWorkbenchRealCluster(
     seatunnelVersion,
     (plugin) => (plugin.selected_profile_keys || []).includes('mysql'),
   );
+  await downloadPluginApi(page.context().request, 'http-base', seatunnelVersion);
+  await waitForPluginDownloadCompleted(
+    page.context().request,
+    'http-base',
+    seatunnelVersion,
+    undefined,
+    900000,
+  );
+  await installPluginToClusterApi(
+    page.context().request,
+    cluster.clusterId,
+    'http-base',
+    seatunnelVersion,
+  );
+  await waitForInstalledPlugin(
+    page.context().request,
+    cluster.clusterId,
+    'http-base',
+    seatunnelVersion,
+  );
   return cluster;
 }
 
