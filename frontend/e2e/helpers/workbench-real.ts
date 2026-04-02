@@ -175,11 +175,22 @@ interface CheckpointSnapshotResponse extends ErrorResponse {
 
 interface RuntimeStorageListResponse extends ErrorResponse {
   data?: {
+    path?: string;
     items?: Array<{
       name?: string;
       path?: string;
       directory?: boolean;
     }>;
+  };
+}
+
+interface RuntimeStorageDetailsResponse extends ErrorResponse {
+  data?: {
+    checkpoint?: {
+      enabled?: boolean;
+      storage_type?: string;
+      namespace?: string;
+    };
   };
 }
 
@@ -868,20 +879,56 @@ export async function listCheckpointFiles(
   clusterId: number,
   jobPlatformId: string,
 ): Promise<Array<{name?: string; path?: string}>> {
-  const response = await request.post(
-    `${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/list`,
-    {
-      data: {
-        path: `/tmp/seatunnel/checkpoint/${jobPlatformId}`,
-        recursive: true,
-        limit: 200,
-      },
-    },
+  const detailsResponse = await request.get(
+    `${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage`,
   );
-  await assertOK(response, 'list checkpoint files');
-  const body = await readJSON<RuntimeStorageListResponse>(response);
-  expect(body.error_msg ?? '').toBe('');
-  return (body.data?.items ?? []).filter((item) => !item.directory);
+  await assertOK(detailsResponse, 'get runtime storage details');
+  const detailsBody = await readJSON<RuntimeStorageDetailsResponse>(
+    detailsResponse,
+  );
+  expect(detailsBody.error_msg ?? '').toBe('');
+  const namespace = detailsBody.data?.checkpoint?.namespace?.trim();
+  expect(namespace, 'checkpoint namespace should be available').toBeTruthy();
+
+  const normalizedNamespace = namespace!.replace(/\/$/, '');
+  const jobDirectory = `${normalizedNamespace}/${jobPlatformId}`;
+  const candidatePaths = [jobDirectory, namespace!];
+  let lastError = '';
+
+  for (const candidatePath of candidatePaths) {
+    const response = await request.post(
+      `${backendBaseURL}/api/v1/clusters/${clusterId}/runtime-storage/checkpoint/list`,
+      {
+        data: {
+          path: candidatePath,
+          recursive: true,
+          limit: 500,
+        },
+      },
+    );
+    const body = await readJSON<RuntimeStorageListResponse>(response);
+    if (!response.ok()) {
+      lastError = body.error_msg || `HTTP ${response.status()}`;
+      continue;
+    }
+    expect(body.error_msg ?? '').toBe('');
+    const items = (body.data?.items ?? []).filter((item) => {
+      if (item.directory) {
+        return false;
+      }
+      if (candidatePath !== namespace) {
+        return true;
+      }
+      return (item.path || '').startsWith(`${jobDirectory}/`);
+    });
+    if (items.length > 0 || candidatePath !== namespace) {
+      return items;
+    }
+  }
+
+  throw new Error(
+    `list checkpoint files failed: ${lastError || 'no checkpoint files found'}`,
+  );
 }
 
 export async function inspectCheckpointFile(
