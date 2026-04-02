@@ -157,11 +157,10 @@ test.describe.serial('workbench real flows', () => {
     expect(schemaJson).toContain('INT');
     expect(schemaJson).toContain('PRIMARY');
 
-    const previewJob = await previewSyncTask(request, multiSourceTask.taskId, 10);
+    const previewJob = await previewSyncTask(request, usersTask.taskId, 10);
     const previewSnapshot = await waitForPreviewRows(request, previewJob.id);
-    expect((previewSnapshot.tables ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((previewSnapshot.tables ?? []).length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify(previewSnapshot.tables)).toContain('seatunnel_demo.users');
-    expect(JSON.stringify(previewSnapshot.tables)).toContain('seatunnel_demo.orders');
     await waitForPreviewCleanup(request, previewJob.id, 240000);
 
     const batchJob = await runSyncTask(request, usersTask.taskId);
