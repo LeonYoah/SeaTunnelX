@@ -36,9 +36,7 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "03-21-real-e2e-expansion-and-incremental-matrix"
-  ],
+  "children": [],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

@@ -61,6 +61,17 @@ func (m *mockOperationAgentSender) SendCommand(ctx context.Context, agentID stri
 	return true, "ok", nil
 }
 
+type scriptedAgentSender struct {
+	send func(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error)
+}
+
+func (s *scriptedAgentSender) SendCommand(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
+	if s != nil && s.send != nil {
+		return s.send(ctx, agentID, commandType, params)
+	}
+	return true, "ok", nil
+}
+
 // MockHostProvider implements HostProvider for testing
 // MockHostProvider 实现用于测试的 HostProvider 接口
 type MockHostProvider struct {
@@ -876,6 +887,164 @@ func TestService_AddNode_hybridNormalizesRoleToMasterWorker(t *testing.T) {
 	}
 	if node.WorkerPort != DefaultPorts.WorkerHazelcast {
 		t.Fatalf("expected hybrid worker port %d, got %d", DefaultPorts.WorkerHazelcast, node.WorkerPort)
+	}
+}
+
+func TestService_GetStatus_refreshesStoppedProcessToStoppedCluster(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	mockHostProvider := NewMockHostProvider()
+	now := time.Now()
+	mockHostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "t13",
+		HostType:      "bare_metal",
+		IPAddress:     "127.0.0.1",
+		AgentStatus:   "installed",
+		AgentID:       "agent-t13",
+		LastHeartbeat: &now,
+	})
+
+	agentSender := &scriptedAgentSender{
+		send: func(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
+			if commandType == "check_process" {
+				return false, "SeaTunnel process not found", nil
+			}
+			return true, "ok", nil
+		},
+	}
+
+	svc := NewService(repo, mockHostProvider, nil)
+	svc.SetAgentCommandSender(agentSender)
+	ctx := context.Background()
+
+	cluster, err := svc.Create(ctx, &CreateClusterRequest{
+		Name:           "t13-cluster",
+		DeploymentMode: DeploymentModeHybrid,
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	node, err := svc.AddNode(ctx, cluster.ID, &AddNodeRequest{
+		HostID:        1,
+		Role:          NodeRoleMasterWorker,
+		InstallDir:    "/opt/seatunnel",
+		HazelcastPort: 5801,
+		APIPort:       8080,
+		WorkerPort:    5802,
+		SkipPrecheck:  true,
+	})
+	if err != nil {
+		t.Fatalf("AddNode returned error: %v", err)
+	}
+
+	if err := repo.UpdateNodeProcess(ctx, node.ID, 4321, "running"); err != nil {
+		t.Fatalf("UpdateNodeProcess returned error: %v", err)
+	}
+	if err := repo.UpdateStatus(ctx, cluster.ID, ClusterStatusRunning); err != nil {
+		t.Fatalf("UpdateStatus returned error: %v", err)
+	}
+
+	status, err := svc.GetStatus(ctx, cluster.ID)
+	if err != nil {
+		t.Fatalf("GetStatus returned error: %v", err)
+	}
+
+	if status.Status != ClusterStatusStopped {
+		t.Fatalf("expected cluster status stopped after refresh, got %q", status.Status)
+	}
+	if len(status.Nodes) != 1 {
+		t.Fatalf("expected 1 node status, got %d", len(status.Nodes))
+	}
+	if status.Nodes[0].Status != NodeStatusStopped {
+		t.Fatalf("expected node status stopped after refresh, got %q", status.Nodes[0].Status)
+	}
+
+	updatedNode, err := repo.GetNodeByID(ctx, node.ID)
+	if err != nil {
+		t.Fatalf("GetNodeByID returned error: %v", err)
+	}
+	if updatedNode.ProcessPID != 0 {
+		t.Fatalf("expected process PID reset to 0, got %d", updatedNode.ProcessPID)
+	}
+	if updatedNode.Status != NodeStatusStopped {
+		t.Fatalf("expected persisted node status stopped, got %q", updatedNode.Status)
+	}
+}
+
+func TestService_ListWithInfo_usesRefreshedRuntimeStatus(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	mockHostProvider := NewMockHostProvider()
+	now := time.Now()
+	mockHostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "t13",
+		HostType:      "bare_metal",
+		IPAddress:     "127.0.0.1",
+		AgentStatus:   "installed",
+		AgentID:       "agent-t13",
+		LastHeartbeat: &now,
+	})
+
+	agentSender := &scriptedAgentSender{
+		send: func(ctx context.Context, agentID string, commandType string, params map[string]string) (bool, string, error) {
+			if commandType == "check_process" {
+				return false, "SeaTunnel process not found", nil
+			}
+			return true, "ok", nil
+		},
+	}
+
+	svc := NewService(repo, mockHostProvider, nil)
+	svc.SetAgentCommandSender(agentSender)
+	ctx := context.Background()
+
+	cluster, err := svc.Create(ctx, &CreateClusterRequest{
+		Name:           "list-info-refresh",
+		DeploymentMode: DeploymentModeHybrid,
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	node, err := svc.AddNode(ctx, cluster.ID, &AddNodeRequest{
+		HostID:        1,
+		Role:          NodeRoleMasterWorker,
+		InstallDir:    "/opt/seatunnel",
+		HazelcastPort: 5801,
+		APIPort:       8080,
+		WorkerPort:    5802,
+		SkipPrecheck:  true,
+	})
+	if err != nil {
+		t.Fatalf("AddNode returned error: %v", err)
+	}
+
+	if err := repo.UpdateNodeProcess(ctx, node.ID, 4321, "running"); err != nil {
+		t.Fatalf("UpdateNodeProcess returned error: %v", err)
+	}
+	if err := repo.UpdateStatus(ctx, cluster.ID, ClusterStatusRunning); err != nil {
+		t.Fatalf("UpdateStatus returned error: %v", err)
+	}
+
+	clusters, total, err := svc.ListWithInfo(ctx, &ClusterFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListWithInfo returned error: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total 1, got %d", total)
+	}
+	if len(clusters) != 1 {
+		t.Fatalf("expected 1 cluster info, got %d", len(clusters))
+	}
+	if clusters[0].Status != ClusterStatusStopped {
+		t.Fatalf("expected refreshed cluster status stopped, got %q", clusters[0].Status)
 	}
 }
 

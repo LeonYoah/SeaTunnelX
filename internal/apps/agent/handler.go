@@ -24,12 +24,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/logger"
+	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
+
+var seatunnelXJavaProxyVersionPattern = regexp.MustCompile(`^[0-9A-Za-z._-]+$`)
 
 // Handler provides HTTP handlers for Agent distribution operations.
 // Handler 提供 Agent 分发操作的 HTTP 处理器。
@@ -41,6 +45,14 @@ type Handler struct {
 	// agentBinaryDir is the directory containing Agent binary files.
 	// agentBinaryDir 是包含 Agent 二进制文件的目录。
 	agentBinaryDir string
+
+	// seatunnelxJavaProxyJarPath is the path to the packaged seatunnelx-java-proxy thin jar.
+	// seatunnelxJavaProxyJarPath 是 seatunnelx-java-proxy 薄 jar 的打包路径。
+	seatunnelxJavaProxyJarPath string
+
+	// seatunnelxJavaProxyScriptPath is the path to the packaged seatunnelx-java-proxy launcher script.
+	// seatunnelxJavaProxyScriptPath 是 seatunnelx-java-proxy 启动脚本的打包路径。
+	seatunnelxJavaProxyScriptPath string
 
 	// grpcPort is the gRPC port for Agent to connect.
 	// grpcPort 是 Agent 连接的 gRPC 端口。
@@ -61,6 +73,14 @@ type HandlerConfig struct {
 	// AgentBinaryDir is the directory containing Agent binary files.
 	// AgentBinaryDir 是包含 Agent 二进制文件的目录。
 	AgentBinaryDir string
+
+	// SeatunnelXJavaProxyJarPath is the path to the packaged seatunnelx-java-proxy thin jar.
+	// SeatunnelXJavaProxyJarPath 是 seatunnelx-java-proxy 薄 jar 的打包路径。
+	SeatunnelXJavaProxyJarPath string
+
+	// SeatunnelXJavaProxyScriptPath is the path to the packaged seatunnelx-java-proxy launcher script.
+	// SeatunnelXJavaProxyScriptPath 是 seatunnelx-java-proxy 启动脚本的打包路径。
+	SeatunnelXJavaProxyScriptPath string
 
 	// GRPCPort is the gRPC port for Agent connections.
 	// GRPCPort 是 Agent 连接的 gRPC 端口。
@@ -86,6 +106,12 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	if cfg.AgentBinaryDir == "" {
 		cfg.AgentBinaryDir = "./lib/agent"
 	}
+	if cfg.SeatunnelXJavaProxyJarPath == "" {
+		cfg.SeatunnelXJavaProxyJarPath = filepath.Join("./lib", seatunnelmeta.SeatunnelXJavaProxyJarFileName(seatunnelmeta.DefaultSeatunnelXJavaProxyVersion))
+	}
+	if cfg.SeatunnelXJavaProxyScriptPath == "" {
+		cfg.SeatunnelXJavaProxyScriptPath = filepath.Join("./scripts", seatunnelmeta.SeatunnelXJavaProxyScriptFileName)
+	}
 	if cfg.GRPCPort == "" {
 		cfg.GRPCPort = "50051"
 	}
@@ -94,10 +120,12 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	}
 
 	return &Handler{
-		controlPlaneAddr:  cfg.ControlPlaneAddr,
-		agentBinaryDir:    cfg.AgentBinaryDir,
-		grpcPort:          cfg.GRPCPort,
-		heartbeatInterval: cfg.HeartbeatInterval,
+		controlPlaneAddr:              cfg.ControlPlaneAddr,
+		agentBinaryDir:                cfg.AgentBinaryDir,
+		seatunnelxJavaProxyJarPath:    cfg.SeatunnelXJavaProxyJarPath,
+		seatunnelxJavaProxyScriptPath: cfg.SeatunnelXJavaProxyScriptPath,
+		grpcPort:                      cfg.GRPCPort,
+		heartbeatInterval:             cfg.HeartbeatInterval,
 	}
 }
 
@@ -236,6 +264,86 @@ func (h *Handler) DownloadAgent(c *gin.Context) {
 	c.File(binaryPath)
 
 	logger.InfoF(c.Request.Context(), "[Agent] Binary downloaded: %s-%s", osType, arch)
+}
+
+// DownloadSeatunnelXJavaProxyJar handles GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - downloads the seatunnelx-java-proxy thin jar.
+// DownloadSeatunnelXJavaProxyJar 处理 GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - 下载 seatunnelx-java-proxy 薄 jar。
+func (h *Handler) DownloadSeatunnelXJavaProxyJar(c *gin.Context) {
+	assetPath, downloadName, err := h.resolveSeatunnelXJavaProxyJarAsset(c.Query("version"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{ErrorMsg: err.Error()})
+		return
+	}
+	h.serveStaticAssetDownload(
+		c,
+		assetPath,
+		downloadName,
+		"application/java-archive",
+		"Capability proxy jar",
+		"Capability proxy jar",
+	)
+}
+
+// DownloadSeatunnelXJavaProxyScript handles GET /api/v1/agent/assets/seatunnelx-java-proxy.sh - downloads the seatunnelx-java-proxy launcher script.
+// DownloadSeatunnelXJavaProxyScript 处理 GET /api/v1/agent/assets/seatunnelx-java-proxy.sh - 下载 seatunnelx-java-proxy 启动脚本。
+func (h *Handler) DownloadSeatunnelXJavaProxyScript(c *gin.Context) {
+	h.serveStaticAssetDownload(
+		c,
+		h.seatunnelxJavaProxyScriptPath,
+		seatunnelmeta.SeatunnelXJavaProxyScriptFileName,
+		"text/x-shellscript; charset=utf-8",
+		"Capability proxy script",
+		"Capability proxy script",
+	)
+}
+
+func (h *Handler) resolveSeatunnelXJavaProxyJarAsset(version string) (string, string, error) {
+	requestedVersion := strings.TrimSpace(version)
+	if requestedVersion == "" || requestedVersion == seatunnelmeta.DefaultSeatunnelXJavaProxyVersion {
+		return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath), nil
+	}
+
+	if !seatunnelXJavaProxyVersionPattern.MatchString(requestedVersion) {
+		return "", "", fmt.Errorf("invalid version parameter: only letters, numbers, dot, underscore, and hyphen are allowed")
+	}
+
+	baseDir := filepath.Dir(h.seatunnelxJavaProxyJarPath)
+	versionedPath := filepath.Join(
+		baseDir,
+		seatunnelmeta.SeatunnelXJavaProxyJarFileName(requestedVersion),
+	)
+	relativePath, err := filepath.Rel(baseDir, versionedPath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("invalid version parameter")
+	}
+	if _, err := os.Stat(versionedPath); err == nil {
+		return versionedPath, filepath.Base(versionedPath), nil
+	}
+
+	return h.seatunnelxJavaProxyJarPath, filepath.Base(h.seatunnelxJavaProxyJarPath), nil
+}
+
+func (h *Handler) serveStaticAssetDownload(
+	c *gin.Context,
+	assetPath string,
+	downloadName string,
+	contentType string,
+	logLabel string,
+	errorLabel string,
+) {
+	if _, err := os.Stat(assetPath); os.IsNotExist(err) {
+		logger.WarnF(c.Request.Context(), "[Agent] %s not found: %s", logLabel, assetPath)
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			ErrorMsg: fmt.Sprintf("%s not found. Please contact administrator / 未找到 %s，请联系管理员", errorLabel, errorLabel),
+		})
+		return
+	}
+
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", downloadName))
+	c.File(assetPath)
+
+	logger.InfoF(c.Request.Context(), "[Agent] %s downloaded: %s", logLabel, assetPath)
 }
 
 // ==================== Helper Methods 辅助方法 ====================

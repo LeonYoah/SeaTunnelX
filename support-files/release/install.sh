@@ -40,6 +40,7 @@ USAGE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-/opt/seatunnelx}"
+CAPABILITY_PROXY_DEFAULT_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
 FORCE=false
 PRESERVE_CONFIG=true
 AUTO_START=true
@@ -88,7 +89,7 @@ else
   exit 1
 fi
 
-for f in seatunnelx bin/start.sh bin/stop.sh bin/status.sh config.example.yaml; do
+for f in seatunnelx bin/start.sh bin/stop.sh bin/status.sh config.example.yaml "lib/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar" scripts/seatunnelx-java-proxy.sh; do
   if [[ ! -e "$SOURCE_DIR/$f" ]]; then
     echo "[ERROR] package payload missing: $f"
     exit 1
@@ -139,7 +140,8 @@ chmod +x \
   "$INSTALL_DIR/install.sh" \
   "$INSTALL_DIR/bin/start.sh" \
   "$INSTALL_DIR/bin/stop.sh" \
-  "$INSTALL_DIR/bin/status.sh"
+  "$INSTALL_DIR/bin/status.sh" \
+  "$INSTALL_DIR/scripts/seatunnelx-java-proxy.sh"
 
 for f in \
   "$INSTALL_DIR/deps/start-observability.sh" \

@@ -1182,6 +1182,20 @@ func (a *Agent) handleUpgradeCommand(ctx context.Context, cmd *pb.CommandRequest
 }
 
 func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
+		reporter.Report(10, "Starting managed seatunnelx-java-proxy service... / 启动托管 seatunnelx-java-proxy 服务...")
+		status, err := installer.StartManagedSeatunnelXJavaProxyService(
+			ctx,
+			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
+			getParamString(cmd.Parameters, "version", seatunnel.DefaultVersion()),
+		)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		reporter.Report(100, "Managed seatunnelx-java-proxy service started / 托管 seatunnelx-java-proxy 服务已启动")
+		return createSeatunnelXJavaProxyCommandResponse(cmd.CommandId, status), nil
+	}
+
 	reporter.Report(10, "Starting SeaTunnel process... / 启动 SeaTunnel 进程...")
 
 	role := getParamString(cmd.Parameters, "role", "")
@@ -1235,6 +1249,19 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 }
 
 func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
+		reporter.Report(10, "Stopping managed seatunnelx-java-proxy service... / 停止托管 seatunnelx-java-proxy 服务...")
+		status, err := installer.StopManagedSeatunnelXJavaProxyService(
+			ctx,
+			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
+		)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		reporter.Report(100, "Managed seatunnelx-java-proxy service stopped / 托管 seatunnelx-java-proxy 服务已停止")
+		return createSeatunnelXJavaProxyCommandResponse(cmd.CommandId, status), nil
+	}
+
 	reporter.Report(10, "Stopping SeaTunnel process... / 停止 SeaTunnel 进程...")
 
 	role := getParamString(cmd.Parameters, "role", "")
@@ -1282,6 +1309,24 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 }
 
 func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
+		reporter.Report(10, "Restarting managed seatunnelx-java-proxy service... / 重启托管 seatunnelx-java-proxy 服务...")
+		installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+		if _, err := installer.StopManagedSeatunnelXJavaProxyService(ctx, installDir); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already stopped") {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		status, err := installer.StartManagedSeatunnelXJavaProxyService(
+			ctx,
+			installDir,
+			getParamString(cmd.Parameters, "version", seatunnel.DefaultVersion()),
+		)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		reporter.Report(100, "Managed seatunnelx-java-proxy service restarted / 托管 seatunnelx-java-proxy 服务已重启")
+		return createSeatunnelXJavaProxyCommandResponse(cmd.CommandId, status), nil
+	}
+
 	reporter.Report(10, "Restarting SeaTunnel process... / 重启 SeaTunnel 进程...")
 
 	role := getParamString(cmd.Parameters, "role", "")
@@ -1345,6 +1390,17 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 }
 
 func (a *Agent) handleStatusCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
+	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
+		status, err := installer.GetManagedSeatunnelXJavaProxyServiceStatus(
+			ctx,
+			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
+		)
+		if err != nil {
+			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
+		}
+		return createSeatunnelXJavaProxyCommandResponse(cmd.CommandId, status), nil
+	}
+
 	processName := getParamString(cmd.Parameters, "process_name", "seatunnel")
 
 	info, err := a.processManager.GetStatus(ctx, processName)
@@ -1358,6 +1414,20 @@ func (a *Agent) handleStatusCommand(ctx context.Context, cmd *pb.CommandRequest,
 		info.Name, info.PID, info.Status, info.Uptime, info.CPUUsage, info.MemoryUsage)
 
 	return executor.CreateSuccessResponse(cmd.CommandId, output), nil
+}
+
+func isSeatunnelXJavaProxyServiceCommand(params map[string]string) bool {
+	service := strings.TrimSpace(getParamString(params, "service", ""))
+	target := strings.TrimSpace(getParamString(params, "target", ""))
+	return service == "seatunnelx_java_proxy" || target == "seatunnelx_java_proxy"
+}
+
+func createSeatunnelXJavaProxyCommandResponse(commandID string, status *installer.SeatunnelXJavaProxyServiceStatus) *pb.CommandResponse {
+	payload, err := json.Marshal(status)
+	if err != nil {
+		return executor.CreateErrorResponse(commandID, err.Error())
+	}
+	return executor.CreateSuccessResponse(commandID, string(payload))
 }
 
 func (a *Agent) handleCollectLogsCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {

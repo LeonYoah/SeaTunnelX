@@ -195,6 +195,48 @@ func TestBuildDiagnosticBundleManifest_compactsMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveDiagnosticPrimaryCategory_keepsUnknownForGenericFailures(t *testing.T) {
+	state := &diagnosticBundleExecutionState{
+		ErrorGroup: &SeatunnelErrorGroup{
+			Title:         "Task TaskGroupLocation failed in Job SeaTunnel_Job",
+			SampleMessage: "Begin to cancel other tasks in this pipeline.",
+		},
+	}
+
+	if got := resolveDiagnosticPrimaryCategory(state); got != "unknown" {
+		t.Fatalf("expected unknown category for generic failure, got %s", got)
+	}
+
+	focus := buildDiagnosticPrimaryFocus(state)
+	if strings.Contains(focus, "外部依赖连通性") || strings.Contains(focus, "dependency reachability") {
+		t.Fatalf("expected generic fallback focus, got %q", focus)
+	}
+}
+
+func TestResolveDiagnosticPrimaryCategory_detectsDependencyOnlyForStrongSignals(t *testing.T) {
+	state := &diagnosticBundleExecutionState{
+		ErrorGroup: &SeatunnelErrorGroup{
+			Title:         "java.net.UnknownHostException",
+			SampleMessage: "dns lookup failed: no such host",
+		},
+	}
+
+	if got := resolveDiagnosticPrimaryCategory(state); got != "dependency" {
+		t.Fatalf("expected dependency category, got %s", got)
+	}
+}
+
+func TestMapInspectionFindingToDiagnosticCategory_doesNotTreatGenericErrorAsDependency(t *testing.T) {
+	finding := &ClusterInspectionFindingInfo{
+		CheckCode: "GENERIC_FAILURE",
+		Summary:   "Task failed with generic error",
+	}
+
+	if got := mapInspectionFindingToDiagnosticCategory(finding); got != "unknown" {
+		t.Fatalf("expected unknown category for generic error finding, got %s", got)
+	}
+}
+
 func TestBuildDiagnosticConfigTypesForTarget(t *testing.T) {
 	tests := []struct {
 		name string

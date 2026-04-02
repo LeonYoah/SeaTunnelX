@@ -139,6 +139,7 @@ CONFIG_PATH="${CONFIG_PATH:-$PROJECT_ROOT/config.yaml}"
 APP_EXTERNAL_URL="${APP_EXTERNAL_URL:-http://127.0.0.1:8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-http://127.0.0.1:8000}"
+CAPABILITY_PROXY_DEFAULT_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 FRONTEND_STANDALONE_DIR="$FRONTEND_DIR/dist-standalone"
 FRONTEND_ENTRY=""
@@ -387,7 +388,7 @@ if $FRONTEND_DEV && ! $DO_RESTART; then
 fi
 
 total=0
-if $DO_BUILD && $RUN_BACKEND; then total=$((total + 2)); fi
+if $DO_BUILD && $RUN_BACKEND; then total=$((total + 3)); fi
 if $DO_BUILD && $RUN_FRONTEND && ! ($FRONTEND_DEV && $DO_RESTART); then total=$((total + 1)); fi
 if $DO_RESTART && $RUN_BACKEND; then total=$((total + 1)); fi
 if $DO_RESTART && $RUN_FRONTEND; then total=$((total + 1)); fi
@@ -412,6 +413,21 @@ if $DO_BUILD && $RUN_BACKEND; then
   if [[ -d lib/agent ]] && [[ -f agent/seatunnelx-agent ]]; then
     cp -f agent/seatunnelx-agent lib/agent/seatunnelx-agent-linux-amd64
     echo "      已同步 agent 到 lib/agent."
+  fi
+
+  step=$((step + 1)); echo "[$step/$total] 构建 seatunnelx-java-proxy 薄 jar ..."
+  if command -v mvn >/dev/null 2>&1; then
+    mvn -q -f tools/seatunnelx-java-proxy/pom.xml -DskipTests package
+    proxy_jar="$(find tools/seatunnelx-java-proxy/target -maxdepth 1 -type f -name 'seatunnelx-java-proxy-*.jar' ! -name '*-bin.jar' | sort | head -n1)"
+    if [[ -n "${proxy_jar:-}" && -f "${proxy_jar:-}" ]]; then
+      mkdir -p lib
+      cp -f "$proxy_jar" "lib/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
+      echo "      已同步 seatunnelx-java-proxy jar 到 lib/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar."
+    else
+      echo "      未找到 seatunnelx-java-proxy 薄 jar，跳过同步."
+    fi
+  else
+    echo "      未找到 mvn，跳过 seatunnelx-java-proxy 薄 jar 构建与同步."
   fi
 fi
 

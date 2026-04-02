@@ -21,6 +21,7 @@ import {
   assertFileContains,
   buildInstallWizardLabURL,
   chooseSelectOption,
+  expectSeatunnelXJavaProxyProbeSuccess,
   expectInstallationSuccess,
   resolveInstalledConfigPaths,
   waitForOnlineHost,
@@ -201,5 +202,58 @@ test.describe.serial('install wizard real installer', () => {
       `fs.s3a.access.key: ${minioAccessKey}`,
       `fs.s3a.secret.key: ${minioSecretKey}`,
     ]);
+
+    const checkpointProbe = await expectSeatunnelXJavaProxyProbeSuccess({
+      installDir,
+      version: seatunnelVersion,
+      kind: 'checkpoint',
+      request: {
+        plugin: 'hdfs',
+        mode: 'read_write',
+        probeTimeoutMs: 15000,
+        config: {
+          'storage.type': 's3',
+          namespace: '/seatunnel/checkpoint/',
+          's3.bucket': checkpointBucket,
+          'fs.s3a.endpoint': minioEndpoint,
+          'fs.s3a.access.key': minioAccessKey,
+          'fs.s3a.secret.key': minioSecretKey,
+          'fs.s3a.path.style.access': 'true',
+          'fs.s3a.connection.ssl.enabled': 'false',
+          'fs.s3a.aws.credentials.provider':
+            'org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider',
+        },
+      },
+    });
+    expect(checkpointProbe.message || '').not.toContain('failed');
+
+    const imapProbe = await expectSeatunnelXJavaProxyProbeSuccess({
+      installDir,
+      version: seatunnelVersion,
+      kind: 'imap',
+      request: {
+        plugin: 'hdfs',
+        mode: 'read_write',
+        deleteAllOnDestroy: true,
+        probeTimeoutMs: 15000,
+        config: {
+          type: 'hdfs',
+          'storage.type': 's3',
+          namespace: '/seatunnel/imap/',
+          clusterName: 'installer-real-e2e',
+          businessName: 'seatunnelx-java-proxy-e2e',
+          's3.bucket': imapBucket,
+          'fs.defaultFS': imapBucket,
+          'fs.s3a.endpoint': minioEndpoint,
+          'fs.s3a.access.key': minioAccessKey,
+          'fs.s3a.secret.key': minioSecretKey,
+          'fs.s3a.path.style.access': 'true',
+          'fs.s3a.connection.ssl.enabled': 'false',
+          'fs.s3a.aws.credentials.provider':
+            'org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider',
+        },
+      },
+    });
+    expect(imapProbe.message || '').not.toContain('failed');
   });
 });

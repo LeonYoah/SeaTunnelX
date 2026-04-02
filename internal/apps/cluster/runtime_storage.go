@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -121,6 +123,10 @@ func (s *Service) GetRuntimeStorageDetails(ctx context.Context, clusterID uint) 
 
 	s.fillLocalRuntimeStorageStats(ctx, nodes, checkpoint)
 	s.fillLocalRuntimeStorageStats(ctx, nodes, imap)
+	if liveNode := pickRuntimeStorageConfigNode(nodes); liveNode != nil {
+		s.fillRemoteRuntimeStorageStats(ctx, clusterObj, liveNode, checkpoint)
+		s.fillRemoteRuntimeStorageStats(ctx, clusterObj, liveNode, imap)
+	}
 	details.Checkpoint = checkpoint
 	details.IMAP = imap
 	return details, nil
@@ -192,12 +198,12 @@ func pickRuntimeStorageConfigNode(nodes []*NodeInfo) *NodeInfo {
 		if node == nil {
 			continue
 		}
-		if node.IsOnline && (node.Role == NodeRoleMaster || node.Role == NodeRoleMasterWorker) {
+		if node.Role == NodeRoleMaster || node.Role == NodeRoleMasterWorker {
 			return node
 		}
 	}
 	for _, node := range nodes {
-		if node != nil && node.IsOnline {
+		if node != nil {
 			return node
 		}
 	}
@@ -205,7 +211,7 @@ func pickRuntimeStorageConfigNode(nodes []*NodeInfo) *NodeInfo {
 }
 
 func (s *Service) loadCheckpointFromNode(ctx context.Context, node *NodeInfo) (*RuntimeStorageSpec, error) {
-	content, err := s.pullConfigFromNode(ctx, node, "seatunnel.yaml")
+	content, err := s.loadRuntimeStorageConfigContent(ctx, node, "seatunnel.yaml")
 	if err != nil {
 		return nil, err
 	}
@@ -219,11 +225,34 @@ func (s *Service) loadIMAPFromNode(ctx context.Context, node *NodeInfo) (*Runtim
 	} else if node.Role == NodeRoleWorker {
 		configType = "hazelcast-worker.yaml"
 	}
-	content, err := s.pullConfigFromNode(ctx, node, configType)
+	content, err := s.loadRuntimeStorageConfigContent(ctx, node, configType)
 	if err != nil {
 		return nil, err
 	}
 	return parseIMAPStorageFromYAML(content), nil
+}
+
+func (s *Service) loadRuntimeStorageConfigContent(ctx context.Context, node *NodeInfo, configType string) (string, error) {
+	content, err := s.pullConfigFromNode(ctx, node, configType)
+	if err == nil && strings.TrimSpace(content) != "" {
+		return content, nil
+	}
+	if localContent, localErr := readRuntimeStorageConfigFromLocalInstallDir(node, configType); localErr == nil && strings.TrimSpace(localContent) != "" {
+		return localContent, nil
+	}
+	return content, err
+}
+
+func readRuntimeStorageConfigFromLocalInstallDir(node *NodeInfo, configType string) (string, error) {
+	if node == nil || strings.TrimSpace(node.InstallDir) == "" {
+		return "", fmt.Errorf("install dir is unavailable")
+	}
+	configPath := filepath.Join(node.InstallDir, "config", configType)
+	bytes, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
 }
 
 func (s *Service) pullConfigFromNode(ctx context.Context, node *NodeInfo, configType string) (string, error) {

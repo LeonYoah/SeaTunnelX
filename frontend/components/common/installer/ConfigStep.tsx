@@ -188,6 +188,59 @@ export function ConfigStep({
     toast.success(t('installer.runtimeStorage.applyCheckpointToImapSuccess'));
   };
 
+  const getRuntimeStorageMissingFields = (kind: RuntimeStorageValidationKind) => {
+    const target = kind === 'checkpoint' ? config.checkpoint : config.imap;
+    const fields: string[] = [];
+    if (!target.namespace?.trim()) {
+      fields.push(t('installer.path'));
+    }
+    switch (target.storage_type) {
+      case 'S3':
+      case 'OSS':
+        if (!target.storage_endpoint?.trim()) {
+        fields.push(t('installer.endpoint'));
+      }
+        if (!target.storage_access_key?.trim()) {
+        fields.push(t('installer.accessKey'));
+      }
+        if (!target.storage_secret_key?.trim()) {
+        fields.push(t('installer.secretKey'));
+      }
+        if (!target.storage_bucket?.trim()) {
+        fields.push(t('installer.bucket'));
+      }
+        break;
+      case 'HDFS':
+        if (target.hdfs_ha_enabled) {
+          if (!target.hdfs_name_services?.trim()) {
+          fields.push('NameService');
+        }
+          if (!target.hdfs_ha_namenodes?.trim()) {
+          fields.push('HA Namenodes');
+        }
+          if (!target.hdfs_namenode_rpc_address_1?.trim()) {
+          fields.push('RPC Address 1');
+        }
+          if (!target.hdfs_namenode_rpc_address_2?.trim()) {
+          fields.push('RPC Address 2');
+        }
+        } else {
+          if (!target.hdfs_namenode_host?.trim()) {
+          fields.push('NameNode Host');
+        }
+          if (!target.hdfs_namenode_port || Number(target.hdfs_namenode_port) <= 0) {
+          fields.push('NameNode Port');
+        }
+        }
+        break;
+      case 'DISABLED':
+        return [];
+      default:
+        break;
+    }
+    return fields;
+  };
+
   const applyImapToCheckpoint = () => {
     if (config.imap.storage_type === 'DISABLED') {
       toast.warning(t('installer.runtimeStorage.applyImapDisabledWarning'));
@@ -227,6 +280,15 @@ export function ConfigStep({
   const validateStorage = async (kind: RuntimeStorageValidationKind) => {
     if (numericHostIds.length === 0) {
       toast.warning(t('installer.runtimeStorage.noHostsSelected'));
+      return;
+    }
+    const missingFields = getRuntimeStorageMissingFields(kind);
+    if (missingFields.length > 0) {
+      toast.warning(
+        t('installer.runtimeStorage.requiredFieldsMissing', {
+          fields: missingFields.join(', '),
+        }),
+      );
       return;
     }
     try {

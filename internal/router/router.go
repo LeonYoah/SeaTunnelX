@@ -244,7 +244,16 @@ func Serve() {
 				clusterRouter.POST("/:id/stop", clusterHandler.StopCluster)
 				clusterRouter.POST("/:id/restart", clusterHandler.RestartCluster)
 				clusterRouter.GET("/:id/status", clusterHandler.GetClusterStatus)
+				clusterRouter.GET("/:id/seatunnelx-java-proxy/status", clusterHandler.GetSeatunnelXJavaProxyStatus)
+				clusterRouter.POST("/:id/seatunnelx-java-proxy/start", clusterHandler.StartSeatunnelXJavaProxy)
+				clusterRouter.POST("/:id/seatunnelx-java-proxy/stop", clusterHandler.StopSeatunnelXJavaProxy)
+				clusterRouter.POST("/:id/seatunnelx-java-proxy/restart", clusterHandler.RestartSeatunnelXJavaProxy)
 				clusterRouter.GET("/:id/runtime-storage", clusterHandler.GetRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/:kind/validate", clusterHandler.ValidateRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/:kind/list", clusterHandler.ListRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/:kind/preview", clusterHandler.PreviewRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/checkpoint/inspect", clusterHandler.InspectCheckpointRuntimeStorage)
+				clusterRouter.POST("/:id/runtime-storage/imap/inspect", clusterHandler.InspectIMAPRuntimeStorage)
 				clusterRouter.POST("/:id/runtime-storage/imap/cleanup", clusterHandler.CleanupIMAPStorage)
 				clusterRouter.Any("/:id/webui", clusterHandler.ProxyWebUI)
 				clusterRouter.Any("/:id/webui/*proxyPath", clusterHandler.ProxyWebUI)
@@ -490,6 +499,14 @@ func Serve() {
 				// GET /api/v1/agent/download - 下载 Agent 二进制文件
 				// GET /api/v1/agent/download - Download Agent binary
 				agentRouter.GET("/download", agentHandler.DownloadAgent)
+
+				// GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - 下载 seatunnelx-java-proxy 薄 jar
+				// GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - Download seatunnelx-java-proxy thin jar
+				agentRouter.GET("/assets/seatunnelx-java-proxy.jar", agentHandler.DownloadSeatunnelXJavaProxyJar)
+
+				// GET /api/v1/agent/assets/seatunnelx-java-proxy.sh - 下载 seatunnelx-java-proxy 启动脚本
+				// GET /api/v1/agent/assets/seatunnelx-java-proxy.sh - Download seatunnelx-java-proxy launcher script
+				agentRouter.GET("/assets/seatunnelx-java-proxy.sh", agentHandler.DownloadSeatunnelXJavaProxyScript)
 			}
 
 			// SeaTunnelX 离线发布包分发 API（无需认证，供客户机器一键下载安装控制面）。
@@ -544,7 +561,11 @@ func Serve() {
 			// Installer SeaTunnel 安装管理
 			// Initialize installer service and handler
 			// 初始化安装服务和处理器
-			installerService := installer.NewService("./lib/packages", nil)
+			// Follow configured packages_dir instead of a hard-coded repo path,
+			// so E2E / tests can preload packages into their isolated storage.
+			// 使用配置中的 packages_dir，而不是硬编码仓库路径，
+			// 这样 E2E / 测试才能在各自隔离目录中预热安装包。
+			installerService := installer.NewService("", nil)
 			// Set host provider for precheck operations
 			// 设置用于预检查操作的主机提供者
 			installerService.SetHostProvider(&hostProviderAdapter{hostService: hostService})
@@ -1075,7 +1096,7 @@ func (a *agentCommandSenderAdapter) SendCommand(ctx context.Context, agentID str
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *agentCommandSenderAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_imap_wal", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL
@@ -1320,7 +1341,7 @@ func (a *installerAgentManagerAdapter) SendCommand(ctx context.Context, agentID 
 // stringToCommandType 将命令类型字符串转换为 pb.CommandType。
 func (a *installerAgentManagerAdapter) stringToCommandType(cmdType string) pb.CommandType {
 	switch cmdType {
-	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "full":
+	case "check_port", "check_directory", "check_http", "check_process", "check_java", "check_tcp", "check_path_ready", "stat_path", "cleanup_path", "seatunnelx_java_proxy_probe", "seatunnelx_java_proxy_stat", "seatunnelx_java_proxy_list", "seatunnelx_java_proxy_preview", "seatunnelx_java_proxy_inspect_checkpoint", "seatunnelx_java_proxy_inspect_imap_wal", "full":
 		return pb.CommandType_PRECHECK
 	case "install":
 		return pb.CommandType_INSTALL

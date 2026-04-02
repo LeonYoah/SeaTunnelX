@@ -53,9 +53,21 @@ import {
   GetClusterStatusResponse,
   GetRuntimeStorageResponse,
   CleanupRuntimeStorageResponse,
+  ValidateRuntimeStorageResponse,
+  ListRuntimeStorageResponse,
+  PreviewRuntimeStorageResponse,
+  InspectCheckpointRuntimeStorageResponse,
+  InspectIMAPRuntimeStorageResponse,
   PrecheckNodeResponse,
   RuntimeStorageDetails,
   RuntimeStorageCleanupResult,
+  RuntimeStorageValidationResult,
+  RuntimeStorageListResult,
+  RuntimeStoragePreviewResult,
+  RuntimeStorageCheckpointInspectResult,
+  RuntimeStorageIMAPInspectResult,
+  SeatunnelXJavaProxyResponse,
+  SeatunnelXJavaProxyStatus,
 } from './types';
 
 /**
@@ -447,6 +459,157 @@ export class ClusterService extends BaseService {
     };
   }
 
+  static async listRuntimeStorage(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+    params?: {path?: string; recursive?: boolean; limit?: number},
+  ): Promise<RuntimeStorageListResult> {
+    const response = await apiClient.post<ListRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/${kind}/list`,
+      {
+        path: params?.path,
+        recursive: params?.recursive ?? false,
+        limit: params?.limit ?? 200,
+      },
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    const data = response.data.data;
+    return {
+      ...data,
+      items: Array.isArray(data.items)
+        ? data.items.map((item) => ({
+            ...item,
+            path: localizeBackendText(item.path),
+            name: localizeBackendText(item.name),
+          }))
+        : [],
+    };
+  }
+
+  static async previewRuntimeStorage(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+    params: {path: string; max_bytes?: number},
+  ): Promise<RuntimeStoragePreviewResult> {
+    const response = await apiClient.post<PreviewRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/${kind}/preview`,
+      params,
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return response.data.data;
+  }
+
+  static async inspectCheckpointRuntimeStorage(
+    clusterId: number,
+    path: string,
+  ): Promise<RuntimeStorageCheckpointInspectResult> {
+    const response = await apiClient.post<InspectCheckpointRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/checkpoint/inspect`,
+      {path},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return response.data.data;
+  }
+
+  static async inspectIMAPRuntimeStorage(
+    clusterId: number,
+    path: string,
+  ): Promise<RuntimeStorageIMAPInspectResult> {
+    const response = await apiClient.post<InspectIMAPRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/imap/inspect`,
+      {path},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return response.data.data;
+  }
+
+  static async validateRuntimeStorage(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+  ): Promise<RuntimeStorageValidationResult> {
+    const response = await apiClient.post<ValidateRuntimeStorageResponse>(
+      `${this.basePath}/${clusterId}/runtime-storage/${kind}/validate`,
+      {},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    const data = response.data.data;
+    return {
+      ...data,
+      warning: localizeBackendText(data.warning),
+      hosts: Array.isArray(data.hosts)
+        ? data.hosts.map((host) => ({
+            ...host,
+            message: localizeBackendText(host.message),
+          }))
+        : [],
+    };
+  }
+
+  static async getSeatunnelXJavaProxyStatus(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+    const response = await apiClient.get<SeatunnelXJavaProxyResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/status`,
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return {
+      ...response.data.data,
+      message: localizeBackendText(response.data.data.message),
+    };
+  }
+
+  static async startSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+    const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/start`,
+      {},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return {
+      ...response.data.data,
+      message: localizeBackendText(response.data.data.message),
+    };
+  }
+
+  static async stopSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+    const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/stop`,
+      {},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return {
+      ...response.data.data,
+      message: localizeBackendText(response.data.data.message),
+    };
+  }
+
+  static async restartSeatunnelXJavaProxy(clusterId: number): Promise<SeatunnelXJavaProxyStatus> {
+    const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/restart`,
+      {},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return {
+      ...response.data.data,
+      message: localizeBackendText(response.data.data.message),
+    };
+  }
+
   // ==================== Safe Methods (with error handling) 安全方法（带错误处理） ====================
 
   /**
@@ -780,6 +943,158 @@ export class ClusterService extends BaseService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : '清理 IMAP 失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async listRuntimeStorageSafe(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+    params?: {path?: string; recursive?: boolean; limit?: number},
+  ): Promise<{
+    success: boolean;
+    data?: RuntimeStorageListResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.listRuntimeStorage(clusterId, kind, params);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取运行时存储文件列表失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async previewRuntimeStorageSafe(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+    params: {path: string; max_bytes?: number},
+  ): Promise<{
+    success: boolean;
+    data?: RuntimeStoragePreviewResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.previewRuntimeStorage(clusterId, kind, params);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '运行时存储预览失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async inspectCheckpointRuntimeStorageSafe(
+    clusterId: number,
+    path: string,
+  ): Promise<{
+    success: boolean;
+    data?: RuntimeStorageCheckpointInspectResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.inspectCheckpointRuntimeStorage(clusterId, path);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Checkpoint 反序列化失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async inspectIMAPRuntimeStorageSafe(
+    clusterId: number,
+    path: string,
+  ): Promise<{
+    success: boolean;
+    data?: RuntimeStorageIMAPInspectResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.inspectIMAPRuntimeStorage(clusterId, path);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'IMAP WAL 解析失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async validateRuntimeStorageSafe(
+    clusterId: number,
+    kind: 'checkpoint' | 'imap',
+  ): Promise<{
+    success: boolean;
+    data?: RuntimeStorageValidationResult;
+    error?: string;
+  }> {
+    try {
+      const data = await this.validateRuntimeStorage(clusterId, kind);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '运行时存储连通性校验失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async getSeatunnelXJavaProxyStatusSafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyStatus;
+    error?: string;
+  }> {
+    try {
+      const data = await this.getSeatunnelXJavaProxyStatus(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '获取 seatunnelx-java-proxy 状态失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async startSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyStatus;
+    error?: string;
+  }> {
+    try {
+      const data = await this.startSeatunnelXJavaProxy(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '启动 seatunnelx-java-proxy 失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async stopSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyStatus;
+    error?: string;
+  }> {
+    try {
+      const data = await this.stopSeatunnelXJavaProxy(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '停止 seatunnelx-java-proxy 失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async restartSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyStatus;
+    error?: string;
+  }> {
+    try {
+      const data = await this.restartSeatunnelXJavaProxy(clusterId);
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : '重启 seatunnelx-java-proxy 失败';
       return {success: false, error: errorMessage};
     }
   }

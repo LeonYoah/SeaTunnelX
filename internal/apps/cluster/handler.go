@@ -32,6 +32,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/seatunnel/seatunnelX/internal/apps/audit"
 	"github.com/seatunnel/seatunnelX/internal/apps/auth"
+	installerapp "github.com/seatunnel/seatunnelX/internal/apps/installer"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 )
 
@@ -224,6 +225,39 @@ type CleanupRuntimeStorageResponse struct {
 	Data     *RuntimeStorageCleanupResult `json:"data"`
 }
 
+// ValidateRuntimeStorageResponse represents runtime storage connectivity validation response.
+// ValidateRuntimeStorageResponse 表示运行时存储连通性校验响应。
+type ValidateRuntimeStorageResponse struct {
+	ErrorMsg string                                       `json:"error_msg"`
+	Data     *installerapp.RuntimeStorageValidationResult `json:"data"`
+}
+
+type ListRuntimeStorageResponse struct {
+	ErrorMsg string                    `json:"error_msg"`
+	Data     *RuntimeStorageListResult `json:"data"`
+}
+
+type PreviewRuntimeStorageResponse struct {
+	ErrorMsg string                       `json:"error_msg"`
+	Data     *RuntimeStoragePreviewResult `json:"data"`
+}
+
+type InspectCheckpointRuntimeStorageResponse struct {
+	ErrorMsg string                                 `json:"error_msg"`
+	Data     *RuntimeStorageCheckpointInspectResult `json:"data"`
+}
+
+type InspectIMAPRuntimeStorageResponse struct {
+	ErrorMsg string                           `json:"error_msg"`
+	Data     *RuntimeStorageIMAPInspectResult `json:"data"`
+}
+
+// SeatunnelXJavaProxyResponse represents a managed seatunnelx-java-proxy response.
+type SeatunnelXJavaProxyResponse struct {
+	ErrorMsg string                     `json:"error_msg"`
+	Data     *SeatunnelXJavaProxyStatus `json:"data"`
+}
+
 // PrecheckNodeResponse represents the response for node precheck.
 // PrecheckNodeResponse 表示节点预检查的响应。
 type PrecheckNodeResponse struct {
@@ -259,6 +293,56 @@ func (h *Handler) CreateCluster(c *gin.Context) {
 		"create", "cluster", audit.UintID(cluster.ID), cluster.Name, audit.AuditDetails{"trigger": "manual"})
 	logger.InfoF(c.Request.Context(), "[Cluster] 创建集群成功: %s (mode: %s)", cluster.Name, cluster.DeploymentMode)
 	c.JSON(http.StatusOK, CreateClusterResponse{Data: cluster.ToClusterInfo()})
+}
+
+// GetSeatunnelXJavaProxyStatus handles GET /api/v1/clusters/:id/seatunnelx-java-proxy/status.
+func (h *Handler) GetSeatunnelXJavaProxyStatus(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: "invalid cluster id"})
+		return
+	}
+	status, err := h.service.GetSeatunnelXJavaProxyStatus(c.Request.Context(), uint(clusterID))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyResponse{ErrorMsg: err.Error(), Data: status})
+		return
+	}
+	c.JSON(http.StatusOK, SeatunnelXJavaProxyResponse{Data: status})
+}
+
+// StartSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/start.
+func (h *Handler) StartSeatunnelXJavaProxy(c *gin.Context) {
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.StartSeatunnelXJavaProxy(ctx, clusterID)
+	})
+}
+
+// StopSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/stop.
+func (h *Handler) StopSeatunnelXJavaProxy(c *gin.Context) {
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.StopSeatunnelXJavaProxy(ctx, clusterID)
+	})
+}
+
+// RestartSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/restart.
+func (h *Handler) RestartSeatunnelXJavaProxy(c *gin.Context) {
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.RestartSeatunnelXJavaProxy(ctx, clusterID)
+	})
+}
+
+func (h *Handler) handleSeatunnelXJavaProxyOperation(c *gin.Context, fn func(context.Context, uint) (*SeatunnelXJavaProxyStatus, error)) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: "invalid cluster id"})
+		return
+	}
+	status, err := fn(c.Request.Context(), uint(clusterID))
+	if err != nil {
+		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyResponse{ErrorMsg: err.Error(), Data: status})
+		return
+	}
+	c.JSON(http.StatusOK, SeatunnelXJavaProxyResponse{Data: status})
 }
 
 // ListClusters handles GET /api/v1/clusters - lists clusters with filtering and pagination.
@@ -713,6 +797,115 @@ func (h *Handler) GetRuntimeStorage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, GetRuntimeStorageResponse{Data: result})
+}
+
+// ValidateRuntimeStorage handles POST /api/v1/clusters/:id/runtime-storage/:kind/validate.
+// ValidateRuntimeStorage 处理 POST /api/v1/clusters/:id/runtime-storage/:kind/validate。
+func (h *Handler) ValidateRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ValidateRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	kind := installerapp.RuntimeStorageValidationKind(strings.ToLower(strings.TrimSpace(c.Param("kind"))))
+	result, err := h.service.ValidateRuntimeStorage(c.Request.Context(), uint(clusterID), kind)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ValidateRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ValidateRuntimeStorageResponse{Data: result})
+}
+
+// ListRuntimeStorage handles POST /api/v1/clusters/:id/runtime-storage/:kind/list.
+func (h *Handler) ListRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ListRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	kind := installerapp.RuntimeStorageValidationKind(strings.ToLower(strings.TrimSpace(c.Param("kind"))))
+	var req struct {
+		Path      string `json:"path"`
+		Recursive bool   `json:"recursive"`
+		Limit     int    `json:"limit"`
+	}
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
+	if req.Limit <= 0 {
+		req.Limit = 200
+	}
+	result, err := h.service.ListRuntimeStorage(c.Request.Context(), uint(clusterID), kind, req.Path, req.Recursive, req.Limit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ListRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ListRuntimeStorageResponse{Data: result})
+}
+
+// PreviewRuntimeStorage handles POST /api/v1/clusters/:id/runtime-storage/:kind/preview.
+func (h *Handler) PreviewRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, PreviewRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	kind := installerapp.RuntimeStorageValidationKind(strings.ToLower(strings.TrimSpace(c.Param("kind"))))
+	var req struct {
+		Path     string `json:"path"`
+		MaxBytes int    `json:"max_bytes"`
+	}
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
+	result, err := h.service.PreviewRuntimeStorage(c.Request.Context(), uint(clusterID), kind, req.Path, req.MaxBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, PreviewRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, PreviewRuntimeStorageResponse{Data: result})
+}
+
+// InspectCheckpointRuntimeStorage handles POST /api/v1/clusters/:id/runtime-storage/checkpoint/inspect.
+func (h *Handler) InspectCheckpointRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, InspectCheckpointRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
+	result, err := h.service.InspectCheckpointRuntimeStorage(c.Request.Context(), uint(clusterID), req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, InspectCheckpointRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, InspectCheckpointRuntimeStorageResponse{Data: result})
+}
+
+// InspectIMAPRuntimeStorage handles POST /api/v1/clusters/:id/runtime-storage/imap/inspect.
+func (h *Handler) InspectIMAPRuntimeStorage(c *gin.Context) {
+	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, InspectIMAPRuntimeStorageResponse{ErrorMsg: "无效的集群 ID / Invalid cluster ID"})
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if c.Request.Body != nil {
+		_ = c.ShouldBindJSON(&req)
+	}
+	result, err := h.service.InspectIMAPRuntimeStorage(c.Request.Context(), uint(clusterID), req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, InspectIMAPRuntimeStorageResponse{ErrorMsg: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, InspectIMAPRuntimeStorageResponse{Data: result})
 }
 
 // ProxyWebUI handles proxying the SeaTunnel Web UI through the control plane.

@@ -241,6 +241,99 @@ func TestListInstalledPluginsEnrichesLocalMetadata(t *testing.T) {
 	}
 }
 
+func TestListLocalPlugins_keepsHttpBaseVisibleEvenWhenAutoAttached(t *testing.T) {
+	tempDir := t.TempDir()
+	service, _ := newTestPluginServiceWithDownloader(t, tempDir)
+
+	version := "2.3.12"
+	connectorsDir := filepath.Join(tempDir, version, "connectors")
+	if err := os.MkdirAll(connectorsDir, 0o755); err != nil {
+		t.Fatalf("failed to create connectors dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(connectorsDir, "connector-http-base-2.3.12.jar"), []byte("jar"), 0o644); err != nil {
+		t.Fatalf("failed to write http-base jar: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(connectorsDir, "connector-http-feishu-2.3.12.jar"), []byte("jar"), 0o644); err != nil {
+		t.Fatalf("failed to write http-feishu jar: %v", err)
+	}
+
+	metadataPath := filepath.Join(tempDir, version, "metadata", "http-feishu.json")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	content, err := json.Marshal(localPluginMetadata{
+		Name:               "http-feishu",
+		Version:            version,
+		ArtifactID:         "connector-http-feishu",
+		AttachedConnectors: []string{"connector-http-base"},
+		UpdatedAt:          time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, content, 0o644); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	plugins, err := service.ListLocalPlugins()
+	if err != nil {
+		t.Fatalf("ListLocalPlugins returned error: %v", err)
+	}
+
+	names := make(map[string]struct{}, len(plugins))
+	for _, plugin := range plugins {
+		names[plugin.Name] = struct{}{}
+	}
+	if _, ok := names["http-base"]; !ok {
+		t.Fatalf("expected http-base to stay visible, got %+v", plugins)
+	}
+}
+
+func TestListLocalPlugins_hidesFileBaseWhenOnlyAutoAttached(t *testing.T) {
+	tempDir := t.TempDir()
+	service, _ := newTestPluginServiceWithDownloader(t, tempDir)
+
+	version := "2.3.12"
+	connectorsDir := filepath.Join(tempDir, version, "connectors")
+	if err := os.MkdirAll(connectorsDir, 0o755); err != nil {
+		t.Fatalf("failed to create connectors dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(connectorsDir, "connector-file-base-2.3.12.jar"), []byte("jar"), 0o644); err != nil {
+		t.Fatalf("failed to write file-base jar: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(connectorsDir, "connector-file-oss-2.3.12.jar"), []byte("jar"), 0o644); err != nil {
+		t.Fatalf("failed to write file-oss jar: %v", err)
+	}
+
+	metadataPath := filepath.Join(tempDir, version, "metadata", "file-oss.json")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	content, err := json.Marshal(localPluginMetadata{
+		Name:               "file-oss",
+		Version:            version,
+		ArtifactID:         "connector-file-oss",
+		AttachedConnectors: []string{"connector-file-base"},
+		UpdatedAt:          time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, content, 0o644); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+
+	plugins, err := service.ListLocalPlugins()
+	if err != nil {
+		t.Fatalf("ListLocalPlugins returned error: %v", err)
+	}
+	for _, plugin := range plugins {
+		if plugin.Name == "file-base" {
+			t.Fatalf("expected file-base to remain hidden when only auto-attached, got %+v", plugins)
+		}
+	}
+}
+
 func TestListInstalledPluginsReconcilesClusterVersion(t *testing.T) {
 	tempDir := t.TempDir()
 	service, repo := newTestPluginServiceWithDownloader(t, tempDir)

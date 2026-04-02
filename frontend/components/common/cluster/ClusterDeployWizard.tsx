@@ -264,6 +264,7 @@ export function ClusterDeployWizard({
     'idle' | 'running' | 'success' | 'failed'
   >('idle');
   const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployWarnings, setDeployWarnings] = useState<string[]>([]);
   const [createdClusterId, setCreatedClusterId] = useState<number | null>(null);
   // Detailed deploy steps state / 详细部署步骤状态
   const [deploySteps, setDeploySteps] = useState<
@@ -374,7 +375,9 @@ export function ClusterDeployWizard({
     () => resolveSeatunnelVersionCapabilities(packages, config.version),
     [packages, config.version],
   );
-  const httpServiceSupported = Boolean(versionCapabilities?.supports_http_service);
+  const httpServiceSupported = Boolean(
+    versionCapabilities?.supports_http_service,
+  );
 
   useEffect(() => {
     if (!open || !resolvedRecommendedVersion || config.version) {
@@ -400,7 +403,8 @@ export function ClusterDeployWizard({
           ? prev.runtime.enable_http
           : false,
         job_log_mode: versionCapabilities.supports_job_log_mode
-          ? prev.runtime.job_log_mode || versionCapabilities.default_job_log_mode
+          ? prev.runtime.job_log_mode ||
+            versionCapabilities.default_job_log_mode
           : 'mixed',
       },
     }));
@@ -431,11 +435,15 @@ export function ClusterDeployWizard({
         ? [
             config.clusterPort,
             config.workerPort,
-            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+            ...(httpServiceSupported && config.runtime.enable_http
+              ? [config.httpPort]
+              : []),
           ]
         : [
             config.clusterPort,
-            ...(httpServiceSupported && config.runtime.enable_http ? [config.httpPort] : []),
+            ...(httpServiceSupported && config.runtime.enable_http
+              ? [config.httpPort]
+              : []),
           ];
 
     // Run precheck for each host in parallel / 并行运行每个主机的预检查
@@ -564,6 +572,62 @@ export function ClusterDeployWizard({
     toast.success(t('installer.runtimeStorage.applyCheckpointToImapSuccess'));
   }, [config.checkpoint, t, updateConfig]);
 
+  const getRuntimeStorageMissingFields = useCallback(
+    (kind: 'checkpoint' | 'imap') => {
+      const target = kind === 'checkpoint' ? config.checkpoint : config.imap;
+      const fields: string[] = [];
+      if (!target.namespace?.trim()) {
+        fields.push(t('installer.path'));
+      }
+      switch (target.storage_type) {
+        case 'S3':
+        case 'OSS':
+          if (!target.storage_endpoint?.trim()) {
+            fields.push(t('installer.endpoint'));
+          }
+          if (!target.storage_access_key?.trim()) {
+            fields.push(t('installer.accessKey'));
+          }
+          if (!target.storage_secret_key?.trim()) {
+            fields.push(t('installer.secretKey'));
+          }
+          if (!target.storage_bucket?.trim()) {
+            fields.push(t('installer.bucket'));
+          }
+          break;
+        case 'HDFS':
+          if (target.hdfs_ha_enabled) {
+            if (!target.hdfs_name_services?.trim()) {
+              fields.push('NameService');
+            }
+            if (!target.hdfs_ha_namenodes?.trim()) {
+              fields.push('HA Namenodes');
+            }
+            if (!target.hdfs_namenode_rpc_address_1?.trim()) {
+              fields.push('RPC Address 1');
+            }
+            if (!target.hdfs_namenode_rpc_address_2?.trim()) {
+              fields.push('RPC Address 2');
+            }
+          } else {
+            if (!target.hdfs_namenode_host?.trim()) {
+              fields.push('NameNode Host');
+            }
+            if (!target.hdfs_namenode_port || Number(target.hdfs_namenode_port) <= 0) {
+              fields.push('NameNode Port');
+            }
+          }
+          break;
+        case 'DISABLED':
+          return [];
+        default:
+          break;
+      }
+      return fields;
+    },
+    [config.checkpoint, config.imap, t],
+  );
+
   const applyImapToCheckpoint = useCallback(() => {
     if (config.imap.storage_type === 'DISABLED') {
       toast.warning(t('installer.runtimeStorage.applyImapDisabledWarning'));
@@ -599,6 +663,15 @@ export function ClusterDeployWizard({
         toast.warning(t('installer.runtimeStorage.noHostsSelected'));
         return;
       }
+      const missingFields = getRuntimeStorageMissingFields(kind);
+      if (missingFields.length > 0) {
+        toast.warning(
+          t('installer.runtimeStorage.requiredFieldsMissing', {
+            fields: missingFields.join(', '),
+          }),
+        );
+        return;
+      }
       try {
         setValidatingKind(kind);
         const result = await services.installer.validateRuntimeStorage({
@@ -623,7 +696,7 @@ export function ClusterDeployWizard({
         setValidatingKind(null);
       }
     },
-    [config.checkpoint, config.imap, selectedHostIds, t],
+    [config.checkpoint, config.imap, getRuntimeStorageMissingFields, selectedHostIds, t],
   );
 
   // Toggle host selection / 切换主机选择
@@ -686,10 +759,13 @@ export function ClusterDeployWizard({
       case 'precheck':
         return allPrechecksPassed; // Must pass precheck / 必须通过预检查
       case 'config':
-        // Just need a valid version selected / 只需要选择有效版本
-        // Package will be downloaded automatically if not available locally
-        // 如果本地没有安装包会自动下载
-        return config.version.length > 0;
+        if (config.version.length === 0) {
+          return false;
+        }
+        return (
+          getRuntimeStorageMissingFields('checkpoint').length === 0 &&
+          getRuntimeStorageMissingFields('imap').length === 0
+        );
       case 'plugins':
         return !hasPluginProfileSelectionIssue; // Optional, but selected JDBC profiles must be explicit / 可选，但已选择的 JDBC 必须显式选择场景
       case 'deploy':
@@ -699,7 +775,7 @@ export function ClusterDeployWizard({
       default:
         return false;
     }
-  }, [currentStep.id, config, selectedHosts, deployStatus, allPrechecksPassed]);
+  }, [currentStep.id, config, selectedHosts, deployStatus, allPrechecksPassed, getRuntimeStorageMissingFields]);
 
   // Handle deploy / 处理部署
   const handleDeploy = useCallback(async () => {
@@ -707,6 +783,7 @@ export function ClusterDeployWizard({
     setDeployStatus('running');
     setDeployProgress(0);
     setDeployError(null);
+    setDeployWarnings([]);
     setDeploySteps([]);
 
     // Helper to update step status / 更新步骤状态的辅助函数
@@ -729,6 +806,22 @@ export function ClusterDeployWizard({
           );
         }
         return [...prev, {step, status, message, hostName, progress}];
+      });
+    };
+
+    const mergeWarnings = (hostLabel: string, warnings?: string[]) => {
+      if (!Array.isArray(warnings) || warnings.length === 0) {
+        return;
+      }
+      setDeployWarnings((prev) => {
+        const merged = new Set(prev);
+        warnings.forEach((warning) => {
+          const trimmed = warning.trim();
+          if (trimmed) {
+            merged.add(`${hostLabel}: ${trimmed}`);
+          }
+        });
+        return Array.from(merged);
       });
     };
 
@@ -901,6 +994,7 @@ export function ClusterDeployWizard({
 
         // Helper to update steps from backend response / 从后端响应更新步骤的辅助函数
         const updateStepsFromStatus = () => {
+          mergeWarnings(label, status.warnings);
           if (status.steps && status.steps.length > 0) {
             for (const step of status.steps) {
               const stepKey = `${step.step}_${host.id}_${role}`;
@@ -1025,6 +1119,7 @@ export function ClusterDeployWizard({
     setDeployStatus('idle');
     setDeployProgress(0);
     setDeployError(null);
+    setDeployWarnings([]);
     setCreatedClusterId(null);
     setPrecheckResults([]);
     setPrecheckRunning(false);
@@ -2819,6 +2914,7 @@ export function ClusterDeployWizard({
                           setDeployStatus('idle');
                           setDeployProgress(0);
                           setDeployError(null);
+                          setDeployWarnings([]);
                           setDeploySteps([]);
                           setCurrentStepIndex(4); // plugins step index
                         }}
@@ -2847,6 +2943,29 @@ export function ClusterDeployWizard({
                 </div>
                 <Progress value={deployProgress} className='h-3' />
               </div>
+
+              {deployWarnings.length > 0 && (
+                <div className='mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30'>
+                  <div className='flex items-start gap-3'>
+                    <AlertTriangle className='mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600' />
+                    <div className='space-y-2'>
+                      <p className='text-sm font-medium text-amber-900 dark:text-amber-200'>
+                        {t('cluster.wizard.warning')}
+                      </p>
+                      <div className='space-y-1'>
+                        {deployWarnings.map((warning) => (
+                          <p
+                            key={warning}
+                            className='break-words text-sm text-amber-800 dark:text-amber-300'
+                          >
+                            {warning}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Detailed steps / 详细步骤 */}
               {deploySteps.length > 0 && (
@@ -2930,6 +3049,31 @@ export function ClusterDeployWizard({
               </div>
             </CardContent>
           </Card>
+
+          {deployWarnings.length > 0 && (
+            <Card className='border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30'>
+              <CardContent className='pt-6'>
+                <div className='flex items-start gap-3'>
+                  <AlertTriangle className='mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600' />
+                  <div className='space-y-2'>
+                    <p className='text-sm font-medium text-amber-900 dark:text-amber-200'>
+                      {t('cluster.wizard.warning')}
+                    </p>
+                    <div className='space-y-1'>
+                      {deployWarnings.map((warning) => (
+                        <p
+                          key={warning}
+                          className='break-words text-sm text-amber-800 dark:text-amber-300'
+                        >
+                          {warning}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <div className='flex justify-center gap-4'>
             <Button variant='outline' onClick={handleClose}>

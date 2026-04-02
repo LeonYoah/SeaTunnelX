@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	pb "github.com/seatunnel/seatunnelX/agent"
@@ -68,6 +69,26 @@ const (
 	// PrecheckSubCommandCleanupPath clears the contents under a local path.
 	// PrecheckSubCommandCleanupPath 清理本地路径下的内容。
 	PrecheckSubCommandCleanupPath PrecheckSubCommand = "cleanup_path"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyProbe performs a real runtime read/write probe.
+	// PrecheckSubCommandSeatunnelXJavaProxyProbe 执行真实运行时读写探测。
+	PrecheckSubCommandSeatunnelXJavaProxyProbe PrecheckSubCommand = "seatunnelx_java_proxy_probe"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyStat performs runtime storage stat through seatunnelx-java-proxy.
+	// PrecheckSubCommandSeatunnelXJavaProxyStat 通过 seatunnelx-java-proxy 统计运行时存储占用。
+	PrecheckSubCommandSeatunnelXJavaProxyStat PrecheckSubCommand = "seatunnelx_java_proxy_stat"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyList lists runtime storage entries through seatunnelx-java-proxy.
+	PrecheckSubCommandSeatunnelXJavaProxyList PrecheckSubCommand = "seatunnelx_java_proxy_list"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyPreview previews runtime storage file content through seatunnelx-java-proxy.
+	PrecheckSubCommandSeatunnelXJavaProxyPreview PrecheckSubCommand = "seatunnelx_java_proxy_preview"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyInspectCheckpoint deserializes checkpoint files through seatunnelx-java-proxy.
+	PrecheckSubCommandSeatunnelXJavaProxyInspectCheckpoint PrecheckSubCommand = "seatunnelx_java_proxy_inspect_checkpoint"
+
+	// PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL inspects IMAP WAL files through seatunnelx-java-proxy.
+	PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL PrecheckSubCommand = "seatunnelx_java_proxy_inspect_imap_wal"
 
 	// PrecheckSubCommandFull runs all precheck items
 	// PrecheckSubCommandFull 运行所有预检查项
@@ -118,6 +139,18 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 		result, err = handleStatPath(ctx, cmd.Parameters)
 	case PrecheckSubCommandCleanupPath:
 		result, err = handleCleanupPath(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyProbe:
+		result, err = handleSeatunnelXJavaProxyProbe(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyStat:
+		result, err = handleSeatunnelXJavaProxyStat(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyList:
+		result, err = handleSeatunnelXJavaProxyList(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyPreview:
+		result, err = handleSeatunnelXJavaProxyPreview(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyInspectCheckpoint:
+		result, err = handleSeatunnelXJavaProxyInspectCheckpoint(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL:
+		result, err = handleSeatunnelXJavaProxyInspectIMAPWAL(ctx, cmd.Parameters)
 	case PrecheckSubCommandFull:
 		result, err = handleFullPrecheck(ctx, cmd.Parameters, reporter)
 	default:
@@ -343,6 +376,422 @@ func handleCleanupPath(ctx context.Context, params map[string]string) (*Precheck
 		Message: checkResult.Message,
 		Details: checkResult.Details,
 	}, nil
+}
+
+func handleSeatunnelXJavaProxyProbe(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	kind := params["kind"]
+	installDir := params["install_dir"]
+	version := params["version"]
+	if kind == "" || installDir == "" {
+		return &PrecheckResult{Success: false, Message: "kind and install_dir parameters are required"}, nil
+	}
+
+	switch kind {
+	case "checkpoint":
+		cfg, err := checkpointConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteCheckpointRuntimeStorageProbe(ctx, installDir, version, cfg)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return &PrecheckResult{
+			Success: result.OK && result.Writable && result.Readable,
+			Message: firstNonEmpty(result.Message, "checkpoint runtime probe completed"),
+			Details: map[string]string{
+				"kind":       kind,
+				"ok":         strconv.FormatBool(result.OK),
+				"writable":   strconv.FormatBool(result.Writable),
+				"readable":   strconv.FormatBool(result.Readable),
+				"statusCode": strconv.Itoa(result.StatusCode),
+			},
+		}, nil
+	case "imap":
+		cfg, err := imapConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteIMAPRuntimeStorageProbe(ctx, installDir, version, cfg)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return &PrecheckResult{
+			Success: result.OK && result.Writable && result.Readable,
+			Message: firstNonEmpty(result.Message, "imap runtime probe completed"),
+			Details: map[string]string{
+				"kind":       kind,
+				"ok":         strconv.FormatBool(result.OK),
+				"writable":   strconv.FormatBool(result.Writable),
+				"readable":   strconv.FormatBool(result.Readable),
+				"statusCode": strconv.Itoa(result.StatusCode),
+			},
+		}, nil
+	default:
+		return &PrecheckResult{Success: false, Message: fmt.Sprintf("unsupported kind: %s", kind)}, nil
+	}
+}
+
+func handleSeatunnelXJavaProxyStat(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	kind := params["kind"]
+	installDir := params["install_dir"]
+	version := params["version"]
+	if kind == "" || installDir == "" {
+		return &PrecheckResult{Success: false, Message: "kind and install_dir parameters are required"}, nil
+	}
+
+	switch kind {
+	case "checkpoint":
+		cfg, err := checkpointConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteCheckpointRuntimeStorageStat(ctx, installDir, version, cfg)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStorageStatPrecheckResult(kind, result), nil
+	case "imap":
+		cfg, err := imapConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteIMAPRuntimeStorageStat(ctx, installDir, version, cfg)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStorageStatPrecheckResult(kind, result), nil
+	default:
+		return &PrecheckResult{Success: false, Message: fmt.Sprintf("unsupported kind: %s", kind)}, nil
+	}
+}
+
+func handleSeatunnelXJavaProxyList(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	kind := params["kind"]
+	installDir := params["install_dir"]
+	version := params["version"]
+	if kind == "" || installDir == "" {
+		return &PrecheckResult{Success: false, Message: "kind and install_dir parameters are required"}, nil
+	}
+	path := params["path"]
+	recursive := parseParamBool(params["recursive"])
+	limit := parseParamInt(params["limit"])
+	if limit <= 0 {
+		limit = 200
+	}
+
+	switch kind {
+	case "checkpoint":
+		cfg, err := checkpointConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteCheckpointRuntimeStorageList(ctx, installDir, version, cfg, path, recursive, limit)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStorageListPrecheckResult(kind, result), nil
+	case "imap":
+		cfg, err := imapConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteIMAPRuntimeStorageList(ctx, installDir, version, cfg, path, recursive, limit)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStorageListPrecheckResult(kind, result), nil
+	default:
+		return &PrecheckResult{Success: false, Message: fmt.Sprintf("unsupported kind: %s", kind)}, nil
+	}
+}
+
+func runtimeStorageListPrecheckResult(kind string, result *installer.RuntimeStorageListResult) *PrecheckResult {
+	if result == nil {
+		return &PrecheckResult{Success: false, Message: "runtime storage list returned no result"}
+	}
+	details := map[string]string{
+		"kind":         kind,
+		"ok":           strconv.FormatBool(result.OK),
+		"path":         result.Path,
+		"storage_type": result.StorageType,
+	}
+	if len(result.Items) > 0 {
+		if bytes, err := json.Marshal(result.Items); err == nil {
+			details["items_json"] = string(bytes)
+		}
+	}
+	return &PrecheckResult{
+		Success: result.OK,
+		Message: firstNonEmpty(result.Message, fmt.Sprintf("%s runtime storage list completed", kind)),
+		Details: details,
+	}
+}
+
+func runtimeStorageStatPrecheckResult(kind string, result *installer.RuntimeStorageStatResult) *PrecheckResult {
+	if result == nil {
+		return &PrecheckResult{Success: false, Message: "runtime storage stat returned no result"}
+	}
+	return &PrecheckResult{
+		Success: result.OK,
+		Message: firstNonEmpty(result.Message, fmt.Sprintf("%s runtime storage stat completed", kind)),
+		Details: map[string]string{
+			"kind":             kind,
+			"ok":               strconv.FormatBool(result.OK),
+			"exists":           strconv.FormatBool(result.Exists),
+			"path":             result.Path,
+			"storage_type":     result.StorageType,
+			"total_size_bytes": strconv.FormatInt(result.TotalSizeBytes, 10),
+			"file_count":       strconv.FormatInt(result.FileCount, 10),
+			"statusCode":       strconv.Itoa(result.StatusCode),
+		},
+	}
+}
+
+func handleSeatunnelXJavaProxyPreview(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	kind := params["kind"]
+	installDir := params["install_dir"]
+	version := params["version"]
+	path := params["path"]
+	maxBytes := parseParamInt(params["max_bytes"])
+	if kind == "" || installDir == "" || strings.TrimSpace(path) == "" {
+		return &PrecheckResult{Success: false, Message: "kind, install_dir, and path parameters are required"}, nil
+	}
+	switch kind {
+	case "checkpoint":
+		cfg, err := checkpointConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteCheckpointRuntimeStoragePreview(ctx, installDir, version, cfg, path, maxBytes)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStoragePreviewPrecheckResult(kind, result), nil
+	case "imap":
+		cfg, err := imapConfigFromParams(params)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		result, err := installer.ExecuteIMAPRuntimeStoragePreview(ctx, installDir, version, cfg, path, maxBytes)
+		if err != nil {
+			return &PrecheckResult{Success: false, Message: err.Error()}, nil
+		}
+		return runtimeStoragePreviewPrecheckResult(kind, result), nil
+	default:
+		return &PrecheckResult{Success: false, Message: fmt.Sprintf("unsupported kind: %s", kind)}, nil
+	}
+}
+
+func handleSeatunnelXJavaProxyInspectCheckpoint(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	installDir := params["install_dir"]
+	version := params["version"]
+	path := params["path"]
+	contentBase64 := params["content_base64"]
+	if installDir == "" || strings.TrimSpace(path) == "" {
+		return &PrecheckResult{Success: false, Message: "install_dir and path parameters are required"}, nil
+	}
+	var (
+		result *installer.RuntimeStorageCheckpointInspectResult
+		err    error
+	)
+	if strings.TrimSpace(contentBase64) != "" {
+		result, err = installer.ExecuteCheckpointInspectFromBase64(ctx, installDir, version, path, contentBase64)
+	} else {
+		cfg, cfgErr := checkpointConfigFromParams(params)
+		if cfgErr != nil {
+			return &PrecheckResult{Success: false, Message: cfgErr.Error()}, nil
+		}
+		result, err = installer.ExecuteCheckpointInspect(ctx, installDir, version, cfg, path)
+	}
+	if err != nil {
+		return &PrecheckResult{Success: false, Message: err.Error()}, nil
+	}
+	return runtimeStorageCheckpointInspectPrecheckResult(result), nil
+}
+
+func handleSeatunnelXJavaProxyInspectIMAPWAL(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	installDir := params["install_dir"]
+	version := params["version"]
+	path := params["path"]
+	contentBase64 := params["content_base64"]
+	if installDir == "" || strings.TrimSpace(path) == "" {
+		return &PrecheckResult{Success: false, Message: "install_dir and path parameters are required"}, nil
+	}
+	var (
+		result *installer.RuntimeStorageIMAPInspectResult
+		err    error
+	)
+	if strings.TrimSpace(contentBase64) != "" {
+		result, err = installer.ExecuteIMAPWALInspectFromBase64(ctx, installDir, version, path, contentBase64)
+	} else {
+		cfg, cfgErr := imapConfigFromParams(params)
+		if cfgErr != nil {
+			return &PrecheckResult{Success: false, Message: cfgErr.Error()}, nil
+		}
+		result, err = installer.ExecuteIMAPWALInspect(ctx, installDir, version, cfg, path)
+	}
+	if err != nil {
+		return &PrecheckResult{Success: false, Message: err.Error()}, nil
+	}
+	return runtimeStorageIMAPInspectPrecheckResult(result), nil
+}
+
+func runtimeStoragePreviewPrecheckResult(kind string, result *installer.RuntimeStoragePreviewResult) *PrecheckResult {
+	if result == nil {
+		return &PrecheckResult{Success: false, Message: "runtime storage preview returned no result"}
+	}
+	details := map[string]string{
+		"kind":         kind,
+		"ok":           strconv.FormatBool(result.OK),
+		"path":         result.Path,
+		"file_name":    result.FileName,
+		"storage_type": result.StorageType,
+		"size_bytes":   strconv.FormatInt(result.SizeBytes, 10),
+		"truncated":    strconv.FormatBool(result.Truncated),
+		"binary":       strconv.FormatBool(result.Binary),
+		"encoding":     result.Encoding,
+		"text_preview": result.TextPreview,
+		"hex_preview":  result.HexPreview,
+	}
+	return &PrecheckResult{
+		Success: result.OK,
+		Message: firstNonEmpty(result.Message, fmt.Sprintf("%s runtime storage preview completed", kind)),
+		Details: details,
+	}
+}
+
+func runtimeStorageCheckpointInspectPrecheckResult(result *installer.RuntimeStorageCheckpointInspectResult) *PrecheckResult {
+	if result == nil {
+		return &PrecheckResult{Success: false, Message: "checkpoint inspect returned no result"}
+	}
+	details := map[string]string{
+		"ok":           strconv.FormatBool(result.OK),
+		"path":         result.Path,
+		"file_name":    result.FileName,
+		"storage_type": result.StorageType,
+		"size_bytes":   strconv.FormatInt(result.SizeBytes, 10),
+		"truncated":    strconv.FormatBool(result.Truncated),
+		"binary":       strconv.FormatBool(result.Binary),
+		"encoding":     result.Encoding,
+		"text_preview": result.TextPreview,
+		"hex_preview":  result.HexPreview,
+	}
+	if bytes, err := json.Marshal(result.PipelineState); err == nil {
+		details["pipeline_state_json"] = string(bytes)
+	}
+	if bytes, err := json.Marshal(result.CompletedCheckpoint); err == nil {
+		details["completed_checkpoint_json"] = string(bytes)
+	}
+	if bytes, err := json.Marshal(result.ActionStates); err == nil {
+		details["action_states_json"] = string(bytes)
+	}
+	if bytes, err := json.Marshal(result.TaskStatistics); err == nil {
+		details["task_statistics_json"] = string(bytes)
+	}
+	return &PrecheckResult{
+		Success: result.OK,
+		Message: firstNonEmpty(result.Message, "checkpoint deserialize completed"),
+		Details: details,
+	}
+}
+
+func runtimeStorageIMAPInspectPrecheckResult(result *installer.RuntimeStorageIMAPInspectResult) *PrecheckResult {
+	if result == nil {
+		return &PrecheckResult{Success: false, Message: "imap wal inspect returned no result"}
+	}
+	details := map[string]string{
+		"ok":           strconv.FormatBool(result.OK),
+		"path":         result.Path,
+		"file_name":    result.FileName,
+		"storage_type": result.StorageType,
+		"size_bytes":   strconv.FormatInt(result.SizeBytes, 10),
+		"truncated":    strconv.FormatBool(result.Truncated),
+		"binary":       strconv.FormatBool(result.Binary),
+		"encoding":     result.Encoding,
+		"text_preview": result.TextPreview,
+		"hex_preview":  result.HexPreview,
+		"entry_count":  strconv.Itoa(result.EntryCount),
+	}
+	if bytes, err := json.Marshal(result.Entries); err == nil {
+		details["entries_json"] = string(bytes)
+	}
+	return &PrecheckResult{
+		Success: result.OK,
+		Message: firstNonEmpty(result.Message, "imap wal inspect completed"),
+		Details: details,
+	}
+}
+
+func checkpointConfigFromParams(params map[string]string) (*installer.CheckpointConfig, error) {
+	storageType := installer.CheckpointStorageType(params["storage_type"])
+	cfg := &installer.CheckpointConfig{
+		StorageType:               storageType,
+		Namespace:                 params["namespace"],
+		HDFSNameNodeHost:          params["hdfs_namenode_host"],
+		HDFSNameNodePort:          parseParamInt(params["hdfs_namenode_port"]),
+		KerberosPrincipal:         params["kerberos_principal"],
+		KerberosKeytabFilePath:    params["kerberos_keytab_file_path"],
+		HDFSHAEnabled:             parseParamBool(params["hdfs_ha_enabled"]),
+		HDFSNameServices:          params["hdfs_name_services"],
+		HDFSHANamenodes:           params["hdfs_ha_namenodes"],
+		HDFSNamenodeRPCAddress1:   params["hdfs_namenode_rpc_address_1"],
+		HDFSNamenodeRPCAddress2:   params["hdfs_namenode_rpc_address_2"],
+		HDFSFailoverProxyProvider: params["hdfs_failover_proxy_provider"],
+		StorageEndpoint:           params["storage_endpoint"],
+		StorageAccessKey:          params["storage_access_key"],
+		StorageSecretKey:          params["storage_secret_key"],
+		StorageBucket:             params["storage_bucket"],
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func imapConfigFromParams(params map[string]string) (*installer.IMAPConfig, error) {
+	storageType := installer.IMAPStorageType(params["storage_type"])
+	cfg := &installer.IMAPConfig{
+		StorageType:               storageType,
+		Namespace:                 params["namespace"],
+		HDFSNameNodeHost:          params["hdfs_namenode_host"],
+		HDFSNameNodePort:          parseParamInt(params["hdfs_namenode_port"]),
+		KerberosPrincipal:         params["kerberos_principal"],
+		KerberosKeytabFilePath:    params["kerberos_keytab_file_path"],
+		HDFSHAEnabled:             parseParamBool(params["hdfs_ha_enabled"]),
+		HDFSNameServices:          params["hdfs_name_services"],
+		HDFSHANamenodes:           params["hdfs_ha_namenodes"],
+		HDFSNamenodeRPCAddress1:   params["hdfs_namenode_rpc_address_1"],
+		HDFSNamenodeRPCAddress2:   params["hdfs_namenode_rpc_address_2"],
+		HDFSFailoverProxyProvider: params["hdfs_failover_proxy_provider"],
+		StorageEndpoint:           params["storage_endpoint"],
+		StorageAccessKey:          params["storage_access_key"],
+		StorageSecretKey:          params["storage_secret_key"],
+		StorageBucket:             params["storage_bucket"],
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func parseParamInt(raw string) int {
+	parsed, _ := strconv.Atoi(raw)
+	return parsed
+}
+
+func parseParamBool(raw string) bool {
+	parsed, _ := strconv.ParseBool(raw)
+	return parsed
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // handleFullPrecheck handles the full precheck sub-command

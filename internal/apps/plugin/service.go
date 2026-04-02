@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seatunnel/seatunnelX/internal/config"
 	"github.com/seatunnel/seatunnelX/internal/logger"
 	"github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
@@ -157,7 +158,7 @@ type Service struct {
 func NewService(repo *Repository) *Service {
 	service := &Service{
 		repo:               repo,
-		downloader:         NewDownloader("./lib/plugins"),
+		downloader:         NewDownloader(config.GetPluginsDir()),
 		cachedPlugins:      make(map[string][]Plugin),
 		pluginsCacheTime:   make(map[string]time.Time),
 		installProgress:    make(map[string]*PluginInstallStatus),

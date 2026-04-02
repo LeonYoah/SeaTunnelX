@@ -30,6 +30,8 @@ MINIO_MC_IMAGE="${E2E_INSTALLER_REAL_MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-03-12
 PLAYWRIGHT_PROJECT="${PLAYWRIGHT_PROJECT:-}"
 PLAYWRIGHT_GREP="${PLAYWRIGHT_GREP:-}"
 PLAYWRIGHT_SPEC="${E2E_REAL_PLAYWRIGHT_SPEC:-e2e/install-wizard-real.spec.ts}"
+JAVA_PROXY_VERSION="${E2E_INSTALLER_REAL_VERSION:-2.3.13}"
+PACKAGE_PRELOAD_MIRROR="${E2E_INSTALLER_REAL_PRELOAD_MIRROR:-aliyun}"
 
 if [[ -z "${SKIP_LOCAL_CLEANUP}" ]]; then
   if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
@@ -60,6 +62,63 @@ raise SystemExit("no free port found")
 PY
 }
 
+mirror_url() {
+  local mirror="$1"
+  case "$mirror" in
+    apache)
+      echo "https://archive.apache.org/dist/seatunnel"
+      ;;
+    huaweicloud)
+      echo "https://mirrors.huaweicloud.com/apache/seatunnel"
+      ;;
+    aliyun|*)
+      echo "https://mirrors.aliyun.com/apache/seatunnel"
+      ;;
+  esac
+}
+
+download_package_if_missing() {
+  local version="$1"
+  local mirror="$2"
+  local packages_dir="$3"
+
+  if [[ -z "${version}" ]]; then
+    return 0
+  fi
+
+  local file_name="apache-seatunnel-${version}-bin.tar.gz"
+  local final_path="${packages_dir}/${file_name}"
+  local temp_path="${final_path}.tmp"
+  local base_url
+  base_url="$(mirror_url "${mirror}")"
+  local download_url="${base_url}/${version}/${file_name}"
+
+  if [[ -s "${final_path}" ]]; then
+    echo "[e2e-real] package cache hit: ${file_name}"
+    return 0
+  fi
+
+  echo "[e2e-real] preloading package ${file_name} from ${mirror} ..."
+  mkdir -p "${packages_dir}"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --retry-delay 2 --continue-at - -o "${temp_path}" "${download_url}"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -c -O "${temp_path}" "${download_url}"
+  else
+    echo "curl or wget is required to preload SeaTunnel packages" >&2
+    exit 1
+  fi
+
+  if [[ ! -s "${temp_path}" ]]; then
+    echo "failed to preload package ${file_name}" >&2
+    exit 1
+  fi
+
+  mv "${temp_path}" "${final_path}"
+  echo "[e2e-real] package preloaded: ${final_path}"
+}
+
 cleanup() {
   docker rm -f "${MINIO_NAME}" >/dev/null 2>&1 || true
   if [[ -n "${TMP_DIR}" && "${KEEP_ARTIFACTS}" != "1" && "${SKIP_LOCAL_CLEANUP}" != "1" ]]; then
@@ -74,7 +133,20 @@ pkill -f 'node ./scripts/e2e/real-agent-supervisor.mjs' >/dev/null 2>&1 || true
 mkdir -p "${BASE_TMP_DIR}"
 TMP_DIR="$(mktemp -d "${BASE_TMP_DIR}/installer-real.XXXXXX")"
 mkdir -p "${TMP_DIR}/logs" "${TMP_DIR}/storage" "${TMP_DIR}/install" "${TMP_DIR}/minio"
+mkdir -p "${TMP_DIR}/storage/packages" "${TMP_DIR}/storage/temp"
 docker rm -f "${MINIO_NAME}" >/dev/null 2>&1 || true
+
+JAVA_PROXY_LIB_PATH="${ROOT_DIR}/lib/seatunnelx-java-proxy-${JAVA_PROXY_VERSION}.jar"
+if [[ ! -f "${JAVA_PROXY_LIB_PATH}" ]]; then
+  mvn -q -DskipTests package -f "${ROOT_DIR}/tools/seatunnelx-java-proxy/pom.xml"
+  BUILT_JAVA_PROXY_JAR="$(find "${ROOT_DIR}/tools/seatunnelx-java-proxy/target" -maxdepth 1 -type f -name "seatunnelx-java-proxy-${JAVA_PROXY_VERSION}*.jar" | grep -v '\-bin\.jar$' | sort | head -n 1 || true)"
+  if [[ -z "${BUILT_JAVA_PROXY_JAR}" ]]; then
+    echo "failed to build seatunnelx-java-proxy jar for version ${JAVA_PROXY_VERSION}" >&2
+    exit 1
+  fi
+  mkdir -p "${ROOT_DIR}/lib"
+  cp "${BUILT_JAVA_PROXY_JAR}" "${JAVA_PROXY_LIB_PATH}"
+fi
 
 BACKEND_HTTP_PORT="$(pick_port "${E2E_INSTALLER_REAL_BACKEND_PORT:-18000}")"
 BACKEND_GRPC_PORT="$(pick_port "${E2E_INSTALLER_REAL_GRPC_PORT:-19090}")"
@@ -88,6 +160,23 @@ HTTP_PORT_SECONDARY="$(pick_port "$((HTTP_PORT_PRIMARY + 1))")"
 BACKEND_CONFIG_PATH="${TMP_DIR}/config.e2e.installer-real.yaml"
 AGENT_CONFIG_PATH="${TMP_DIR}/config.e2e.agent-real.yaml"
 TMP_DIR_ESCAPED="$(printf '%s\n' "${TMP_DIR}" | sed 's/[\/&]/\\&/g')"
+
+declare -a PRELOAD_VERSIONS=()
+PRELOAD_VERSIONS+=("${E2E_INSTALLER_REAL_VERSION:-2.3.13}")
+if [[ -n "${E2E_UPGRADE_REAL_SOURCE_VERSION:-}" ]]; then
+  PRELOAD_VERSIONS+=("${E2E_UPGRADE_REAL_SOURCE_VERSION}")
+fi
+if [[ -n "${E2E_UPGRADE_REAL_TARGET_VERSION:-}" ]]; then
+  PRELOAD_VERSIONS+=("${E2E_UPGRADE_REAL_TARGET_VERSION}")
+fi
+
+declare -A PRELOAD_VERSION_SEEN=()
+for version in "${PRELOAD_VERSIONS[@]}"; do
+  if [[ -n "${version}" && -z "${PRELOAD_VERSION_SEEN[${version}]:-}" ]]; then
+    PRELOAD_VERSION_SEEN["${version}"]=1
+    download_package_if_missing "${version}" "${PACKAGE_PRELOAD_MIRROR}" "${TMP_DIR}/storage/packages"
+  fi
+done
 
 sed \
   -e "s/:18000/:${BACKEND_HTTP_PORT}/g" \

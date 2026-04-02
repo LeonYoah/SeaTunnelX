@@ -245,3 +245,24 @@ func TestFillLocalRuntimeStorageStatsDeduplicatesHosts(t *testing.T) {
 		t.Fatalf("expected stat_path to run once per host, got %d commands", len(agentSender.commands))
 	}
 }
+
+func TestRuntimeStorageListItemUnmarshalAcceptsCamelCaseFields(t *testing.T) {
+	raw := []byte(`{
+		"path":"file:/tmp/stx-local-imap/engine_checkpoint-id-map",
+		"name":"engine_checkpoint-id-map",
+		"directory":true,
+		"sizeBytes":9750,
+		"modifiedAt":"2026-03-24T00:30:41+08:00"
+	}`)
+
+	var item RuntimeStorageListItem
+	if err := json.Unmarshal(raw, &item); err != nil {
+		t.Fatalf("failed to unmarshal runtime storage list item: %v", err)
+	}
+	if item.SizeBytes != 9750 {
+		t.Fatalf("expected size 9750, got %d", item.SizeBytes)
+	}
+	if item.ModifiedAt != "2026-03-24T00:30:41+08:00" {
+		t.Fatalf("unexpected modified_at: %s", item.ModifiedAt)
+	}
+}

@@ -940,6 +940,7 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 	var plugins []LocalPlugin
 	metadataByVersion := make(map[string]map[string]*localPluginMetadata)
 	attachedArtifactsByVersion := make(map[string]map[string]struct{})
+	hiddenPluginsByVersion := make(map[string]map[string]struct{})
 
 	// Walk through plugins directory / 遍历插件目录
 	entries, err := os.ReadDir(d.pluginsDir)
@@ -956,6 +957,7 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 		}
 
 		version := entry.Name()
+		hiddenPluginsByVersion[version] = loadHiddenPluginNamesForVersion(version)
 		metadataDir := filepath.Join(d.pluginsDir, version, "metadata")
 		if metadataEntries, metaErr := os.ReadDir(metadataDir); metaErr == nil {
 			metadataByVersion[version] = make(map[string]*localPluginMetadata)
@@ -1029,7 +1031,7 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 		}
 		if metadata == nil {
 			if attached := attachedArtifactsByVersion[plugins[i].Version]; attached != nil {
-				if _, ok := attached[plugins[i].ArtifactID]; ok {
+				if _, ok := attached[plugins[i].ArtifactID]; ok && shouldHideAutoAttachedLocalPlugin(plugins[i], hiddenPluginsByVersion[plugins[i].Version]) {
 					continue
 				}
 			}
@@ -1046,6 +1048,30 @@ func (d *Downloader) ListLocalPlugins() ([]LocalPlugin, error) {
 	}
 
 	return filtered, nil
+}
+
+func loadHiddenPluginNamesForVersion(version string) map[string]struct{} {
+	hidden := make(map[string]struct{})
+	seed, err := loadOfficialDependencySeed(version)
+	if err != nil || seed == nil {
+		return hidden
+	}
+	for _, name := range seed.HiddenPlugins {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		hidden[name] = struct{}{}
+	}
+	return hidden
+}
+
+func shouldHideAutoAttachedLocalPlugin(plugin LocalPlugin, hiddenPlugins map[string]struct{}) bool {
+	if len(hiddenPlugins) == 0 {
+		return false
+	}
+	_, ok := hiddenPlugins[strings.TrimSpace(plugin.Name)]
+	return ok
 }
 
 // parsePluginNameFromFilename extracts the plugin name from a jar filename.

@@ -3668,20 +3668,8 @@ func resolveDiagnosticPrimaryCategory(state *diagnosticBundleExecutionState) str
 	}
 	if state.ErrorGroup != nil {
 		text := strings.ToLower(strings.Join([]string{state.ErrorGroup.Title, state.ErrorGroup.SampleMessage, state.ErrorGroup.ExceptionClass}, " "))
-		switch {
-		case strings.Contains(text, "deadline_exceeded"),
-			strings.Contains(text, "connection"),
-			strings.Contains(text, "timeout"),
-			strings.Contains(text, "refused"),
-			strings.Contains(text, "dns"),
-			strings.Contains(text, "unknownhost"),
-			strings.Contains(text, "network"):
-			return "dependency"
-		case strings.Contains(text, "config"),
-			strings.Contains(text, "catalog initialize failed"),
-			strings.Contains(text, "plugin"),
-			strings.Contains(text, "connector"):
-			return "configuration"
+		if category := classifyDiagnosticTextCategory(text); category != "unknown" {
+			return category
 		}
 	}
 	for _, event := range state.ProcessEvents {
@@ -3719,17 +3707,37 @@ func mapInspectionFindingToDiagnosticCategory(finding *ClusterInspectionFindingI
 		return "unknown"
 	}
 	text := strings.ToLower(strings.Join([]string{finding.CheckCode, finding.CheckName, finding.Summary, finding.Recommendation, finding.EvidenceSummary}, " "))
+	return classifyDiagnosticTextCategory(text)
+}
+
+func classifyDiagnosticTextCategory(text string) string {
 	switch {
-	case strings.Contains(text, "error"),
+	case strings.Contains(text, "deadline_exceeded"),
 		strings.Contains(text, "dependency"),
 		strings.Contains(text, "timeout"),
 		strings.Contains(text, "connection"),
+		strings.Contains(text, "connect timed out"),
 		strings.Contains(text, "network"):
+		return "dependency"
+	case strings.Contains(text, "dns"),
+		strings.Contains(text, "unknownhost"),
+		strings.Contains(text, "no such host"),
+		strings.Contains(text, "name or service not known"),
+		strings.Contains(text, "connection refused"),
+		strings.Contains(text, "refused"),
+		strings.Contains(text, "unreachable"),
+		strings.Contains(text, "reset by peer"),
+		strings.Contains(text, "broken pipe"):
 		return "dependency"
 	case strings.Contains(text, "config"),
 		strings.Contains(text, "catalog"),
 		strings.Contains(text, "connector"),
-		strings.Contains(text, "plugin"):
+		strings.Contains(text, "plugin"),
+		strings.Contains(text, "classnotfound"),
+		strings.Contains(text, "no suitable driver"),
+		strings.Contains(text, "invalid argument"),
+		strings.Contains(text, "parse config"),
+		strings.Contains(text, "yaml"):
 		return "configuration"
 	case strings.Contains(text, "cpu"),
 		strings.Contains(text, "heap"),
