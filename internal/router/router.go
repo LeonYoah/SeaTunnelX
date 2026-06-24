@@ -528,8 +528,8 @@ func Serve() {
 				// GET /api/v1/seatunnelx/install.sh - Get control-plane one-click install script
 				releaseBundleRouter.GET("/install.sh", releaseBundleHandler.GetInstallScript)
 
-				// GET /api/v1/seatunnelx/download - 下载最新的 CentOS 7 兼容离线包
-				// GET /api/v1/seatunnelx/download - Download the latest CentOS 7 compatible offline bundle
+				// GET /api/v1/seatunnelx/download - 下载最新的 SeaTunnelX 离线包
+				// GET /api/v1/seatunnelx/download - Download the latest SeaTunnelX offline bundle
 				releaseBundleRouter.GET("/download", releaseBundleHandler.DownloadBundle)
 			}
 

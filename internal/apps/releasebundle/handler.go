@@ -38,9 +38,9 @@ import (
 )
 
 const (
-	// DefaultBundlePattern selects the CentOS 7 compatible SeaTunnelX release bundle.
-	// DefaultBundlePattern 选择适用于 CentOS 7 的 SeaTunnelX 发布包。
-	DefaultBundlePattern = "seatunnelx-*-linux-amd64-node18-glibc217-without-observability.tar.gz"
+	// DefaultBundlePattern selects the latest generated SeaTunnelX release bundle.
+	// DefaultBundlePattern 选择最新生成的 SeaTunnelX 发布包。
+	DefaultBundlePattern = "seatunnelx-*.tar.gz"
 	// DefaultReleaseDir is the default directory containing built release tarballs.
 	// DefaultReleaseDir 是默认的发布包输出目录。
 	DefaultReleaseDir = "./dist/releases"

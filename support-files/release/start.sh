@@ -111,6 +111,9 @@ start_observability() {
 
   if [[ -x "$BASE_DIR/deps/start-observability.sh" ]]; then
     echo "starting bundled observability stack..."
+    if [[ -x "$BASE_DIR/deps/init-observability-defaults.sh" ]]; then
+      "$BASE_DIR/deps/init-observability-defaults.sh"
+    fi
     (cd "$BASE_DIR" && "$BASE_DIR/deps/start-observability.sh")
   else
     echo "bundled observability stack not found, skipping"

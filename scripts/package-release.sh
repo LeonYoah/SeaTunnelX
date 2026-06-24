@@ -394,27 +394,27 @@ prepare_observability_stack() {
   tar -xzf "$prom_path" -C "$tmp"
   local prom_dir
   prom_dir="$(find "$tmp" -maxdepth 1 -type d -name "prometheus-*" | head -n1)"
-  rm -rf "$deps_dir/prometheus"
-  mkdir -p "$deps_dir/prometheus"
-  cp -a "$prom_dir"/. "$deps_dir/prometheus/"
+  rm -rf "$deps_dir"/prometheus-*
+  cp -a "$prom_dir" "$deps_dir/"
   rm -rf "$tmp"/*
 
   tar -xzf "$alert_path" -C "$tmp"
   local alert_dir
   alert_dir="$(find "$tmp" -maxdepth 1 -type d -name "alertmanager-*" | head -n1)"
-  rm -rf "$deps_dir/alertmanager"
-  mkdir -p "$deps_dir/alertmanager"
-  cp -a "$alert_dir"/. "$deps_dir/alertmanager/"
+  rm -rf "$deps_dir"/alertmanager-*
+  cp -a "$alert_dir" "$deps_dir/"
   rm -rf "$tmp"/*
 
   tar -xzf "$grafana_path" -C "$tmp"
   local grafana_dir
   grafana_dir="$(find "$tmp" -maxdepth 1 -type d -name "grafana-*" | head -n1)"
-  rm -rf "$deps_dir/grafana"
-  mkdir -p "$deps_dir/grafana"
-  cp -a "$grafana_dir"/. "$deps_dir/grafana/"
+  rm -rf "$deps_dir"/grafana-*
+  cp -a "$grafana_dir" "$deps_dir/"
   rm -rf "$tmp"
 
+  cp -a "$ROOT_DIR/deps/alertmanager_config" "$deps_dir/"
+  cp -a "$ROOT_DIR/deps/prometheus_config" "$deps_dir/"
+  cp -a "$ROOT_DIR/deps/grafana_config" "$deps_dir/"
   cp "$ROOT_DIR/deps/init-observability-defaults.sh" "$deps_dir/"
   cp "$ROOT_DIR/deps/start-observability.sh" "$deps_dir/"
   cp "$ROOT_DIR/deps/stop-observability.sh" "$deps_dir/"
