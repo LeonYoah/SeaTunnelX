@@ -25,13 +25,161 @@ FRONTEND_NODE_BIN="${FRONTEND_NODE_BIN:-$BASE_DIR/runtime/node/bin/node}"
 FRONTEND_SERVER="$BASE_DIR/frontend/server.js"
 CONFIG_PATH="${CONFIG_PATH:-$BASE_DIR/config.yaml}"
 
+BACKEND_HOST_WAS_SET="${BACKEND_HOST+x}"
+BACKEND_PORT_WAS_SET="${BACKEND_PORT+x}"
+BACKEND_ADDR_WAS_SET="${BACKEND_ADDR+x}"
+GRPC_PORT_WAS_SET="${GRPC_PORT+x}"
+PROMETHEUS_PORT_WAS_SET="${PROMETHEUS_PORT+x}"
+PROMETHEUS_URL_WAS_SET="${PROMETHEUS_URL+x}"
+ALERTMANAGER_PORT_WAS_SET="${ALERTMANAGER_PORT+x}"
+ALERTMANAGER_URL_WAS_SET="${ALERTMANAGER_URL+x}"
+GRAFANA_PORT_WAS_SET="${GRAFANA_PORT+x}"
+GRAFANA_URL_WAS_SET="${GRAFANA_URL+x}"
+CONTROL_PLANE_BASE_URL_WAS_SET="${CONTROL_PLANE_BASE_URL+x}"
+APP_EXTERNAL_URL_WAS_SET="${APP_EXTERNAL_URL+x}"
+
 FRONTEND_ENABLE="${FRONTEND_ENABLE:-true}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
-NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-http://127.0.0.1:8000}"
+BACKEND_HOST="${BACKEND_HOST:-}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_ADDR="${BACKEND_ADDR:-${BACKEND_HOST}:${BACKEND_PORT}}"
+GRPC_PORT="${GRPC_PORT:-9000}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
+CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
+APP_EXTERNAL_URL="${APP_EXTERNAL_URL:-$CONTROL_PLANE_BASE_URL}"
+PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
+ALERTMANAGER_URL="${ALERTMANAGER_URL:-http://127.0.0.1:${ALERTMANAGER_PORT}}"
+GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:${GRAFANA_PORT}}"
+NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-$CONTROL_PLANE_BASE_URL}"
 START_OBSERVABILITY="${START_OBSERVABILITY:-auto}"
 
+export BACKEND_PORT GRPC_PORT PROMETHEUS_PORT ALERTMANAGER_PORT GRAFANA_PORT
+export CONTROL_PLANE_BASE_URL APP_EXTERNAL_URL PROMETHEUS_URL ALERTMANAGER_URL GRAFANA_URL
+export SEATUNNELX_JAVA_PROXY_PORT="$JAVA_PROXY_PORT"
+
 mkdir -p "$RUN_DIR" "$LOG_DIR"
+
+validate_port() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < 1 || value > 65535 )); then
+    echo "invalid $name: $value"
+    exit 1
+  fi
+}
+
+validate_port "FRONTEND_PORT" "$FRONTEND_PORT"
+validate_port "BACKEND_PORT" "$BACKEND_PORT"
+validate_port "GRPC_PORT" "$GRPC_PORT"
+validate_port "PROMETHEUS_PORT" "$PROMETHEUS_PORT"
+validate_port "ALERTMANAGER_PORT" "$ALERTMANAGER_PORT"
+validate_port "GRAFANA_PORT" "$GRAFANA_PORT"
+validate_port "JAVA_PROXY_PORT" "$JAVA_PROXY_PORT"
+
+yaml_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+set_top_yaml_scalar() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  local value="$4"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v section="$section" -v key="$key" -v value="$value" '
+    /^[^[:space:]#][^:]*:/ {
+      top=$0
+      sub(":.*", "", top)
+      in_section=(top == section)
+    }
+    in_section && $0 ~ "^[[:space:]]+" key ":[[:space:]]*" {
+      indent=$0
+      sub("[^ ].*", "", indent)
+      print indent key ": " value
+      changed=1
+      next
+    }
+    { print }
+    END { if (!changed) exit 2 }
+  ' "$file" >"$tmp" && mv "$tmp" "$file" || {
+    local code=$?
+    rm -f "$tmp"
+    if [[ "$code" -ne 2 ]]; then
+      echo "failed to update $section.$key in $file"
+      exit 1
+    fi
+  }
+}
+
+set_nested_yaml_scalar() {
+  local file="$1"
+  local section="$2"
+  local subsection="$3"
+  local key="$4"
+  local value="$5"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v section="$section" -v subsection="$subsection" -v key="$key" -v value="$value" '
+    /^[^[:space:]#][^:]*:/ {
+      top=$0
+      sub(":.*", "", top)
+      in_section=(top == section)
+      in_subsection=0
+    }
+    in_section && $0 ~ "^[[:space:]][[:space:]]" subsection ":[[:space:]]*$" {
+      in_subsection=1
+    }
+    in_section && in_subsection && $0 ~ "^[[:space:]][[:space:]][[:space:]][[:space:]]" key ":[[:space:]]*" {
+      indent=$0
+      sub("[^ ].*", "", indent)
+      print indent key ": " value
+      changed=1
+      next
+    }
+    { print }
+    END { if (!changed) exit 2 }
+  ' "$file" >"$tmp" && mv "$tmp" "$file" || {
+    local code=$?
+    rm -f "$tmp"
+    if [[ "$code" -ne 2 ]]; then
+      echo "failed to update $section.$subsection.$key in $file"
+      exit 1
+    fi
+  }
+}
+
+apply_config_overrides() {
+  if [[ ! -f "$CONFIG_PATH" ]]; then
+    return
+  fi
+
+  if [[ -n "$BACKEND_PORT_WAS_SET" || -n "$BACKEND_HOST_WAS_SET" || -n "$BACKEND_ADDR_WAS_SET" ]]; then
+    set_top_yaml_scalar "$CONFIG_PATH" "app" "addr" "$(yaml_quote "$BACKEND_ADDR")"
+  fi
+  if [[ -n "$BACKEND_PORT_WAS_SET" || -n "$CONTROL_PLANE_BASE_URL_WAS_SET" || -n "$APP_EXTERNAL_URL_WAS_SET" ]]; then
+    set_top_yaml_scalar "$CONFIG_PATH" "app" "external_url" "$(yaml_quote "$APP_EXTERNAL_URL")"
+  fi
+  if [[ -n "$GRPC_PORT_WAS_SET" ]]; then
+    set_top_yaml_scalar "$CONFIG_PATH" "grpc" "port" "$GRPC_PORT"
+  fi
+  if [[ -n "$PROMETHEUS_PORT_WAS_SET" || -n "$PROMETHEUS_URL_WAS_SET" ]]; then
+    set_nested_yaml_scalar "$CONFIG_PATH" "observability" "prometheus" "url" "$(yaml_quote "$PROMETHEUS_URL")"
+  fi
+  if [[ -n "$ALERTMANAGER_PORT_WAS_SET" || -n "$ALERTMANAGER_URL_WAS_SET" ]]; then
+    set_nested_yaml_scalar "$CONFIG_PATH" "observability" "alertmanager" "url" "$(yaml_quote "$ALERTMANAGER_URL")"
+  fi
+  if [[ -n "$GRAFANA_PORT_WAS_SET" || -n "$GRAFANA_URL_WAS_SET" ]]; then
+    set_nested_yaml_scalar "$CONFIG_PATH" "observability" "grafana" "url" "$(yaml_quote "$GRAFANA_URL")"
+  fi
+}
 
 start_backend() {
   local pidfile="$RUN_DIR/backend.pid"
@@ -120,6 +268,7 @@ start_observability() {
   fi
 }
 
+apply_config_overrides
 start_backend
 start_frontend
 start_observability
@@ -127,8 +276,11 @@ start_observability
 echo
 echo "done."
 echo "  config  : $CONFIG_PATH"
-echo "  backend : follow app.addr in config.yaml"
+echo "  backend : follow app.addr in config.yaml (env BACKEND_PORT=$BACKEND_PORT)"
+echo "  grpc    : follow grpc.port in config.yaml (env GRPC_PORT=$GRPC_PORT)"
 if [[ "$FRONTEND_ENABLE" == "true" || "$FRONTEND_ENABLE" == "1" ]]; then
   echo "  frontend: http://$FRONTEND_HOST:$FRONTEND_PORT"
 fi
-echo "  tips    : set FRONTEND_PORT / FRONTEND_HOST to override frontend binding"
+echo "  observability: prometheus=$PROMETHEUS_PORT alertmanager=$ALERTMANAGER_PORT grafana=$GRAFANA_PORT"
+echo "  java-proxy   : $JAVA_PROXY_PORT"
+echo "  tips    : set FRONTEND_PORT / BACKEND_PORT / GRPC_PORT / GRAFANA_PORT / PROMETHEUS_PORT / ALERTMANAGER_PORT / JAVA_PROXY_PORT to override ports"

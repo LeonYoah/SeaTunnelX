@@ -45,7 +45,7 @@ Options:
   --node-major <18|22>               Bundle Node runtime major version for Next standalone (18 is recommended for CentOS 7)
   --node-variant <official|glibc217> Node binary source variant (default: official)
   --build-frontend                   Build frontend standalone before packaging
-  --version <string>                 Package version label (default: git describe --tags --always --dirty)
+  --version <string>                 Package version label (default: yyyy-mm-dd-hh_mm_ss timestamp)
   --output-dir <path>                Output directory for tar.gz files (default: dist/releases)
   --cache-dir <path>                 Download/build cache dir (default: .cache/release)
   --help                             Show this help
@@ -156,7 +156,7 @@ case "$BUNDLE_OBSERVABILITY" in
 esac
 
 if [[ -z "$APP_VERSION" ]]; then
-  APP_VERSION="$(git -C "$ROOT_DIR" describe --tags --always --dirty 2>/dev/null || date +%Y%m%d%H%M%S)"
+  APP_VERSION="$(date +%Y-%m-%d-%H_%M_%S)"
 fi
 APP_VERSION_SAFE="$(echo "$APP_VERSION" | tr '/ ' '__')"
 

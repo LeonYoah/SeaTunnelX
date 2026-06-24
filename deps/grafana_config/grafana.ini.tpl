@@ -6,7 +6,7 @@ provisioning = __GRAFANA_PROVISIONING__
 
 [server]
 http_addr = 0.0.0.0
-http_port = 3000
+http_port = __GRAFANA_PORT__
 domain = __GRAFANA_DOMAIN__
 root_url = __GRAFANA_ROOT_URL__
 serve_from_sub_path = true
@@ -31,4 +31,3 @@ max_connections = 0
 
 [plugins]
 preinstall =
-

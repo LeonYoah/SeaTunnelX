@@ -2,6 +2,23 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+
+validate_port() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < 1 || value > 65535 )); then
+    echo "Invalid $name: $value" >&2
+    exit 1
+  fi
+}
+
+validate_port "PROMETHEUS_PORT" "$PROMETHEUS_PORT"
+validate_port "ALERTMANAGER_PORT" "$ALERTMANAGER_PORT"
+validate_port "GRAFANA_PORT" "$GRAFANA_PORT"
+
 PROM_DIR="$(ls -d "$BASE_DIR"/prometheus-* 2>/dev/null | head -1)"
 ALERT_DIR="$(ls -d "$BASE_DIR"/alertmanager-* 2>/dev/null | head -1)"
 GRAFANA_DIR="$(ls -d "$BASE_DIR"/grafana-* 2>/dev/null | head -1)"
@@ -48,10 +65,10 @@ for pidfile in \
   fi
 done
 
-setsid sh -c "exec $ALERT_DIR/alertmanager --config.file=$ALERT_DIR/alertmanager.yml --storage.path=$ALERT_DIR/data --web.listen-address=:9093 >> $ALERT_DIR/logs/alertmanager.log 2>&1" < /dev/null &
+setsid sh -c "exec $ALERT_DIR/alertmanager --config.file=$ALERT_DIR/alertmanager.yml --storage.path=$ALERT_DIR/data --web.listen-address=:$ALERTMANAGER_PORT >> $ALERT_DIR/logs/alertmanager.log 2>&1" < /dev/null &
 echo $! > "$ALERT_DIR/alertmanager.pid"
 
-setsid sh -c "exec $PROM_DIR/prometheus --config.file=$PROM_DIR/prometheus.yml --storage.tsdb.path=$PROM_DIR/data --web.listen-address=:9090 --web.enable-lifecycle >> $PROM_DIR/logs/prometheus.log 2>&1" < /dev/null &
+setsid sh -c "exec $PROM_DIR/prometheus --config.file=$PROM_DIR/prometheus.yml --storage.tsdb.path=$PROM_DIR/data --web.listen-address=:$PROMETHEUS_PORT --web.enable-lifecycle >> $PROM_DIR/logs/prometheus.log 2>&1" < /dev/null &
 echo $! > "$PROM_DIR/prometheus.pid"
 
 setsid sh -c "exec $GRAFANA_DIR/bin/grafana server --homepath=$GRAFANA_DIR --config=$GRAFANA_DIR/conf/grafana.ini >> $GRAFANA_DIR/logs/grafana.log 2>&1" < /dev/null &
@@ -72,7 +89,7 @@ done
 
 echo
 echo "Endpoints:"
-echo "  - Grafana     : http://127.0.0.1:3000 (admin/admin by default)"
+echo "  - Grafana     : http://127.0.0.1:$GRAFANA_PORT (admin/admin by default)"
 echo "  - GrafanaProxy: /api/v1/monitoring/proxy/grafana/ (recommended for UI embed)"
-echo "  - Prometheus  : http://127.0.0.1:9090"
-echo "  - Alertmanager: http://127.0.0.1:9093"
+echo "  - Prometheus  : http://127.0.0.1:$PROMETHEUS_PORT"
+echo "  - Alertmanager: http://127.0.0.1:$ALERTMANAGER_PORT"

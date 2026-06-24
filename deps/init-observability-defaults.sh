@@ -15,11 +15,32 @@ if [[ -z "$PROM_DIR" || -z "$ALERT_DIR" || -z "$GRAFANA_DIR" ]]; then
   exit 1
 fi
 
-# Prometheus URL 仅用于 Grafana datasource
-PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
+# 端口与地址需要和控制面启动脚本保持一致，避免 Grafana/Prometheus 指向旧端口。
+# Ports and URLs must stay aligned with the control-plane startup script.
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL:-${APP_EXTERNAL_URL:-http://127.0.0.1:${BACKEND_PORT}}}"
+CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL%/}"
+PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
+
+validate_port() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || (( value < 1 || value > 65535 )); then
+    echo "Invalid $name: $value" >&2
+    exit 1
+  fi
+}
+
+validate_port "BACKEND_PORT" "$BACKEND_PORT"
+validate_port "PROMETHEUS_PORT" "$PROMETHEUS_PORT"
+validate_port "ALERTMANAGER_PORT" "$ALERTMANAGER_PORT"
+validate_port "GRAFANA_PORT" "$GRAFANA_PORT"
 
 # Grafana 相关
-GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:3000}"
+GRAFANA_URL="${GRAFANA_URL:-http://127.0.0.1:${GRAFANA_PORT}}"
 GRAFANA_URL="${GRAFANA_URL%/}"
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}"
 GRAFANA_PROXY_SUBPATH="${GRAFANA_PROXY_SUBPATH:-/api/v1/monitoring/proxy/grafana}"
@@ -56,8 +77,12 @@ cp "$BASE_DIR/alertmanager_config/alertmanager.yml" \
   "$ALERT_DIR/alertmanager.yml"
 
 # ---------- Prometheus ----------
-cp "$BASE_DIR/prometheus_config/prometheus.yml" \
-  "$PROM_DIR/prometheus.yml"
+sed \
+  -e "s#__PROMETHEUS_PORT__#$PROMETHEUS_PORT#g" \
+  -e "s#__ALERTMANAGER_PORT__#$ALERTMANAGER_PORT#g" \
+  -e "s#__CONTROL_PLANE_BASE_URL__#$CONTROL_PLANE_BASE_URL#g" \
+  "$BASE_DIR/prometheus_config/prometheus.yml" \
+  > "$PROM_DIR/prometheus.yml"
 
 if compgen -G "$BASE_DIR/prometheus_config/rules/*.yml" > /dev/null; then
   cp "$BASE_DIR/prometheus_config/rules/"*.yml \
@@ -75,6 +100,7 @@ sed \
   -e "s#__GRAFANA_LOGS__#$GRAFANA_LOGS_PATH#g" \
   -e "s#__GRAFANA_PLUGINS__#$GRAFANA_PLUGINS_PATH#g" \
   -e "s#__GRAFANA_PROVISIONING__#$GRAFANA_PROVISIONING_PATH#g" \
+  -e "s#__GRAFANA_PORT__#$GRAFANA_PORT#g" \
   -e "s#__GRAFANA_DOMAIN__#$GRAFANA_DOMAIN#g" \
   -e "s#__GRAFANA_ROOT_URL__#$GRAFANA_ROOT_URL#g" \
   -e "s#__GRAFANA_ADMIN_USER__#$GRAFANA_ADMIN_USER#g" \

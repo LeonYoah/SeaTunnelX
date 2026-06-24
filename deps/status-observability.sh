@@ -2,6 +2,9 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
 PROM_DIR="$(ls -d "$BASE_DIR"/prometheus-* 2>/dev/null | head -1)"
 ALERT_DIR="$(ls -d "$BASE_DIR"/alertmanager-* 2>/dev/null | head -1)"
 GRAFANA_DIR="$(ls -d "$BASE_DIR"/grafana-* 2>/dev/null | head -1)"
@@ -31,4 +34,4 @@ done
 
 echo
 echo "Ports:"
-ss -lntp 2>/dev/null | grep -E ':9090|:9093|:3000' || true
+ss -lntp 2>/dev/null | grep -E ":${PROMETHEUS_PORT}\\b|:${ALERTMANAGER_PORT}\\b|:${GRAFANA_PORT}\\b" || true

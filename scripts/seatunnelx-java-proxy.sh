@@ -41,7 +41,7 @@ fi
 APP_JAR=${SEATUNNEL_HOME:-}/starter/seatunnel-starter.jar
 DEFAULT_PROXY_VERSION="${CAPABILITY_PROXY_DEFAULT_VERSION:-2.3.13}"
 APP_MAIN="org.apache.seatunnel.tools.proxy.SeatunnelXJavaProxyApplication"
-DEFAULT_PROXY_PORT="18080"
+DEFAULT_PROXY_PORT="${JAVA_PROXY_PORT:-18080}"
 
 fail_preflight() {
   echo "seatunnelx-java-proxy preflight failed: $1" >&2
@@ -133,7 +133,7 @@ JAVA_OPTS="${JAVA_OPTS} -Dseatunnelx.java.proxy.seatunnel.home=${SEATUNNEL_HOME}
 CLASS_PATH=${SEATUNNEL_HOME}/lib/*:${APP_JAR}:${PROXY_JAR}
 
 resolve_proxy_port() {
-  local port="${SEATUNNELX_JAVA_PROXY_PORT:-}"
+  local port="${SEATUNNELX_JAVA_PROXY_PORT:-${JAVA_PROXY_PORT:-}}"
   local arg
   for arg in "$@"; do
     case "$arg" in

@@ -19,6 +19,12 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_DIR="$BASE_DIR/run"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+GRPC_PORT="${GRPC_PORT:-9000}"
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
 
 status_one() {
   local name="$1"
@@ -41,7 +47,7 @@ status_one "frontend" "$RUN_DIR/frontend.pid"
 
 echo
 echo "ports:"
-ss -lntp | grep -E ":8000|:${FRONTEND_PORT}\\b|:9090|:9093|:3000" || true
+ss -lntp | grep -E ":${BACKEND_PORT}\\b|:${GRPC_PORT}\\b|:${FRONTEND_PORT}\\b|:${PROMETHEUS_PORT}\\b|:${ALERTMANAGER_PORT}\\b|:${GRAFANA_PORT}\\b|:${JAVA_PROXY_PORT}\\b" || true
 
 if [[ -x "$BASE_DIR/deps/status-observability.sh" ]]; then
   echo

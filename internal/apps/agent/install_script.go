@@ -374,6 +374,7 @@ SUPPORT_SCRIPT_DIR="${SUPPORT_DIR}/scripts"
 CAPABILITY_PROXY_VERSION="{{.SeatunnelXJavaProxyVersion}}"
 CAPABILITY_PROXY_JAR="${SUPPORT_LIB_DIR}/{{.SeatunnelXJavaProxyJarFileName}}"
 CAPABILITY_PROXY_SCRIPT="${SUPPORT_SCRIPT_DIR}/{{.SeatunnelXJavaProxyScriptFileName}}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
 
 # ==================== Colors 颜色 ====================
 RED='\033[0;31m'
@@ -816,6 +817,7 @@ fi
 # 导出运行时存储探测所需的辅助资产路径
 export SEATUNNELX_JAVA_PROXY_HOME="CAPABILITY_PROXY_HOME_PLACEHOLDER"
 export SEATUNNELX_JAVA_PROXY_SCRIPT="CAPABILITY_PROXY_SCRIPT_PLACEHOLDER"
+export SEATUNNELX_JAVA_PROXY_PORT="JAVA_PROXY_PORT_PLACEHOLDER"
 
 # Log environment info for debugging
 # 记录环境信息用于调试
@@ -837,6 +839,7 @@ WRAPPER_EOF
     sed -i "s|AGENT_BINARY_PLACEHOLDER|${AGENT_BINARY}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     sed -i "s|CAPABILITY_PROXY_HOME_PLACEHOLDER|${SUPPORT_DIR}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     sed -i "s|CAPABILITY_PROXY_SCRIPT_PLACEHOLDER|${CAPABILITY_PROXY_SCRIPT}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
+    sed -i "s|JAVA_PROXY_PORT_PLACEHOLDER|${JAVA_PROXY_PORT}|g" "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     chmod +x "${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
     
     log_info "Startup wrapper script created at ${INSTALL_DIR}/${AGENT_BINARY}-start.sh"
