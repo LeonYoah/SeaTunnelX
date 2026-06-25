@@ -21,12 +21,21 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/seatunnel/seatunnelX/internal/config"
 )
+
+type seatunnelxJavaProxyCommandRecord struct {
+	agentID     string
+	commandType string
+	params      map[string]string
+}
 
 type seatunnelxJavaProxyAgentSender struct {
 	lastAgentID        string
 	lastCommand        string
 	lastParams         map[string]string
+	commands           []seatunnelxJavaProxyCommandRecord
 	response           string
 	responses          []string
 	responsesByCommand map[string]string
@@ -42,6 +51,11 @@ func (m *seatunnelxJavaProxyAgentSender) SendCommand(ctx context.Context, agentI
 	for k, v := range params {
 		m.lastParams[k] = v
 	}
+	m.commands = append(m.commands, seatunnelxJavaProxyCommandRecord{
+		agentID:     agentID,
+		commandType: commandType,
+		params:      m.lastParams,
+	})
 	if len(m.responsesByCommand) > 0 {
 		response, ok := m.responsesByCommand[commandType]
 		if !ok {
@@ -119,6 +133,12 @@ func TestGetSeatunnelXJavaProxyStatusUsesOnlineMasterNode(t *testing.T) {
 	}
 	if agentSender.lastParams["service"] != "seatunnelx_java_proxy" {
 		t.Fatalf("expected service param seatunnelx_java_proxy, got %#v", agentSender.lastParams)
+	}
+	if status.Endpoint != "http://10.0.0.1:18080" || status.DirectEndpoint != "http://10.0.0.1:18080" {
+		t.Fatalf("expected Control Plane direct endpoint to use node host IP, got %#v", status)
+	}
+	if status.LocalEndpoint != "http://127.0.0.1:18080" {
+		t.Fatalf("expected Agent local endpoint to preserve reported localhost endpoint, got %#v", status)
 	}
 }
 
@@ -227,5 +247,93 @@ func TestGetSeatunnelXJavaProxyServiceLogUsesReportedLogPath(t *testing.T) {
 	}
 	if agentSender.lastParams["log_file"] != result.LogPath {
 		t.Fatalf("expected get_logs to target reported log path, got %#v", agentSender.lastParams)
+	}
+}
+
+func TestInstallOrRepairSeatunnelXJavaProxyTargetsSelectedNode(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	oldExternalURL := config.Config.App.ExternalURL
+	config.Config.App.ExternalURL = "http://control-plane.example"
+	defer func() {
+		config.Config.App.ExternalURL = oldExternalURL
+	}()
+
+	repo := NewRepository(db)
+	hostProvider := NewMockHostProvider()
+	service := NewService(repo, hostProvider, nil)
+	lastHeartbeat := time.Now()
+	hostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "master-1",
+		IPAddress:     "10.0.0.1",
+		AgentID:       "agent-master-1",
+		AgentStatus:   "installed",
+		LastHeartbeat: &lastHeartbeat,
+	})
+	hostProvider.AddHost(&HostInfo{
+		ID:            2,
+		Name:          "worker-1",
+		IPAddress:     "10.0.0.2",
+		AgentID:       "agent-worker-1",
+		AgentStatus:   "installed",
+		LastHeartbeat: &lastHeartbeat,
+	})
+
+	agentSender := &seatunnelxJavaProxyAgentSender{
+		success: true,
+		responsesByCommand: map[string]string{
+			"seatunnelx_java_proxy_install": `{"message":"installed"}`,
+			"status":                        `{"service":"seatunnelx_java_proxy","managed":true,"running":true,"healthy":true,"endpoint":"http://127.0.0.1:18080","port":18080,"pid":4567,"message":"ok"}`,
+		},
+	}
+	service.SetAgentCommandSender(agentSender)
+
+	clusterInfo, err := service.Create(context.Background(), &CreateClusterRequest{
+		Name:           "cluster-a",
+		Version:        "2.3.13",
+		InstallDir:     "/opt/seatunnel",
+		DeploymentMode: DeploymentModeSeparated,
+	})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	if _, err := service.AddNode(context.Background(), clusterInfo.ID, &AddNodeRequest{
+		HostID:     1,
+		Role:       NodeRoleMaster,
+		InstallDir: "/opt/seatunnel",
+	}); err != nil {
+		t.Fatalf("add master node: %v", err)
+	}
+	worker, err := service.AddNode(context.Background(), clusterInfo.ID, &AddNodeRequest{
+		HostID:     2,
+		Role:       NodeRoleWorker,
+		InstallDir: "/opt/seatunnel",
+	})
+	if err != nil {
+		t.Fatalf("add worker node: %v", err)
+	}
+
+	agentSender.commands = nil
+	status, err := service.InstallOrRepairSeatunnelXJavaProxy(context.Background(), clusterInfo.ID, worker.ID)
+	if err != nil {
+		t.Fatalf("InstallOrRepairSeatunnelXJavaProxy returned error: %v", err)
+	}
+	if len(agentSender.commands) < 2 {
+		t.Fatalf("expected install and status commands, got %#v", agentSender.commands)
+	}
+	installCommand := agentSender.commands[0]
+	if installCommand.agentID != "agent-worker-1" || installCommand.commandType != "seatunnelx_java_proxy_install" {
+		t.Fatalf("expected install command to selected worker agent, got %#v", installCommand)
+	}
+	if installCommand.params["node_id"] != "2" {
+		t.Fatalf("expected selected node id in install command, got %#v", installCommand.params)
+	}
+	if installCommand.params["jar_url"] == "" || installCommand.params["script_url"] == "" {
+		t.Fatalf("expected support asset URLs in install command, got %#v", installCommand.params)
+	}
+	if status.Endpoint != "http://10.0.0.2:18080" || status.NodeID != worker.ID {
+		t.Fatalf("expected refreshed direct status for selected worker, got %#v", status)
 	}
 }

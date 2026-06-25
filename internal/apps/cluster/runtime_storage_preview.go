@@ -108,7 +108,7 @@ func (s *Service) PreviewRuntimeStorage(
 	if err != nil {
 		return nil, err
 	}
-	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID)
+	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (s *Service) InspectCheckpointRuntimeStorage(
 	if err != nil {
 		return nil, err
 	}
-	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID)
+	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (s *Service) InspectIMAPRuntimeStorage(
 	if err != nil {
 		return nil, err
 	}
-	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID)
+	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID, 0)
 	if err != nil {
 		return nil, err
 	}

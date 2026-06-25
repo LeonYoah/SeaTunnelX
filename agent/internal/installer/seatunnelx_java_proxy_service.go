@@ -21,6 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -36,6 +38,106 @@ import (
 )
 
 const seatunnelxJavaProxyStopTimeout = 8 * time.Second
+
+// InstallOrRepairSeatunnelXJavaProxySupportAssets downloads the managed java-proxy support assets.
+// InstallOrRepairSeatunnelXJavaProxySupportAssets 下载并修复托管 java-proxy 辅助资产。
+func InstallOrRepairSeatunnelXJavaProxySupportAssets(
+	ctx context.Context,
+	supportDir string,
+	version string,
+	jarURL string,
+	scriptURL string,
+) (map[string]string, error) {
+	resolvedSupportDir := strings.TrimSpace(supportDir)
+	if resolvedSupportDir == "" {
+		resolvedSupportDir = strings.TrimSpace(os.Getenv(seatunnelxJavaProxyHomeEnvVar))
+	}
+	if resolvedSupportDir == "" {
+		resolvedSupportDir = seatunnelxJavaProxyDefaultSupportDir
+	}
+	resolvedVersion := seatunnelmeta.ResolveSeatunnelXJavaProxyVersion(version)
+	if strings.TrimSpace(jarURL) == "" {
+		return nil, fmt.Errorf("seatunnelx-java-proxy jar_url is required")
+	}
+	if strings.TrimSpace(scriptURL) == "" {
+		return nil, fmt.Errorf("seatunnelx-java-proxy script_url is required")
+	}
+
+	libDir := filepath.Join(resolvedSupportDir, "lib")
+	scriptDir := filepath.Join(resolvedSupportDir, "scripts")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create java-proxy lib dir: %w", err)
+	}
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create java-proxy script dir: %w", err)
+	}
+
+	jarPath := filepath.Join(libDir, seatunnelmeta.SeatunnelXJavaProxyJarFileName(resolvedVersion))
+	scriptPath := filepath.Join(scriptDir, seatunnelmeta.SeatunnelXJavaProxyScriptFileName)
+	if err := downloadSeatunnelXJavaProxyAsset(ctx, jarURL, jarPath, 0o644); err != nil {
+		return nil, fmt.Errorf("install java-proxy jar: %w", err)
+	}
+	if err := downloadSeatunnelXJavaProxyAsset(ctx, scriptURL, scriptPath, 0o755); err != nil {
+		return nil, fmt.Errorf("install java-proxy script: %w", err)
+	}
+
+	return map[string]string{
+		"support_dir": resolvedSupportDir,
+		"version":     resolvedVersion,
+		"jar_path":    jarPath,
+		"script_path": scriptPath,
+	}, nil
+}
+
+func downloadSeatunnelXJavaProxyAsset(ctx context.Context, rawURL string, targetPath string, mode os.FileMode) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse asset url: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("unsupported asset url scheme: %s", parsed.Scheme)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("download returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(targetPath), ".seatunnelx-java-proxy-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	written, copyErr := io.Copy(tmpFile, resp.Body)
+	closeErr := tmpFile.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if written <= 0 {
+		return fmt.Errorf("downloaded asset is empty")
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		return err
+	}
+	return nil
+}
 
 // SeatunnelXJavaProxyServiceStatus describes the current managed seatunnelx-java-proxy state.
 type SeatunnelXJavaProxyServiceStatus struct {

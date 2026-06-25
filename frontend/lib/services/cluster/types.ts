@@ -430,10 +430,16 @@ export interface SeatunnelXJavaProxyStatus {
   running: boolean;
   healthy: boolean;
   endpoint?: string;
+  local_endpoint?: string;
+  direct_endpoint?: string;
   port?: number;
   pid?: number;
   log_path?: string;
   message?: string;
+}
+
+export interface SeatunnelXJavaProxyOperationRequest {
+  node_id?: number;
 }
 
 export interface SeatunnelXJavaProxyLogPreviewResult {

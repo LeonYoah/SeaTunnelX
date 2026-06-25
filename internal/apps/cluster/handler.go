@@ -258,6 +258,11 @@ type SeatunnelXJavaProxyResponse struct {
 	Data     *SeatunnelXJavaProxyStatus `json:"data"`
 }
 
+// SeatunnelXJavaProxyOperationRequest represents an optional java-proxy operation target node.
+type SeatunnelXJavaProxyOperationRequest struct {
+	NodeID uint `json:"node_id"`
+}
+
 type SeatunnelXJavaProxyLogPreviewResponse struct {
 	ErrorMsg string                               `json:"error_msg"`
 	Data     *SeatunnelXJavaProxyLogPreviewResult `json:"data"`
@@ -307,7 +312,12 @@ func (h *Handler) GetSeatunnelXJavaProxyStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: "invalid cluster id"})
 		return
 	}
-	status, err := h.service.GetSeatunnelXJavaProxyStatus(c.Request.Context(), uint(clusterID))
+	nodeID, err := parseSeatunnelXJavaProxyNodeIDQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	status, err := h.service.GetSeatunnelXJavaProxyStatus(c.Request.Context(), uint(clusterID), nodeID)
 	if err != nil {
 		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyResponse{ErrorMsg: err.Error(), Data: status})
 		return
@@ -315,24 +325,31 @@ func (h *Handler) GetSeatunnelXJavaProxyStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, SeatunnelXJavaProxyResponse{Data: status})
 }
 
+// InstallOrRepairSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/install.
+func (h *Handler) InstallOrRepairSeatunnelXJavaProxy(c *gin.Context) {
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint, nodeID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.InstallOrRepairSeatunnelXJavaProxy(ctx, clusterID, nodeID)
+	})
+}
+
 // StartSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/start.
 func (h *Handler) StartSeatunnelXJavaProxy(c *gin.Context) {
-	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
-		return h.service.StartSeatunnelXJavaProxy(ctx, clusterID)
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint, nodeID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.StartSeatunnelXJavaProxy(ctx, clusterID, nodeID)
 	})
 }
 
 // StopSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/stop.
 func (h *Handler) StopSeatunnelXJavaProxy(c *gin.Context) {
-	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
-		return h.service.StopSeatunnelXJavaProxy(ctx, clusterID)
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint, nodeID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.StopSeatunnelXJavaProxy(ctx, clusterID, nodeID)
 	})
 }
 
 // RestartSeatunnelXJavaProxy handles POST /api/v1/clusters/:id/seatunnelx-java-proxy/restart.
 func (h *Handler) RestartSeatunnelXJavaProxy(c *gin.Context) {
-	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint) (*SeatunnelXJavaProxyStatus, error) {
-		return h.service.RestartSeatunnelXJavaProxy(ctx, clusterID)
+	h.handleSeatunnelXJavaProxyOperation(c, func(ctx context.Context, clusterID uint, nodeID uint) (*SeatunnelXJavaProxyStatus, error) {
+		return h.service.RestartSeatunnelXJavaProxy(ctx, clusterID, nodeID)
 	})
 }
 
@@ -352,7 +369,12 @@ func (h *Handler) PreviewSeatunnelXJavaProxyServiceLog(c *gin.Context) {
 		}
 		lines = parsed
 	}
-	result, err := h.service.GetSeatunnelXJavaProxyServiceLog(c.Request.Context(), uint(clusterID), lines)
+	nodeID, err := parseSeatunnelXJavaProxyNodeIDQuery(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyLogPreviewResponse{ErrorMsg: err.Error()})
+		return
+	}
+	result, err := h.service.GetSeatunnelXJavaProxyServiceLog(c.Request.Context(), uint(clusterID), lines, nodeID)
 	if err != nil {
 		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyLogPreviewResponse{ErrorMsg: err.Error(), Data: result})
 		return
@@ -360,18 +382,56 @@ func (h *Handler) PreviewSeatunnelXJavaProxyServiceLog(c *gin.Context) {
 	c.JSON(http.StatusOK, SeatunnelXJavaProxyLogPreviewResponse{Data: result})
 }
 
-func (h *Handler) handleSeatunnelXJavaProxyOperation(c *gin.Context, fn func(context.Context, uint) (*SeatunnelXJavaProxyStatus, error)) {
+func (h *Handler) handleSeatunnelXJavaProxyOperation(c *gin.Context, fn func(context.Context, uint, uint) (*SeatunnelXJavaProxyStatus, error)) {
 	clusterID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: "invalid cluster id"})
 		return
 	}
-	status, err := fn(c.Request.Context(), uint(clusterID))
+	nodeID, err := parseSeatunnelXJavaProxyOperationNodeID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, SeatunnelXJavaProxyResponse{ErrorMsg: err.Error()})
+		return
+	}
+	status, err := fn(c.Request.Context(), uint(clusterID), nodeID)
 	if err != nil {
 		c.JSON(h.getStatusCodeForError(err), SeatunnelXJavaProxyResponse{ErrorMsg: err.Error(), Data: status})
 		return
 	}
 	c.JSON(http.StatusOK, SeatunnelXJavaProxyResponse{Data: status})
+}
+
+func parseSeatunnelXJavaProxyNodeIDQuery(c *gin.Context) (uint, error) {
+	raw := strings.TrimSpace(c.Query("node_id"))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, errors.New("invalid node_id")
+	}
+	return uint(value), nil
+}
+
+func parseSeatunnelXJavaProxyOperationNodeID(c *gin.Context) (uint, error) {
+	nodeID, err := parseSeatunnelXJavaProxyNodeIDQuery(c)
+	if err != nil {
+		return 0, err
+	}
+	if c.Request == nil || c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return nodeID, nil
+	}
+	var req SeatunnelXJavaProxyOperationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nodeID, nil
+		}
+		return 0, err
+	}
+	if req.NodeID > 0 {
+		nodeID = req.NodeID
+	}
+	return nodeID, nil
 }
 
 // ListClusters handles GET /api/v1/clusters - lists clusters with filtering and pagination.

@@ -93,6 +93,10 @@ const (
 	// PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL inspects IMAP WAL files through seatunnelx-java-proxy.
 	PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL PrecheckSubCommand = "seatunnelx_java_proxy_inspect_imap_wal"
 
+	// PrecheckSubCommandSeatunnelXJavaProxyInstall installs or repairs managed java-proxy assets.
+	// PrecheckSubCommandSeatunnelXJavaProxyInstall 安装或修复托管 java-proxy 辅助资产。
+	PrecheckSubCommandSeatunnelXJavaProxyInstall PrecheckSubCommand = "seatunnelx_java_proxy_install"
+
 	// PrecheckSubCommandSyncLocalRun executes one local sync job through seatunnel.sh.
 	PrecheckSubCommandSyncLocalRun PrecheckSubCommand = "sync_local_run"
 
@@ -171,6 +175,8 @@ func HandlePrecheckCommand(ctx context.Context, cmd *pb.CommandRequest, reporter
 		result, err = handleSeatunnelXJavaProxyInspectCheckpointSourceState(ctx, cmd.Parameters)
 	case PrecheckSubCommandSeatunnelXJavaProxyInspectIMAPWAL:
 		result, err = handleSeatunnelXJavaProxyInspectIMAPWAL(ctx, cmd.Parameters)
+	case PrecheckSubCommandSeatunnelXJavaProxyInstall:
+		result, err = handleSeatunnelXJavaProxyInstall(ctx, cmd.Parameters)
 	case PrecheckSubCommandSyncLocalRun:
 		result, err = handleSyncLocalRun(ctx, cmd.Parameters)
 	case PrecheckSubCommandSyncLocalStatus:
@@ -705,6 +711,24 @@ func handleSeatunnelXJavaProxyInspectIMAPWAL(ctx context.Context, params map[str
 		return &PrecheckResult{Success: false, Message: err.Error()}, nil
 	}
 	return runtimeStorageIMAPInspectPrecheckResult(result), nil
+}
+
+func handleSeatunnelXJavaProxyInstall(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	details, err := installer.InstallOrRepairSeatunnelXJavaProxySupportAssets(
+		ctx,
+		params["support_dir"],
+		params["version"],
+		params["jar_url"],
+		params["script_url"],
+	)
+	if err != nil {
+		return &PrecheckResult{Success: false, Message: err.Error()}, nil
+	}
+	return &PrecheckResult{
+		Success: true,
+		Message: "seatunnelx-java-proxy support assets installed or repaired",
+		Details: details,
+	}, nil
 }
 
 func runtimeStoragePreviewPrecheckResult(kind string, result *installer.RuntimeStoragePreviewResult) *PrecheckResult {

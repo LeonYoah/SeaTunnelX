@@ -113,7 +113,7 @@ func (s *Service) ListRuntimeStorage(
 	if err != nil {
 		return nil, err
 	}
-	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID)
+	node, hostInfo, err := s.pickSeatunnelXJavaProxyNode(ctx, clusterID, 0)
 	if err != nil {
 		return nil, err
 	}

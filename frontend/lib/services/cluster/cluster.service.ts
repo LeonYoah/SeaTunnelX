@@ -71,6 +71,7 @@ import {
   SeatunnelXJavaProxyLogPreviewResult,
   SeatunnelXJavaProxyResponse,
   SeatunnelXJavaProxyStatus,
+  SeatunnelXJavaProxyOperationRequest,
 } from './types';
 
 /**
@@ -581,9 +582,28 @@ export class ClusterService extends BaseService {
 
   static async getSeatunnelXJavaProxyStatus(
     clusterId: number,
+    params?: SeatunnelXJavaProxyOperationRequest,
   ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.get<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/status`,
+      {params},
+    );
+    if (response.data.error_msg) {
+      throw new Error(localizeBackendText(response.data.error_msg));
+    }
+    return {
+      ...response.data.data,
+      message: localizeBackendText(response.data.data.message),
+    };
+  }
+
+  static async installOrRepairSeatunnelXJavaProxy(
+    clusterId: number,
+    data?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<SeatunnelXJavaProxyStatus> {
+    const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
+      `${this.basePath}/${clusterId}/seatunnelx-java-proxy/install`,
+      data || {},
     );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
@@ -596,10 +616,11 @@ export class ClusterService extends BaseService {
 
   static async startSeatunnelXJavaProxy(
     clusterId: number,
+    data?: SeatunnelXJavaProxyOperationRequest,
   ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/start`,
-      {},
+      data || {},
     );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
@@ -612,10 +633,11 @@ export class ClusterService extends BaseService {
 
   static async stopSeatunnelXJavaProxy(
     clusterId: number,
+    data?: SeatunnelXJavaProxyOperationRequest,
   ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/stop`,
-      {},
+      data || {},
     );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
@@ -628,10 +650,11 @@ export class ClusterService extends BaseService {
 
   static async restartSeatunnelXJavaProxy(
     clusterId: number,
+    data?: SeatunnelXJavaProxyOperationRequest,
   ): Promise<SeatunnelXJavaProxyStatus> {
     const response = await apiClient.post<SeatunnelXJavaProxyResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/restart`,
-      {},
+      data || {},
     );
     if (response.data.error_msg) {
       throw new Error(localizeBackendText(response.data.error_msg));
@@ -644,7 +667,7 @@ export class ClusterService extends BaseService {
 
   static async previewSeatunnelXJavaProxyServiceLog(
     clusterId: number,
-    params?: {lines?: number},
+    params?: {lines?: number; node_id?: number},
   ): Promise<SeatunnelXJavaProxyLogPreviewResult> {
     const response = await apiClient.get<SeatunnelXJavaProxyLogPreviewResponse>(
       `${this.basePath}/${clusterId}/seatunnelx-java-proxy/logs`,
@@ -1107,13 +1130,16 @@ export class ClusterService extends BaseService {
     }
   }
 
-  static async getSeatunnelXJavaProxyStatusSafe(clusterId: number): Promise<{
+  static async getSeatunnelXJavaProxyStatusSafe(
+    clusterId: number,
+    params?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<{
     success: boolean;
     data?: SeatunnelXJavaProxyStatus;
     error?: string;
   }> {
     try {
-      const data = await this.getSeatunnelXJavaProxyStatus(clusterId);
+      const data = await this.getSeatunnelXJavaProxyStatus(clusterId, params);
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -1124,13 +1150,39 @@ export class ClusterService extends BaseService {
     }
   }
 
-  static async startSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+  static async installOrRepairSeatunnelXJavaProxySafe(
+    clusterId: number,
+    request?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<{
     success: boolean;
     data?: SeatunnelXJavaProxyStatus;
     error?: string;
   }> {
     try {
-      const data = await this.startSeatunnelXJavaProxy(clusterId);
+      const data = await this.installOrRepairSeatunnelXJavaProxy(
+        clusterId,
+        request,
+      );
+      return {success: true, data};
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : '安装/修复 seatunnelx-java-proxy 失败';
+      return {success: false, error: errorMessage};
+    }
+  }
+
+  static async startSeatunnelXJavaProxySafe(
+    clusterId: number,
+    request?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<{
+    success: boolean;
+    data?: SeatunnelXJavaProxyStatus;
+    error?: string;
+  }> {
+    try {
+      const data = await this.startSeatunnelXJavaProxy(clusterId, request);
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -1141,13 +1193,16 @@ export class ClusterService extends BaseService {
     }
   }
 
-  static async stopSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+  static async stopSeatunnelXJavaProxySafe(
+    clusterId: number,
+    request?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<{
     success: boolean;
     data?: SeatunnelXJavaProxyStatus;
     error?: string;
   }> {
     try {
-      const data = await this.stopSeatunnelXJavaProxy(clusterId);
+      const data = await this.stopSeatunnelXJavaProxy(clusterId, request);
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -1158,13 +1213,16 @@ export class ClusterService extends BaseService {
     }
   }
 
-  static async restartSeatunnelXJavaProxySafe(clusterId: number): Promise<{
+  static async restartSeatunnelXJavaProxySafe(
+    clusterId: number,
+    request?: SeatunnelXJavaProxyOperationRequest,
+  ): Promise<{
     success: boolean;
     data?: SeatunnelXJavaProxyStatus;
     error?: string;
   }> {
     try {
-      const data = await this.restartSeatunnelXJavaProxy(clusterId);
+      const data = await this.restartSeatunnelXJavaProxy(clusterId, request);
       return {success: true, data};
     } catch (error) {
       const errorMessage =
@@ -1177,7 +1235,7 @@ export class ClusterService extends BaseService {
 
   static async previewSeatunnelXJavaProxyServiceLogSafe(
     clusterId: number,
-    params?: {lines?: number},
+    params?: {lines?: number; node_id?: number},
   ): Promise<{
     success: boolean;
     data?: SeatunnelXJavaProxyLogPreviewResult;
