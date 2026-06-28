@@ -19,6 +19,7 @@
 # - 前端默认使用 Next.js standalone 产物 + PM2 启动（seatunnelx-ui）
 # - 支持统一的目标（前端/后端）与动作（构建/重启）
 # - 后端构建后默认同步并重启已安装的本机 seatunnelx-agent
+# - seatunnelx-java-proxy jar/脚本同步到本机 Agent 目录后默认顺手重启本机 java-proxy
 # - 启动前会检测并清理同名 PM2 进程，最后执行 pm2 save
 
 set -euo pipefail
@@ -46,7 +47,9 @@ SeaTunnelX 构建/重启脚本
   --no-local-agent-restart
                    后端构建后不同步/不重启本机 seatunnelx-agent（默认仅在本机已安装时同步并重启）
   --restart-java-proxy
-                   构建/重启后，重启本机 seatunnelx-java-proxy
+                   即使本次未同步 java-proxy 资产，也强制重启本机 seatunnelx-java-proxy
+  --no-java-proxy-restart
+                   构建并同步 java-proxy 后不自动重启本机 seatunnelx-java-proxy
   --stop-frontend  仅停止前端 PM2 进程并退出
   -h, --help       显示本帮助
 
@@ -69,6 +72,7 @@ SeaTunnelX 构建/重启脚本
   LOCAL_AGENT_BINARY             本机 Agent 二进制名，默认 seatunnelx-agent
   LOCAL_AGENT_SERVICE            本机 Agent systemd 服务名，默认 seatunnelx-agent
   LOCAL_AGENT_RESTART            本机已安装 Agent 时是否默认同步/重启，默认 true
+  LOCAL_JAVA_PROXY_RESTART       java-proxy 资产同步后是否自动重启，默认 true
   LOCAL_SEATUNNEL_HOME           本机 SeaTunnel 安装目录，默认 /opt/seatunnel-2.3.13-new
   LOCAL_JAVA_PROXY_PORT          本机 seatunnelx-java-proxy 端口，默认读取 config.yaml 的 java_proxy.default_port
   CONTROL_PLANE_BASE_URL         控制面地址，默认 http://127.0.0.1:8000
@@ -95,6 +99,14 @@ case "${LOCAL_AGENT_RESTART:-true}" in
     exit 1
     ;;
 esac
+case "${LOCAL_JAVA_PROXY_RESTART:-true}" in
+  true|TRUE|1|yes|YES|y|Y) AUTO_RESTART_JAVA_PROXY=true ;;
+  false|FALSE|0|no|NO|n|N) AUTO_RESTART_JAVA_PROXY=false ;;
+  *)
+    echo "LOCAL_JAVA_PROXY_RESTART 取值无效: ${LOCAL_JAVA_PROXY_RESTART}（支持 true/false）"
+    exit 1
+    ;;
+esac
 while [[ $# -gt 0 ]]; do
   arg="$1"
   case "$arg" in
@@ -113,6 +125,7 @@ while [[ $# -gt 0 ]]; do
     --stop-frontend) STOP_FRONTEND=true ;;
     --no-local-agent-restart) RESTART_LOCAL_AGENT=false ;;
     --restart-java-proxy) RESTART_JAVA_PROXY=true ;;
+    --no-java-proxy-restart) AUTO_RESTART_JAVA_PROXY=false ;;
     *)
       echo "未知参数: $arg"
       echo
@@ -421,13 +434,13 @@ restart_local_java_proxy() {
     echo "[*] 停止本机 seatunnelx-java-proxy (pid=$old_pid, port=$port) ..."
     kill -TERM "$old_pid" 2>/dev/null || true
     for _ in {1..20}; do
-      if kill -0 "$old_pid" 2>/dev/null || ss -lntp 2>/dev/null | rg -q ":$port"; then
+      if kill -0 "$old_pid" 2>/dev/null || ss -lntp 2>/dev/null | grep -q ":$port"; then
         sleep 1
       else
         break
       fi
     done
-    if kill -0 "$old_pid" 2>/dev/null || ss -lntp 2>/dev/null | rg -q ":$port"; then
+    if kill -0 "$old_pid" 2>/dev/null || ss -lntp 2>/dev/null | grep -q ":$port"; then
       kill -KILL "$old_pid" 2>/dev/null || true
       sleep 1
     fi
@@ -437,9 +450,11 @@ restart_local_java_proxy() {
   local pid
   pid="$(
     SEATUNNEL_HOME="$install_dir" \
+    SEATUNNELX_JAVA_PROXY_HOME="$AGENT_HOME" \
     SEATUNNEL_PROXY_JAR="$jar_path" \
+    SEATUNNELX_JAVA_PROXY_PORT="$port" \
     SEATUNNELX_JAVA_PROXY_VERSION="$CAPABILITY_PROXY_DEFAULT_VERSION" \
-    nohup bash "$script_path" -Dseatunnelx.java.proxy.port="$port" >>"$log_path" 2>&1 < /dev/null & echo $!
+    nohup setsid bash "$script_path" -Dseatunnelx.java.proxy.port="$port" >>"$log_path" 2>&1 < /dev/null & echo $!
   )"
   echo "$pid" >"$pid_path"
   echo "$port" >"$port_path"
@@ -659,7 +674,7 @@ start_frontend_dev() {
 }
 
 require_cmd pm2
-if $RESTART_JAVA_PROXY; then
+if $RESTART_JAVA_PROXY || ($DO_BUILD && $RUN_BACKEND && $AUTO_RESTART_JAVA_PROXY); then
   require_cmd curl
 fi
 if $RUN_BACKEND && $DO_BUILD; then
@@ -711,6 +726,7 @@ fi
 
 step=0
 FRONTEND_PREPARED=false
+JAVA_PROXY_ASSETS_SYNCED=false
 
 if $DO_BUILD && $RUN_BACKEND; then
   step=$((step + 1)); echo "[$step/$total] 构建 seatunnelx ..."
@@ -743,11 +759,13 @@ if $DO_BUILD && $RUN_BACKEND; then
       if [[ -d "$AGENT_PROXY_LIB_DIR" ]]; then
         cp -f "$proxy_jar" "$AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar"
         echo "      已同步 seatunnelx-java-proxy jar 到 $AGENT_PROXY_LIB_DIR/seatunnelx-java-proxy-${CAPABILITY_PROXY_DEFAULT_VERSION}.jar."
+        JAVA_PROXY_ASSETS_SYNCED=true
       fi
       if [[ -d "$AGENT_HOME/scripts" && -f "$PROJECT_ROOT/scripts/seatunnelx-java-proxy.sh" ]]; then
         cp -f "$PROJECT_ROOT/scripts/seatunnelx-java-proxy.sh" "$AGENT_HOME/scripts/seatunnelx-java-proxy.sh"
         chmod +x "$AGENT_HOME/scripts/seatunnelx-java-proxy.sh"
         echo "      已同步 seatunnelx-java-proxy 启动脚本到 $AGENT_HOME/scripts/seatunnelx-java-proxy.sh."
+        JAVA_PROXY_ASSETS_SYNCED=true
       fi
     else
       echo "      未找到 seatunnelx-java-proxy 薄 jar，跳过同步."
@@ -818,7 +836,7 @@ else
   echo "[*] 构建完成（未执行重启）."
 fi
 
-if $RESTART_JAVA_PROXY; then
+if $RESTART_JAVA_PROXY || ($JAVA_PROXY_ASSETS_SYNCED && $AUTO_RESTART_JAVA_PROXY); then
   restart_local_java_proxy
 fi
 
