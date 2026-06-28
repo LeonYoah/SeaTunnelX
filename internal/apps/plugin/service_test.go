@@ -442,6 +442,49 @@ func TestInstallPluginToClusterRecordsAttachedConnectorDependencies(t *testing.T
 	}
 }
 
+func TestRecordInstalledPluginRecordsAttachedConnectorDependencies(t *testing.T) {
+	service, repo := newTestPluginService(t)
+	ctx := context.Background()
+	version := "2.3.13"
+
+	service.SetPluginFetcher(func(ctx context.Context, version string, mirror MirrorSource) ([]Plugin, MirrorSource, error) {
+		return []Plugin{{
+			Name:        "cdc-mysql",
+			DisplayName: "Cdc Mysql",
+			Category:    PluginCategoryConnector,
+			Version:     version,
+			GroupID:     "org.apache.seatunnel",
+			ArtifactID:  "connector-cdc-mysql",
+		}}, MirrorSourceApache, nil
+	})
+
+	if err := service.RecordInstalledPlugin(ctx, 1, "cdc-mysql", version); err != nil {
+		t.Fatalf("RecordInstalledPlugin returned error: %v", err)
+	}
+
+	plugins, err := repo.ListByCluster(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListByCluster returned error: %v", err)
+	}
+	byName := make(map[string]InstalledPlugin, len(plugins))
+	for _, item := range plugins {
+		byName[item.PluginName] = item
+	}
+	if _, ok := byName["cdc-mysql"]; !ok {
+		t.Fatalf("expected primary plugin record, got %+v", plugins)
+	}
+	jdbc, ok := byName["jdbc"]
+	if !ok {
+		t.Fatalf("expected attached jdbc connector record, got %+v", plugins)
+	}
+	if jdbc.ArtifactID != "connector-jdbc" || jdbc.Version != version || jdbc.InstallPath != "connectors/connector-jdbc-2.3.13.jar" {
+		t.Fatalf("unexpected jdbc record: %+v", jdbc)
+	}
+	if _, ok := byName["mysql-connector-java"]; ok {
+		t.Fatalf("expected non-connector dependency to stay out of installed plugins, got %+v", plugins)
+	}
+}
+
 func TestListAvailablePluginsFetchesRemoteAndPersistsCatalog(t *testing.T) {
 	service, repo := newTestPluginService(t)
 	ctx := context.Background()

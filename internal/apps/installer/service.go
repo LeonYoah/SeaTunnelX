@@ -116,6 +116,12 @@ type PluginTransferer interface {
 	RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error
 }
 
+type pluginInstallRecorderWithProfiles interface {
+	// RecordInstalledPluginWithProfiles records installed plugin metadata using the selected dependency profiles.
+	// RecordInstalledPluginWithProfiles 使用选中的依赖画像记录已安装插件元数据。
+	RecordInstalledPluginWithProfiles(ctx context.Context, clusterID uint, pluginName, version string, profileKeys []string) error
+}
+
 // HostProvider is the interface for getting host information
 // HostProvider 是获取主机信息的接口
 type HostProvider interface {
@@ -2384,9 +2390,16 @@ func (s *Service) startClusterAfterInstall(ctx context.Context, agentID string, 
 	// 检查是否已为此集群记录插件，避免重复
 	if s.pluginTransferer != nil && req.Connector != nil && len(req.Connector.SelectedPlugins) > 0 {
 		for _, pluginName := range req.Connector.SelectedPlugins {
+			selectedProfileKeys := normalizeProfileKeys(req.Connector.SelectedPluginProfiles[pluginName])
 			// RecordInstalledPlugin should handle duplicates internally (upsert or skip)
 			// RecordInstalledPlugin 应该在内部处理重复（更新或跳过）
-			if err := s.pluginTransferer.RecordInstalledPlugin(ctx, clusterID, pluginName, req.Version); err != nil {
+			var err error
+			if recorder, ok := s.pluginTransferer.(pluginInstallRecorderWithProfiles); ok {
+				err = recorder.RecordInstalledPluginWithProfiles(ctx, clusterID, pluginName, req.Version, selectedProfileKeys)
+			} else {
+				err = s.pluginTransferer.RecordInstalledPlugin(ctx, clusterID, pluginName, req.Version)
+			}
+			if err != nil {
 				// Only log warning, don't fail the installation
 				// 只记录警告，不要让安装失败
 				logger.DebugF(ctx, "[Installer] 记录插件时出现问题（可能已存在）/ Issue recording plugin (may already exist): cluster=%d, plugin=%s, error=%v",

@@ -64,6 +64,14 @@
 - **扫描通用 Factory 后再按目标类型过滤。** 这样可兼容官方 connector 包结构，同时避免把 source/sink/catalog 混到错误类型列表。
 - **回归测试必须覆盖通用 Factory SPI 与 `lib` classpath。** 如果修改 `PluginRuntimeService` 或 classloader 扫描逻辑，至少保留一个“connector jar 只有通用 Factory SPI”的测试，并保留一个“`seatunnel-transforms-v2.jar` 通过运行时 classpath 暴露 transform SPI”的测试，防止工作台插件面板返回 `plugins: []`。
 
+### 插件安装与伴生 Connector 记录约定
+
+- **`target_dir=connectors` 的依赖是伴生 connector。** 例如选择 `cdc-mysql` 时，官方依赖会自动带上 `connector-jdbc`；该 jar 不只是普通驱动依赖，也应在集群“已安装插件”中体现为 `jdbc`。
+- **单独安装插件与一键安装必须保持同一语义。** `InstallPluginToCluster` 和一键安装完成后的 `RecordInstalledPlugin` 都要记录选中插件以及伴生 connector，不能只记录用户显式勾选的插件。
+- **依赖画像要贯穿下载、传输、记录三步。** 如果安装时选择了 profile keys，记录已安装插件时也应使用相同 profile keys 解析伴生 connector，避免 UI 展示与实际安装文件不一致。
+- **只把 connector 依赖写入已安装插件表。** JDBC 驱动、数据库驱动等安装到 `plugins/<artifact>` 或 `lib` 的普通依赖不应作为独立插件记录。
+- **回归测试必须覆盖 CDC → JDBC 场景。** 修改插件安装、依赖解析或一键安装记录逻辑时，至少保留 `cdc-mysql` 自动记录 `jdbc`、且不记录 `mysql-connector-java` 的测试。
+
 ### 部署会话 Cookie 约定
 
 - **私有化部署默认应将 `app.session_domain` 留空。** 这样浏览器会按当前访问 host 绑定 `seatunnel_session_id`，最适合 IP、内网域名和自定义域名混用场景。

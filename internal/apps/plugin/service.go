@@ -1768,6 +1768,16 @@ func buildPluginPreparationFingerprint(deps []PluginDependency) (string, error) 
 // This implements the installer.PluginTransferer interface.
 // 这实现了 installer.PluginTransferer 接口。
 func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, pluginName, version string) error {
+	return s.recordInstalledPluginWithProfiles(ctx, clusterID, pluginName, version, nil)
+}
+
+// RecordInstalledPluginWithProfiles records a selected plugin and companion connector dependencies.
+// RecordInstalledPluginWithProfiles 记录选中插件及其伴生 connector 依赖。
+func (s *Service) RecordInstalledPluginWithProfiles(ctx context.Context, clusterID uint, pluginName, version string, profileKeys []string) error {
+	return s.recordInstalledPluginWithProfiles(ctx, clusterID, pluginName, version, normalizeProfileKeys(profileKeys))
+}
+
+func (s *Service) recordInstalledPluginWithProfiles(ctx context.Context, clusterID uint, pluginName, version string, profileKeys []string) error {
 	// Resolve category and artifact_id (for display and DB not-null) / 解析分类与 artifact_id（用于展示及 DB 非空）
 	category := PluginCategoryConnector
 	artifactID := getArtifactID(pluginName)
@@ -1796,9 +1806,11 @@ func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, plu
 			updated = true
 		}
 		if updated {
-			return s.repo.Update(ctx, existing)
+			if err := s.repo.Update(ctx, existing); err != nil {
+				return err
+			}
 		}
-		return nil
+		return s.recordInstalledPluginAttachedConnectors(ctx, clusterID, pluginName, version, artifactID, profileKeys)
 	}
 
 	// Create new record / 创建新记录
@@ -1812,5 +1824,16 @@ func (s *Service) RecordInstalledPlugin(ctx context.Context, clusterID uint, plu
 		InstalledAt: time.Now(),
 	}
 
-	return s.repo.Create(ctx, installed)
+	if err := s.repo.Create(ctx, installed); err != nil {
+		return err
+	}
+	return s.recordInstalledPluginAttachedConnectors(ctx, clusterID, pluginName, version, artifactID, profileKeys)
+}
+
+func (s *Service) recordInstalledPluginAttachedConnectors(ctx context.Context, clusterID uint, pluginName, version, primaryArtifactID string, profileKeys []string) error {
+	deps, err := s.GetPluginDependenciesForVersionAndProfiles(ctx, pluginName, version, profileKeys)
+	if err != nil {
+		return err
+	}
+	return s.recordAttachedConnectorPlugins(ctx, clusterID, version, primaryArtifactID, deps)
 }
