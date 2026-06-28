@@ -39,7 +39,7 @@ Environment overrides when starting later:
   GRAFANA_PORT                   Bundled Grafana port (default: 3000)
   PROMETHEUS_PORT                Bundled Prometheus port (default: 9090)
   ALERTMANAGER_PORT              Bundled Alertmanager port (default: 9093)
-  JAVA_PROXY_PORT                seatunnelx-java-proxy port (default: 18080)
+  JAVA_PROXY_PORT                seatunnelx-java-proxy default port override (config default: java_proxy.default_port)
   NEXT_PUBLIC_BACKEND_BASE_URL   Frontend API base URL (default: http://127.0.0.1:<BACKEND_PORT>)
 USAGE
 }
@@ -168,7 +168,7 @@ echo "     status: $INSTALL_DIR/bin/status.sh"
 echo "     config: $INSTALL_DIR/config.yaml"
 echo
 echo "[INFO] port hints:"
-echo "       backend http/grpc ports come from $INSTALL_DIR/config.yaml"
+echo "       backend http/grpc/java-proxy defaults come from $INSTALL_DIR/config.yaml"
 echo "       frontend/observability/java-proxy ports can be overridden with environment variables"
 echo "       example: CONFIG_PATH=$INSTALL_DIR/config.yaml FRONTEND_PORT=8080 BACKEND_PORT=18000 GRPC_PORT=19000 GRAFANA_PORT=13000 PROMETHEUS_PORT=19090 ALERTMANAGER_PORT=19093 JAVA_PROXY_PORT=18081 $INSTALL_DIR/bin/start.sh"
 

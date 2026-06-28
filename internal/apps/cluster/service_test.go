@@ -916,6 +916,95 @@ func TestClusterServiceDeleteConstraint(t *testing.T) {
 	}
 }
 
+func TestClusterServiceDeleteForceStopsJavaProxyBeforeInstallDirRemoval(t *testing.T) {
+	db, cleanup := setupServiceTestDB(t)
+	defer cleanup()
+
+	repo := NewRepository(db)
+	mockHostProvider := NewMockHostProvider()
+	now := time.Now()
+	mockHostProvider.AddHost(&HostInfo{
+		ID:            1,
+		Name:          "host-1",
+		HostType:      "bare_metal",
+		IPAddress:     "127.0.0.1",
+		AgentID:       "agent-1",
+		AgentStatus:   "installed",
+		LastHeartbeat: &now,
+	})
+
+	svc := NewService(repo, mockHostProvider, nil)
+	ctx := context.Background()
+	cluster, err := svc.Create(ctx, &CreateClusterRequest{
+		Name:           "delete-cluster",
+		DeploymentMode: DeploymentModeHybrid,
+		InstallDir:     "/opt/seatunnel-cluster",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	node, err := svc.AddNode(ctx, cluster.ID, &AddNodeRequest{
+		HostID:       1,
+		Role:         NodeRoleMasterWorker,
+		InstallDir:   "/opt/seatunnel-node",
+		SkipPrecheck: true,
+	})
+	if err != nil {
+		t.Fatalf("AddNode returned error: %v", err)
+	}
+
+	agentSender := &mockOperationAgentSender{}
+	svc.SetAgentCommandSender(agentSender)
+
+	if err := svc.Delete(ctx, cluster.ID, true); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+
+	if len(agentSender.commands) != 3 {
+		t.Fatalf("expected java-proxy stop, seatunnel stop and remove_install_dir commands, got %#v", agentSender.commands)
+	}
+
+	javaProxyStop := agentSender.commands[0]
+	if javaProxyStop.agentID != "agent-1" || javaProxyStop.commandType != string(OperationStop) {
+		t.Fatalf("expected first command to force stop java-proxy on agent-1, got %#v", javaProxyStop)
+	}
+	if javaProxyStop.params["service"] != "seatunnelx_java_proxy" {
+		t.Fatalf("expected java-proxy service stop, got params %#v", javaProxyStop.params)
+	}
+	if javaProxyStop.params["force"] != "true" || javaProxyStop.params["graceful"] != "false" {
+		t.Fatalf("expected forced java-proxy stop, got params %#v", javaProxyStop.params)
+	}
+	if javaProxyStop.params["install_dir"] != "/opt/seatunnel-node" {
+		t.Fatalf("expected node install_dir in java-proxy stop, got %#v", javaProxyStop.params)
+	}
+	if javaProxyStop.params["node_id"] != fmt.Sprintf("%d", node.ID) {
+		t.Fatalf("expected node_id %d, got %#v", node.ID, javaProxyStop.params)
+	}
+	expectedDefaultPort := fmt.Sprintf("%d", seatunnelXJavaProxyConfiguredDefaultPort())
+	if javaProxyStop.params[seatunnelXJavaProxyDefaultPortParam] != expectedDefaultPort {
+		t.Fatalf("expected java-proxy default port %s, got %#v", expectedDefaultPort, javaProxyStop.params)
+	}
+
+	seatunnelStop := agentSender.commands[1]
+	if seatunnelStop.commandType != string(OperationStop) || seatunnelStop.params["service"] != "" {
+		t.Fatalf("expected second command to stop SeaTunnel process, got %#v", seatunnelStop)
+	}
+	if seatunnelStop.params["install_dir"] != "/opt/seatunnel-node" {
+		t.Fatalf("expected node install_dir in SeaTunnel stop, got %#v", seatunnelStop.params)
+	}
+
+	removeInstallDir := agentSender.commands[2]
+	if removeInstallDir.commandType != "remove_install_dir" {
+		t.Fatalf("expected third command to remove install_dir, got %#v", removeInstallDir)
+	}
+	if removeInstallDir.params["install_dir"] != "/opt/seatunnel-node" {
+		t.Fatalf("expected node install_dir in remove_install_dir, got %#v", removeInstallDir.params)
+	}
+	if removeInstallDir.params[seatunnelXJavaProxyDefaultPortParam] != expectedDefaultPort {
+		t.Fatalf("expected remove_install_dir to carry java-proxy default port %s, got %#v", expectedDefaultPort, removeInstallDir.params)
+	}
+}
+
 func TestClusterServiceStartUsesNodeInstallDirAndRefreshesProcess(t *testing.T) {
 	db, cleanup := setupServiceTestDB(t)
 	defer cleanup()

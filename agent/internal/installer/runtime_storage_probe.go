@@ -40,24 +40,38 @@ import (
 )
 
 const (
-	seatunnelxJavaProxyHomeEnvVar        = "SEATUNNELX_JAVA_PROXY_HOME"
-	seatunnelxJavaProxyJarEnvVar         = "SEATUNNELX_JAVA_PROXY_JAR"
-	seatunnelxJavaProxyScriptEnvVar      = "SEATUNNELX_JAVA_PROXY_SCRIPT"
-	seatunnelxJavaProxyEndpointEnvVar    = "SEATUNNELX_JAVA_PROXY_ENDPOINT"
-	seatunnelxJavaProxyPortEnvVar        = "SEATUNNELX_JAVA_PROXY_PORT"
-	seatunnelProxyJarEnvVar              = "SEATUNNEL_PROXY_JAR"
-	seatunnelProxyVersionEnvVar          = "SEATUNNELX_JAVA_PROXY_VERSION"
-	seatunnelxJavaProxyDefaultSupportDir = "/usr/local/lib/seatunnelx-agent"
-	runtimeProbeTimeout                  = 20 * time.Second
-	runtimeProbeBusinessName             = "imap-probe"
-	runtimeProbeClusterName              = "seatunnel-cluster"
-	seatunnelxJavaProxyDefaultHost       = "127.0.0.1"
-	seatunnelxJavaProxyDefaultPort       = 18080
-	seatunnelxJavaProxyHealthPath        = "/healthz"
-	seatunnelxJavaProxyStateDirName      = ".seatunnelx"
-	seatunnelxJavaProxyServiceDirName    = "seatunnelx-java-proxy"
-	seatunnelxJavaProxyStartupWait       = 12 * time.Second
+	seatunnelxJavaProxyHomeEnvVar         = "SEATUNNELX_JAVA_PROXY_HOME"
+	seatunnelxJavaProxyJarEnvVar          = "SEATUNNELX_JAVA_PROXY_JAR"
+	seatunnelxJavaProxyScriptEnvVar       = "SEATUNNELX_JAVA_PROXY_SCRIPT"
+	seatunnelxJavaProxyEndpointEnvVar     = "SEATUNNELX_JAVA_PROXY_ENDPOINT"
+	seatunnelxJavaProxyPortEnvVar         = "SEATUNNELX_JAVA_PROXY_PORT"
+	seatunnelProxyJarEnvVar               = "SEATUNNEL_PROXY_JAR"
+	seatunnelProxyVersionEnvVar           = "SEATUNNELX_JAVA_PROXY_VERSION"
+	seatunnelxJavaProxyDefaultSupportDir  = "/usr/local/lib/seatunnelx-agent"
+	runtimeProbeTimeout                   = 20 * time.Second
+	runtimeProbeBusinessName              = "imap-probe"
+	runtimeProbeClusterName               = "seatunnel-cluster"
+	seatunnelxJavaProxyDefaultHost        = "127.0.0.1"
+	seatunnelxJavaProxyBuiltInDefaultPort = 18080
+	seatunnelxJavaProxyHealthPath         = "/healthz"
+	seatunnelxJavaProxyStateDirName       = ".seatunnelx"
+	seatunnelxJavaProxyServiceDirName     = "seatunnelx-java-proxy"
+	seatunnelxJavaProxyStartupWait        = 12 * time.Second
 )
+
+type seatunnelxJavaProxyDefaultPortContextKey struct{}
+
+// WithSeatunnelXJavaProxyDefaultPort 将 Control Plane 配置的默认端口写入上下文。
+// WithSeatunnelXJavaProxyDefaultPort stores the Control Plane configured default port in context.
+func WithSeatunnelXJavaProxyDefaultPort(ctx context.Context, port int) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !isValidSeatunnelXJavaProxyPort(port) {
+		return ctx
+	}
+	return context.WithValue(ctx, seatunnelxJavaProxyDefaultPortContextKey{}, port)
+}
 
 type runtimeStorageProbeResponse struct {
 	OK         bool   `json:"ok"`
@@ -568,27 +582,32 @@ func ensureSeatunnelXJavaProxyService(ctx context.Context, installDir string, se
 		return "", fmt.Errorf("create seatunnelx-java-proxy state dir: %w", err)
 	}
 
-	for _, port := range seatunnelxJavaProxyPortCandidates(stateDir) {
+	for _, port := range seatunnelxJavaProxyPortCandidates(ctx, stateDir) {
 		if port <= 0 {
 			continue
 		}
 		baseURL := seatunnelxJavaProxyServiceBaseURL(port)
 		if err := waitForSeatunnelXJavaProxyHealthy(ctx, baseURL, 1500*time.Millisecond); err == nil {
+			if !seatunnelxJavaProxyPortOwnedByInstallDir(ctx, port, installDir) {
+				continue
+			}
 			_ = os.WriteFile(filepath.Join(stateDir, "service.port"), []byte(strconv.Itoa(port)+"\n"), 0o644)
 			return baseURL, nil
 		}
 	}
 
-	port := seatunnelxJavaProxyPreferredPort(stateDir)
+	port := seatunnelxJavaProxyPreferredPort(ctx, stateDir)
+	if !seatunnelxJavaProxyPortAvailableForStart(ctx, port, installDir) {
+		if fallbackPort, portErr := findOpenSeatunnelXJavaProxyPort(port + 1); portErr == nil {
+			port = fallbackPort
+		}
+	}
 	baseURL, err := startSeatunnelXJavaProxyService(ctx, installDir, seatunnelVersion, scriptPath, jarPath, stateDir, port)
 	if err == nil {
 		return baseURL, nil
 	}
-	if os.Getenv(seatunnelxJavaProxyPortEnvVar) != "" {
-		return "", err
-	}
 
-	fallbackPort, portErr := findOpenSeatunnelXJavaProxyPort()
+	fallbackPort, portErr := findOpenSeatunnelXJavaProxyPort(port + 1)
 	if portErr != nil || fallbackPort == port {
 		return "", err
 	}
@@ -644,6 +663,9 @@ func startSeatunnelXJavaProxyService(
 	if err := waitForSeatunnelXJavaProxyHealthy(ctx, baseURL, seatunnelxJavaProxyStartupWait); err != nil {
 		return "", fmt.Errorf("wait for managed seatunnelx-java-proxy service on %s: %w", baseURL, err)
 	}
+	if !seatunnelxJavaProxyPortOwnedByInstallDir(ctx, port, installDir) {
+		return "", fmt.Errorf("managed seatunnelx-java-proxy port %d is owned by another install_dir", port)
+	}
 	return baseURL, nil
 }
 
@@ -697,9 +719,9 @@ func seatunnelxJavaProxyServiceBaseURL(port int) string {
 	return fmt.Sprintf("http://%s:%d", seatunnelxJavaProxyDefaultHost, port)
 }
 
-func seatunnelxJavaProxyPortCandidates(stateDir string) []int {
+func seatunnelxJavaProxyPortCandidates(ctx context.Context, stateDir string) []int {
 	candidates := make([]int, 0, 3)
-	if port, ok := parseSeatunnelXJavaProxyPort(strings.TrimSpace(os.Getenv(seatunnelxJavaProxyPortEnvVar))); ok {
+	if port := seatunnelxJavaProxyDefaultPort(ctx); port > 0 {
 		candidates = append(candidates, port)
 	}
 	if bytes, err := os.ReadFile(filepath.Join(stateDir, "service.port")); err == nil {
@@ -707,7 +729,7 @@ func seatunnelxJavaProxyPortCandidates(stateDir string) []int {
 			candidates = append(candidates, port)
 		}
 	}
-	candidates = append(candidates, seatunnelxJavaProxyDefaultPort)
+	candidates = append(candidates, seatunnelxJavaProxyBuiltInDefaultPort)
 
 	seen := make(map[int]struct{}, len(candidates))
 	result := make([]int, 0, len(candidates))
@@ -724,12 +746,12 @@ func seatunnelxJavaProxyPortCandidates(stateDir string) []int {
 	return result
 }
 
-func seatunnelxJavaProxyPreferredPort(stateDir string) int {
-	candidates := seatunnelxJavaProxyPortCandidates(stateDir)
+func seatunnelxJavaProxyPreferredPort(ctx context.Context, stateDir string) int {
+	candidates := seatunnelxJavaProxyPortCandidates(ctx, stateDir)
 	if len(candidates) > 0 {
 		return candidates[0]
 	}
-	return seatunnelxJavaProxyDefaultPort
+	return seatunnelxJavaProxyBuiltInDefaultPort
 }
 
 func parseSeatunnelXJavaProxyPort(value string) (int, bool) {
@@ -737,24 +759,65 @@ func parseSeatunnelXJavaProxyPort(value string) (int, bool) {
 		return 0, false
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || port <= 0 || port > 65535 {
+	if err != nil || !isValidSeatunnelXJavaProxyPort(port) {
 		return 0, false
 	}
 	return port, true
 }
 
-func findOpenSeatunnelXJavaProxyPort() (int, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(seatunnelxJavaProxyDefaultHost, "0"))
-	if err != nil {
-		return 0, err
+func seatunnelxJavaProxyDefaultPort(ctx context.Context) int {
+	if ctx != nil {
+		if port, ok := ctx.Value(seatunnelxJavaProxyDefaultPortContextKey{}).(int); ok && isValidSeatunnelXJavaProxyPort(port) {
+			return port
+		}
 	}
-	defer listener.Close()
+	if port, ok := parseSeatunnelXJavaProxyPort(strings.TrimSpace(os.Getenv(seatunnelxJavaProxyPortEnvVar))); ok {
+		return port
+	}
+	return seatunnelxJavaProxyBuiltInDefaultPort
+}
 
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok || addr.Port <= 0 {
-		return 0, fmt.Errorf("failed to resolve seatunnelx-java-proxy port from listener address")
+func isValidSeatunnelXJavaProxyPort(port int) bool {
+	return port >= 1 && port <= 65535
+}
+
+func findOpenSeatunnelXJavaProxyPort(startPort int) (int, error) {
+	if startPort > 65535 {
+		return 0, fmt.Errorf("no open seatunnelx-java-proxy port found from %d", startPort)
 	}
-	return addr.Port, nil
+	if startPort <= 0 {
+		startPort = seatunnelxJavaProxyBuiltInDefaultPort
+	}
+	for port := startPort; port <= 65535; port++ {
+		listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		return port, nil
+	}
+	return 0, fmt.Errorf("no open seatunnelx-java-proxy port found from %d", startPort)
+}
+
+func seatunnelxJavaProxyPortAvailableForStart(ctx context.Context, port int, installDir string) bool {
+	if !isValidSeatunnelXJavaProxyPort(port) {
+		return false
+	}
+	pids := seatunnelxJavaProxyPIDsByPort(ctx, port)
+	if len(pids) > 0 {
+		for _, pid := range pids {
+			if seatunnelxJavaProxyPIDMatchesInstallDir(pid, installDir) {
+				return true
+			}
+		}
+		return false
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
 }
 
 func readRuntimeStorageProbeResponse(path string) (*runtimeStorageProbeResponse, error) {

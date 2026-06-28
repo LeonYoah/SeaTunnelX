@@ -25,6 +25,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/seatunnel/seatunnelX/internal/config"
 	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
@@ -43,6 +44,10 @@ type InstallScriptGenerator struct {
 	// heartbeatInterval is the heartbeat interval in seconds.
 	// heartbeatInterval 是心跳间隔（秒）。
 	heartbeatInterval int
+
+	// javaProxyDefaultPort 是 Control Plane 配置的 Java Proxy 默认端口。
+	// javaProxyDefaultPort is the Control Plane configured default Java Proxy port.
+	javaProxyDefaultPort int
 
 	// template is the parsed install script template.
 	// template 是解析后的安装脚本模板。
@@ -63,6 +68,10 @@ type InstallScriptConfig struct {
 	// HeartbeatInterval is the heartbeat interval in seconds from Control Plane config.
 	// HeartbeatInterval 是来自 Control Plane 配置的心跳间隔（秒）。
 	HeartbeatInterval int
+
+	// JavaProxyDefaultPort 是 Control Plane 配置的 Java Proxy 默认端口。
+	// JavaProxyDefaultPort is the Control Plane configured default Java Proxy port.
+	JavaProxyDefaultPort int
 }
 
 // InstallScriptData holds data for rendering the install script template.
@@ -111,6 +120,10 @@ type InstallScriptData struct {
 	// HeartbeatInterval is the heartbeat interval string (e.g., "60s").
 	// HeartbeatInterval 是心跳间隔字符串（如 "60s"）。
 	HeartbeatInterval string
+
+	// JavaProxyDefaultPort 是托管 Java Proxy 的默认起始端口。
+	// JavaProxyDefaultPort is the default managed Java Proxy starting port.
+	JavaProxyDefaultPort int
 }
 
 // SupportedPlatform represents a supported OS and architecture combination.
@@ -182,6 +195,10 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 	if heartbeatInterval <= 0 {
 		heartbeatInterval = 10 // Default 10 seconds
 	}
+	javaProxyDefaultPort := cfg.JavaProxyDefaultPort
+	if javaProxyDefaultPort <= 0 || javaProxyDefaultPort > 65535 {
+		javaProxyDefaultPort = config.GetJavaProxyDefaultPort()
+	}
 
 	// Parse template
 	// 解析模板
@@ -191,10 +208,11 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 	}
 
 	return &InstallScriptGenerator{
-		controlPlaneAddr:  controlPlaneAddr,
-		grpcAddr:          grpcAddr,
-		heartbeatInterval: heartbeatInterval,
-		template:          tmpl,
+		controlPlaneAddr:     controlPlaneAddr,
+		grpcAddr:             grpcAddr,
+		heartbeatInterval:    heartbeatInterval,
+		javaProxyDefaultPort: javaProxyDefaultPort,
+		template:             tmpl,
 	}, nil
 }
 
@@ -214,6 +232,7 @@ func (g *InstallScriptGenerator) Generate() (string, error) {
 		SeatunnelXJavaProxyJarFileName:    seatunnelmeta.SeatunnelXJavaProxyJarFileName(seatunnelmeta.DefaultSeatunnelXJavaProxyVersion),
 		SeatunnelXJavaProxyScriptFileName: seatunnelmeta.SeatunnelXJavaProxyScriptFileName,
 		HeartbeatInterval:                 fmt.Sprintf("%ds", g.heartbeatInterval),
+		JavaProxyDefaultPort:              g.javaProxyDefaultPort,
 	}
 
 	return g.GenerateWithData(data)
@@ -257,6 +276,9 @@ func (g *InstallScriptGenerator) GenerateWithData(data *InstallScriptData) (stri
 	}
 	if data.SeatunnelXJavaProxyScriptFileName == "" {
 		data.SeatunnelXJavaProxyScriptFileName = seatunnelmeta.SeatunnelXJavaProxyScriptFileName
+	}
+	if data.JavaProxyDefaultPort <= 0 || data.JavaProxyDefaultPort > 65535 {
+		data.JavaProxyDefaultPort = config.GetJavaProxyDefaultPort()
 	}
 
 	var buf bytes.Buffer
@@ -374,7 +396,7 @@ SUPPORT_SCRIPT_DIR="${SUPPORT_DIR}/scripts"
 CAPABILITY_PROXY_VERSION="{{.SeatunnelXJavaProxyVersion}}"
 CAPABILITY_PROXY_JAR="${SUPPORT_LIB_DIR}/{{.SeatunnelXJavaProxyJarFileName}}"
 CAPABILITY_PROXY_SCRIPT="${SUPPORT_SCRIPT_DIR}/{{.SeatunnelXJavaProxyScriptFileName}}"
-JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-{{.JavaProxyDefaultPort}}}}"
 
 # ==================== Colors 颜色 ====================
 RED='\033[0;31m'

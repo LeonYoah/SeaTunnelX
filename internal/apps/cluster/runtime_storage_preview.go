@@ -202,6 +202,7 @@ func (s *Service) InspectCheckpointRuntimeStorage(
 		"path":           strings.TrimSpace(path),
 		"content_base64": contentBase64,
 	}
+	addSeatunnelXJavaProxyDefaultPortParam(params)
 	success, output, sendErr := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "seatunnelx_java_proxy_inspect_checkpoint", params)
 	result := runtimeStorageHostResultFromCommandOutput(success, output)
 	if sendErr != nil {
@@ -256,6 +257,7 @@ func (s *Service) InspectIMAPRuntimeStorage(
 			"path":           strings.TrimSpace(path),
 			"content_base64": base64.StdEncoding.EncodeToString(content),
 		}
+		addSeatunnelXJavaProxyDefaultPortParam(params)
 	} else {
 		cfg, cfgErr := s.resolveRuntimeStorageValidationConfig(ctx, clusterObj, node, installerapp.RuntimeStorageValidationIMAP)
 		if cfgErr != nil {
@@ -326,6 +328,7 @@ func (s *Service) inspectCheckpointSourceStateRuntimeStorage(
 			"path":           strings.TrimSpace(path),
 			"content_base64": strings.TrimSpace(contentBase64),
 		}
+		addSeatunnelXJavaProxyDefaultPortParam(params)
 	} else {
 		cfg, err := s.resolveRuntimeStorageValidationConfig(
 			ctx, clusterObj, node, installerapp.RuntimeStorageValidationCheckpoint)

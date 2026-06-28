@@ -150,9 +150,10 @@ func (h *Handler) GetInstallScript(c *gin.Context) {
 	// Use InstallScriptGenerator to generate the install script
 	// 使用 InstallScriptGenerator 生成安装脚本
 	generator, err := NewInstallScriptGenerator(&InstallScriptConfig{
-		ControlPlaneAddr:  h.getControlPlaneURL(),
-		GRPCAddr:          h.getGRPCAddr(),
-		HeartbeatInterval: h.heartbeatInterval,
+		ControlPlaneAddr:     h.getControlPlaneURL(),
+		GRPCAddr:             h.getGRPCAddr(),
+		HeartbeatInterval:    h.heartbeatInterval,
+		JavaProxyDefaultPort: config.GetJavaProxyDefaultPort(),
 	})
 	if err != nil {
 		logger.ErrorF(c.Request.Context(), "[Agent] Failed to create install script generator: %v", err)

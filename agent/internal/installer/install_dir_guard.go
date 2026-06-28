@@ -18,10 +18,13 @@
 package installer
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/seatunnel/seatunnelX/agent/internal/logger"
 )
 
 const managedInstallMarkerFileName = ".seatunnelx-managed"
@@ -32,6 +35,27 @@ func RemoveManagedInstallDir(installDir string) (string, error) {
 	clean, err := validateManagedInstallDir(installDir)
 	if err != nil {
 		return "", err
+	}
+
+	if err := os.RemoveAll(clean); err != nil {
+		return "", fmt.Errorf("failed to remove installation directory: %w", err)
+	}
+	return clean, nil
+}
+
+// ForceRemoveManagedInstallDir 先强制停止该 install_dir 的托管 Java Proxy，再删除安装目录。
+// ForceRemoveManagedInstallDir force-stops the install_dir managed Java Proxy before removing the install directory.
+func ForceRemoveManagedInstallDir(ctx context.Context, installDir string) (string, error) {
+	clean, err := validateManagedInstallDir(installDir)
+	if err != nil {
+		return "", err
+	}
+	if status, stopErr := ForceStopManagedSeatunnelXJavaProxyService(ctx, clean); stopErr != nil {
+		if status != nil && !status.Managed {
+			logger.WarnF(ctx, "[seatunnelx-java-proxy] skip force stop before removing install_dir because an external endpoint is configured / 删除安装目录前跳过强制停止外部 Java Proxy: install_dir=%s", clean)
+		} else {
+			return "", fmt.Errorf("force stop seatunnelx-java-proxy before removing install_dir: %w", stopErr)
+		}
 	}
 
 	if err := os.RemoveAll(clean); err != nil {

@@ -563,6 +563,7 @@ func runtimeStorageProxyParams(
 		"install_dir": installDir,
 		"version":     version,
 	}
+	addSeatunnelXJavaProxyDefaultPortParam(params)
 	switch kind {
 	case installerapp.RuntimeStorageValidationCheckpoint:
 		if checkpoint != nil {

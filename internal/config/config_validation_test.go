@@ -55,3 +55,19 @@ func TestValidateConfig_RemoteObservabilityHappyPath(t *testing.T) {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
 }
+
+func TestSetDefaults_JavaProxyDefaultPort(t *testing.T) {
+	c := &configModel{}
+	setDefaults(c)
+	if c.JavaProxy.DefaultPort != DefaultJavaProxyPort {
+		t.Fatalf("expected default java proxy port %d, got %d", DefaultJavaProxyPort, c.JavaProxy.DefaultPort)
+	}
+}
+
+func TestValidateConfig_InvalidJavaProxyDefaultPort(t *testing.T) {
+	c := &configModel{}
+	c.JavaProxy.DefaultPort = 70000
+	if err := validateConfig(c); err == nil {
+		t.Fatalf("expected validation error for invalid java proxy default port")
+	}
+}

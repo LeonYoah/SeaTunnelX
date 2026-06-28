@@ -469,7 +469,8 @@
       "plugins": "Plugins",
       "configs": "Configs",
       "diagnostics": "Diagnostics",
-      "upgrades": "Upgrades"
+      "upgrades": "Upgrades",
+      "proxy": "Cluster Proxy"
     },
     "nodeList": "Node List",
     "addNode": "Add Node",
@@ -752,11 +753,13 @@
       "storageType": "Storage Type",
       "inspectWal": "Inspect IMAP WAL",
       "inspectWalFailed": "Failed to inspect IMAP WAL",
-      "entryCount": "Entry Count"
+      "entryCount": "Entry Count",
+      "proxyUnavailable": "Cluster Proxy is not ready, so runtime storage inspection may be unavailable.",
+      "goToProxy": "Configure Cluster Proxy"
     },
     "seatunnelxJavaProxy": {
-      "title": "SeaTunnelX Java Proxy",
-      "description": "Managed proxy service used by install-time probes and runtime storage diagnostics.",
+      "title": "Cluster Proxy",
+      "description": "Managed proxy service for cluster-side capabilities.",
       "healthy": "Healthy",
       "unhealthy": "Running but unhealthy",
       "stopped": "Stopped",
@@ -766,7 +769,7 @@
       "endpoint": "Endpoint",
       "controlPlaneEndpoint": "Control Plane direct endpoint",
       "localEndpoint": "Agent local endpoint",
-      "directEndpointHint": "The Control Plane backend connects directly to http://<node_host_ip>:18080 on the selected node and no longer proxies through the Agent.",
+      "directEndpointHint": "The Control Plane backend connects directly to http://<node_host_ip>:<actual_port> on the selected node. The actual port comes from status and no longer proxies through the Agent.",
       "pid": "PID",
       "logPath": "Log path",
       "noStatus": "seatunnelx-java-proxy status is unavailable",
@@ -774,18 +777,48 @@
       "start": "Start",
       "stop": "Stop",
       "restart": "Restart",
-      "installSuccess": "seatunnelx-java-proxy installed/repaired successfully",
+      "installSuccess": "Java Proxy dependencies installed successfully",
       "startSuccess": "seatunnelx-java-proxy started successfully",
       "stopSuccess": "seatunnelx-java-proxy stopped successfully",
       "restartSuccess": "seatunnelx-java-proxy restarted successfully",
-      "installError": "Failed to install/repair seatunnelx-java-proxy",
+      "installError": "Failed to install Java Proxy dependencies",
       "startError": "Failed to start seatunnelx-java-proxy",
       "stopError": "Failed to stop seatunnelx-java-proxy",
       "restartError": "Failed to restart seatunnelx-java-proxy",
       "viewServiceLog": "View Runtime Log",
       "viewServiceLogError": "Failed to load seatunnelx-java-proxy runtime log",
       "viewRuntimeLog": "View Runtime Log",
-      "viewRuntimeLogError": "Failed to load seatunnelx-java-proxy runtime log"
+      "viewRuntimeLogError": "Failed to load seatunnelx-java-proxy runtime log",
+      "clusterAgentDescription": "Provides cluster-side capabilities for runtime storage, workbench debugging, and install-time probes.",
+      "ready": "Ready",
+      "notRunning": "Not running",
+      "notInstalled": "Not installed",
+      "notInstalledTitle": "Cluster Proxy is not installed",
+      "notInstalledDescription": "Install Java Proxy dependencies to enable runtime storage inspection, workbench debugging, and related capabilities.",
+      "installProxy": "Install Java Proxy",
+      "install": "Install",
+      "reinstallAssets": "Reinstall dependencies",
+      "serviceStatus": "Service status",
+      "port": "Port",
+      "version": "Version",
+      "relatedFeatures": "Related features",
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "diagnostics": "Diagnostics",
+      "installDialogTitle": "Install Java Proxy",
+      "installDialogDescription": "Select one Master node as the deployment node.",
+      "noMasterNode": "No online Master node is available.",
+      "features": {
+        "runtimeStorage": {
+          "title": "Runtime Storage"
+        },
+        "workbenchDebug": {
+          "title": "Workbench Debugging"
+        },
+        "installProbe": {
+          "title": "Install-time Probes"
+        }
+      }
     },
     "activeAlertsBanner": {
       "title": "{count} active alerts detected",

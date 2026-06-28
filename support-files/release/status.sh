@@ -18,13 +18,38 @@ set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_DIR="$BASE_DIR/run"
+CONFIG_PATH="${CONFIG_PATH:-$BASE_DIR/config.yaml}"
+
+read_top_yaml_scalar() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  [[ -f "$file" ]] || return 0
+  awk -v section="$section" -v key="$key" '
+    /^[^[:space:]#][^:]*:/ {
+      top=$0
+      sub(":.*", "", top)
+      in_section=(top == section)
+    }
+    in_section && $0 ~ "^[[:space:]]+" key ":[[:space:]]*" {
+      value=$0
+      sub("^[[:space:]]*" key ":[[:space:]]*", "", value)
+      sub("[[:space:]]+#.*$", "", value)
+      gsub(/^[[:space:]\"'\'']+|[[:space:]\"'\'']+$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
+}
+
+CONFIG_JAVA_PROXY_DEFAULT_PORT="$(read_top_yaml_scalar "$CONFIG_PATH" "java_proxy" "default_port" || true)"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 GRPC_PORT="${GRPC_PORT:-9000}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
-JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-${CONFIG_JAVA_PROXY_DEFAULT_PORT:-18080}}}"
 
 status_one() {
   local name="$1"

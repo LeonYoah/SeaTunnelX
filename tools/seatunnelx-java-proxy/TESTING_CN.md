@@ -136,7 +136,7 @@ export SEATUNNEL_PROXY_JAR=${SEATUNNEL_HOME}/tools/seatunnelx-java-proxy.jar
 export JAVA_HOME=/path/to/jdk8-or-jdk11
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 当前脚本会自动加载：
@@ -162,7 +162,7 @@ cp tools/seatunnelx-java-proxy/bin/seatunnelx-java-proxy.sh \
   ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 部署后建议至少核对这几项：

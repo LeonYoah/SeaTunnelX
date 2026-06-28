@@ -3327,6 +3327,6 @@ func buildStringMapNodeContent(values map[string]string) []*yaml.Node {
 // Uninstall removes the SeaTunnel installation
 // Uninstall 移除 SeaTunnel 安装
 func (m *InstallerManager) Uninstall(ctx context.Context, installDir string) error {
-	_, err := RemoveManagedInstallDir(installDir)
+	_, err := ForceRemoveManagedInstallDir(ctx, installDir)
 	return err
 }

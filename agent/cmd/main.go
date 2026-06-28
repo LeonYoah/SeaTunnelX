@@ -1184,6 +1184,7 @@ func (a *Agent) handleUpgradeCommand(ctx context.Context, cmd *pb.CommandRequest
 func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
 		reporter.Report(10, "Starting managed seatunnelx-java-proxy service... / 启动托管 seatunnelx-java-proxy 服务...")
+		ctx = withSeatunnelXJavaProxyDefaultPort(ctx, cmd.Parameters)
 		status, err := installer.StartManagedSeatunnelXJavaProxyService(
 			ctx,
 			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
@@ -1251,10 +1252,16 @@ func (a *Agent) handleStartCommand(ctx context.Context, cmd *pb.CommandRequest, 
 func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
 		reporter.Report(10, "Stopping managed seatunnelx-java-proxy service... / 停止托管 seatunnelx-java-proxy 服务...")
-		status, err := installer.StopManagedSeatunnelXJavaProxyService(
-			ctx,
-			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
-		)
+		ctx = withSeatunnelXJavaProxyDefaultPort(ctx, cmd.Parameters)
+		installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
+		force := getParamBool(cmd.Parameters, "force", false) || !getParamBool(cmd.Parameters, "graceful", true)
+		var status *installer.SeatunnelXJavaProxyServiceStatus
+		var err error
+		if force {
+			status, err = installer.ForceStopManagedSeatunnelXJavaProxyService(ctx, installDir)
+		} else {
+			status, err = installer.StopManagedSeatunnelXJavaProxyService(ctx, installDir)
+		}
 		if err != nil {
 			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 		}
@@ -1311,6 +1318,7 @@ func (a *Agent) handleStopCommand(ctx context.Context, cmd *pb.CommandRequest, r
 func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
 		reporter.Report(10, "Restarting managed seatunnelx-java-proxy service... / 重启托管 seatunnelx-java-proxy 服务...")
+		ctx = withSeatunnelXJavaProxyDefaultPort(ctx, cmd.Parameters)
 		installDir := getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir)
 		if _, err := installer.StopManagedSeatunnelXJavaProxyService(ctx, installDir); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already stopped") {
 			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
@@ -1391,9 +1399,11 @@ func (a *Agent) handleRestartCommand(ctx context.Context, cmd *pb.CommandRequest
 
 func (a *Agent) handleStatusCommand(ctx context.Context, cmd *pb.CommandRequest, reporter executor.ProgressReporter) (*pb.CommandResponse, error) {
 	if isSeatunnelXJavaProxyServiceCommand(cmd.Parameters) {
+		ctx = withSeatunnelXJavaProxyDefaultPort(ctx, cmd.Parameters)
 		status, err := installer.GetManagedSeatunnelXJavaProxyServiceStatus(
 			ctx,
 			getParamString(cmd.Parameters, "install_dir", a.config.SeaTunnel.InstallDir),
+			getParamString(cmd.Parameters, "version", seatunnel.DefaultVersion()),
 		)
 		if err != nil {
 			return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
@@ -1874,6 +1884,10 @@ func getParamInt(params map[string]string, key string, defaultValue int) int {
 	return defaultValue
 }
 
+func withSeatunnelXJavaProxyDefaultPort(ctx context.Context, params map[string]string) context.Context {
+	return installer.WithSeatunnelXJavaProxyDefaultPort(ctx, getParamInt(params, "java_proxy_default_port", 0))
+}
+
 // getParamBool gets a boolean parameter with default value
 // getParamBool 获取布尔参数，带默认值
 func getParamBool(params map[string]string, key string, defaultValue bool) bool {
@@ -2274,7 +2288,8 @@ func (a *Agent) handleRemoveInstallDirCommand(ctx context.Context, cmd *pb.Comma
 		return executor.CreateErrorResponse(cmd.CommandId, msg), fmt.Errorf("%s", msg)
 	}
 
-	removedDir, err := installer.RemoveManagedInstallDir(installDir)
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, cmd.Parameters)
+	removedDir, err := installer.ForceRemoveManagedInstallDir(ctx, installDir)
 	if err != nil {
 		return executor.CreateErrorResponse(cmd.CommandId, err.Error()), err
 	}

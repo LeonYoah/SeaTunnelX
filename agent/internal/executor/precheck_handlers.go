@@ -415,6 +415,7 @@ func handleCleanupPath(ctx context.Context, params map[string]string) (*Precheck
 }
 
 func handleSeatunnelXJavaProxyProbe(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	kind := params["kind"]
 	installDir := params["install_dir"]
 	version := params["version"]
@@ -469,6 +470,7 @@ func handleSeatunnelXJavaProxyProbe(ctx context.Context, params map[string]strin
 }
 
 func handleSeatunnelXJavaProxyStat(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	kind := params["kind"]
 	installDir := params["install_dir"]
 	version := params["version"]
@@ -503,6 +505,7 @@ func handleSeatunnelXJavaProxyStat(ctx context.Context, params map[string]string
 }
 
 func handleSeatunnelXJavaProxyList(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	kind := params["kind"]
 	installDir := params["install_dir"]
 	version := params["version"]
@@ -585,6 +588,7 @@ func runtimeStorageStatPrecheckResult(kind string, result *installer.RuntimeStor
 }
 
 func handleSeatunnelXJavaProxyPreview(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	kind := params["kind"]
 	installDir := params["install_dir"]
 	version := params["version"]
@@ -620,6 +624,7 @@ func handleSeatunnelXJavaProxyPreview(ctx context.Context, params map[string]str
 }
 
 func handleSeatunnelXJavaProxyInspectCheckpoint(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	installDir := params["install_dir"]
 	version := params["version"]
 	path := params["path"]
@@ -650,6 +655,7 @@ func handleSeatunnelXJavaProxyInspectCheckpointSourceState(
 	ctx context.Context,
 	params map[string]string,
 ) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	installDir := params["install_dir"]
 	version := params["version"]
 	path := params["path"]
@@ -687,6 +693,7 @@ func handleSeatunnelXJavaProxyInspectCheckpointSourceState(
 }
 
 func handleSeatunnelXJavaProxyInspectIMAPWAL(ctx context.Context, params map[string]string) (*PrecheckResult, error) {
+	ctx = withSeatunnelXJavaProxyDefaultPort(ctx, params)
 	installDir := params["install_dir"]
 	version := params["version"]
 	path := params["path"]
@@ -903,6 +910,10 @@ func imapConfigFromParams(params map[string]string) (*installer.IMAPConfig, erro
 func parseParamInt(raw string) int {
 	parsed, _ := strconv.Atoi(raw)
 	return parsed
+}
+
+func withSeatunnelXJavaProxyDefaultPort(ctx context.Context, params map[string]string) context.Context {
+	return installer.WithSeatunnelXJavaProxyDefaultPort(ctx, parseParamInt(params["java_proxy_default_port"]))
 }
 
 func parseParamBool(raw string) bool {

@@ -20,6 +20,7 @@ package config
 type configModel struct {
 	App            AppConfig            `mapstructure:"app"`
 	Sync           SyncConfig           `mapstructure:"sync"`
+	JavaProxy      JavaProxyConfig      `mapstructure:"java_proxy"`
 	Auth           authConfig           `mapstructure:"auth"`
 	OAuth2         OAuth2Config         `mapstructure:"oauth2"`
 	OAuthProviders OAuthProvidersConfig `mapstructure:"oauth_providers"`
@@ -87,6 +88,14 @@ type SyncConfig struct {
 	// PreviewDataTTLHours is kept for backward compatibility and will be used when minute-level config is absent.
 	// PreviewDataTTLHours 仅用于兼容旧配置；未设置分钟级配置时才会使用。
 	PreviewDataTTLHours int `mapstructure:"preview_data_ttl_hours"`
+}
+
+// JavaProxyConfig 保存 Control Plane 下发给托管 seatunnelx-java-proxy 服务的默认配置。
+// JavaProxyConfig holds Control Plane defaults for managed seatunnelx-java-proxy services.
+type JavaProxyConfig struct {
+	// DefaultPort 是 Agent 遇到端口冲突前优先尝试的起始端口。
+	// DefaultPort is the first port Agent should try before incrementing on conflicts.
+	DefaultPort int `mapstructure:"default_port"`
 }
 
 // authConfig 认证配置

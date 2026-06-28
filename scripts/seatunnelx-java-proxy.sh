@@ -164,6 +164,10 @@ kill_existing_proxy_listener() {
     [ -z "${pid}" ] && continue
     cmdline=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)
     if printf '%s' "${cmdline}" | grep -q "${APP_MAIN}"; then
+      if ! printf '%s' "${cmdline}" | grep -Fq -- "-Dseatunnelx.java.proxy.seatunnel.home=${SEATUNNEL_HOME}"; then
+        echo "seatunnelx-java-proxy detected listener on port ${port} for another SEATUNNEL_HOME, skip killing pid=${pid}" >&2
+        continue
+      fi
       echo "seatunnelx-java-proxy detected existing listener on port ${port}, killing pid=${pid}" >&2
       kill "${pid}" 2>/dev/null || true
       local retries=30

@@ -44,7 +44,7 @@ This change implements the install-time foundation:
 2. If the service is not available, installer code **falls back to existing `probe-once` CLI behavior**.
 3. When SeaTunnel runtime has already been extracted, installer code can **lazy-start** a local proxy service by running:
    - `scripts/seatunnelx-java-proxy.sh`
-   - with `-Dseatunnel.capability.proxy.port=<port>`
+   - with `-Dseatunnelx.java.proxy.port=<port>`
 4. Service state is persisted under:
    - `<SEATUNNEL_HOME>/.seatunnelx/seatunnelx-java-proxy/`
    - including `service.port`, `service.pid`, and `service.log`
@@ -56,8 +56,8 @@ This change implements the install-time foundation:
 For checkpoint / IMAP runtime probe:
 
 1. use `SEATUNNELX_JAVA_PROXY_ENDPOINT` if explicitly configured
-2. else reuse an already healthy local managed proxy service if found
-3. else start a local managed proxy service lazily
+2. else reuse an already healthy local managed proxy service for the same `install_dir` if found
+3. else start a local managed proxy service lazily from the Control Plane configured default port
 4. if any of the above fails, fall back to `probe-once`
 
 This keeps current installs backward compatible while enabling service-based probing.
@@ -65,7 +65,8 @@ This keeps current installs backward compatible while enabling service-based pro
 ## New environment knobs
 
 - `SEATUNNELX_JAVA_PROXY_ENDPOINT`: force installer probes to use an existing proxy service
-- `SEATUNNELX_JAVA_PROXY_PORT`: preferred port for the lazily started managed service
+- `java_proxy.default_port` in Control Plane `config.yaml`: the default starting port sent to Agents; if it conflicts, Agents try `default_port + 1`, then keep incrementing until a free port is found
+- `SEATUNNELX_JAVA_PROXY_PORT`: legacy Agent-side fallback when Control Plane does not send `java_proxy.default_port`
 
 ## What is not yet included
 

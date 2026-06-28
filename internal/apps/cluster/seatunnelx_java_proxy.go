@@ -30,7 +30,7 @@ import (
 	seatunnelmeta "github.com/seatunnel/seatunnelX/internal/seatunnel"
 )
 
-const seatunnelXJavaProxyDefaultPort = 18080
+const seatunnelXJavaProxyDefaultPortParam = "java_proxy_default_port"
 
 // SeatunnelXJavaProxyStatus represents the managed seatunnelx-java-proxy state for a cluster.
 type SeatunnelXJavaProxyStatus struct {
@@ -45,6 +45,7 @@ type SeatunnelXJavaProxyStatus struct {
 	Version        string `json:"version,omitempty"`
 	Service        string `json:"service,omitempty"`
 	Managed        bool   `json:"managed"`
+	Installed      bool   `json:"installed"`
 	Running        bool   `json:"running"`
 	Healthy        bool   `json:"healthy"`
 	Endpoint       string `json:"endpoint,omitempty"`
@@ -102,13 +103,14 @@ func (s *Service) InstallOrRepairSeatunnelXJavaProxy(ctx context.Context, cluste
 		return decodeSeatunnelXJavaProxyStatus(clusterInfo, node, hostInfo, ""), fmt.Errorf("app.external_url is required to install seatunnelx-java-proxy assets")
 	}
 	params := map[string]string{
-		"sub_command": "seatunnelx_java_proxy_install",
-		"service":     "seatunnelx_java_proxy",
-		"cluster_id":  fmt.Sprintf("%d", clusterID),
-		"node_id":     fmt.Sprintf("%d", node.ID),
-		"version":     version,
-		"jar_url":     fmt.Sprintf("%s/api/v1/agent/assets/seatunnelx-java-proxy.jar?version=%s", assetBaseURL, url.QueryEscape(version)),
-		"script_url":  fmt.Sprintf("%s/api/v1/agent/assets/seatunnelx-java-proxy.sh", assetBaseURL),
+		"sub_command":                       "seatunnelx_java_proxy_install",
+		"service":                           "seatunnelx_java_proxy",
+		"cluster_id":                        fmt.Sprintf("%d", clusterID),
+		"node_id":                           fmt.Sprintf("%d", node.ID),
+		"version":                           version,
+		seatunnelXJavaProxyDefaultPortParam: strconv.Itoa(seatunnelXJavaProxyConfiguredDefaultPort()),
+		"jar_url":                           fmt.Sprintf("%s/api/v1/agent/assets/seatunnelx-java-proxy.jar?version=%s", assetBaseURL, url.QueryEscape(version)),
+		"script_url":                        fmt.Sprintf("%s/api/v1/agent/assets/seatunnelx-java-proxy.sh", assetBaseURL),
 	}
 	success, message, sendErr := s.agentSender.SendCommand(ctx, hostInfo.AgentID, "seatunnelx_java_proxy_install", params)
 	status := decodeSeatunnelXJavaProxyStatus(clusterInfo, node, hostInfo, "")
@@ -198,11 +200,12 @@ func (s *Service) executeSeatunnelXJavaProxyCommand(ctx context.Context, cluster
 	}
 
 	params := map[string]string{
-		"service":     "seatunnelx_java_proxy",
-		"cluster_id":  fmt.Sprintf("%d", clusterID),
-		"node_id":     fmt.Sprintf("%d", node.ID),
-		"install_dir": node.InstallDir,
-		"version":     clusterInfo.Version,
+		"service":                           "seatunnelx_java_proxy",
+		"cluster_id":                        fmt.Sprintf("%d", clusterID),
+		"node_id":                           fmt.Sprintf("%d", node.ID),
+		"install_dir":                       node.InstallDir,
+		"version":                           clusterInfo.Version,
+		seatunnelXJavaProxyDefaultPortParam: strconv.Itoa(seatunnelXJavaProxyConfiguredDefaultPort()),
 	}
 	success, message, sendErr := s.agentSender.SendCommand(ctx, hostInfo.AgentID, commandType, params)
 	status := decodeSeatunnelXJavaProxyStatus(clusterInfo, node, hostInfo, firstNonEmpty(message, errorString(sendErr)))
@@ -295,6 +298,7 @@ func decodeSeatunnelXJavaProxyStatus(clusterInfo *Cluster, node *NodeInfo, hostI
 			status.Service = payload.Service
 		}
 		status.Managed = payload.Managed
+		status.Installed = payload.Installed
 		status.Running = payload.Running
 		status.Healthy = payload.Healthy
 		status.Endpoint = payload.Endpoint
@@ -312,7 +316,7 @@ func decodeSeatunnelXJavaProxyStatus(clusterInfo *Cluster, node *NodeInfo, hostI
 		status.Port = seatunnelXJavaProxyEndpointPort(firstNonEmpty(status.LocalEndpoint, status.Endpoint))
 	}
 	if status.Port <= 0 {
-		status.Port = seatunnelXJavaProxyDefaultPort
+		status.Port = seatunnelXJavaProxyConfiguredDefaultPort()
 	}
 	if status.Managed || status.Endpoint == "" || seatunnelXJavaProxyIsLocalEndpoint(status.Endpoint) {
 		status.DirectEndpoint = firstNonEmpty(
@@ -322,6 +326,18 @@ func decodeSeatunnelXJavaProxyStatus(clusterInfo *Cluster, node *NodeInfo, hostI
 		status.Endpoint = firstNonEmpty(status.DirectEndpoint, status.Endpoint)
 	}
 	return status
+}
+
+func seatunnelXJavaProxyConfiguredDefaultPort() int {
+	return config.GetJavaProxyDefaultPort()
+}
+
+func addSeatunnelXJavaProxyDefaultPortParam(params map[string]string) map[string]string {
+	if params == nil {
+		params = make(map[string]string)
+	}
+	params[seatunnelXJavaProxyDefaultPortParam] = strconv.Itoa(seatunnelXJavaProxyConfiguredDefaultPort())
+	return params
 }
 
 func optionalNodeID(nodeID ...uint) uint {

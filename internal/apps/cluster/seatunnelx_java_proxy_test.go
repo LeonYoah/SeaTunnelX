@@ -84,6 +84,11 @@ func (m *seatunnelxJavaProxyAgentSender) SendCommand(ctx context.Context, agentI
 func TestGetSeatunnelXJavaProxyStatusUsesOnlineMasterNode(t *testing.T) {
 	db, cleanup := setupServiceTestDB(t)
 	defer cleanup()
+	oldDefaultPort := config.Config.JavaProxy.DefaultPort
+	config.Config.JavaProxy.DefaultPort = 19080
+	defer func() {
+		config.Config.JavaProxy.DefaultPort = oldDefaultPort
+	}()
 
 	repo := NewRepository(db)
 	hostProvider := NewMockHostProvider()
@@ -133,6 +138,9 @@ func TestGetSeatunnelXJavaProxyStatusUsesOnlineMasterNode(t *testing.T) {
 	}
 	if agentSender.lastParams["service"] != "seatunnelx_java_proxy" {
 		t.Fatalf("expected service param seatunnelx_java_proxy, got %#v", agentSender.lastParams)
+	}
+	if agentSender.lastParams[seatunnelXJavaProxyDefaultPortParam] != "19080" {
+		t.Fatalf("expected configured java proxy default port param, got %#v", agentSender.lastParams)
 	}
 	if status.Endpoint != "http://10.0.0.1:18080" || status.DirectEndpoint != "http://10.0.0.1:18080" {
 		t.Fatalf("expected Control Plane direct endpoint to use node host IP, got %#v", status)
@@ -332,6 +340,9 @@ func TestInstallOrRepairSeatunnelXJavaProxyTargetsSelectedNode(t *testing.T) {
 	}
 	if installCommand.params["jar_url"] == "" || installCommand.params["script_url"] == "" {
 		t.Fatalf("expected support asset URLs in install command, got %#v", installCommand.params)
+	}
+	if installCommand.params[seatunnelXJavaProxyDefaultPortParam] == "" {
+		t.Fatalf("expected java proxy default port in install command, got %#v", installCommand.params)
 	}
 	if status.Endpoint != "http://10.0.0.2:18080" || status.NodeID != worker.ID {
 		t.Fatalf("expected refreshed direct status for selected worker, got %#v", status)

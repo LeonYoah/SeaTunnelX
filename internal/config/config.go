@@ -29,6 +29,12 @@ import (
 
 var Config *configModel
 
+const (
+	// DefaultJavaProxyPort 是 config.yaml 未配置 java_proxy.default_port 时的内置兜底值。
+	// DefaultJavaProxyPort is the built-in fallback when config.yaml omits java_proxy.default_port.
+	DefaultJavaProxyPort = 18080
+)
+
 func init() {
 	// 加载配置文件路径
 	configPath := os.Getenv("CONFIG_PATH")
@@ -93,6 +99,9 @@ func setDefaults(c *configModel) {
 
 	if c.Sync.PreviewDataTTLMinutes <= 0 && c.Sync.PreviewDataTTLHours <= 0 {
 		c.Sync.PreviewDataTTLMinutes = 24 * 60
+	}
+	if c.JavaProxy.DefaultPort <= 0 {
+		c.JavaProxy.DefaultPort = DefaultJavaProxyPort
 	}
 
 	// 认证默认配置
@@ -190,6 +199,9 @@ func validateConfig(c *configModel) error {
 	if c == nil {
 		return nil
 	}
+	if c.JavaProxy.DefaultPort != 0 && !isValidTCPPort(c.JavaProxy.DefaultPort) {
+		return fmt.Errorf("java_proxy.default_port must be between 1 and 65535")
+	}
 	if !c.Observability.Enabled {
 		return nil
 	}
@@ -213,6 +225,19 @@ func validateConfig(c *configModel) error {
 		return err
 	}
 	return nil
+}
+
+// GetJavaProxyDefaultPort 返回配置中的托管 Java Proxy 默认端口。
+// GetJavaProxyDefaultPort returns the configured managed Java Proxy default port.
+func GetJavaProxyDefaultPort() int {
+	if Config == nil || !isValidTCPPort(Config.JavaProxy.DefaultPort) {
+		return DefaultJavaProxyPort
+	}
+	return Config.JavaProxy.DefaultPort
+}
+
+func isValidTCPPort(port int) bool {
+	return port >= 1 && port <= 65535
 }
 
 func validateRequiredHTTPURL(name, raw string) error {

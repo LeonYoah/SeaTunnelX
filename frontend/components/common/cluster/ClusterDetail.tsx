@@ -68,6 +68,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   WorkbenchDialogContent,
@@ -147,6 +148,7 @@ interface ClusterDetailProps {
 type ClusterDetailTab =
   | 'nodes'
   | 'overview'
+  | 'proxy'
   | 'storage'
   | 'monitoring'
   | 'webui'
@@ -336,6 +338,8 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     useState<SeatunnelXJavaProxyLogPreviewResult | null>(null);
   const [seatunnelxJavaProxyOperating, setSeatunnelXJavaProxyOperating] =
     useState<'install' | 'start' | 'stop' | 'restart' | null>(null);
+  const [seatunnelxJavaProxyInstallOpen, setSeatunnelXJavaProxyInstallOpen] =
+    useState(false);
   const [
     selectedSeatunnelXJavaProxyNodeId,
     setSelectedSeatunnelXJavaProxyNodeId,
@@ -394,7 +398,12 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   const [nodeToRemove, setNodeToRemove] = useState<NodeInfo | null>(null);
   const [activeTab, setActiveTab] = useState<ClusterDetailTab>('overview');
   const seatunnelXJavaProxyNodeOptions = useMemo(
-    () => nodes.filter((node) => node.is_online !== false),
+    () =>
+      nodes.filter(
+        (node) =>
+          node.is_online !== false &&
+          (node.role === 'master' || node.role === 'master/worker'),
+      ),
     [nodes],
   );
   const seatunnelXJavaProxyOperationRequest = useMemo(() => {
@@ -664,10 +673,10 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           return;
         }
         setSeatunnelXJavaProxy(result.data);
-        toast.success(
-          result.data.message ||
-            t(`cluster.seatunnelxJavaProxy.${operation}Success`),
-        );
+        if (operation === 'install') {
+          setSeatunnelXJavaProxyInstallOpen(false);
+        }
+        toast.success(t(`cluster.seatunnelxJavaProxy.${operation}Success`));
       } finally {
         setSeatunnelXJavaProxyOperating(null);
       }
@@ -772,11 +781,12 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
   }, [loadUpgradeTasks, upgradeTasksPage, upgradeTasksPageSize]);
 
   useEffect(() => {
-    if (activeTab !== 'storage') {
-      return;
+    if (activeTab === 'storage') {
+      void loadRuntimeStorage();
     }
-    void loadRuntimeStorage();
-    void loadSeatunnelXJavaProxyStatus();
+    if (activeTab === 'proxy') {
+      void loadSeatunnelXJavaProxyStatus();
+    }
   }, [activeTab, loadRuntimeStorage, loadSeatunnelXJavaProxyStatus]);
 
   useEffect(() => {
@@ -1285,6 +1295,33 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
     1,
     Math.ceil(upgradeTasksTotal / upgradeTasksPageSize),
   );
+  const seatunnelXJavaProxyInstalled =
+    seatunnelxJavaProxy?.managed === false ||
+    seatunnelxJavaProxy?.installed === true ||
+    Boolean(
+      seatunnelxJavaProxy?.healthy ||
+        seatunnelxJavaProxy?.running ||
+        seatunnelxJavaProxy?.pid,
+    );
+  const seatunnelXJavaProxyStatusLabel = seatunnelxJavaProxy?.healthy
+    ? t('cluster.seatunnelxJavaProxy.ready')
+    : seatunnelxJavaProxy?.running
+      ? t('cluster.seatunnelxJavaProxy.unhealthy')
+      : seatunnelXJavaProxyInstalled
+        ? t('cluster.seatunnelxJavaProxy.notRunning')
+        : t('cluster.seatunnelxJavaProxy.notInstalled');
+  const seatunnelXJavaProxyStatusVariant = seatunnelxJavaProxy?.healthy
+    ? 'default'
+    : seatunnelxJavaProxy?.running
+      ? 'outline'
+      : 'secondary';
+  const seatunnelXJavaProxyDeploymentNode = seatunnelxJavaProxy?.host_name
+    ? `${seatunnelxJavaProxy.host_name}${
+        seatunnelxJavaProxy.role
+          ? ` (${t(`cluster.roles.${getRoleTranslationKey(seatunnelxJavaProxy.role)}`)})`
+          : ''
+      }`
+    : '-';
 
   const containerVariants = {
     hidden: {opacity: 0},
@@ -1856,6 +1893,13 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
               {t('cluster.detailTabs.nodes')}
             </TabsTrigger>
             <TabsTrigger
+              value='proxy'
+              className='flex-none px-3'
+              data-testid='cluster-detail-tab-proxy'
+            >
+              {t('cluster.detailTabs.proxy')}
+            </TabsTrigger>
+            <TabsTrigger
               value='storage'
               className='flex-none px-3'
               data-testid='cluster-detail-tab-storage'
@@ -2041,6 +2085,294 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
             </TabsContent>
           )}
 
+          <TabsContent value='proxy' className='space-y-6'>
+            <Card>
+              <CardHeader className='flex flex-row items-start justify-between gap-4 space-y-0'>
+                <div>
+                  <CardTitle className='flex items-center gap-2'>
+                    <Wrench className='h-5 w-5' />
+                    {t('cluster.seatunnelxJavaProxy.title')}
+                  </CardTitle>
+                  <CardDescription>
+                    {t('cluster.seatunnelxJavaProxy.clusterAgentDescription')}
+                  </CardDescription>
+                </div>
+                <div className='flex items-center gap-2'>
+                  <Badge variant={seatunnelXJavaProxyStatusVariant}>
+                    {seatunnelXJavaProxyStatusLabel}
+                  </Badge>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => void loadSeatunnelXJavaProxyStatus()}
+                    disabled={seatunnelxJavaProxyLoading}
+                    data-testid='seatunnelx-java-proxy-refresh'
+                  >
+                    {seatunnelxJavaProxyLoading ? (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    ) : (
+                      <RefreshCw className='mr-2 h-4 w-4' />
+                    )}
+                    {t('common.refresh')}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className='space-y-5'>
+                {seatunnelxJavaProxyLoading && !seatunnelxJavaProxy ? (
+                  <div className='flex items-center justify-center py-10'>
+                    <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+                  </div>
+                ) : !seatunnelXJavaProxyInstalled ? (
+                  <div className='rounded-lg border border-dashed bg-muted/20 p-6'>
+                    <div className='flex flex-col gap-4 md:flex-row md:items-center md:justify-between'>
+                      <div className='space-y-1'>
+                        <div className='font-medium'>
+                          {t('cluster.seatunnelxJavaProxy.notInstalledTitle')}
+                        </div>
+                        <p className='text-sm text-muted-foreground'>
+                          {t(
+                            'cluster.seatunnelxJavaProxy.notInstalledDescription',
+                          )}
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => setSeatunnelXJavaProxyInstallOpen(true)}
+                        disabled={
+                          seatunnelXJavaProxyNodeOptions.length === 0 ||
+                          seatunnelxJavaProxyOperating !== null
+                        }
+                        data-testid='seatunnelx-java-proxy-install-open'
+                      >
+                        <Wrench className='mr-2 h-4 w-4' />
+                        {t('cluster.seatunnelxJavaProxy.installProxy')}
+                      </Button>
+                    </div>
+                    {seatunnelXJavaProxyNodeOptions.length === 0 && (
+                      <p className='mt-3 text-sm text-muted-foreground'>
+                        {t('cluster.seatunnelxJavaProxy.noMasterNode')}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
+                      <div>
+                        <div className='text-sm text-muted-foreground'>
+                          {t('cluster.seatunnelxJavaProxy.deploymentNode')}
+                        </div>
+                        <div className='font-medium break-all'>
+                          {seatunnelXJavaProxyDeploymentNode}
+                        </div>
+                      </div>
+                      <div>
+                        <div className='text-sm text-muted-foreground'>
+                          {t('cluster.seatunnelxJavaProxy.serviceStatus')}
+                        </div>
+                        <div className='font-medium'>
+                          {seatunnelXJavaProxyStatusLabel}
+                        </div>
+                      </div>
+                      <div>
+                        <div className='text-sm text-muted-foreground'>
+                          {t('cluster.seatunnelxJavaProxy.port')}
+                        </div>
+                        <div className='font-medium'>
+                          {seatunnelxJavaProxy?.port || '-'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className='text-sm text-muted-foreground'>
+                          {t('cluster.seatunnelxJavaProxy.version')}
+                        </div>
+                        <div className='font-medium'>
+                          {seatunnelxJavaProxy?.version ||
+                            cluster.version ||
+                            '-'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className='flex flex-wrap gap-2'>
+                      {!seatunnelxJavaProxy?.running && (
+                        <Button
+                          size='sm'
+                          onClick={() =>
+                            void handleSeatunnelXJavaProxyOperation('start')
+                          }
+                          disabled={seatunnelxJavaProxyOperating !== null}
+                          data-testid='seatunnelx-java-proxy-start'
+                        >
+                          {seatunnelxJavaProxyOperating === 'start' ? (
+                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          ) : (
+                            <Play className='mr-2 h-4 w-4' />
+                          )}
+                          {t('cluster.seatunnelxJavaProxy.start')}
+                        </Button>
+                      )}
+                      {seatunnelxJavaProxy?.running && (
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() =>
+                            void handleSeatunnelXJavaProxyOperation('restart')
+                          }
+                          disabled={seatunnelxJavaProxyOperating !== null}
+                          data-testid='seatunnelx-java-proxy-restart'
+                        >
+                          {seatunnelxJavaProxyOperating === 'restart' ? (
+                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          ) : (
+                            <RotateCcw className='mr-2 h-4 w-4' />
+                          )}
+                          {t('cluster.seatunnelxJavaProxy.restart')}
+                        </Button>
+                      )}
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void handlePreviewSeatunnelXJavaProxyLog()}
+                        disabled={
+                          seatunnelxJavaProxyLoading ||
+                          seatunnelxJavaProxyLogLoading
+                        }
+                        data-testid='seatunnelx-java-proxy-view-log'
+                      >
+                        {seatunnelxJavaProxyLogLoading ? (
+                          <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                        ) : (
+                          <FileText className='mr-2 h-4 w-4' />
+                        )}
+                        {t('cluster.seatunnelxJavaProxy.viewRuntimeLog')}
+                      </Button>
+                      {!seatunnelxJavaProxy?.healthy && (
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() =>
+                            void handleSeatunnelXJavaProxyOperation('install')
+                          }
+                          disabled={seatunnelxJavaProxyOperating !== null}
+                          data-testid='seatunnelx-java-proxy-reinstall'
+                        >
+                          {seatunnelxJavaProxyOperating === 'install' ? (
+                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          ) : (
+                            <Wrench className='mr-2 h-4 w-4' />
+                          )}
+                          {t('cluster.seatunnelxJavaProxy.reinstallAssets')}
+                        </Button>
+                      )}
+                      {seatunnelxJavaProxy?.running && (
+                        <Button
+                          variant='ghost'
+                          size='sm'
+                          onClick={() =>
+                            void handleSeatunnelXJavaProxyOperation('stop')
+                          }
+                          disabled={seatunnelxJavaProxyOperating !== null}
+                          data-testid='seatunnelx-java-proxy-stop'
+                        >
+                          {seatunnelxJavaProxyOperating === 'stop' ? (
+                            <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                          ) : (
+                            <Square className='mr-2 h-4 w-4' />
+                          )}
+                          {t('cluster.seatunnelxJavaProxy.stop')}
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className='text-base'>
+                  {t('cluster.seatunnelxJavaProxy.relatedFeatures')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className='grid gap-3 md:grid-cols-3'>
+                  {[
+                    'runtimeStorage',
+                    'workbenchDebug',
+                    'installProbe',
+                  ].map((feature) => (
+                    <div
+                      key={feature}
+                      className='rounded-lg border bg-muted/20 p-4'
+                    >
+                      <div className='font-medium'>
+                        {t(
+                          `cluster.seatunnelxJavaProxy.features.${feature}.title`,
+                        )}
+                      </div>
+                      <div className='mt-2'>
+                        <Badge
+                          variant={
+                            seatunnelxJavaProxy?.healthy
+                              ? 'default'
+                              : 'secondary'
+                          }
+                        >
+                          {seatunnelxJavaProxy?.healthy
+                            ? t('cluster.seatunnelxJavaProxy.available')
+                            : t('cluster.seatunnelxJavaProxy.unavailable')}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            {seatunnelXJavaProxyInstalled && (
+              <details className='rounded-lg border bg-muted/10 p-4 text-sm'>
+                <summary className='cursor-pointer font-medium'>
+                  {t('cluster.seatunnelxJavaProxy.diagnostics')}
+                </summary>
+                <div className='mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
+                  <div>
+                    <div className='text-muted-foreground'>
+                      {t('cluster.seatunnelxJavaProxy.endpoint')}
+                    </div>
+                    <div className='break-all font-medium'>
+                      {seatunnelxJavaProxy?.direct_endpoint ||
+                        seatunnelxJavaProxy?.endpoint ||
+                        '-'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className='text-muted-foreground'>
+                      {t('cluster.seatunnelxJavaProxy.localEndpoint')}
+                    </div>
+                    <div className='break-all font-medium'>
+                      {seatunnelxJavaProxy?.local_endpoint || '-'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className='text-muted-foreground'>
+                      {t('cluster.seatunnelxJavaProxy.pid')}
+                    </div>
+                    <div className='font-medium'>
+                      {seatunnelxJavaProxy?.pid ?? '-'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className='text-muted-foreground'>
+                      {t('cluster.seatunnelxJavaProxy.logPath')}
+                    </div>
+                    <div className='break-all font-medium'>
+                      {seatunnelxJavaProxy?.log_path || '-'}
+                    </div>
+                  </div>
+                </div>
+              </details>
+            )}
+          </TabsContent>
+
           <TabsContent value='storage' className='space-y-6'>
             {/* Runtime Storage / 运行时存储 */}
             <Card>
@@ -2077,244 +2409,21 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
                         source: runtimeStorage?.config_source || '-',
                       })}
                     </div>
-                    <Card data-testid='seatunnelx-java-proxy-card'>
-                      <CardHeader className='pb-3'>
-                        <div className='flex items-start justify-between gap-4'>
-                          <div>
-                            <CardTitle className='text-base'>
-                              {t('cluster.seatunnelxJavaProxy.title')}
-                            </CardTitle>
-                            <CardDescription>
-                              {t('cluster.seatunnelxJavaProxy.description')}
-                            </CardDescription>
+                    {!seatunnelxJavaProxyLoading &&
+                      !seatunnelxJavaProxy?.healthy && (
+                        <div className='flex flex-col gap-3 rounded-lg border bg-muted/20 p-4 text-sm md:flex-row md:items-center md:justify-between'>
+                          <div className='text-muted-foreground'>
+                            {t('cluster.runtimeStorage.proxyUnavailable')}
                           </div>
-                          <div className='flex items-center gap-2'>
-                            <Badge
-                              variant={
-                                seatunnelxJavaProxy?.healthy
-                                  ? 'default'
-                                  : seatunnelxJavaProxy?.running
-                                    ? 'outline'
-                                    : 'secondary'
-                              }
-                            >
-                              {seatunnelxJavaProxy?.healthy
-                                ? t('cluster.seatunnelxJavaProxy.healthy')
-                                : seatunnelxJavaProxy?.running
-                                  ? t('cluster.seatunnelxJavaProxy.unhealthy')
-                                  : t('cluster.seatunnelxJavaProxy.stopped')}
-                            </Badge>
-                            <Button
-                              variant='outline'
-                              size='sm'
-                              onClick={() =>
-                                void loadSeatunnelXJavaProxyStatus()
-                              }
-                              disabled={seatunnelxJavaProxyLoading}
-                              data-testid='seatunnelx-java-proxy-refresh'
-                            >
-                              {seatunnelxJavaProxyLoading ? (
-                                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                              ) : (
-                                <RefreshCw className='mr-2 h-4 w-4' />
-                              )}
-                              {t('common.refresh')}
-                            </Button>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent className='space-y-4 text-sm'>
-                        <div className='grid gap-3 md:grid-cols-[minmax(220px,360px)_1fr]'>
-                          <div className='space-y-2'>
-                            <div className='text-muted-foreground'>
-                              {t(
-                                'cluster.seatunnelxJavaProxy.selectDeploymentNode',
-                              )}
-                            </div>
-                            <Select
-                              value={selectedSeatunnelXJavaProxyNodeId}
-                              onValueChange={
-                                setSelectedSeatunnelXJavaProxyNodeId
-                              }
-                              disabled={
-                                seatunnelXJavaProxyNodeOptions.length === 0 ||
-                                seatunnelxJavaProxyOperating !== null
-                              }
-                            >
-                              <SelectTrigger
-                                className='w-full'
-                                data-testid='seatunnelx-java-proxy-node-select'
-                              >
-                                <SelectValue
-                                  placeholder={t(
-                                    'cluster.seatunnelxJavaProxy.noDeploymentNode',
-                                  )}
-                                />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {seatunnelXJavaProxyNodeOptions.map((node) => (
-                                  <SelectItem
-                                    key={node.id}
-                                    value={String(node.id)}
-                                  >
-                                    {`${node.host_name || `#${node.id}`} · ${node.host_ip || '-'} (${t(`cluster.roles.${getRoleTranslationKey(node.role)}`)})`}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
-                            {t(
-                              'cluster.seatunnelxJavaProxy.directEndpointHint',
-                            )}
-                          </div>
-                        </div>
-                        <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-5'>
-                          <div>
-                            <div className='text-muted-foreground'>
-                              {t('cluster.seatunnelxJavaProxy.deploymentNode')}
-                            </div>
-                            <div className='font-medium break-all'>
-                              {seatunnelxJavaProxy?.host_name || '-'}
-                              {seatunnelxJavaProxy?.role
-                                ? ` (${t(`cluster.roles.${getRoleTranslationKey(seatunnelxJavaProxy.role)}`)})`
-                                : ''}
-                            </div>
-                          </div>
-                          <div>
-                            <div className='text-muted-foreground'>
-                              {t(
-                                'cluster.seatunnelxJavaProxy.controlPlaneEndpoint',
-                              )}
-                            </div>
-                            <div className='font-medium break-all'>
-                              {seatunnelxJavaProxy?.direct_endpoint ||
-                                seatunnelxJavaProxy?.endpoint ||
-                                '-'}
-                            </div>
-                          </div>
-                          <div>
-                            <div className='text-muted-foreground'>
-                              {t('cluster.seatunnelxJavaProxy.localEndpoint')}
-                            </div>
-                            <div className='font-medium break-all'>
-                              {seatunnelxJavaProxy?.local_endpoint || '-'}
-                            </div>
-                          </div>
-                          <div>
-                            <div className='text-muted-foreground'>
-                              {t('cluster.seatunnelxJavaProxy.pid')}
-                            </div>
-                            <div className='font-medium'>
-                              {seatunnelxJavaProxy?.pid ?? '-'}
-                            </div>
-                          </div>
-                          <div>
-                            <div className='text-muted-foreground'>
-                              {t('cluster.seatunnelxJavaProxy.logPath')}
-                            </div>
-                            <div className='font-medium break-all'>
-                              {seatunnelxJavaProxy?.log_path &&
-                              seatunnelxJavaProxy.log_path.trim() !== ''
-                                ? seatunnelxJavaProxy.log_path
-                                : '-'}
-                            </div>
-                          </div>
-                        </div>
-                        <div className='rounded-md border bg-muted/20 p-3 text-sm'>
-                          {seatunnelxJavaProxy?.message ||
-                            t('cluster.seatunnelxJavaProxy.noStatus')}
-                        </div>
-                        <div className='flex flex-wrap gap-2'>
                           <Button
                             variant='outline'
                             size='sm'
-                            onClick={() =>
-                              void handleSeatunnelXJavaProxyOperation('install')
-                            }
-                            disabled={
-                              seatunnelxJavaProxyOperating !== null ||
-                              seatunnelXJavaProxyNodeOptions.length === 0
-                            }
-                            data-testid='seatunnelx-java-proxy-install'
+                            onClick={() => setActiveTab('proxy')}
                           >
-                            {seatunnelxJavaProxyOperating === 'install' ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <Wrench className='mr-2 h-4 w-4' />
-                            )}
-                            {t('cluster.seatunnelxJavaProxy.installRepair')}
-                          </Button>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handlePreviewSeatunnelXJavaProxyLog()
-                            }
-                            disabled={
-                              seatunnelxJavaProxyLoading ||
-                              seatunnelxJavaProxyLogLoading
-                            }
-                            data-testid='seatunnelx-java-proxy-view-log'
-                          >
-                            {seatunnelxJavaProxyLogLoading ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <FileText className='mr-2 h-4 w-4' />
-                            )}
-                            {t('cluster.seatunnelxJavaProxy.viewRuntimeLog')}
-                          </Button>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handleSeatunnelXJavaProxyOperation('start')
-                            }
-                            disabled={seatunnelxJavaProxyOperating !== null}
-                            data-testid='seatunnelx-java-proxy-start'
-                          >
-                            {seatunnelxJavaProxyOperating === 'start' ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <Play className='mr-2 h-4 w-4' />
-                            )}
-                            {t('cluster.seatunnelxJavaProxy.start')}
-                          </Button>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handleSeatunnelXJavaProxyOperation('restart')
-                            }
-                            disabled={seatunnelxJavaProxyOperating !== null}
-                            data-testid='seatunnelx-java-proxy-restart'
-                          >
-                            {seatunnelxJavaProxyOperating === 'restart' ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <RotateCcw className='mr-2 h-4 w-4' />
-                            )}
-                            {t('cluster.seatunnelxJavaProxy.restart')}
-                          </Button>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handleSeatunnelXJavaProxyOperation('stop')
-                            }
-                            disabled={seatunnelxJavaProxyOperating !== null}
-                            data-testid='seatunnelx-java-proxy-stop'
-                          >
-                            {seatunnelxJavaProxyOperating === 'stop' ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <Square className='mr-2 h-4 w-4' />
-                            )}
-                            {t('cluster.seatunnelxJavaProxy.stop')}
+                            {t('cluster.runtimeStorage.goToProxy')}
                           </Button>
                         </div>
-                      </CardContent>
-                    </Card>
+                      )}
                     <div className='grid gap-4 xl:grid-cols-2'>
                       {renderRuntimeStorageSpec(
                         runtimeStorage?.checkpoint,
@@ -3023,6 +3132,78 @@ export function ClusterDetail({clusterId}: ClusterDetailProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={seatunnelxJavaProxyInstallOpen}
+        onOpenChange={setSeatunnelXJavaProxyInstallOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t('cluster.seatunnelxJavaProxy.installDialogTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {t('cluster.seatunnelxJavaProxy.installDialogDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-2'>
+            <div className='text-sm font-medium'>
+              {t('cluster.seatunnelxJavaProxy.deploymentNode')}
+            </div>
+            <Select
+              value={selectedSeatunnelXJavaProxyNodeId}
+              onValueChange={setSelectedSeatunnelXJavaProxyNodeId}
+              disabled={
+                seatunnelXJavaProxyNodeOptions.length === 0 ||
+                seatunnelxJavaProxyOperating !== null
+              }
+            >
+              <SelectTrigger data-testid='seatunnelx-java-proxy-node-select'>
+                <SelectValue
+                  placeholder={t(
+                    'cluster.seatunnelxJavaProxy.noDeploymentNode',
+                  )}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {seatunnelXJavaProxyNodeOptions.map((node) => (
+                  <SelectItem key={node.id} value={String(node.id)}>
+                    {`${node.host_name || `#${node.id}`} · ${node.host_ip || '-'} (${t(`cluster.roles.${getRoleTranslationKey(node.role)}`)})`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {seatunnelXJavaProxyNodeOptions.length === 0 && (
+              <p className='text-sm text-muted-foreground'>
+                {t('cluster.seatunnelxJavaProxy.noMasterNode')}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant='outline'
+              onClick={() => setSeatunnelXJavaProxyInstallOpen(false)}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              onClick={() =>
+                void handleSeatunnelXJavaProxyOperation('install')
+              }
+              disabled={
+                selectedSeatunnelXJavaProxyNodeId === '' ||
+                seatunnelxJavaProxyOperating !== null
+              }
+              data-testid='seatunnelx-java-proxy-install'
+            >
+              {seatunnelxJavaProxyOperating === 'install' && (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              )}
+              {t('cluster.seatunnelxJavaProxy.install')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={runtimeStoragePreviewOpen}

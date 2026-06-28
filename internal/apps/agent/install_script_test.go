@@ -107,6 +107,7 @@ func TestInstallScriptGenerate(t *testing.T) {
 		"/api/v1/agent/assets/seatunnelx-java-proxy.sh",
 		"SEATUNNELX_JAVA_PROXY_HOME",
 		"SEATUNNELX_JAVA_PROXY_SCRIPT",
+		"JAVA_PROXY_PORT=\"${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}\"",
 		"seatunnelx-agent",
 		seatunnelmeta.SeatunnelXJavaProxyJarFileName(seatunnelmeta.DefaultSeatunnelXJavaProxyVersion),
 	}
@@ -127,13 +128,14 @@ func TestInstallScriptGenerateWithData(t *testing.T) {
 	}
 
 	data := &InstallScriptData{
-		ControlPlaneAddr: "http://custom-server:9090",
-		GRPCAddr:         "custom-server:60000",
-		InstallDir:       "/opt/custom/bin",
-		ConfigDir:        "/opt/custom/config",
-		AgentBinary:      "custom-agent",
-		ServiceName:      "custom-service",
-		SupportDir:       "/opt/custom/support",
+		ControlPlaneAddr:     "http://custom-server:9090",
+		GRPCAddr:             "custom-server:60000",
+		InstallDir:           "/opt/custom/bin",
+		ConfigDir:            "/opt/custom/config",
+		AgentBinary:          "custom-agent",
+		ServiceName:          "custom-service",
+		SupportDir:           "/opt/custom/support",
+		JavaProxyDefaultPort: 19080,
 	}
 
 	script, err := gen.GenerateWithData(data)
@@ -149,6 +151,7 @@ func TestInstallScriptGenerateWithData(t *testing.T) {
 		"/opt/custom/bin",
 		"/opt/custom/config",
 		"/opt/custom/support",
+		"JAVA_PROXY_PORT=\"${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-19080}}\"",
 		"custom-agent",
 		"custom-service",
 	}

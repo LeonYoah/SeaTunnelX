@@ -141,21 +141,23 @@ func downloadSeatunnelXJavaProxyAsset(ctx context.Context, rawURL string, target
 
 // SeatunnelXJavaProxyServiceStatus describes the current managed seatunnelx-java-proxy state.
 type SeatunnelXJavaProxyServiceStatus struct {
-	Service  string `json:"service"`
-	Managed  bool   `json:"managed"`
-	Running  bool   `json:"running"`
-	Healthy  bool   `json:"healthy"`
-	Endpoint string `json:"endpoint,omitempty"`
-	Port     int    `json:"port,omitempty"`
-	PID      int    `json:"pid,omitempty"`
-	LogPath  string `json:"log_path,omitempty"`
-	StateDir string `json:"state_dir,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Service    string `json:"service"`
+	Managed    bool   `json:"managed"`
+	Installed  bool   `json:"installed"`
+	Running    bool   `json:"running"`
+	Healthy    bool   `json:"healthy"`
+	Endpoint   string `json:"endpoint,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+	InstallDir string `json:"install_dir,omitempty"`
+	LogPath    string `json:"log_path,omitempty"`
+	StateDir   string `json:"state_dir,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 // StartManagedSeatunnelXJavaProxyService ensures the managed seatunnelx-java-proxy service is available.
 func StartManagedSeatunnelXJavaProxyService(ctx context.Context, installDir string, seatunnelVersion string) (*SeatunnelXJavaProxyServiceStatus, error) {
-	status, _ := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir)
+	status, _ := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir, seatunnelVersion)
 	if status != nil && status.Healthy {
 		return status, nil
 	}
@@ -165,17 +167,19 @@ func StartManagedSeatunnelXJavaProxyService(ctx context.Context, installDir stri
 		return nil, err
 	}
 
-	status, statusErr := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir)
+	status, statusErr := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir, seatunnelVersion)
 	if statusErr != nil {
 		return &SeatunnelXJavaProxyServiceStatus{
-			Service:  "seatunnelx_java_proxy",
-			Managed:  true,
-			Running:  true,
-			Healthy:  true,
-			Endpoint: baseURL,
-			Message:  "seatunnelx-java-proxy service started",
-			StateDir: seatunnelxJavaProxyServiceStateDir(installDir),
-			LogPath:  filepath.Join(seatunnelxJavaProxyServiceStateDir(installDir), "service.log"),
+			Service:    "seatunnelx_java_proxy",
+			Managed:    true,
+			Installed:  true,
+			Running:    true,
+			Healthy:    true,
+			Endpoint:   baseURL,
+			InstallDir: installDir,
+			Message:    "seatunnelx-java-proxy service started",
+			StateDir:   seatunnelxJavaProxyServiceStateDir(installDir),
+			LogPath:    filepath.Join(seatunnelxJavaProxyServiceStateDir(installDir), "service.log"),
 		}, nil
 	}
 	status.Message = firstNonBlank(status.Message, "seatunnelx-java-proxy service started")
@@ -183,17 +187,21 @@ func StartManagedSeatunnelXJavaProxyService(ctx context.Context, installDir stri
 }
 
 // GetManagedSeatunnelXJavaProxyServiceStatus returns the current seatunnelx-java-proxy state.
-func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir string) (*SeatunnelXJavaProxyServiceStatus, error) {
+func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir string, seatunnelVersion ...string) (*SeatunnelXJavaProxyServiceStatus, error) {
+	version := seatunnelmeta.ResolveSeatunnelXJavaProxyVersion(firstNonBlank(seatunnelVersion...))
 	status := &SeatunnelXJavaProxyServiceStatus{
-		Service:  "seatunnelx_java_proxy",
-		Managed:  true,
-		StateDir: seatunnelxJavaProxyServiceStateDir(installDir),
-		LogPath:  filepath.Join(seatunnelxJavaProxyServiceStateDir(installDir), "service.log"),
+		Service:    "seatunnelx_java_proxy",
+		Managed:    true,
+		Installed:  seatunnelxJavaProxySupportAssetsInstalled(installDir, version),
+		InstallDir: installDir,
+		StateDir:   seatunnelxJavaProxyServiceStateDir(installDir),
+		LogPath:    filepath.Join(seatunnelxJavaProxyServiceStateDir(installDir), "service.log"),
 	}
 
 	if endpoint := strings.TrimSpace(os.Getenv(seatunnelxJavaProxyEndpointEnvVar)); endpoint != "" {
 		normalized := strings.TrimRight(endpoint, "/")
 		status.Managed = false
+		status.Installed = true
 		status.Endpoint = normalized
 		if port := seatunnelxJavaProxyPortFromEndpoint(normalized); port > 0 {
 			status.Port = port
@@ -217,21 +225,36 @@ func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir 
 	}
 	if bytes, err := os.ReadFile(filepath.Join(status.StateDir, "service.pid")); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(bytes))); err == nil && pid > 0 {
-			status.PID = pid
+			if seatunnelxJavaProxyPIDMatchesInstallDir(pid, installDir) {
+				status.PID = pid
+			}
 		}
 	}
 
+	if status.Port > 0 && !seatunnelxJavaProxyPortOwnedByInstallDir(ctx, status.Port, installDir) {
+		status.Endpoint = ""
+		status.Port = 0
+		status.PID = 0
+		status.Message = "seatunnelx-java-proxy port is owned by another install_dir"
+	}
+
 	if status.Endpoint == "" {
-		for _, port := range seatunnelxJavaProxyPortCandidates(status.StateDir) {
+		for _, port := range seatunnelxJavaProxyPortCandidates(ctx, status.StateDir) {
 			if port <= 0 {
 				continue
 			}
 			endpoint := seatunnelxJavaProxyServiceBaseURL(port)
 			if err := waitForSeatunnelXJavaProxyHealthy(ctx, endpoint, 1200*time.Millisecond); err == nil {
+				if !seatunnelxJavaProxyPortOwnedByInstallDir(ctx, port, installDir) {
+					continue
+				}
 				status.Endpoint = endpoint
 				status.Port = port
 				status.Healthy = true
 				status.Running = true
+				if pid := seatunnelxJavaProxyPIDByPortForInstallDir(ctx, port, installDir); pid > 0 {
+					status.PID = pid
+				}
 				_ = os.MkdirAll(status.StateDir, 0o755)
 				_ = os.WriteFile(filepath.Join(status.StateDir, "service.port"), []byte(strconv.Itoa(port)+"\n"), 0o644)
 				break
@@ -240,7 +263,7 @@ func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir 
 	}
 
 	if status.PID <= 0 && status.Port > 0 {
-		if pid := seatunnelxJavaProxyPIDByPort(ctx, status.Port); pid > 0 {
+		if pid := seatunnelxJavaProxyPIDByPortForInstallDir(ctx, status.Port, installDir); pid > 0 {
 			status.PID = pid
 			_ = os.MkdirAll(status.StateDir, 0o755)
 			_ = os.WriteFile(filepath.Join(status.StateDir, "service.pid"), []byte(strconv.Itoa(pid)+"\n"), 0o644)
@@ -250,7 +273,8 @@ func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir 
 		status.Running = seatunnelxJavaProxyPIDAlive(status.PID)
 	}
 	if status.Endpoint != "" && !status.Healthy {
-		if err := waitForSeatunnelXJavaProxyHealthy(ctx, status.Endpoint, 1500*time.Millisecond); err == nil {
+		if err := waitForSeatunnelXJavaProxyHealthy(ctx, status.Endpoint, 1500*time.Millisecond); err == nil &&
+			seatunnelxJavaProxyPortOwnedByInstallDir(ctx, status.Port, installDir) {
 			status.Healthy = true
 			status.Running = true
 		}
@@ -269,10 +293,20 @@ func GetManagedSeatunnelXJavaProxyServiceStatus(ctx context.Context, installDir 
 	case status.Running:
 		status.Message = "seatunnelx-java-proxy service process is running but health check failed"
 	default:
-		status.Message = "seatunnelx-java-proxy service is not running"
+		status.Message = firstNonBlank(status.Message, "seatunnelx-java-proxy service is not running")
 	}
 
 	return status, nil
+}
+
+func seatunnelxJavaProxySupportAssetsInstalled(installDir string, seatunnelVersion string) bool {
+	if _, err := resolveSeatunnelXJavaProxyScriptPath(installDir); err != nil {
+		return false
+	}
+	if _, err := resolveSeatunnelXJavaProxyJarPath(installDir, seatunnelVersion); err != nil {
+		return false
+	}
+	return true
 }
 
 // StopManagedSeatunnelXJavaProxyService stops the locally managed seatunnelx-java-proxy service.
@@ -316,19 +350,76 @@ func StopManagedSeatunnelXJavaProxyService(ctx context.Context, installDir strin
 	stoppedStatus, statusErr := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir)
 	if statusErr != nil {
 		return &SeatunnelXJavaProxyServiceStatus{
-			Service:  "seatunnelx_java_proxy",
-			Managed:  true,
-			Running:  false,
-			Healthy:  false,
-			Endpoint: status.Endpoint,
-			Port:     status.Port,
-			LogPath:  status.LogPath,
-			StateDir: status.StateDir,
-			Message:  "seatunnelx-java-proxy service stopped",
+			Service:    "seatunnelx_java_proxy",
+			Managed:    true,
+			Installed:  status.Installed,
+			Running:    false,
+			Healthy:    false,
+			Endpoint:   status.Endpoint,
+			Port:       status.Port,
+			InstallDir: installDir,
+			LogPath:    status.LogPath,
+			StateDir:   status.StateDir,
+			Message:    "seatunnelx-java-proxy service stopped",
 		}, nil
 	}
 	stoppedStatus.Message = "seatunnelx-java-proxy service stopped"
 	return stoppedStatus, nil
+}
+
+// ForceStopManagedSeatunnelXJavaProxyService 强制终止本地托管的 seatunnelx-java-proxy 服务。
+// ForceStopManagedSeatunnelXJavaProxyService forcefully kills the locally managed seatunnelx-java-proxy service.
+func ForceStopManagedSeatunnelXJavaProxyService(ctx context.Context, installDir string) (*SeatunnelXJavaProxyServiceStatus, error) {
+	status, err := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir)
+	if err != nil {
+		return nil, err
+	}
+	if status == nil {
+		return nil, fmt.Errorf("seatunnelx-java-proxy service status is unavailable")
+	}
+	if !status.Managed {
+		status.Message = "configured external seatunnelx-java-proxy endpoint cannot be stopped by agent"
+		return status, errors.New(status.Message)
+	}
+	if status.PID <= 0 && !status.Running {
+		cleanupSeatunnelXJavaProxyRuntimeState(status)
+		status.Message = "seatunnelx-java-proxy service is already stopped"
+		return status, nil
+	}
+	if err := forceKillSeatunnelXJavaProxyProcesses(ctx, status); err != nil {
+		status.Message = "failed to force stop seatunnelx-java-proxy service"
+		return status, err
+	}
+
+	cleanupSeatunnelXJavaProxyRuntimeState(status)
+	stoppedStatus, statusErr := GetManagedSeatunnelXJavaProxyServiceStatus(ctx, installDir)
+	if statusErr != nil {
+		return &SeatunnelXJavaProxyServiceStatus{
+			Service:    "seatunnelx_java_proxy",
+			Managed:    true,
+			Installed:  status.Installed,
+			Running:    false,
+			Healthy:    false,
+			Endpoint:   status.Endpoint,
+			Port:       status.Port,
+			InstallDir: installDir,
+			LogPath:    status.LogPath,
+			StateDir:   status.StateDir,
+			Message:    "seatunnelx-java-proxy service force killed",
+		}, nil
+	}
+	stoppedStatus.Message = "seatunnelx-java-proxy service force killed"
+	return stoppedStatus, nil
+}
+
+// cleanupSeatunnelXJavaProxyRuntimeState 清理运行时 PID/端口状态，避免卸载后残留。
+// cleanupSeatunnelXJavaProxyRuntimeState removes runtime PID/port state to avoid stale uninstall leftovers.
+func cleanupSeatunnelXJavaProxyRuntimeState(status *SeatunnelXJavaProxyServiceStatus) {
+	if status == nil || strings.TrimSpace(status.StateDir) == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(status.StateDir, "service.pid"))
+	_ = os.Remove(filepath.Join(status.StateDir, "service.port"))
 }
 
 // forceKillSeatunnelXJavaProxyProcesses 在优雅停止超时后强制终止已知的 proxy 进程。
@@ -355,10 +446,10 @@ func forceKillSeatunnelXJavaProxyProcesses(ctx context.Context, status *Seatunne
 		if !seatunnelxJavaProxyPIDAlive(pid) {
 			continue
 		}
-		// 端口发现的 PID 需要再次校验命令行，避免误杀同端口上的非 proxy 进程。
-		// PIDs discovered from the port are validated by cmdline to avoid killing an unrelated listener.
-		if pid != status.PID && !seatunnelxJavaProxyPIDMatches(pid) {
-			logger.WarnF(ctx, "[seatunnelx-java-proxy] skip force killing non-proxy listener: pid=%d, port=%d", pid, status.Port)
+		// 端口发现的 PID 需要再次校验命令行和 install_dir，避免误杀其他集群实例。
+		// PIDs discovered from the port are validated by cmdline and install_dir to avoid killing another cluster instance.
+		if !seatunnelxJavaProxyPIDMatchesInstallDir(pid, status.InstallDir) {
+			logger.WarnF(ctx, "[seatunnelx-java-proxy] skip force killing non-matching listener: pid=%d, port=%d, install_dir=%s", pid, status.Port, status.InstallDir)
 			continue
 		}
 		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
@@ -436,12 +527,48 @@ func linuxProcessState(pid int) (string, bool) {
 // seatunnelxJavaProxyPIDMatches 检查进程命令行是否属于 seatunnelx-java-proxy。
 // seatunnelxJavaProxyPIDMatches checks whether a process command line belongs to seatunnelx-java-proxy.
 func seatunnelxJavaProxyPIDMatches(pid int) bool {
+	cmdline, ok := seatunnelxJavaProxyPIDCmdline(pid)
+	if !ok {
+		return false
+	}
+	return strings.Contains(cmdline, "SeatunnelXJavaProxyApplication") ||
+		strings.Contains(cmdline, "seatunnelx-java-proxy")
+}
+
+func seatunnelxJavaProxyPIDMatchesInstallDir(pid int, installDir string) bool {
+	cmdline, ok := seatunnelxJavaProxyPIDCmdline(pid)
+	if !ok {
+		return false
+	}
+	return seatunnelxJavaProxyCmdlineMatchesInstallDir(cmdline, installDir)
+}
+
+func seatunnelxJavaProxyPIDCmdline(pid int) (string, bool) {
 	cmdlinePath := filepath.Join("/proc", strconv.Itoa(pid), "cmdline")
 	content, err := os.ReadFile(cmdlinePath)
 	if err != nil {
+		return "", false
+	}
+	return strings.ReplaceAll(string(content), "\x00", " "), true
+}
+
+func seatunnelxJavaProxyCmdlineMatchesInstallDir(cmdline string, installDir string) bool {
+	if strings.TrimSpace(cmdline) == "" || !seatunnelxJavaProxyCmdlineMatchesProxy(cmdline) {
 		return false
 	}
-	cmdline := strings.ReplaceAll(string(content), "\x00", " ")
+	trimmedInstallDir := strings.TrimSpace(installDir)
+	normalizedInstallDir := filepath.Clean(trimmedInstallDir)
+	if normalizedInstallDir == "" || normalizedInstallDir == "." {
+		return true
+	}
+	if strings.Contains(cmdline, "-Dseatunnelx.java.proxy.seatunnel.home="+normalizedInstallDir) {
+		return true
+	}
+	return trimmedInstallDir != normalizedInstallDir &&
+		strings.Contains(cmdline, "-Dseatunnelx.java.proxy.seatunnel.home="+trimmedInstallDir)
+}
+
+func seatunnelxJavaProxyCmdlineMatchesProxy(cmdline string) bool {
 	return strings.Contains(cmdline, "SeatunnelXJavaProxyApplication") ||
 		strings.Contains(cmdline, "seatunnelx-java-proxy")
 }
@@ -464,6 +591,28 @@ func seatunnelxJavaProxyPIDByPort(ctx context.Context, port int) int {
 		return 0
 	}
 	return pids[0]
+}
+
+func seatunnelxJavaProxyPIDByPortForInstallDir(ctx context.Context, port int, installDir string) int {
+	for _, pid := range seatunnelxJavaProxyPIDsByPort(ctx, port) {
+		if seatunnelxJavaProxyPIDMatchesInstallDir(pid, installDir) {
+			return pid
+		}
+	}
+	return 0
+}
+
+func seatunnelxJavaProxyPortOwnedByInstallDir(ctx context.Context, port int, installDir string) bool {
+	pids := seatunnelxJavaProxyPIDsByPort(ctx, port)
+	if len(pids) == 0 {
+		return true
+	}
+	for _, pid := range pids {
+		if seatunnelxJavaProxyPIDMatchesInstallDir(pid, installDir) {
+			return true
+		}
+	}
+	return false
 }
 
 // seatunnelxJavaProxyPIDsByPort 返回指定 proxy 端口上的监听进程 PID。

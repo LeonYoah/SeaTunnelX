@@ -70,7 +70,7 @@ SeaTunnelX 构建/重启脚本
   LOCAL_AGENT_SERVICE            本机 Agent systemd 服务名，默认 seatunnelx-agent
   LOCAL_AGENT_RESTART            本机已安装 Agent 时是否默认同步/重启，默认 true
   LOCAL_SEATUNNEL_HOME           本机 SeaTunnel 安装目录，默认 /opt/seatunnel-2.3.13-new
-  LOCAL_JAVA_PROXY_PORT          本机 seatunnelx-java-proxy 端口，默认 18080
+  LOCAL_JAVA_PROXY_PORT          本机 seatunnelx-java-proxy 端口，默认读取 config.yaml 的 java_proxy.default_port
   CONTROL_PLANE_BASE_URL         控制面地址，默认 http://127.0.0.1:8000
   CONTROL_PLANE_USERNAME         登录用户名，默认 admin
   CONTROL_PLANE_PASSWORD         登录密码，默认 admin123
@@ -165,6 +165,28 @@ fi
 PM2_API="${PM2_API:-seatunnelx-api}"
 PM2_UI="${PM2_UI:-seatunnelx-ui}"
 CONFIG_PATH="${CONFIG_PATH:-$PROJECT_ROOT/config.yaml}"
+read_config_top_scalar() {
+  local config_path="$1"
+  local section="$2"
+  local key="$3"
+  [[ -f "$config_path" ]] || return 0
+  awk -v section="$section" -v key="$key" '
+    /^[^[:space:]#][^:]*:/ {
+      top=$0
+      sub(":.*", "", top)
+      in_section=(top == section)
+    }
+    in_section && $0 ~ "^[[:space:]]+" key ":[[:space:]]*" {
+      value=$0
+      sub("^[[:space:]]*" key ":[[:space:]]*", "", value)
+      sub("[[:space:]]+#.*$", "", value)
+      gsub(/^[[:space:]\"'\'']+|[[:space:]\"'\'']+$/, "", value)
+      print value
+      exit
+    }
+  ' "$config_path"
+}
+CONFIG_JAVA_PROXY_DEFAULT_PORT="$(read_config_top_scalar "$CONFIG_PATH" "java_proxy" "default_port" || true)"
 APP_EXTERNAL_URL="${APP_EXTERNAL_URL:-http://127.0.0.1:8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 NEXT_PUBLIC_BACKEND_BASE_URL="${NEXT_PUBLIC_BACKEND_BASE_URL:-http://127.0.0.1:8000}"
@@ -175,7 +197,7 @@ LOCAL_AGENT_SERVICE="${LOCAL_AGENT_SERVICE:-seatunnelx-agent}"
 AGENT_HOME="${AGENT_HOME:-/usr/local/lib/seatunnelx-agent}"
 AGENT_PROXY_LIB_DIR="${AGENT_PROXY_LIB_DIR:-$AGENT_HOME/lib}"
 LOCAL_SEATUNNEL_HOME="${LOCAL_SEATUNNEL_HOME:-/opt/seatunnel-2.3.13-new}"
-LOCAL_JAVA_PROXY_PORT="${LOCAL_JAVA_PROXY_PORT:-18080}"
+LOCAL_JAVA_PROXY_PORT="${LOCAL_JAVA_PROXY_PORT:-${CONFIG_JAVA_PROXY_DEFAULT_PORT:-18080}}"
 CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL:-http://127.0.0.1:8000}"
 CONTROL_PLANE_USERNAME="${CONTROL_PLANE_USERNAME:-admin}"
 CONTROL_PLANE_PASSWORD="${CONTROL_PLANE_PASSWORD:-admin123}"
@@ -321,6 +343,22 @@ is_java_proxy_pid() {
   return 1
 }
 
+is_java_proxy_pid_for_install_dir() {
+  local pid="$1"
+  local install_dir="$2"
+  if ! is_java_proxy_pid "$pid"; then
+    return 1
+  fi
+  local args=""
+  args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  [[ "$args" == *"-Dseatunnelx.java.proxy.seatunnel.home=${install_dir}"* ]]
+}
+
+listener_pid_on_port() {
+  local port="$1"
+  ss -lntp 2>/dev/null | awk -v port=":$port" '$4 ~ port"$" {print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1 || true
+}
+
 restart_local_java_proxy() {
   local install_dir="$LOCAL_SEATUNNEL_HOME"
   local port="$LOCAL_JAVA_PROXY_PORT"
@@ -359,10 +397,25 @@ restart_local_java_proxy() {
   mkdir -p "$state_dir"
   touch "$log_path"
 
-  old_pid="$(ss -lntp 2>/dev/null | awk -v port=":$port" '$4 ~ port"$" {print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1 || true)"
+  while (( port <= 65535 )); do
+    old_pid="$(listener_pid_on_port "$port")"
+    if [[ -z "$old_pid" ]]; then
+      break
+    fi
+    if is_java_proxy_pid_for_install_dir "$old_pid" "$install_dir"; then
+      break
+    fi
+    echo "      端口 $port 已被其他进程或其他 SEATUNNEL_HOME 占用 (pid=$old_pid)，尝试 $((port + 1))."
+    port=$((port + 1))
+  done
+  if (( port > 65535 )); then
+    echo "      未找到可用的本机 seatunnelx-java-proxy 端口."
+    return 1
+  fi
+
   if [[ -n "$old_pid" ]]; then
-    if ! is_java_proxy_pid "$old_pid"; then
-      echo "      端口 $port 当前被非 seatunnelx-java-proxy 进程占用 (pid=$old_pid)，为避免误杀已跳过重启."
+    if ! is_java_proxy_pid_for_install_dir "$old_pid" "$install_dir"; then
+      echo "      端口 $port 当前不属于 ${install_dir} 的 seatunnelx-java-proxy (pid=$old_pid)，为避免误杀已跳过重启."
       return 1
     fi
     echo "[*] 停止本机 seatunnelx-java-proxy (pid=$old_pid, port=$port) ..."

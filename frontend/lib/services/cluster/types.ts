@@ -427,6 +427,7 @@ export interface SeatunnelXJavaProxyStatus {
   version?: string;
   service?: string;
   managed: boolean;
+  installed?: boolean;
   running: boolean;
   healthy: boolean;
   endpoint?: string;

@@ -134,7 +134,7 @@ export SEATUNNEL_PROXY_JAR=${SEATUNNEL_HOME}/tools/seatunnelx-java-proxy.jar
 export JAVA_HOME=/path/to/jdk8-or-jdk11
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 The script automatically loads:
@@ -160,7 +160,7 @@ cp tools/seatunnelx-java-proxy/bin/seatunnelx-java-proxy.sh \
   ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 After deployment, verify at least:

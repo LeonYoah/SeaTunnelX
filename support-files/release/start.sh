@@ -37,6 +37,32 @@ GRAFANA_PORT_WAS_SET="${GRAFANA_PORT+x}"
 GRAFANA_URL_WAS_SET="${GRAFANA_URL+x}"
 CONTROL_PLANE_BASE_URL_WAS_SET="${CONTROL_PLANE_BASE_URL+x}"
 APP_EXTERNAL_URL_WAS_SET="${APP_EXTERNAL_URL+x}"
+JAVA_PROXY_PORT_WAS_SET="${JAVA_PROXY_PORT+x}"
+SEATUNNELX_JAVA_PROXY_PORT_WAS_SET="${SEATUNNELX_JAVA_PROXY_PORT+x}"
+
+read_top_yaml_scalar() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  [[ -f "$file" ]] || return 0
+  awk -v section="$section" -v key="$key" '
+    /^[^[:space:]#][^:]*:/ {
+      top=$0
+      sub(":.*", "", top)
+      in_section=(top == section)
+    }
+    in_section && $0 ~ "^[[:space:]]+" key ":[[:space:]]*" {
+      value=$0
+      sub("^[[:space:]]*" key ":[[:space:]]*", "", value)
+      sub("[[:space:]]+#.*$", "", value)
+      gsub(/^[[:space:]\"'\'']+|[[:space:]\"'\'']+$/, "", value)
+      print value
+      exit
+    }
+  ' "$file"
+}
+
+CONFIG_JAVA_PROXY_DEFAULT_PORT="$(read_top_yaml_scalar "$CONFIG_PATH" "java_proxy" "default_port" || true)"
 
 FRONTEND_ENABLE="${FRONTEND_ENABLE:-true}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
@@ -48,7 +74,7 @@ GRPC_PORT="${GRPC_PORT:-9000}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 ALERTMANAGER_PORT="${ALERTMANAGER_PORT:-9093}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
-JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-18080}}"
+JAVA_PROXY_PORT="${JAVA_PROXY_PORT:-${SEATUNNELX_JAVA_PROXY_PORT:-${CONFIG_JAVA_PROXY_DEFAULT_PORT:-18080}}}"
 CONTROL_PLANE_BASE_URL="${CONTROL_PLANE_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 APP_EXTERNAL_URL="${APP_EXTERNAL_URL:-$CONTROL_PLANE_BASE_URL}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
@@ -179,6 +205,9 @@ apply_config_overrides() {
   if [[ -n "$GRAFANA_PORT_WAS_SET" || -n "$GRAFANA_URL_WAS_SET" ]]; then
     set_nested_yaml_scalar "$CONFIG_PATH" "observability" "grafana" "url" "$(yaml_quote "$GRAFANA_URL")"
   fi
+  if [[ -n "$JAVA_PROXY_PORT_WAS_SET" || -n "$SEATUNNELX_JAVA_PROXY_PORT_WAS_SET" ]]; then
+    set_top_yaml_scalar "$CONFIG_PATH" "java_proxy" "default_port" "$JAVA_PROXY_PORT"
+  fi
 }
 
 start_backend() {
@@ -283,4 +312,4 @@ if [[ "$FRONTEND_ENABLE" == "true" || "$FRONTEND_ENABLE" == "1" ]]; then
 fi
 echo "  observability: prometheus=$PROMETHEUS_PORT alertmanager=$ALERTMANAGER_PORT grafana=$GRAFANA_PORT"
 echo "  java-proxy   : $JAVA_PROXY_PORT"
-echo "  tips    : set FRONTEND_PORT / BACKEND_PORT / GRPC_PORT / GRAFANA_PORT / PROMETHEUS_PORT / ALERTMANAGER_PORT / JAVA_PROXY_PORT to override ports"
+echo "  tips    : backend/grpc/java-proxy defaults come from config.yaml; set FRONTEND_PORT / BACKEND_PORT / GRPC_PORT / GRAFANA_PORT / PROMETHEUS_PORT / ALERTMANAGER_PORT / JAVA_PROXY_PORT to override ports"

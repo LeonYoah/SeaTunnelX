@@ -149,7 +149,7 @@ export SEATUNNEL_PROXY_JAR=${SEATUNNEL_HOME}/tools/seatunnelx-java-proxy.jar
 export JAVA_HOME=/path/to/jdk8-or-jdk11
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 The script builds classpath from:
@@ -187,7 +187,7 @@ If you deploy the proxy into an existing SeaTunnel cluster directory, use this c
    - for S3 or MinIO, confirm Hadoop/S3A/AWS jars exist under `${SEATUNNEL_HOME}/lib/`
    - for OSS, confirm Aliyun-related jars are available under `${SEATUNNEL_HOME}/lib/` or injected through `EXTRA_PROXY_CLASSPATH`
 7. Start the proxy
-   - `sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh -Dseatunnel.capability.proxy.port=18080`
+   - `sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh -Dseatunnelx.java.proxy.port=18080`
 8. Run smoke checks
    - `GET /healthz`
    - a minimal HOCON request to `POST /api/v1/config/dag`

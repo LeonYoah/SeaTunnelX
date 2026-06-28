@@ -473,6 +473,7 @@ func (s *Service) Delete(ctx context.Context, id uint, forceRemoveInstallDir boo
 	// 获取带节点的集群，向各节点 Agent 发送停止命令（尽力而为）
 	clusterWithNodes, err := s.repo.GetByID(ctx, id, true)
 	if err == nil && len(clusterWithNodes.Nodes) > 0 {
+		s.forceStopJavaProxyForDeletion(ctx, clusterWithNodes)
 		s.stopProcessesForDeletion(ctx, clusterWithNodes)
 		if forceRemoveInstallDir {
 			s.removeInstallDirOnAgents(ctx, clusterWithNodes)
@@ -493,6 +494,44 @@ func (s *Service) Delete(ctx context.Context, id uint, forceRemoveInstallDir boo
 	return nil
 }
 
+// forceStopJavaProxyForDeletion 在删除集群前强制停止对应 install_dir 的 Java Proxy；尽力而为，不阻断删除。
+// forceStopJavaProxyForDeletion sends a forced Java Proxy stop before the cluster is deleted.
+func (s *Service) forceStopJavaProxyForDeletion(ctx context.Context, cluster *Cluster) {
+	if s.hostProvider == nil || s.agentSender == nil {
+		logger.WarnF(ctx, "[Cluster] Delete: skip forcing java-proxy stop (hostProvider or agentSender not set) / 删除集群：未强制停止 Java Proxy（主机提供者或命令发送器未配置）")
+		return
+	}
+	seen := make(map[string]struct{}, len(cluster.Nodes))
+	for _, node := range cluster.Nodes {
+		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
+		if err != nil || hostInfo == nil || hostInfo.AgentID == "" {
+			logger.WarnF(ctx, "[Cluster] Delete: skip java-proxy stop for node (no host or no agent) / 删除集群：跳过节点 Java Proxy 停止: node_id=%d, host_id=%d", node.ID, node.HostID)
+			continue
+		}
+		installDir := resolveNodeInstallDir(node.InstallDir, cluster.InstallDir)
+		uniqueKey := hostInfo.AgentID + "\x00" + installDir
+		if _, ok := seen[uniqueKey]; ok {
+			continue
+		}
+		seen[uniqueKey] = struct{}{}
+
+		params := map[string]string{
+			"service":                           "seatunnelx_java_proxy",
+			"cluster_id":                        fmt.Sprintf("%d", cluster.ID),
+			"node_id":                           fmt.Sprintf("%d", node.ID),
+			"install_dir":                       installDir,
+			"force":                             "true",
+			"graceful":                          "false",
+			seatunnelXJavaProxyDefaultPortParam: strconv.Itoa(seatunnelXJavaProxyConfiguredDefaultPort()),
+		}
+		logger.InfoF(ctx, "[Cluster] Delete: force stopping java-proxy on agent / 删除集群：强制停止 Agent 上的 Java Proxy: agent_id=%s, node_id=%d, install_dir=%s", hostInfo.AgentID, node.ID, installDir)
+		_, _, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, string(OperationStop), params)
+		if err != nil {
+			logger.WarnF(ctx, "[Cluster] Delete: force stop java-proxy on agent failed / 删除集群时强制停止 Java Proxy 失败: host_id=%d, node_id=%d, err=%v", node.HostID, node.ID, err)
+		}
+	}
+}
+
 // stopProcessesForDeletion sends stop command to each node's agent so actual SeaTunnel processes are stopped.
 // Best effort: logs errors but does not fail the deletion.
 // stopProcessesForDeletion 向各节点 Agent 发送停止命令以停止主机上的 SeaTunnel 进程；尽力而为，不阻断删除。
@@ -507,10 +546,7 @@ func (s *Service) stopProcessesForDeletion(ctx context.Context, cluster *Cluster
 			logger.WarnF(ctx, "[Cluster] Delete: skip node (no host or no agent) / 删除集群：跳过节点: node_id=%d, host_id=%d", node.ID, node.HostID)
 			continue
 		}
-		installDir := node.InstallDir
-		if installDir == "" {
-			installDir = cluster.InstallDir
-		}
+		installDir := resolveNodeInstallDir(node.InstallDir, cluster.InstallDir)
 		params := map[string]string{
 			"cluster_id":  fmt.Sprintf("%d", cluster.ID),
 			"node_id":     fmt.Sprintf("%d", node.ID),
@@ -533,17 +569,14 @@ func (s *Service) removeInstallDirOnAgents(ctx context.Context, cluster *Cluster
 	}
 	for _, node := range cluster.Nodes {
 		hostInfo, err := s.hostProvider.GetHostByID(ctx, node.HostID)
-		if err != nil || hostInfo.AgentID == "" {
+		if err != nil || hostInfo == nil || hostInfo.AgentID == "" {
 			continue
 		}
-		installDir := node.InstallDir
-		if installDir == "" {
-			installDir = cluster.InstallDir
+		installDir := resolveNodeInstallDir(node.InstallDir, cluster.InstallDir)
+		params := map[string]string{
+			"install_dir":                       installDir,
+			seatunnelXJavaProxyDefaultPortParam: strconv.Itoa(seatunnelXJavaProxyConfiguredDefaultPort()),
 		}
-		if installDir == "" {
-			continue
-		}
-		params := map[string]string{"install_dir": installDir}
 		logger.InfoF(ctx, "[Cluster] Delete: sending remove_install_dir to agent / 删除集群：向 Agent 发送删除安装目录: agent_id=%s, install_dir=%s", hostInfo.AgentID, installDir)
 		_, _, err = s.agentSender.SendCommand(ctx, hostInfo.AgentID, "remove_install_dir", params)
 		if err != nil {

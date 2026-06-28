@@ -153,7 +153,7 @@ export SEATUNNEL_PROXY_JAR=${SEATUNNEL_HOME}/tools/seatunnelx-java-proxy.jar
 export JAVA_HOME=/path/to/jdk8-or-jdk11
 
 sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
-  -Dseatunnel.capability.proxy.port=18080
+  -Dseatunnelx.java.proxy.port=18080
 ```
 
 脚本会自动复用：
@@ -190,7 +190,7 @@ sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh \
    - S3 / MinIO 至少要确认 `${SEATUNNEL_HOME}/lib/` 下有 Hadoop/S3A/AWS 相关 jar
    - OSS 需要额外确认阿里云相关 jar 是否已放到 `${SEATUNNEL_HOME}/lib/` 或通过 `EXTRA_PROXY_CLASSPATH` 挂入
 7. 启动 proxy
-   - `sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh -Dseatunnel.capability.proxy.port=18080`
+   - `sh ${SEATUNNEL_HOME}/bin/seatunnelx-java-proxy.sh -Dseatunnelx.java.proxy.port=18080`
 8. 做最小自检
    - `GET /healthz`
    - 用一份最小 HOCON 调 `POST /api/v1/config/dag`
