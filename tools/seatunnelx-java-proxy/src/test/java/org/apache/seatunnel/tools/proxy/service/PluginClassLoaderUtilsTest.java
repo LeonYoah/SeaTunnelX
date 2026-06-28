@@ -17,6 +17,7 @@
 
 package org.apache.seatunnel.tools.proxy.service;
 
+import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactory;
 import org.apache.seatunnel.tools.proxy.model.PluginFactoryInfo;
 
@@ -37,6 +38,7 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginClassLoaderUtilsTest {
 
@@ -135,9 +137,111 @@ class PluginClassLoaderUtilsTest {
                     new PluginRuntimeService().discoverPluginFactories(context);
 
             assertEquals(0, factories.size());
-            assertEquals(1, context.getWarnings().size());
+            assertTrue(
+                    context.getWarnings().stream()
+                            .anyMatch(
+                                    warning ->
+                                            warning.contains(
+                                                    "org.apache.seatunnel.connectors.cdc.mysql.source.MySqlTableSourceFactory")));
         } finally {
             context.close();
+        }
+    }
+
+    @Test
+    void discoverPluginFactoriesShouldReadGenericFactoryServiceEntry() throws Exception {
+        Path brokenJar = tempDir.resolve("connectors/fake/connector-fake.jar");
+        Files.createDirectories(brokenJar.getParent());
+        try (JarOutputStream jarOutputStream =
+                new JarOutputStream(Files.newOutputStream(brokenJar))) {
+            jarOutputStream.putNextEntry(
+                    new JarEntry("META-INF/services/" + Factory.class.getName()));
+            jarOutputStream.write(
+                    "org.apache.seatunnel.connectors.seatunnel.fake.source.FakeSourceFactory\n"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            jarOutputStream.closeEntry();
+        }
+
+        URLClassLoader classLoader =
+                PluginClassLoaderUtils.createClassLoader(
+                        Collections.singletonList(brokenJar.toString()),
+                        Thread.currentThread().getContextClassLoader());
+        PluginRuntimeService.PluginExecutionContext context =
+                new PluginRuntimeService.PluginExecutionContext(
+                        "source",
+                        PluginClassLoaderUtils.pluginJars(classLoader),
+                        classLoader,
+                        classLoader,
+                        PluginClassLoaderUtils.classpathFingerprint(classLoader),
+                        "seatunnel_home",
+                        new ArrayList<>());
+        try {
+            List<PluginFactoryInfo> factories =
+                    new PluginRuntimeService().discoverPluginFactories(context);
+
+            assertEquals(0, factories.size());
+            assertTrue(
+                    context.getWarnings().stream()
+                            .anyMatch(
+                                    warning ->
+                                            warning.contains(
+                                                    "org.apache.seatunnel.connectors.seatunnel.fake.source.FakeSourceFactory")));
+        } finally {
+            context.close();
+        }
+    }
+
+    @Test
+    void discoverTransformFactoriesShouldReadGenericFactoryServiceEntryFromClasspath()
+            throws Exception {
+        Path transformLibJar = tempDir.resolve("lib/seatunnel-transforms-v2.jar");
+        Files.createDirectories(transformLibJar.getParent());
+        try (JarOutputStream jarOutputStream =
+                new JarOutputStream(Files.newOutputStream(transformLibJar))) {
+            jarOutputStream.putNextEntry(
+                    new JarEntry("META-INF/services/" + Factory.class.getName()));
+            jarOutputStream.write(
+                    "org.apache.seatunnel.transform.copy.CopyFieldTransformFactory\n"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            jarOutputStream.closeEntry();
+        }
+
+        Path connectorJar = tempDir.resolve("connectors/fake/connector-fake.jar");
+        Files.createDirectories(connectorJar.getParent());
+        try (JarOutputStream ignored = new JarOutputStream(Files.newOutputStream(connectorJar))) {
+            // 空的合法 jar。 Empty valid jar.
+        }
+
+        URLClassLoader parentClassLoader =
+                PluginClassLoaderUtils.createClassLoader(
+                        Collections.singletonList(transformLibJar.toString()),
+                        Thread.currentThread().getContextClassLoader());
+        URLClassLoader classLoader =
+                PluginClassLoaderUtils.createClassLoader(
+                        Collections.singletonList(connectorJar.toString()), parentClassLoader);
+        PluginRuntimeService.PluginExecutionContext context =
+                new PluginRuntimeService.PluginExecutionContext(
+                        "transform",
+                        PluginClassLoaderUtils.pluginJars(classLoader),
+                        classLoader,
+                        classLoader,
+                        PluginClassLoaderUtils.classpathFingerprint(classLoader),
+                        "seatunnel_home",
+                        new ArrayList<>());
+        try {
+            List<PluginFactoryInfo> factories =
+                    new PluginRuntimeService().discoverPluginFactories(context);
+
+            assertEquals(0, factories.size());
+            assertTrue(
+                    context.getWarnings().stream()
+                            .anyMatch(
+                                    warning ->
+                                            warning.contains(
+                                                    "org.apache.seatunnel.transform.copy.CopyFieldTransformFactory")));
+        } finally {
+            context.close();
+            PluginClassLoaderUtils.closeQuietly(parentClassLoader);
         }
     }
 }

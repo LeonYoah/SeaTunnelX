@@ -41,6 +41,12 @@
    - Hide endpoints/PID/log path behind diagnostics and replace raw backend messages with i18n operation feedback.
    - Add `installed` status propagation so the UI can distinguish missing dependencies from stopped service.
 
+9. [x] Java Proxy plugin discovery regression
+   - Fix `PluginRuntimeService` to scan SeaTunnel's generic `Factory` SPI in addition to concrete source/sink/transform/catalog SPI.
+   - Add regression coverage for connector jars that only expose `META-INF/services/org.apache.seatunnel.api.table.factory.Factory`.
+   - Fix transform discovery to read runtime classpath service resources, so `SEATUNNEL_HOME/lib/seatunnel-transforms-v2.jar` is considered even when dynamic plugin jars exist.
+   - Add regression coverage for generic `Factory` SPI exposed from a classpath lib jar rather than a connector/plugin jar.
+
 ## Validation Commands
 
 ```bash
@@ -63,6 +69,9 @@ bash -n support-files/release/start.sh && bash -n support-files/release/status.s
 - 集群代理 UI 验证：`cd frontend && pnpm exec eslint components/common/cluster/ClusterDetail.tsx lib/services/cluster/types.ts` ✅
 - 集群代理类型验证：`cd frontend && pnpm exec tsc --noEmit` ✅
 - 集群代理状态字段验证：`go test ./internal/apps/cluster && (cd agent && go test ./internal/installer ./cmd)` ✅
+- 插件发现回归验证：`cd tools/seatunnelx-java-proxy && mvn -q -DskipITs -Dtest=PluginClassLoaderUtilsTest test` ✅
+- Java Proxy 打包验证：`cd tools/seatunnelx-java-proxy && mvn -q -DskipTests package` ✅
+- 本机真实插件发现验证：使用 `/opt/seatunnel-2.3.13` 与新构建 Java Proxy 临时启动 18082，`source` 返回 4 个插件，`transform` 返回 20 个插件（来自 `lib/seatunnel-transforms-v2.jar`）✅
 - `python3 ./.trellis/scripts/task.py validate .trellis/tasks/06-26-java-proxy-multi-cluster-model` ✅
 - `git diff --check` ✅
 

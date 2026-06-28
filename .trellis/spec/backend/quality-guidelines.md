@@ -54,6 +54,16 @@
 - **“支持中英文”不等于“同屏双语拼接”。** 例如 diagnostics / 巡检中心 / 诊断报告这类模块，要求是支持 `zh` / `en` 自由切换，并按当前语言返回单语言结果；不要回退到 `中文 / English` 并排或斜杠拼接输出。
 - **版本敏感安装配置由后端统一裁决。** 对一键安装 / 创建集群这类会下发 `seatunnel.yaml` / `hazelcast*.yaml` 的流程，Control Plane 应返回显式 capability（如 `version_capabilities`），Agent 在最终写配置时也必须二次 gate，避免把旧版本不支持的 key（如 `history-job-expire-minutes`、`scheduled-deletion-enable`、`job-schedule-strategy`）误写进去。
 
+### Java Proxy 插件发现约定
+
+- **SeaTunnel connector 插件发现必须兼容通用 `Factory` SPI。** SeaTunnel 2.3.x connector jar 通常把 provider 写在 `META-INF/services/org.apache.seatunnel.api.table.factory.Factory`，而不是具体的 `TableSourceFactory` / `TableSinkFactory` 文件里。
+- **不要只扫描具体插件类型 SPI。** Java Proxy 在列出 source/sink/transform/catalog 工厂时，应同时扫描：
+  - `META-INF/services/<具体 Factory 接口>`
+  - `META-INF/services/org.apache.seatunnel.api.table.factory.Factory`
+- **不要只扫描 `connectors/` 与 `plugins/` jar。** Java Proxy 启动 classpath 已包含 `SEATUNNEL_HOME/lib/*`，transform 工厂通常来自 `lib/seatunnel-transforms-v2.jar`，因此发现逻辑必须读取运行时 `ClassLoader` 的 service resources，再叠加动态插件 jar。
+- **扫描通用 Factory 后再按目标类型过滤。** 这样可兼容官方 connector 包结构，同时避免把 source/sink/catalog 混到错误类型列表。
+- **回归测试必须覆盖通用 Factory SPI 与 `lib` classpath。** 如果修改 `PluginRuntimeService` 或 classloader 扫描逻辑，至少保留一个“connector jar 只有通用 Factory SPI”的测试，并保留一个“`seatunnel-transforms-v2.jar` 通过运行时 classpath 暴露 transform SPI”的测试，防止工作台插件面板返回 `plugins: []`。
+
 ### 部署会话 Cookie 约定
 
 - **私有化部署默认应将 `app.session_domain` 留空。** 这样浏览器会按当前访问 host 绑定 `seatunnel_session_id`，最适合 IP、内网域名和自定义域名混用场景。

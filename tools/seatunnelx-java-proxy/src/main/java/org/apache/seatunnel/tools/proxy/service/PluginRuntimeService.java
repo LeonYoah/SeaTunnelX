@@ -37,6 +37,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -199,6 +200,9 @@ public class PluginRuntimeService {
             try {
                 Class<?> rawClass = Class.forName(providerClass, true, context.getClassLoader());
                 if (!factoryClass.isAssignableFrom(rawClass)) {
+                    if (Factory.class.isAssignableFrom(rawClass)) {
+                        continue;
+                    }
                     context.addWarning(
                             "Skip plugin provider "
                                     + providerClass
@@ -219,28 +223,68 @@ public class PluginRuntimeService {
     }
 
     /**
-     * 从 jar 的 META-INF/services 文件收集 provider 类名。 Collects provider class names from jar
-     * META-INF/services files.
+     * 从运行时 classpath 与插件 jar 的 META-INF/services 文件收集 provider 类名。 Collects provider class names
+     * from runtime classpath and plugin jar META-INF/services files.
      */
     private <T extends Factory> Set<String> collectProviderClasses(
             PluginExecutionContext context, Class<T> factoryClass) {
         Set<String> providerClasses = new LinkedHashSet<>();
-        String serviceEntryName = "META-INF/services/" + factoryClass.getName();
+        List<String> serviceEntryNames = serviceEntryNames(factoryClass);
+        collectProviderClassesFromClassLoader(context, serviceEntryNames, providerClasses);
+        collectProviderClassesFromPluginJars(context, serviceEntryNames, providerClasses);
+        return providerClasses;
+    }
+
+    private <T extends Factory> List<String> serviceEntryNames(Class<T> factoryClass) {
+        List<String> serviceEntryNames = new ArrayList<>();
+        serviceEntryNames.add("META-INF/services/" + factoryClass.getName());
+        serviceEntryNames.add("META-INF/services/" + Factory.class.getName());
+        return serviceEntryNames;
+    }
+
+    private void collectProviderClassesFromClassLoader(
+            PluginExecutionContext context,
+            List<String> serviceEntryNames,
+            Set<String> providerClasses) {
+        for (String serviceEntryName : serviceEntryNames) {
+            try {
+                Enumeration<URL> resources =
+                        context.getClassLoader().getResources(serviceEntryName);
+                while (resources.hasMoreElements()) {
+                    URL resource = resources.nextElement();
+                    try {
+                        collectProviderClassesFromContent(resource.openStream(), providerClasses);
+                    } catch (Throwable e) {
+                        context.addWarning(
+                                "Skip service resource "
+                                        + resource
+                                        + " because it failed to read: "
+                                        + summarizeThrowable(e));
+                    }
+                }
+            } catch (Throwable e) {
+                context.addWarning(
+                        "Skip service resources for "
+                                + serviceEntryName
+                                + " because they failed to read: "
+                                + summarizeThrowable(e));
+            }
+        }
+    }
+
+    private void collectProviderClassesFromPluginJars(
+            PluginExecutionContext context,
+            List<String> serviceEntryNames,
+            Set<String> providerClasses) {
         for (String pluginJar : context.getPluginJars()) {
             try (JarFile jarFile = new JarFile(pluginJar)) {
-                JarEntry serviceEntry = jarFile.getJarEntry(serviceEntryName);
-                if (serviceEntry == null) {
-                    continue;
-                }
-                String content =
-                        new String(
-                                readAllBytes(jarFile.getInputStream(serviceEntry)),
-                                StandardCharsets.UTF_8);
-                for (String line : content.split("\\R")) {
-                    String providerClass = stripServiceComment(line);
-                    if (StringUtils.isNotBlank(providerClass)) {
-                        providerClasses.add(providerClass);
+                for (String serviceEntryName : serviceEntryNames) {
+                    JarEntry serviceEntry = jarFile.getJarEntry(serviceEntryName);
+                    if (serviceEntry == null) {
+                        continue;
                     }
+                    collectProviderClassesFromContent(
+                            jarFile.getInputStream(serviceEntry), providerClasses);
                 }
             } catch (Throwable e) {
                 context.addWarning(
@@ -250,7 +294,17 @@ public class PluginRuntimeService {
                                 + summarizeThrowable(e));
             }
         }
-        return providerClasses;
+    }
+
+    private void collectProviderClassesFromContent(
+            InputStream inputStream, Set<String> providerClasses) throws IOException {
+        String content = new String(readAllBytes(inputStream), StandardCharsets.UTF_8);
+        for (String line : content.split("\\R")) {
+            String providerClass = stripServiceComment(line);
+            if (StringUtils.isNotBlank(providerClass)) {
+                providerClasses.add(providerClass);
+            }
+        }
     }
 
     /**
