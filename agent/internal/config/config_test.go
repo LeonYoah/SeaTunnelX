@@ -154,7 +154,7 @@ func TestValidateConfig(t *testing.T) {
 			errMsg:  "control_plane.addresses is required",
 		},
 		{
-			name: "TLS enabled without cert file",
+			name: "TLS enabled without ca file",
 			config: &Config{
 				ControlPlane: ControlPlaneConfig{
 					Addresses: []string{"localhost:9090"},
@@ -170,15 +170,35 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "control_plane.tls.cert_file is required when TLS is enabled",
+			errMsg:  "control_plane.tls.ca_file is required when TLS is enabled",
 		},
 		{
-			name: "TLS enabled without key file",
+			name: "TLS one-way with only ca file",
+			config: &Config{
+				ControlPlane: ControlPlaneConfig{
+					Addresses: []string{"localhost:9090"},
+					TLS: TLSConfig{
+						Enabled: true,
+						CAFile:  "/etc/seatunnelx-agent/certs/ca.crt",
+					},
+				},
+				Heartbeat: HeartbeatConfig{
+					Interval: 10 * time.Second,
+				},
+				Log: LogConfig{
+					Level: "info",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "TLS mTLS missing key file",
 			config: &Config{
 				ControlPlane: ControlPlaneConfig{
 					Addresses: []string{"localhost:9090"},
 					TLS: TLSConfig{
 						Enabled:  true,
+						CAFile:   "/etc/seatunnelx-agent/certs/ca.crt",
 						CertFile: "/path/to/cert.pem",
 					},
 				},
@@ -190,7 +210,7 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "control_plane.tls.key_file is required when TLS is enabled",
+			errMsg:  "cert_file and key_file must both be set",
 		},
 		{
 			name: "invalid log level",

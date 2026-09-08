@@ -316,6 +316,68 @@ func TestGetSupportedPlatforms(t *testing.T) {
 	}
 }
 
+// TestInstallScriptGenerate_TLSEnabled verifies CA download and Agent TLS config when CP TLS is on.
+// TestInstallScriptGenerate_TLSEnabled 验证 Control Plane 开启 TLS 时脚本会下载 CA 并启用 Agent TLS。
+func TestInstallScriptGenerate_TLSEnabled(t *testing.T) {
+	gen, err := NewInstallScriptGenerator(&InstallScriptConfig{
+		ControlPlaneAddr: "http://cp.example.com:8000",
+		GRPCAddr:         "cp.example.com:9000",
+		TLSEnabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewInstallScriptGenerator: %v", err)
+	}
+
+	script, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	wantSnippets := []string{
+		`GRPC_TLS_ENABLED="true"`,
+		"/api/v1/agent/ca.crt",
+		"download_ca",
+		DefaultAgentCAFile,
+		"enabled: true",
+		`ca_file: "` + DefaultAgentCAFile + `"`,
+	}
+	for _, want := range wantSnippets {
+		if !strings.Contains(script, want) {
+			t.Errorf("TLS-enabled script missing %q", want)
+		}
+	}
+}
+
+// TestInstallScriptGenerate_TLSDisabled verifies CA download is skipped when CP TLS is off.
+// TestInstallScriptGenerate_TLSDisabled 验证 Control Plane 未开 TLS 时脚本跳过 CA 下载。
+func TestInstallScriptGenerate_TLSDisabled(t *testing.T) {
+	gen, err := NewInstallScriptGenerator(&InstallScriptConfig{
+		ControlPlaneAddr: "http://cp.example.com:8000",
+		GRPCAddr:         "cp.example.com:9000",
+		TLSEnabled:       false,
+	})
+	if err != nil {
+		t.Fatalf("NewInstallScriptGenerator: %v", err)
+	}
+
+	script, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if !strings.Contains(script, `GRPC_TLS_ENABLED="false"`) {
+		t.Error("expected GRPC_TLS_ENABLED=false")
+	}
+	if !strings.Contains(script, "enabled: false") {
+		t.Error("expected tls.enabled: false in generated config")
+	}
+	// download_ca function still exists but skips when GRPC_TLS_ENABLED != true
+	// download_ca 函数仍存在，但在 GRPC_TLS_ENABLED != true 时会跳过
+	if !strings.Contains(script, "download_ca") {
+		t.Error("expected download_ca helper to remain in script")
+	}
+}
+
 // TestInstallScriptContainsRequirements tests that the script implements all requirements.
 // TestInstallScriptContainsRequirements 测试脚本实现了所有需求。
 func TestInstallScriptContainsRequirements(t *testing.T) {

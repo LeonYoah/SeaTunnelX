@@ -44,6 +44,10 @@ type InstallScriptGenerator struct {
 	// heartbeatInterval 是心跳间隔（秒）。
 	heartbeatInterval int
 
+	// tlsEnabled indicates whether Control Plane gRPC TLS is enabled.
+	// tlsEnabled 表示 Control Plane gRPC TLS 是否已启用。
+	tlsEnabled bool
+
 	// template is the parsed install script template.
 	// template 是解析后的安装脚本模板。
 	template *template.Template
@@ -63,6 +67,10 @@ type InstallScriptConfig struct {
 	// HeartbeatInterval is the heartbeat interval in seconds from Control Plane config.
 	// HeartbeatInterval 是来自 Control Plane 配置的心跳间隔（秒）。
 	HeartbeatInterval int
+
+	// TLSEnabled indicates whether Control Plane gRPC TLS is enabled (Agent should fetch CA).
+	// TLSEnabled 表示 Control Plane gRPC TLS 是否已启用（Agent 应拉取 CA）。
+	TLSEnabled bool
 }
 
 // InstallScriptData holds data for rendering the install script template.
@@ -111,6 +119,14 @@ type InstallScriptData struct {
 	// HeartbeatInterval is the heartbeat interval string (e.g., "60s").
 	// HeartbeatInterval 是心跳间隔字符串（如 "60s"）。
 	HeartbeatInterval string
+
+	// TLSEnabled indicates whether Agent should enable gRPC TLS and download CA.
+	// TLSEnabled 表示 Agent 是否应启用 gRPC TLS 并下载 CA。
+	TLSEnabled bool
+
+	// AgentCAFile is the on-host path where the downloaded CA certificate is stored.
+	// AgentCAFile 是本机保存已下载 CA 证书的路径。
+	AgentCAFile string
 }
 
 // SupportedPlatform represents a supported OS and architecture combination.
@@ -148,6 +164,10 @@ const DefaultServiceName = "seatunnelx-agent"
 // DefaultSupportDir is the default directory for Agent-managed support assets.
 // DefaultSupportDir 是 Agent 管理辅助资产的默认目录。
 const DefaultSupportDir = "/usr/local/lib/seatunnelx-agent"
+
+// DefaultAgentCAFile is the default on-host path for the Control Plane CA certificate.
+// DefaultAgentCAFile 是 Control Plane CA 证书在本机的默认路径。
+const DefaultAgentCAFile = DefaultConfigDir + "/certs/ca.crt"
 
 // SupportedPlatforms defines all supported OS and architecture combinations.
 // SupportedPlatforms 定义所有支持的操作系统和架构组合。
@@ -194,6 +214,7 @@ func NewInstallScriptGenerator(cfg *InstallScriptConfig) (*InstallScriptGenerato
 		controlPlaneAddr:  controlPlaneAddr,
 		grpcAddr:          grpcAddr,
 		heartbeatInterval: heartbeatInterval,
+		tlsEnabled:        cfg.TLSEnabled,
 		template:          tmpl,
 	}, nil
 }
@@ -214,6 +235,8 @@ func (g *InstallScriptGenerator) Generate() (string, error) {
 		SeatunnelXJavaProxyJarFileName:    seatunnelmeta.SeatunnelXJavaProxyJarFileName(seatunnelmeta.DefaultSeatunnelXJavaProxyVersion),
 		SeatunnelXJavaProxyScriptFileName: seatunnelmeta.SeatunnelXJavaProxyScriptFileName,
 		HeartbeatInterval:                 fmt.Sprintf("%ds", g.heartbeatInterval),
+		TLSEnabled:                        g.tlsEnabled,
+		AgentCAFile:                       DefaultAgentCAFile,
 	}
 
 	return g.GenerateWithData(data)
@@ -257,6 +280,9 @@ func (g *InstallScriptGenerator) GenerateWithData(data *InstallScriptData) (stri
 	}
 	if data.SeatunnelXJavaProxyScriptFileName == "" {
 		data.SeatunnelXJavaProxyScriptFileName = seatunnelmeta.SeatunnelXJavaProxyScriptFileName
+	}
+	if data.AgentCAFile == "" {
+		data.AgentCAFile = DefaultAgentCAFile
 	}
 
 	var buf bytes.Buffer
@@ -374,6 +400,9 @@ SUPPORT_SCRIPT_DIR="${SUPPORT_DIR}/scripts"
 CAPABILITY_PROXY_VERSION="{{.SeatunnelXJavaProxyVersion}}"
 CAPABILITY_PROXY_JAR="${SUPPORT_LIB_DIR}/{{.SeatunnelXJavaProxyJarFileName}}"
 CAPABILITY_PROXY_SCRIPT="${SUPPORT_SCRIPT_DIR}/{{.SeatunnelXJavaProxyScriptFileName}}"
+GRPC_TLS_ENABLED="{{if .TLSEnabled}}true{{else}}false{{end}}"
+AGENT_CA_FILE="{{.AgentCAFile}}"
+AGENT_CA_DIR="$(dirname "${AGENT_CA_FILE}")"
 
 # ==================== Colors 颜色 ====================
 RED='\033[0;31m'
@@ -421,8 +450,10 @@ cleanup() {
         rm -rf "${CONFIG_DIR}" 2>/dev/null || true
         rm -rf "${LOG_DIR}" 2>/dev/null || true
         rm -rf "${SUPPORT_DIR}" 2>/dev/null || true
+        rm -rf "${AGENT_CA_DIR}" 2>/dev/null || true
         rm -f "/etc/systemd/system/${SERVICE_NAME}.service" 2>/dev/null || true
         rm -f "/tmp/${AGENT_BINARY}" 2>/dev/null || true
+        rm -f "/tmp/${SERVICE_NAME}-ca.crt" 2>/dev/null || true
         rm -f "/tmp/${SERVICE_NAME}-{{.SeatunnelXJavaProxyJarFileName}}" 2>/dev/null || true
         rm -f "/tmp/${SERVICE_NAME}-{{.SeatunnelXJavaProxyScriptFileName}}" 2>/dev/null || true
         
@@ -620,6 +651,51 @@ download_support_assets() {
     log_info "Capability proxy 资产下载完成"
 }
 
+# ==================== Download CA 下载 CA ====================
+# When Control Plane gRPC TLS is enabled, fetch CA for one-way TLS trust.
+# Control Plane 已开启 gRPC TLS 时，拉取 CA 用于单向 TLS 信任。
+download_ca() {
+    if [ "${GRPC_TLS_ENABLED}" != "true" ]; then
+        log_info "Control Plane gRPC TLS is disabled; skipping CA download"
+        log_info "Control Plane gRPC TLS 未启用，跳过 CA 下载"
+        return 0
+    fi
+
+    local ca_url="${CONTROL_PLANE_ADDR}/api/v1/agent/ca.crt"
+    local temp_ca="/tmp/${SERVICE_NAME}-ca.crt"
+
+    log_step "Downloading Control Plane CA certificate..."
+    log_step "正在下载 Control Plane CA 证书..."
+    log_info "URL: ${ca_url}"
+
+    if command -v curl &> /dev/null; then
+        if ! curl -fsSL -o "${temp_ca}" "${ca_url}"; then
+            log_error "Failed to download CA certificate using curl"
+            log_error "使用 curl 下载 CA 证书失败"
+            exit 1
+        fi
+    elif command -v wget &> /dev/null; then
+        if ! wget -q -O "${temp_ca}" "${ca_url}"; then
+            log_error "Failed to download CA certificate using wget"
+            log_error "使用 wget 下载 CA 证书失败"
+            exit 1
+        fi
+    fi
+
+    if [ ! -s "${temp_ca}" ]; then
+        log_error "Downloaded CA certificate is missing or empty"
+        log_error "下载的 CA 证书不存在或为空"
+        exit 1
+    fi
+
+    mkdir -p "${AGENT_CA_DIR}"
+    mv "${temp_ca}" "${AGENT_CA_FILE}"
+    chmod 0644 "${AGENT_CA_FILE}"
+
+    log_info "CA certificate installed to ${AGENT_CA_FILE}"
+    log_info "CA 证书已安装到 ${AGENT_CA_FILE}"
+}
+
 # ==================== Install Agent 安装 Agent ====================
 # Requirements: 2.3 - Installs Agent to /usr/local/bin and creates config.
 install_agent() {
@@ -682,13 +758,13 @@ control_plane:
   # Control Plane 的 gRPC 地址（支持多个用于高可用）
   addresses:
     - "${GRPC_ADDR}"
-  # TLS configuration
-  # TLS 配置
+  # TLS configuration (one-way: only ca_file required when enabled)
+  # TLS 配置（单向：启用时仅需 ca_file）
   tls:
-    enabled: false
+    enabled: {{if .TLSEnabled}}true{{else}}false{{end}}
     cert_file: ""
     key_file: ""
-    ca_file: ""
+    ca_file: "{{if .TLSEnabled}}{{.AgentCAFile}}{{end}}"
   # Authentication token
   # 认证 Token
   token: ""
@@ -964,6 +1040,12 @@ print_summary() {
     echo -e "  Logs:    ${LOG_DIR}/agent.log"
     echo -e "  Proxy:   ${CAPABILITY_PROXY_JAR}"
     echo -e "  Script:  ${CAPABILITY_PROXY_SCRIPT}"
+    if [ "${GRPC_TLS_ENABLED}" = "true" ]; then
+        echo -e "  CA:      ${AGENT_CA_FILE}"
+        echo -e "  TLS:     enabled (one-way)"
+    else
+        echo -e "  TLS:     disabled"
+    fi
     echo -e "  Service: ${SERVICE_NAME}"
     echo ""
     echo -e "${BLUE}Useful Commands / 常用命令:${NC}"
@@ -1031,24 +1113,28 @@ main() {
     # 步骤 5: 下载辅助资产
     download_support_assets
 
-    # Step 6: Install Agent
-    # 步骤 6: 安装 Agent
+    # Step 6: Download CA when Control Plane TLS is enabled
+    # 步骤 6: Control Plane 已开 TLS 时下载 CA
+    download_ca
+
+    # Step 7: Install Agent
+    # 步骤 7: 安装 Agent
     install_agent
     
-    # Step 7: Install support assets
-    # 步骤 7: 安装辅助资产
+    # Step 8: Install support assets
+    # 步骤 8: 安装辅助资产
     install_support_assets
 
-    # Step 8: Create systemd service
-    # 步骤 8: 创建 systemd 服务
+    # Step 9: Create systemd service
+    # 步骤 9: 创建 systemd 服务
     create_systemd_service
     
-    # Step 9: Start Agent
-    # 步骤 9: 启动 Agent
+    # Step 10: Start Agent
+    # 步骤 10: 启动 Agent
     start_agent
     
-    # Step 10: Print summary
-    # 步骤 10: 打印摘要
+    # Step 11: Print summary
+    # 步骤 11: 打印摘要
     print_summary
     
     # Disable trap on successful completion

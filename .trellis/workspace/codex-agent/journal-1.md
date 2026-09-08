@@ -68,3 +68,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 安装流自动 gRPC TLS
+
+**Date**: 2026-09-08
+**Task**: 安装流自动 gRPC TLS
+**Branch**: `feat/install-auto-tls-openssl`
+
+### Summary
+
+完成 openssl 检测与证书引导、CA 下载接口、Agent 安装脚本单向 TLS、Docker 预装 openssl，并写入 backend code-spec（关联 #23）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `544948ad3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
