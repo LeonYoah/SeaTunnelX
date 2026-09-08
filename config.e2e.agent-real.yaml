@@ -19,8 +19,11 @@ agent:
 control_plane:
   addresses:
     - "127.0.0.1:19090"
+  # real-agent-supervisor.mjs patches this when Control Plane auto-enables gRPC TLS.
+  # Control Plane 自动开启 gRPC TLS 时，由 real-agent-supervisor.mjs 改写本段。
   tls:
     enabled: false
+    ca_file: ""
   token: ""
 
 heartbeat:

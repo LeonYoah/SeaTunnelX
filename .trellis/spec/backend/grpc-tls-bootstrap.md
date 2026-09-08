@@ -69,6 +69,7 @@
 - `internal/tlsbootstrap`：无 openssl / 已有证书不覆盖 / 真实 openssl 生成
 - `internal/apps/agent`：`DownloadCA` 404/200；安装脚本含 `GRPC_TLS_ENABLED` 与 `download_ca`
 - `agent/internal/config`：单向 TLS 仅需 `ca_file`；cert/key 成对校验
+- E2E real installer：`real-agent-supervisor.mjs` 在 backend healthy 后拉取 `/api/v1/agent/ca.crt`，改写 Agent 配置为 `tls.enabled=true` + `ca_file`（否则 Agent 明文连 TLS 端口会 `server preface: EOF`）
 
 ### 7. Wrong vs Correct
 
@@ -88,6 +89,11 @@ tls:
   # 缺少 ca_file
 ```
 
+```js
+// E2E 在 CP 已自动开 TLS 后，仍用 plaintext Agent 配置启动
+spawn(goBin, ['run', './cmd', '--config', agentConfigPath])
+```
+
 #### Correct
 
 ```go
@@ -102,6 +108,11 @@ tls:
   ca_file: /etc/seatunnelx-agent/certs/ca.crt
 ```
 
+```js
+// E2E：先拉 CA 再启动 Agent
+const effective = await resolveAgentConfigWithTLS(agentConfigPath)
+spawn(goBin, ['run', './cmd', '--config', effective])
+```
 ---
 
 ## Design Decision: 用 openssl CLI 而非纯 Go 生成
