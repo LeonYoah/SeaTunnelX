@@ -19,6 +19,7 @@
 | [错误处理](./error-handling.md) | 错误类型与处理策略 | 已填写 |
 | [质量规范](./quality-guidelines.md) | 代码标准、注释规范、License 头、语言输出约定、禁止模式 | 已填写 |
 | [日志规范](./logging-guidelines.md) | 结构化日志与日志级别 | 已填写 |
+| [gRPC TLS 自动引导](./grpc-tls-bootstrap.md) | openssl 检测、证书落盘、CA 下发与 Agent 单向 TLS 契约 | 已填写 |
 
 ---
 

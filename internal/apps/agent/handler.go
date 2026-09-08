@@ -61,6 +61,14 @@ type Handler struct {
 	// heartbeatInterval is the heartbeat interval in seconds from Control Plane config.
 	// heartbeatInterval 是来自 Control Plane 配置的心跳间隔（秒）。
 	heartbeatInterval int
+
+	// tlsEnabled indicates whether Control Plane gRPC TLS is enabled.
+	// tlsEnabled 表示 Control Plane gRPC TLS 是否已启用。
+	tlsEnabled bool
+
+	// caFile is the local CA certificate path for Agent trust (empty when TLS is off).
+	// caFile 是供 Agent 信任的本地 CA 证书路径（TLS 关闭时为空）。
+	caFile string
 }
 
 // HandlerConfig holds configuration for the Agent Handler.
@@ -89,6 +97,14 @@ type HandlerConfig struct {
 	// HeartbeatInterval is the heartbeat interval in seconds.
 	// HeartbeatInterval 是心跳间隔（秒）。
 	HeartbeatInterval int
+
+	// TLSEnabled indicates whether Control Plane gRPC TLS is enabled.
+	// TLSEnabled 表示 Control Plane gRPC TLS 是否已启用。
+	TLSEnabled bool
+
+	// CAFile is the local path to the CA certificate Agents should trust.
+	// CAFile 是 Agent 应信任的 CA 证书本地路径。
+	CAFile string
 }
 
 // NewHandler creates a new Handler instance.
@@ -126,6 +142,8 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 		seatunnelxJavaProxyScriptPath: cfg.SeatunnelXJavaProxyScriptPath,
 		grpcPort:                      cfg.GRPCPort,
 		heartbeatInterval:             cfg.HeartbeatInterval,
+		tlsEnabled:                    cfg.TLSEnabled,
+		caFile:                        cfg.CAFile,
 	}
 }
 
@@ -153,6 +171,7 @@ func (h *Handler) GetInstallScript(c *gin.Context) {
 		ControlPlaneAddr:  h.getControlPlaneURL(),
 		GRPCAddr:          h.getGRPCAddr(),
 		HeartbeatInterval: h.heartbeatInterval,
+		TLSEnabled:        h.tlsEnabled,
 	})
 	if err != nil {
 		logger.ErrorF(c.Request.Context(), "[Agent] Failed to create install script generator: %v", err)
@@ -264,6 +283,42 @@ func (h *Handler) DownloadAgent(c *gin.Context) {
 	c.File(binaryPath)
 
 	logger.InfoF(c.Request.Context(), "[Agent] Binary downloaded: %s-%s", osType, arch)
+}
+
+// DownloadCA handles GET /api/v1/agent/ca.crt - downloads the gRPC TLS CA for Agent install.
+// DownloadCA 处理 GET /api/v1/agent/ca.crt - 下载供 Agent 安装流使用的 gRPC TLS CA。
+// @Tags agent
+// @Produce application/x-pem-file
+// @Success 200 {file} binary "CA certificate"
+// @Failure 404 {object} ErrorResponse "TLS disabled or CA not found"
+// @Router /api/v1/agent/ca.crt [get]
+func (h *Handler) DownloadCA(c *gin.Context) {
+	// TLS off → no CA to distribute.
+	// TLS 未开启 → 没有可下发的 CA。
+	if !h.tlsEnabled {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			ErrorMsg: "gRPC TLS is not enabled on Control Plane / Control Plane 未启用 gRPC TLS",
+		})
+		return
+	}
+	if h.caFile == "" {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			ErrorMsg: "CA certificate path is not configured / 未配置 CA 证书路径",
+		})
+		return
+	}
+	if _, err := os.Stat(h.caFile); os.IsNotExist(err) {
+		logger.WarnF(c.Request.Context(), "[Agent] CA certificate not found: %s", h.caFile)
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			ErrorMsg: "CA certificate not found. Please contact administrator / 未找到 CA 证书，请联系管理员",
+		})
+		return
+	}
+
+	c.Header("Content-Type", "application/x-pem-file")
+	c.Header("Content-Disposition", "attachment; filename=ca.crt")
+	c.File(h.caFile)
+	logger.InfoF(c.Request.Context(), "[Agent] CA certificate downloaded: %s", h.caFile)
 }
 
 // DownloadSeatunnelXJavaProxyJar handles GET /api/v1/agent/assets/seatunnelx-java-proxy.jar - downloads the seatunnelx-java-proxy thin jar.

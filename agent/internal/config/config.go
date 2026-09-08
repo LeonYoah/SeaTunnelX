@@ -97,16 +97,16 @@ type TLSConfig struct {
 	// Enabled 表示是否启用 TLS
 	Enabled bool `mapstructure:"enabled"`
 
-	// CertFile is the path to the TLS certificate file
-	// CertFile 是 TLS 证书文件的路径
+	// CertFile is the optional client certificate for mTLS (not required for one-way TLS).
+	// CertFile 是可选的 mTLS 客户端证书（单向 TLS 不需要）。
 	CertFile string `mapstructure:"cert_file"`
 
-	// KeyFile is the path to the TLS key file
-	// KeyFile 是 TLS 密钥文件的路径
+	// KeyFile is the optional client private key for mTLS (not required for one-way TLS).
+	// KeyFile 是可选的 mTLS 客户端私钥（单向 TLS 不需要）。
 	KeyFile string `mapstructure:"key_file"`
 
-	// CAFile is the path to the CA certificate file
-	// CAFile 是 CA 证书文件的路径
+	// CAFile is the CA certificate used to verify the Control Plane server (required for one-way TLS).
+	// CAFile 是用于校验 Control Plane 服务端的 CA 证书（单向 TLS 必需）。
 	CAFile string `mapstructure:"ca_file"`
 }
 
@@ -239,13 +239,16 @@ func (c *Config) Validate() error {
 		return errors.New("control_plane.addresses is required")
 	}
 
-	// Validate TLS configuration / 验证 TLS 配置
+	// Validate TLS: one-way TLS only needs ca_file; client cert/key are optional for mTLS.
+	// 校验 TLS：单向 TLS 仅需 ca_file；客户端 cert/key 可选（留给 mTLS）。
 	if c.ControlPlane.TLS.Enabled {
-		if c.ControlPlane.TLS.CertFile == "" {
-			return errors.New("control_plane.tls.cert_file is required when TLS is enabled")
+		if c.ControlPlane.TLS.CAFile == "" {
+			return errors.New("control_plane.tls.ca_file is required when TLS is enabled")
 		}
-		if c.ControlPlane.TLS.KeyFile == "" {
-			return errors.New("control_plane.tls.key_file is required when TLS is enabled")
+		certSet := c.ControlPlane.TLS.CertFile != ""
+		keySet := c.ControlPlane.TLS.KeyFile != ""
+		if certSet != keySet {
+			return errors.New("control_plane.tls.cert_file and key_file must both be set for mTLS (or both empty for one-way TLS)")
 		}
 	}
 

@@ -240,34 +240,39 @@ func (c *Client) dialWithOptions(ctx context.Context, addr string) (*grpc.Client
 	return grpc.DialContext(ctx, addr, opts...)
 }
 
-// loadTLSConfig loads TLS configuration from files
-// loadTLSConfig 从文件加载 TLS 配置
+// loadTLSConfig loads TLS configuration from files for one-way TLS (CA required) or optional mTLS.
+// loadTLSConfig 从文件加载 TLS：单向 TLS 必须有 CA；客户端证书可选（mTLS）。
 func (c *Client) loadTLSConfig() (*tls.Config, error) {
 	tlsCfg := c.config.ControlPlane.TLS
 
-	// Load client certificate if provided
-	// 如果提供则加载客户端证书
+	// One-way TLS requires a CA to trust the Control Plane server certificate.
+	// 单向 TLS 需要 CA 以信任 Control Plane 服务端证书。
+	if tlsCfg.CAFile == "" {
+		return nil, errors.New("control_plane.tls.ca_file is required when TLS is enabled")
+	}
+	caCert, err := os.ReadFile(tlsCfg.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caCert) {
+		return nil, errors.New("failed to append CA certificate")
+	}
+
+	// Optional client certificate for mTLS; both cert and key must be set together.
+	// 可选的 mTLS 客户端证书；cert 与 key 必须同时配置。
 	var certificates []tls.Certificate
-	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
+	certSet := tlsCfg.CertFile != ""
+	keySet := tlsCfg.KeyFile != ""
+	if certSet != keySet {
+		return nil, errors.New("control_plane.tls.cert_file and key_file must both be set for mTLS")
+	}
+	if certSet && keySet {
 		cert, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load client certificate: %w", err)
 		}
 		certificates = append(certificates, cert)
-	}
-
-	// Load CA certificate if provided
-	// 如果提供则加载 CA 证书
-	var rootCAs *x509.CertPool
-	if tlsCfg.CAFile != "" {
-		caCert, err := os.ReadFile(tlsCfg.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-		rootCAs = x509.NewCertPool()
-		if !rootCAs.AppendCertsFromPEM(caCert) {
-			return nil, errors.New("failed to append CA certificate")
-		}
 	}
 
 	return &tls.Config{

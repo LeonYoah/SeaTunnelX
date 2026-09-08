@@ -42,6 +42,7 @@ internal/
 ├── router/                  # Gin 路由、中间件（日志、会话）
 ├── session/                 # 会话存储（默认内存实现）
 ├── task/                    # legacy scheduler/worker 壳入口
+├── tlsbootstrap/            # gRPC TLS 自动引导（openssl 检测与证书生成）
 └── utils/                   # 共享工具（http_client、自定义类型等）
 ```
 

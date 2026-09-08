@@ -38,6 +38,7 @@ func setupTestRouter(handler *Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/api/v1/agent/install.sh", handler.GetInstallScript)
+	r.GET("/api/v1/agent/ca.crt", handler.DownloadCA)
 	r.GET("/api/v1/agent/download", handler.DownloadAgent)
 	r.GET("/api/v1/agent/assets/seatunnelx-java-proxy.jar", handler.DownloadSeatunnelXJavaProxyJar)
 	r.GET("/api/v1/agent/assets/seatunnelx-java-proxy.sh", handler.DownloadSeatunnelXJavaProxyScript)
@@ -92,6 +93,81 @@ func TestNewHandler(t *testing.T) {
 	}
 	if h2.grpcPort != "50052" {
 		t.Errorf("Expected custom gRPC port '50052', got '%s'", h2.grpcPort)
+	}
+}
+
+// TestDownloadCA_TLSDisabled returns 404 when Control Plane TLS is off.
+// TestDownloadCA_TLSDisabled 在 Control Plane 未开 TLS 时返回 404。
+func TestDownloadCA_TLSDisabled(t *testing.T) {
+	handler := NewHandler(&HandlerConfig{
+		TLSEnabled: false,
+		CAFile:     "/tmp/does-not-matter.crt",
+	})
+	router := setupTestRouter(handler)
+
+	req, _ := http.NewRequest("GET", "/api/v1/agent/ca.crt", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestDownloadCA_Success serves the CA PEM when TLS is enabled and the file exists.
+// TestDownloadCA_Success 在 TLS 开启且 CA 文件存在时返回 PEM。
+func TestDownloadCA_Success(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.crt")
+	caPEM := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+	if err := os.WriteFile(caPath, caPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := NewHandler(&HandlerConfig{
+		TLSEnabled: true,
+		CAFile:     caPath,
+	})
+	router := setupTestRouter(handler)
+
+	req, _ := http.NewRequest("GET", "/api/v1/agent/ca.crt", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/x-pem-file") {
+		t.Errorf("unexpected content type: %s", ct)
+	}
+	if !strings.Contains(w.Body.String(), "BEGIN CERTIFICATE") {
+		t.Errorf("expected PEM body, got %q", w.Body.String())
+	}
+}
+
+// TestGetInstallScript_TLSEnabled embeds CA download into the install script.
+// TestGetInstallScript_TLSEnabled 验证安装脚本在 TLS 开启时包含 CA 下载。
+func TestGetInstallScript_TLSEnabled(t *testing.T) {
+	handler := NewHandler(&HandlerConfig{
+		ControlPlaneAddr: "http://test-server:8080",
+		GRPCPort:         "50051",
+		TLSEnabled:       true,
+		CAFile:           "/etc/seatunnelx/certs/ca.crt",
+	})
+	router := setupTestRouter(handler)
+
+	req, _ := http.NewRequest("GET", "/api/v1/agent/install.sh", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`GRPC_TLS_ENABLED="true"`, "/api/v1/agent/ca.crt", "enabled: true"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("install script missing %q", want)
+		}
 	}
 }
 

@@ -59,6 +59,7 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/otel_trace"
 	pb "github.com/seatunnel/seatunnelX/internal/proto/agent"
 	"github.com/seatunnel/seatunnelX/internal/session"
+	"github.com/seatunnel/seatunnelX/internal/tlsbootstrap"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -91,6 +92,11 @@ func Serve() {
 	var grpcSrv *grpcServer.Server
 	var agentManager *agent.Manager
 	if config.IsGRPCEnabled() {
+		// Auto-provision gRPC TLS when openssl is available.
+		// 本机有 openssl 时自动准备 gRPC TLS。
+		if _, err := tlsbootstrap.EnsureGRPCTLS(tlsbootstrap.Options{}); err != nil {
+			log.Printf("[TLS] 自动准备 gRPC TLS 失败，将按当前配置继续: %v / Failed to bootstrap gRPC TLS, continuing with current config: %v\n", err, err)
+		}
 		grpcSrv, agentManager = initGRPCServer(ctx)
 		if grpcSrv != nil {
 			defer grpcSrv.Stop()
@@ -491,6 +497,8 @@ func Serve() {
 				AgentBinaryDir:    "./lib/agent",
 				GRPCPort:          fmt.Sprintf("%d", config.GetGRPCPort()),
 				HeartbeatInterval: config.Config.GRPC.HeartbeatInterval,
+				TLSEnabled:        config.Config.GRPC.TLSEnabled,
+				CAFile:            tlsbootstrap.AgentCAPath(),
 			})
 
 			agentRouter := apiV1Router.Group("/agent")
@@ -502,6 +510,10 @@ func Serve() {
 				// GET /api/v1/agent/uninstall.sh - 获取卸载脚本
 				// GET /api/v1/agent/uninstall.sh - Get uninstall script
 				agentRouter.GET("/uninstall.sh", agentHandler.GetUninstallScript)
+
+				// GET /api/v1/agent/ca.crt - 下载 gRPC TLS CA（供 Agent 安装流使用）
+				// GET /api/v1/agent/ca.crt - Download gRPC TLS CA for Agent install flow
+				agentRouter.GET("/ca.crt", agentHandler.DownloadCA)
 
 				// GET /api/v1/agent/download - 下载 Agent 二进制文件
 				// GET /api/v1/agent/download - Download Agent binary
