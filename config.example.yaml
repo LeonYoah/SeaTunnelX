@@ -117,8 +117,12 @@ grpc:
   # gRPC 服务器端口（默认 9000）
   # gRPC server port (default: 9000)
   port: 9000
-  # 是否启用 TLS（生产环境建议启用）
-  # Whether to enable TLS (recommended for production)
+  # 是否启用 TLS（默认 false=明文）。设为 true 后：
+  # - 若已配置/存在证书则直接启用且不覆盖
+  # - 若证书缺失且本机有 openssl，则自动生成到 storage/certs/（约 99 年有效期）
+  # Whether to enable TLS (default false = plaintext). When true:
+  # - reuse existing certs without overwrite
+  # - if missing and openssl is available, auto-generate under storage/certs/ (~99y)
   tls_enabled: false
   # TLS 证书文件路径
   # TLS certificate file path
