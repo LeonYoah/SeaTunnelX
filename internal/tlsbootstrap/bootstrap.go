@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-// Package tlsbootstrap auto-provisions gRPC TLS materials when openssl is available.
-// tlsbootstrap 包在本机有 openssl 时自动准备 gRPC TLS 证书材料。
+// Package tlsbootstrap provisions gRPC TLS materials when grpc.tls_enabled is explicitly true.
+// tlsbootstrap 包在 grpc.tls_enabled 显式为 true 时准备 gRPC TLS 证书材料。
 package tlsbootstrap
 
 import (
@@ -41,6 +41,11 @@ const (
 	caKeyName      = "ca.key"
 	serverCertName = "server.crt"
 	serverKeyName  = "server.key"
+
+	// Default validity for local auto-generated certs (~99 years).
+	// 本地自动生成证书的默认有效期（约 99 年）。
+	defaultCAValidDays     = "36135" // 99 * 365
+	defaultServerValidDays = "36135" // 99 * 365
 )
 
 // Result describes the outcome of EnsureGRPCTLS.
@@ -91,13 +96,13 @@ type Options struct {
 	CommandRunner func(name string, arg ...string) *exec.Cmd
 }
 
-// EnsureGRPCTLS detects openssl and prepares unidirectional gRPC TLS materials.
-// EnsureGRPCTLS 检测 openssl 并准备单向 gRPC TLS 材料。
+// EnsureGRPCTLS prepares unidirectional gRPC TLS materials when explicitly enabled.
+// EnsureGRPCTLS 在显式开启时准备单向 gRPC TLS 材料。
 //
 // Behavior / 行为:
-// - openssl missing → keep TLS disabled (or disable if certs missing)
-// - certs already present → enable TLS, do not overwrite; remind user they can replace and restart
-// - openssl present and certs missing → generate CA + server cert, enable TLS
+// - grpc.tls_enabled=false（默认）→ 不生成、不强制开启，即使磁盘上已有证书
+// - grpc.tls_enabled=true 且证书已存在 → 启用并指向现有文件，不覆盖
+// - grpc.tls_enabled=true 且证书缺失 → 本机有 openssl 则自动生成；无则保持关闭并打日志
 func EnsureGRPCTLS(opts Options) (Result, error) {
 	lookPath := opts.LookPath
 	if lookPath == nil {
@@ -123,6 +128,20 @@ func EnsureGRPCTLS(opts Options) (Result, error) {
 	serverKey := filepath.Join(certDir, serverKeyName)
 
 	grpcCfg := config.GetGRPCConfig()
+
+	// Opt-in only: default config keeps plaintext gRPC until the operator enables TLS.
+	// 仅显式开启：默认配置保持明文 gRPC，直到运维打开 TLS。
+	if !grpcCfg.TLSEnabled {
+		reason := "grpc.tls_enabled is false; gRPC TLS left disabled"
+		log.Printf("[TLS] grpc.tls_enabled=false，保持 gRPC TLS 关闭（不会自动生成证书）。需要加密时请设为 true 后重启 / %s. Set grpc.tls_enabled=true and restart to provision certs.", reason)
+		return Result{
+			TLSEnabled:    false,
+			CertFile:      grpcCfg.CertFile,
+			KeyFile:       grpcCfg.KeyFile,
+			CAFile:        caCert,
+			SkippedReason: reason,
+		}, nil
+	}
 
 	// If user already configured explicit cert/key that both exist, keep them.
 	// 若用户已显式配置且文件存在，则沿用，不覆盖。
@@ -163,7 +182,7 @@ func EnsureGRPCTLS(opts Options) (Result, error) {
 	if anyCertMaterialExists(caCert, caKey, serverCert, serverKey) {
 		config.Config.GRPC.TLSEnabled = false
 		reason := "incomplete cert materials present; refusing overwrite"
-		log.Printf("[TLS] 证书目录存在不完整文件，拒绝覆盖且不自动开启 TLS。请补齐 ca.crt/server.crt/server.key 或清空目录后重启 / Incomplete cert files present under %s; refusing overwrite and leaving gRPC TLS disabled. Complete the set or clear the directory and restart. dir=%s",
+		log.Printf("[TLS] 证书目录存在不完整文件，拒绝覆盖且关闭 TLS。请补齐 ca.crt/server.crt/server.key 或清空目录后重启 / Incomplete cert files present under %s; refusing overwrite and leaving gRPC TLS disabled. Complete the set or clear the directory and restart. dir=%s",
 			certDir, certDir)
 		return Result{
 			TLSEnabled:    false,
@@ -176,18 +195,11 @@ func EnsureGRPCTLS(opts Options) (Result, error) {
 
 	opensslPath, err := lookPath("openssl")
 	if err != nil || opensslPath == "" {
-		// Keep configured paths; only force TLS off when materials cannot be created.
-		// 保留已配置路径；仅在无法创建材料时强制关闭 TLS。
-		wasEnabled := grpcCfg.TLSEnabled
+		// User opted in but materials cannot be created without openssl.
+		// 用户已显式开启，但无 openssl 无法创建材料。
 		config.Config.GRPC.TLSEnabled = false
 		reason := "openssl not found; gRPC TLS left disabled"
-		if wasEnabled {
-			// User asked for TLS but certs are missing and openssl is unavailable.
-			// 用户已显式开启 TLS，但证书缺失且本机无 openssl。
-			log.Printf("[TLS] 配置要求开启 gRPC TLS，但证书不存在且未检测到 openssl，已保持关闭 / Config requested gRPC TLS, but certs are missing and openssl was not found; TLS left disabled")
-		} else {
-			log.Printf("[TLS] 未检测到 openssl，跳过自动开启 gRPC TLS / %s", reason)
-		}
+		log.Printf("[TLS] 配置要求开启 gRPC TLS，但证书不存在且未检测到 openssl，已保持关闭 / Config requested gRPC TLS, but certs are missing and openssl was not found; TLS left disabled")
 		return Result{
 			TLSEnabled:    false,
 			CertFile:      grpcCfg.CertFile,
@@ -208,7 +220,7 @@ func EnsureGRPCTLS(opts Options) (Result, error) {
 	// Unidirectional TLS: leave server CAFile empty so ClientAuth stays off.
 	// 单向 TLS：服务端 CAFile 留空，避免误开 mTLS。
 	applyGRPCConfig(true, serverCert, serverKey, "")
-	log.Printf("[TLS] 已用 openssl 生成证书并默认开启 gRPC TLS。可用自有证书替换 %s 后重启 / Generated certs with openssl and enabled gRPC TLS. Replace files under %s and restart to use your own. dir=%s san=%v",
+	log.Printf("[TLS] 已用 openssl 生成证书并开启 gRPC TLS。可用自有证书替换 %s 后重启 / Generated certs with openssl and enabled gRPC TLS. Replace files under %s and restart to use your own. dir=%s san=%v",
 		certDir, certDir, certDir, hosts)
 
 	return Result{
@@ -333,7 +345,7 @@ func generateCerts(
 	}
 	if err := run("req", "-x509", "-new", "-nodes",
 		"-key", caKeyName,
-		"-sha256", "-days", "3650",
+		"-sha256", "-days", defaultCAValidDays,
 		"-out", caCertName,
 		"-subj", "/CN=SeaTunnelX-Local-CA"); err != nil {
 		return err
@@ -360,7 +372,7 @@ func generateCerts(
 		"-CAkey", caKeyName,
 		"-CAcreateserial",
 		"-out", serverCertName,
-		"-days", "825",
+		"-days", defaultServerValidDays,
 		"-sha256",
 		"-extfile", "server_ext.cnf"); err != nil {
 		return err

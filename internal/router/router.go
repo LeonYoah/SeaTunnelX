@@ -92,10 +92,10 @@ func Serve() {
 	var grpcSrv *grpcServer.Server
 	var agentManager *agent.Manager
 	if config.IsGRPCEnabled() {
-		// Auto-provision gRPC TLS when openssl is available.
-		// 本机有 openssl 时自动准备 gRPC TLS。
+		// Provision gRPC TLS only when grpc.tls_enabled is explicitly true.
+		// 仅当 grpc.tls_enabled 显式为 true 时准备 gRPC TLS。
 		if _, err := tlsbootstrap.EnsureGRPCTLS(tlsbootstrap.Options{}); err != nil {
-			log.Printf("[TLS] 自动准备 gRPC TLS 失败，将按当前配置继续: %v / Failed to bootstrap gRPC TLS, continuing with current config: %v\n", err, err)
+			log.Printf("[TLS] 准备 gRPC TLS 失败，将按当前配置继续: %v / Failed to bootstrap gRPC TLS, continuing with current config: %v\n", err, err)
 		}
 		grpcSrv, agentManager = initGRPCServer(ctx)
 		if grpcSrv != nil {

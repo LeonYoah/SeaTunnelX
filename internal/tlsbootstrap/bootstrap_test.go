@@ -27,6 +27,32 @@ import (
 	"github.com/seatunnel/seatunnelX/internal/config"
 )
 
+func TestEnsureGRPCTLS_DefaultDisabledNoGenerate(t *testing.T) {
+	config.Config.GRPC.TLSEnabled = false
+	config.Config.GRPC.CertFile = ""
+	config.Config.GRPC.KeyFile = ""
+
+	res, err := EnsureGRPCTLS(Options{
+		CertDir: t.TempDir(),
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/openssl", nil
+		},
+		CommandRunner: func(name string, arg ...string) *exec.Cmd {
+			t.Fatalf("openssl should not run when tls_enabled=false")
+			return exec.Command(name, arg...)
+		},
+	})
+	if err != nil {
+		t.Fatalf("EnsureGRPCTLS: %v", err)
+	}
+	if res.TLSEnabled || res.Generated {
+		t.Fatalf("expected TLS left disabled by default: %+v", res)
+	}
+	if config.Config.GRPC.TLSEnabled {
+		t.Fatalf("expected global TLSEnabled=false")
+	}
+}
+
 func TestEnsureGRPCTLS_NoOpenSSL(t *testing.T) {
 	config.Config.GRPC.TLSEnabled = true
 	config.Config.GRPC.CertFile = ""
@@ -63,7 +89,7 @@ func TestEnsureGRPCTLS_ExistingCertsNoOverwrite(t *testing.T) {
 		}
 	}
 
-	config.Config.GRPC.TLSEnabled = false
+	config.Config.GRPC.TLSEnabled = true
 	config.Config.GRPC.CertFile = ""
 	config.Config.GRPC.KeyFile = ""
 
@@ -97,13 +123,43 @@ func TestEnsureGRPCTLS_ExistingCertsNoOverwrite(t *testing.T) {
 	}
 }
 
+func TestEnsureGRPCTLS_ExistingCertsIgnoredWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"ca.crt", "server.crt", "server.key"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("placeholder"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config.Config.GRPC.TLSEnabled = false
+	config.Config.GRPC.CertFile = ""
+	config.Config.GRPC.KeyFile = ""
+
+	res, err := EnsureGRPCTLS(Options{
+		CertDir: dir,
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/openssl", nil
+		},
+		CommandRunner: func(name string, arg ...string) *exec.Cmd {
+			t.Fatalf("openssl should not run when tls_enabled=false")
+			return exec.Command(name, arg...)
+		},
+	})
+	if err != nil {
+		t.Fatalf("EnsureGRPCTLS: %v", err)
+	}
+	if res.TLSEnabled || config.Config.GRPC.TLSEnabled {
+		t.Fatalf("existing certs must not force-enable TLS when tls_enabled=false: %+v", res)
+	}
+}
+
 func TestEnsureGRPCTLS_GenerateWithOpenSSL(t *testing.T) {
 	if _, err := exec.LookPath("openssl"); err != nil {
 		t.Skip("openssl not available")
 	}
 
 	dir := t.TempDir()
-	config.Config.GRPC.TLSEnabled = false
+	config.Config.GRPC.TLSEnabled = true
 	config.Config.GRPC.CertFile = ""
 	config.Config.GRPC.KeyFile = ""
 	config.Config.App.ExternalURL = "http://cp.example.com:8000"
